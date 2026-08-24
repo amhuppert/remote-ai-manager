@@ -171,7 +171,17 @@ async function proposedSpecWithComment() {
     elementId: "reply-r1",
     threadId: "thread-1",
     parentCommentId: null,
-    anchor: { quote: "answer review feedback" },
+    anchor: {
+      sectionId: "requirements",
+      headingLabel: "Requirements",
+      line: 1,
+      charStart: 0,
+      charEnd: 22,
+      quote: "answer review feedback",
+      prefix: "",
+      suffix: "",
+      docRevision: created.draft.id,
+    },
     body: "Which surface answers this feedback?",
     blocking: true,
   });

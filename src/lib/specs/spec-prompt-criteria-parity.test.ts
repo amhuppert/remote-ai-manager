@@ -50,11 +50,15 @@ function pinnedRevision(): SpecRevisionSnapshot {
       authoringStage: "plan",
       basedOnRevisionId: null,
       contentHash: "sha256:revision-parity",
+      citationContractVersion: 2,
+      citationVersion: 1,
+      citationHash: "0".repeat(64),
       proposedAt: NOW,
       approvedAt: NOW,
       externalDelivery: null,
       createdAt: NOW,
     },
+    assumptionCitations: [],
     elements: [
       {
         element: {

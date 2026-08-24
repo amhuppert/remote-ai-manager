@@ -5,11 +5,10 @@ import {
   type TextAnnotation,
 } from "@recogito/text-annotator";
 import {
-  findCommentBlock,
   rangeFromBlockOffsets,
-  selectAnchoredComments,
+  selectRenderableAnnotations,
 } from "../anchor-dom";
-import type { ResolvedComment } from "../types";
+import type { ResolvedMarkdownAnnotation } from "@/components/document-viewer/annotation-contract";
 
 /**
  * Recogito-coupled glue: convert re-anchored comments into text annotations the
@@ -40,38 +39,39 @@ const SENT_HIGHLIGHT: HighlightStyle = {
 };
 
 /** Build text annotations for every comment whose stored quote re-anchored. */
-export function commentsToTextAnnotations(
-  comments: ResolvedComment[],
+export function markdownAnnotationsToTextAnnotations(
+  sources: readonly ResolvedMarkdownAnnotation[],
   container: HTMLElement,
 ): TextAnnotation[] {
   const annotations: TextAnnotation[] = [];
-  for (const comment of selectAnchoredComments(comments)) {
-    if (comment.reanchor.status !== "anchored") continue;
-    const block = findCommentBlock(container, comment.anchor);
-    if (!block) continue;
+  for (const source of selectRenderableAnnotations(sources)) {
+    if (source.anchorState.status === "stale" || source.block === null)
+      continue;
     const range = rangeFromBlockOffsets(
-      block,
-      comment.reanchor.charStart,
-      comment.reanchor.charEnd,
+      source.block,
+      source.anchorState.charStart,
+      source.anchorState.charEnd,
     );
     if (!range || range.collapsed) continue;
     const selector = rangeToSelector(range, container);
     annotations.push({
-      id: comment.id,
+      id: source.id,
       bodies: [],
-      target: { annotation: comment.id, selector: [selector] },
+      target: { annotation: source.id, selector: [selector] },
     });
   }
   return annotations;
 }
 
 /** A highlight style keyed by each annotation's current comment status. */
-export function highlightStyleForComments(
-  comments: ResolvedComment[],
+export function highlightStyleForAnnotations(
+  annotations: readonly ResolvedMarkdownAnnotation[],
 ): HighlightStyleExpression<TextAnnotation> {
-  const statusById = new Map(comments.map((c) => [c.id, c.status]));
+  const toneById = new Map(
+    annotations.map((annotation) => [annotation.id, annotation.tone]),
+  );
   return (annotation: TextAnnotation) =>
-    statusById.get(annotation.id) === "sent"
+    toneById.get(annotation.id) === "settled"
       ? SENT_HIGHLIGHT
       : PENDING_HIGHLIGHT;
 }

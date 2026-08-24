@@ -2,8 +2,8 @@
  * The prefixes an agent reads as guidance, and nothing else
  * (`.kiro/steering/cli.md`, docs/design/cc-cli/09 §3). Each one is a promise
  * about what the line costs the reader: an `instruction:` is obeyed before
- * anything else, a `hint:` may be ignored. A sixth spelling does not add a
- * meaning — it makes the other five ambiguous, because an agent now has to
+ * anything else, a `hint:` may be ignored. A seventh spelling does not add a
+ * meaning — it makes the other six ambiguous, because an agent now has to
  * guess which tier an unfamiliar word belongs to.
  *
  * A `label: value` line inside a command's own output is not guidance: it is
@@ -25,6 +25,12 @@ export const GUIDANCE_PREFIXES = {
   next: "next",
   /** Server-rendered help garnish, appended to a help page. */
   context: "context",
+  /**
+   * Why a refusal's constraint exists. Refusal output only — it costs the
+   * reader nothing to act on, so a success path that printed one would be
+   * asking the reader to weigh a reason for something that already happened.
+   */
+  why: "why",
 } as const;
 
 export type GuidancePrefix = keyof typeof GUIDANCE_PREFIXES;

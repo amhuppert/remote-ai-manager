@@ -4,14 +4,20 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/Button";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
 import type { StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
+import type { ActorProvenance } from "@/lib/specs/schemas";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import type { SpecRevisionSnapshot } from "@/lib/specs/schemas";
 import type { SpecImportRecordView } from "@/lib/specs/view-schemas";
 import { cn } from "@/lib/ui/cn";
 
-import { importProvenance, settledAtImport } from "./presentation";
+import { SpecActorAttribution } from "./SpecActorAttribution";
+import { importProvenance } from "./presentation";
 
 const logger = createClientLogger("spec-studio-history");
 
@@ -23,8 +29,7 @@ export type SpecHistoryKind =
   | "gate"
   | "execution"
   | "waiver"
-  | "question"
-  | "assumption"
+  | "attention"
   | "comment";
 
 export type SpecHistoryEmphasis = "human" | "policy" | "system";
@@ -39,12 +44,24 @@ export interface SpecHistoryEvent {
   occurredAt: string;
   href: string | null;
   priority: number;
+  audit?: {
+    actor: ActorProvenance | null;
+    operation: string;
+    changes: readonly SpecHistoryFieldChange[];
+  };
+}
+
+interface SpecHistoryFieldChange {
+  field: string;
+  before: string;
+  after: string;
 }
 
 type HistoryFilter =
   | "all"
   | "approvals"
   | "admissions"
+  | "attention"
   | "gates"
   | "executions";
 
@@ -52,6 +69,7 @@ const FILTERS: ReadonlyArray<{ value: HistoryFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "approvals", label: "Human approvals" },
   { value: "admissions", label: "Policy admissions" },
+  { value: "attention", label: "Attention records" },
   { value: "gates", label: "Gate changes" },
   { value: "executions", label: "Executions" },
 ];
@@ -78,6 +96,7 @@ export default function SpecHistoryPanel({
   const visibleEvents = events.filter((event) => {
     if (filter === "all") return true;
     if (filter === "admissions") return event.kind === "admission";
+    if (filter === "attention") return event.kind === "attention";
     if (filter === "executions") return event.kind === "execution";
     if (filter === "gates") return event.kind === "gate";
     // A policy admission is never a human approval, whatever it is admitting.
@@ -87,8 +106,6 @@ export default function SpecHistoryPanel({
     return (
       event.kind === "approval" ||
       event.kind === "waiver" ||
-      event.kind === "question" ||
-      event.kind === "assumption" ||
       (event.kind === "revision" && event.emphasis === "human")
     );
   });
@@ -145,32 +162,22 @@ export default function SpecHistoryPanel({
           showHeading && "mt-md",
         )}
       >
-        <div
-          role="radiogroup"
+        <SegmentedControl
           aria-label="Filter spec history"
-          className="flex flex-wrap items-center gap-xs"
+          value={filter}
+          onValueChange={(value) => selectFilter(value as HistoryFilter)}
+          layoutClassName="flex flex-wrap"
         >
-          {FILTERS.map((option) => {
-            const selected = filter === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                className={cn(
-                  "inline-flex h-[22px] cursor-pointer items-center rounded-full border border-solid px-sm font-mono text-[0.66rem] font-semibold transition-colors duration-150 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
-                  selected
-                    ? "border-cyan-glow-strong bg-cyan-glow text-cyan"
-                    : "border-border-default bg-transparent text-text-secondary hover:border-border-strong hover:text-text-primary",
-                )}
-                onClick={() => selectFilter(option.value)}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+          {FILTERS.map((option) => (
+            <SegmentedControlItem
+              key={option.value}
+              value={option.value}
+              layoutClassName="min-h-[44px] min-w-[44px]"
+            >
+              {option.label}
+            </SegmentedControlItem>
+          ))}
+        </SegmentedControl>
         <div className="ml-auto flex items-center gap-md font-mono text-[0.64rem] text-text-tertiary max-768:ml-0 max-768:w-full">
           <span className="inline-flex items-center gap-xs">
             <span
@@ -276,6 +283,40 @@ export default function SpecHistoryPanel({
                   >
                     {event.detail}
                   </p>
+                  {event.audit !== undefined && (
+                    <div className="mt-xs border-x-0 border-t border-b-0 border-solid border-border-dim pt-xs">
+                      <SpecActorAttribution
+                        action={`${capitalize(event.audit.operation)} by`}
+                        actor={event.audit.actor}
+                        occurredAt={event.occurredAt}
+                      />
+                      {event.audit.changes.length > 0 && (
+                        <dl
+                          aria-label={`${event.label} field changes`}
+                          className="mt-xs mb-0 grid gap-xs"
+                        >
+                          {event.audit.changes.map((change) => (
+                            <div
+                              key={change.field}
+                              className="grid min-w-0 grid-cols-[112px_minmax(0,1fr)_minmax(0,1fr)] gap-sm rounded-sm bg-bg-raised px-sm py-xs max-768:grid-cols-1 max-768:gap-2xs"
+                            >
+                              <dt className="font-semibold text-text-secondary">
+                                {change.field}
+                              </dt>
+                              <dd className="m-0 min-w-0 break-words whitespace-pre-wrap text-text-tertiary">
+                                <span className="sr-only">Before: </span>
+                                {change.before}
+                              </dd>
+                              <dd className="m-0 min-w-0 break-words whitespace-pre-wrap text-text-primary">
+                                <span className="sr-only">After: </span>
+                                {change.after}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </div>
+                  )}
                   {event.kind === "admission" && (
                     <AdmissionReviewControls
                       state={reviewState}
@@ -379,7 +420,6 @@ export function buildSpecHistory(
   // the import's detail and goes null when that detail is unreadable, but the
   // provenance itself must never go with it.
   const imported = importProvenance(detail.gateAdmissions);
-  const importedAt = imported?.at ?? null;
   const events: SpecHistoryEvent[] = [
     {
       id: `${detail.spec.id}:created`,
@@ -575,71 +615,8 @@ export function buildSpecHistory(
     });
   }
 
-  for (const question of detail.questions) {
-    events.push({
-      id: `${question.id}:created`,
-      kind: "question",
-      emphasis: "system",
-      tone: "neutral",
-      label: `${question.handle} opened`,
-      detail: "A durable question was attached to the spec.",
-      occurredAt: question.createdAt,
-      href: elementHref(projectName, detail.spec.slug, question.handle),
-      priority: 15,
-    });
-    if (question.answeredAt !== null) {
-      const atImport = settledAtImport(question.answeredAt, importedAt);
-      events.push({
-        id: `${question.id}:answered`,
-        kind: "question",
-        emphasis: atImport ? "policy" : "human",
-        tone: atImport ? "neutral" : "green",
-        label: `${question.handle} answered${atImport ? " at import" : ""}`,
-        detail: atImport
-          ? "The answer came in with the imported source; nobody answered it here."
-          : "The question received an explicit answer.",
-        occurredAt: question.answeredAt,
-        href: elementHref(projectName, detail.spec.slug, question.handle),
-        priority: 55,
-      });
-    }
-  }
-
-  for (const assumption of detail.assumptions) {
-    events.push({
-      id: `${assumption.id}:created`,
-      kind: "assumption",
-      emphasis: "system",
-      tone: "neutral",
-      label: `${assumption.handle} proposed`,
-      detail: "An assumption was recorded for explicit disposition.",
-      occurredAt: assumption.createdAt,
-      href: elementHref(projectName, detail.spec.slug, assumption.handle),
-      priority: 15,
-    });
-    if (
-      assumption.disposedAt !== null &&
-      assumption.disposition !== "proposed"
-    ) {
-      const atImport = settledAtImport(assumption.disposedAt, importedAt);
-      events.push({
-        id: `${assumption.id}:disposed`,
-        kind: "assumption",
-        emphasis: atImport ? "policy" : "human",
-        tone: atImport
-          ? "neutral"
-          : assumption.disposition === "confirmed"
-            ? "green"
-            : "red",
-        label: `${assumption.handle} ${assumption.disposition}${atImport ? " at import" : ""}`,
-        detail: atImport
-          ? "The disposition came in with the imported source; no human took it here."
-          : "A human disposition was recorded against the assumption.",
-        occurredAt: assumption.disposedAt,
-        href: elementHref(projectName, detail.spec.slug, assumption.handle),
-        priority: 55,
-      });
-    }
+  for (const attentionEvent of detail.attentionAuditEvents ?? []) {
+    events.push(attentionHistoryEvent(attentionEvent, detail, projectName));
   }
 
   for (const comment of detail.comments) {
@@ -667,6 +644,328 @@ export function buildSpecHistory(
     if (right.priority !== left.priority) return right.priority - left.priority;
     return left.id.localeCompare(right.id);
   });
+}
+
+type AttentionAuditEvent = SpecDetailView["attentionAuditEvents"][number];
+
+function attentionHistoryEvent(
+  event: AttentionAuditEvent,
+  detail: SpecDetailView,
+  projectName: string,
+): SpecHistoryEvent {
+  if (event.kind === "record") {
+    const handle = `${event.payload.recordKind === "question" ? "Q" : "A"}${event.payload.recordNumber}`;
+    const operationLabel = recordOperationLabel(event);
+    const changes = recordFieldChanges(event, detail);
+    return {
+      id: `attention:${event.eventId}`,
+      kind: "attention",
+      emphasis:
+        event.payload.operation === "imported"
+          ? "policy"
+          : event.actor?.kind === "human"
+            ? "human"
+            : "system",
+      tone: recordOperationTone(event),
+      label: `${handle} ${operationLabel}`,
+      detail:
+        event.payload.reason ??
+        `${capitalize(event.payload.operation)} recorded ${changes.length} changed ${changes.length === 1 ? "field" : "fields"}.`,
+      occurredAt: event.occurredAt,
+      href: attentionHref(projectName, detail.spec.slug, handle),
+      priority: 55,
+      audit: {
+        actor: event.actor,
+        operation: event.payload.operation,
+        changes,
+      },
+    };
+  }
+
+  const changedHandles = citationAssumptionHandles(event);
+  const revision = detail.revisions.find(
+    (candidate) => candidate.id === event.payload.revisionId,
+  );
+  const subject =
+    changedHandles.length === 0
+      ? revision === undefined
+        ? "Revision"
+        : `Revision ${revision.number}`
+      : changedHandles.join(", ");
+  return {
+    id: `attention:${event.eventId}`,
+    kind: "attention",
+    emphasis: event.actor?.kind === "human" ? "human" : "system",
+    tone: "cyan",
+    label: `${subject} citations updated`,
+    detail: "The draft revision's pinned assumption citation set changed.",
+    occurredAt: event.occurredAt,
+    href:
+      changedHandles[0] === undefined
+        ? reviewHref(projectName, detail.spec.slug, event.payload.revisionId)
+        : attentionHref(projectName, detail.spec.slug, changedHandles[0]),
+    priority: 54,
+    audit: {
+      actor: event.actor,
+      operation: "citations updated",
+      changes: citationFieldChanges(event, detail),
+    },
+  };
+}
+
+function recordOperationLabel(
+  event: Extract<AttentionAuditEvent, { kind: "record" }>,
+): string {
+  if (event.payload.operation === "imported") {
+    if (
+      event.payload.after.kind === "question" &&
+      event.payload.after.status === "answered"
+    ) {
+      return "answered at import";
+    }
+    if (
+      event.payload.after.kind === "assumption" &&
+      event.payload.after.disposition !== "proposed"
+    ) {
+      return `${event.payload.after.disposition} at import`;
+    }
+  }
+  if (
+    event.payload.operation === "disposed" &&
+    event.payload.after.kind === "assumption"
+  ) {
+    return event.payload.after.disposition;
+  }
+  return event.payload.operation;
+}
+
+function recordOperationTone(
+  event: Extract<AttentionAuditEvent, { kind: "record" }>,
+): StatusChipTone {
+  if (event.payload.operation === "imported") return "neutral";
+  if (event.payload.operation === "answered") return "green";
+  if (
+    event.payload.operation === "disposed" &&
+    event.payload.after.kind === "assumption"
+  ) {
+    if (event.payload.after.disposition === "confirmed") return "green";
+    if (event.payload.after.disposition === "rejected") return "red";
+    return "amber";
+  }
+  if (
+    event.payload.operation === "withdrawn" ||
+    event.payload.operation === "superseded"
+  ) {
+    return "amber";
+  }
+  if (event.payload.operation === "edited") return "cyan";
+  return "neutral";
+}
+
+function recordFieldChanges(
+  event: Extract<AttentionAuditEvent, { kind: "record" }>,
+  detail: SpecDetailView,
+): SpecHistoryFieldChange[] {
+  const before = event.payload.before;
+  const after = event.payload.after;
+  const changes: SpecHistoryFieldChange[] = [];
+  const add = (field: string, beforeValue: unknown, afterValue: unknown) => {
+    const previous = historyFieldValue(beforeValue);
+    const next = historyFieldValue(afterValue);
+    if (before !== null && previous === next) return;
+    if (before === null && next === "—" && field !== "Record version") return;
+    changes.push({ field, before: previous, after: next });
+  };
+  const attachment = (elementId: string | null | undefined): string => {
+    if (elementId === null || elementId === undefined) return "Spec";
+    return elementHandles(detail.currentRevision).get(elementId) ?? elementId;
+  };
+
+  add("Text", before?.text, after.text);
+  add(
+    "Attachment",
+    before === null ? undefined : attachment(before.elementId),
+    attachment(after.elementId),
+  );
+  add("Record version", before?.recordVersion, after.recordVersion);
+  if (after.kind === "question") {
+    add(
+      "Status",
+      before?.kind === "question" ? before.status : undefined,
+      after.status,
+    );
+    add(
+      "Answer",
+      before?.kind === "question" ? before.answer : undefined,
+      after.answer,
+    );
+    add(
+      "Answered at",
+      before?.kind === "question" ? before.answeredAt : undefined,
+      after.answeredAt,
+    );
+    add(
+      "Withdrawn at",
+      before?.kind === "question" ? before.withdrawnAt : undefined,
+      after.withdrawnAt,
+    );
+    return changes;
+  }
+
+  add(
+    "Disposition",
+    before?.kind === "assumption" ? before.disposition : undefined,
+    after.disposition,
+  );
+  add(
+    "Disposed at",
+    before?.kind === "assumption" ? before.disposedAt : undefined,
+    after.disposedAt,
+  );
+  add(
+    "Withdrawn at",
+    before?.kind === "assumption" ? before.withdrawnAt : undefined,
+    after.withdrawnAt,
+  );
+  add(
+    "Supersedes",
+    assumptionHandleForId(
+      detail,
+      before?.kind === "assumption" ? before.supersedesAssumptionId : undefined,
+    ),
+    assumptionHandleForId(detail, after.supersedesAssumptionId),
+  );
+  add(
+    "Superseded by",
+    assumptionHandleForId(
+      detail,
+      before?.kind === "assumption"
+        ? before.supersededByAssumptionId
+        : undefined,
+    ),
+    assumptionHandleForId(detail, after.supersededByAssumptionId),
+  );
+  return changes;
+}
+
+function citationFieldChanges(
+  event: Extract<AttentionAuditEvent, { kind: "citations" }>,
+  detail: SpecDetailView,
+): SpecHistoryFieldChange[] {
+  const payload = event.payload;
+  const changes: SpecHistoryFieldChange[] = [
+    {
+      field: "Citation version",
+      before: String(payload.beforeCitationVersion),
+      after: String(payload.afterCitationVersion),
+    },
+    {
+      field: "Citation hash",
+      before: shortHash(payload.beforeCitationHash),
+      after: shortHash(payload.afterCitationHash),
+    },
+  ];
+  if (payload.added.length > 0) {
+    changes.push({
+      field: "Added",
+      before: "—",
+      after: payload.added
+        .map((entry) => citationEntryLabel(entry, detail))
+        .join(", "),
+    });
+  }
+  if (payload.removed.length > 0) {
+    changes.push({
+      field: "Removed",
+      before: payload.removed
+        .map((entry) => citationEntryLabel(entry, detail))
+        .join(", "),
+      after: "—",
+    });
+  }
+  if (payload.refreshed.length > 0) {
+    changes.push({
+      field: "Refreshed",
+      before: payload.refreshed
+        .map(
+          (entry) =>
+            `${citationSubjectLabel(entry.elementId, entry.beforeSnapshot.number, detail)} v${entry.beforeSnapshot.recordVersion}`,
+        )
+        .join(", "),
+      after: payload.refreshed
+        .map(
+          (entry) =>
+            `${citationSubjectLabel(entry.elementId, entry.afterSnapshot.number, detail)} v${entry.afterSnapshot.recordVersion}`,
+        )
+        .join(", "),
+    });
+  }
+  return changes;
+}
+
+function citationAssumptionHandles(
+  event: Extract<AttentionAuditEvent, { kind: "citations" }>,
+): string[] {
+  return [
+    ...event.payload.added.map((entry) => entry.snapshot.number),
+    ...event.payload.removed.map((entry) => entry.snapshot.number),
+    ...event.payload.refreshed.map((entry) => entry.afterSnapshot.number),
+  ]
+    .filter((number, index, numbers) => numbers.indexOf(number) === index)
+    .sort((left, right) => left - right)
+    .map((number) => `A${number}`);
+}
+
+function citationEntryLabel(
+  entry: Extract<
+    AttentionAuditEvent,
+    { kind: "citations" }
+  >["payload"]["added"][number],
+  detail: SpecDetailView,
+): string {
+  return citationSubjectLabel(entry.elementId, entry.snapshot.number, detail);
+}
+
+function citationSubjectLabel(
+  elementId: string,
+  assumptionNumber: number,
+  detail: SpecDetailView,
+): string {
+  const element =
+    elementHandles(detail.currentRevision).get(elementId) ?? elementId;
+  return `${element} → A${assumptionNumber}`;
+}
+
+function assumptionHandleForId(
+  detail: SpecDetailView,
+  assumptionId: string | null | undefined,
+): string | undefined {
+  if (assumptionId === null || assumptionId === undefined) return undefined;
+  return (
+    detail.assumptions.find((assumption) => assumption.id === assumptionId)
+      ?.handle ?? assumptionId
+  );
+}
+
+function historyFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function shortHash(hash: string): string {
+  return `${hash.slice(0, 12)}…`;
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function attentionHref(
+  projectName: string,
+  slug: string,
+  handle: string,
+): string {
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=questions&el=${encodeURIComponent(handle)}`;
 }
 
 /**
@@ -770,10 +1069,8 @@ function historyKindLabel(kind: SpecHistoryKind): string {
       return "Execution";
     case "waiver":
       return "Waiver";
-    case "question":
-      return "Question";
-    case "assumption":
-      return "Assumption";
+    case "attention":
+      return "Attention record";
     case "comment":
       return "Review";
   }

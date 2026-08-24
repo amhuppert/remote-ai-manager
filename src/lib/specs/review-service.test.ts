@@ -17,7 +17,11 @@ import {
   type SpecReviewRepo,
 } from "@/lib/state-store/spec-review-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
-import { createSpecsRepo, type SpecsRepo } from "@/lib/state-store/specs-repo";
+import {
+  createSpecsRepo,
+  type SpecsRepo,
+  type SpecsRepoTransaction,
+} from "@/lib/state-store/specs-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type { Db } from "@/lib/state-store/schemas";
 
@@ -27,12 +31,30 @@ import {
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
 import { authoringReviewProjection } from "./authoring-review-projection";
+import { assumptionCitationSnapshot } from "./attention-records";
 import { loadProposalState } from "./review-state";
-import { createReviewService, type ReviewService } from "./review-service";
+import {
+  createReviewService,
+  type ReviewCommentInput,
+  type ReviewService,
+  type ReviewServiceDeps,
+} from "./review-service";
+import type { Spec } from "./schemas";
 
 const PROJECT_PATH = "/repos/native-sdd-review";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
 const HUMAN = { kind: "human" } as const;
+const COMMENT_ANCHOR = {
+  sectionId: "requirements",
+  headingLabel: "Requirements",
+  line: 1,
+  charStart: 0,
+  charEnd: 25,
+  quote: "Review gates are durable.",
+  prefix: "",
+  suffix: "",
+  docRevision: "revision-content-hash",
+};
 
 let db: Db;
 let specs: SpecsRepo;
@@ -41,6 +63,7 @@ let linksRepo: ReturnType<typeof createSpecLinksRepo>;
 let specEvents: ReturnType<typeof createSpecEventsRepo>;
 let authoring: AuthoringService;
 let reviewing: ReviewService;
+let reviewDeps: ReviewServiceDeps;
 let idSequence: number;
 let timeSequence: number;
 
@@ -74,10 +97,11 @@ beforeEach(() => {
     },
   };
   authoring = createAuthoringService(deps);
-  reviewing = createReviewService({
+  reviewDeps = {
     ...deps,
     delivery: createSpecDeliveryRepo(db),
-  });
+  };
+  reviewing = createReviewService(reviewDeps);
 });
 
 afterEach(() => db.close());
@@ -170,6 +194,44 @@ async function proposedSpec(
     actor: AGENT,
   });
   return created;
+}
+
+/**
+ * The status projection composed exactly as the read routes compose it, over
+ * whatever the service actually persisted — so an assertion here speaks for
+ * what a surface renders about real rows rather than about a hand-built shape.
+ */
+async function projectionOf(spec: Spec, revisionId: string) {
+  const snapshot = await specs.getRevisionSnapshot(revisionId);
+  if (snapshot === null) {
+    throw new Error(`expected a snapshot for ${revisionId}`);
+  }
+  const revisions = await specs.listRevisions(spec.id);
+  return specs.transaction("test.projection", (repo) => {
+    const loaded = loadProposalState(
+      repo,
+      reviewRepo,
+      linksRepo,
+      spec,
+      snapshot,
+    );
+    return authoringReviewProjection({
+      policy: spec.gatePolicy,
+      snapshot,
+      governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+      importBaselineRows: loaded.importBaselineRows,
+      importBaselineCitationState: loaded.importBaselineCitationState,
+      approvals: reviewRepo.findApprovalsBySpecId(spec.id),
+      admissions: reviewRepo.findGateAdmissionsBySpecId(spec.id),
+      currentExecution: null,
+      revisionNumberById: new Map(
+        revisions.map((candidate) => [candidate.id, candidate.number]),
+      ),
+      applies: loaded.approvalApplies,
+      blockingThreads: loaded.reviewSnapshot.blockingThreads,
+      signOffFindings: [],
+    });
+  });
 }
 
 describe("ReviewService", () => {
@@ -270,7 +332,7 @@ describe("ReviewService", () => {
       elementId: "requirement-1",
       threadId: "thread-1",
       parentCommentId: null,
-      anchor: { quote: "Review gates are durable." },
+      anchor: COMMENT_ANCHOR,
       body: "Please make the refusal explicit.",
       blocking: true,
       actor: HUMAN,
@@ -299,6 +361,163 @@ describe("ReviewService", () => {
     const after = await specs.getRevisionSnapshot(created.draft.id);
     expect(after?.revision.contentHash).toBe(before?.revision.contentHash);
     expect(after?.elements).toEqual(before?.elements);
+  });
+
+  it("refuses non-root, invalid-anchor, and blank root comment payloads before persistence", async () => {
+    const created = await proposedSpec();
+    const valid = {
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "requirement-1",
+      threadId: "thread-root",
+      parentCommentId: null,
+      anchor: COMMENT_ANCHOR,
+      body: "Review this root.",
+      blocking: false,
+      actor: HUMAN,
+    };
+    const root = await reviewing.comment(valid);
+    if (!root.ok) throw new Error("valid root fixture was refused");
+
+    await expect(
+      reviewing.comment({
+        ...valid,
+        parentCommentId: root.value.id,
+      } as unknown as ReviewCommentInput),
+    ).rejects.toThrow();
+    await expect(
+      reviewing.comment({
+        ...valid,
+        threadId: "thread-invalid-anchor",
+        anchor: { opaque: true },
+      } as unknown as ReviewCommentInput),
+    ).rejects.toThrow();
+    await expect(
+      reviewing.comment({
+        ...valid,
+        threadId: "thread-blank",
+        body: "   \n  ",
+      }),
+    ).rejects.toThrow();
+    expect(
+      reviewRepo
+        .findCommentsByRevision(created.draft.id)
+        .map((comment) => comment.id),
+    ).toEqual([root.value.id]);
+  });
+
+  it("refuses a root comment when the proposed revision does not carry its element", async () => {
+    const created = await proposedSpec();
+
+    const result = await reviewing.comment({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "requirement-missing",
+      threadId: "thread-missing-element",
+      parentCommentId: null,
+      anchor: COMMENT_ANCHOR,
+      body: "This target is stale.",
+      blocking: false,
+      actor: HUMAN,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: { code: "not_found" },
+    });
+    expect(reviewRepo.findCommentsByRevision(created.draft.id)).toEqual([]);
+  });
+
+  it.each(["draft", "approved", "withdrawn", "abandoned"] as const)(
+    "refuses a root comment on a %s target",
+    async (targetState) => {
+      const created = await proposedSpec(
+        targetState === "approved" ? "fast-path" : "contract-bearing",
+      );
+      let revisionId = created.draft.id;
+      if (targetState === "approved") {
+        await reviewing.signOffRevision({
+          specId: created.spec.id,
+          revisionId,
+          approver: "alex",
+          actor: HUMAN,
+        });
+      }
+      if (targetState === "draft" || targetState === "withdrawn") {
+        const changed = await reviewing.requestChanges({
+          specId: created.spec.id,
+          revisionId,
+          actor: HUMAN,
+        });
+        if (!changed.ok) throw new Error("request changes fixture was refused");
+        revisionId =
+          targetState === "draft" ? changed.value.draft.id : revisionId;
+      }
+      if (targetState === "abandoned") {
+        await specs.abandon({
+          specId: created.spec.id,
+          abandonedAt: "2026-07-18T14:30:00.000Z",
+          reason: "No longer needed.",
+          updatedAt: "2026-07-18T14:30:00.000Z",
+        });
+      }
+
+      const result = await reviewing.comment({
+        specId: created.spec.id,
+        revisionId,
+        elementId: "requirement-1",
+        threadId: `thread-${targetState}`,
+        parentCommentId: null,
+        anchor: COMMENT_ANCHOR,
+        body: "This target is not reviewable.",
+        blocking: false,
+        actor: HUMAN,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        refusal: { code: "gate_blocked" },
+      });
+      expect(reviewRepo.findCommentsByRevision(revisionId)).toEqual([]);
+    },
+  );
+
+  it("rechecks proposal state inside the transaction before admitting a root", async () => {
+    const created = await proposedSpec();
+    const racedSpecs: SpecsRepo = {
+      ...specs,
+      async transaction<T>(
+        label: string,
+        operation: (repo: SpecsRepoTransaction) => T,
+      ): Promise<T> {
+        db.prepare(
+          "UPDATE spec_revisions SET state = 'withdrawn' WHERE id = ?",
+        ).run(created.draft.id);
+        return specs.transaction(label, operation);
+      },
+    };
+    const racedReviewing = createReviewService({
+      ...reviewDeps,
+      specs: racedSpecs,
+    });
+
+    const result = await racedReviewing.comment({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "requirement-1",
+      threadId: "thread-race",
+      parentCommentId: null,
+      anchor: COMMENT_ANCHOR,
+      body: "The proposal moved before this write.",
+      blocking: false,
+      actor: HUMAN,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: { code: "gate_blocked" },
+    });
+    expect(reviewRepo.findCommentsByRevision(created.draft.id)).toEqual([]);
   });
 
   /**
@@ -520,33 +739,7 @@ describe("ReviewService", () => {
     // The read must agree: the requirements gate is satisfied BY THIS
     // revision's own admission. Reading it as pending with a rev-1 row filed
     // under history is what left the D3 spec unable to say who admitted it.
-    const revisions = await specs.listRevisions(created.spec.id);
-    const signedOff = await specs.getRevisionSnapshot(followUp.id);
-    if (signedOff === null) throw new Error("expected a signed-off snapshot");
-    const projection = await specs.transaction("test.projection", (repo) => {
-      const loaded = loadProposalState(
-        repo,
-        reviewRepo,
-        linksRepo,
-        created.spec,
-        signedOff,
-      );
-      return authoringReviewProjection({
-        policy: created.spec.gatePolicy,
-        snapshot: signedOff,
-        governanceBaseSnapshot: loaded.governanceBaseSnapshot,
-        importBaselineRows: loaded.importBaselineRows,
-        approvals: reviewRepo.findApprovalsBySpecId(created.spec.id),
-        admissions: reviewRepo.findGateAdmissionsBySpecId(created.spec.id),
-        currentExecution: null,
-        revisionNumberById: new Map(
-          revisions.map((candidate) => [candidate.id, candidate.number]),
-        ),
-        applies: loaded.approvalApplies,
-        blockingThreads: loaded.reviewSnapshot.blockingThreads,
-        signOffFindings: [],
-      });
-    });
+    const projection = await projectionOf(created.spec, followUp.id);
     const requirements = projection.gates.find(
       (gate) => gate.gate === "requirements",
     );
@@ -558,6 +751,55 @@ describe("ReviewService", () => {
       requirements?.priorAdmissions.map(({ revisionId }) => revisionId),
     ).toEqual([created.draft.id]);
     expect(projection.revisionSignOff?.state).toBe("signed_off");
+  });
+
+  /**
+   * R11.5: the fast path's sign-off persists an approval row for every subject
+   * in the same act, so a really-signed-off revision carries rows that look
+   * exactly like per-subject grants a human made on it. Crediting each subject
+   * to that reading would report an act nobody performed — nobody was asked per
+   * subject — so the ledger must name the combined sign-off that settled them.
+   * Read off the persisted rows, because a ledger asserted over hand-built ones
+   * is what missed this.
+   */
+  it("reports the subjects a real fast-path sign-off settled as combined-act", async () => {
+    const created = await proposedSpec("fast-path");
+
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    // The state the classifier has to read correctly: per-subject rows granted
+    // on this very revision, written by the sign-off rather than by a human
+    // approving each subject.
+    expect(
+      reviewRepo
+        .findApprovalsBySpecId(created.spec.id)
+        .filter(({ revision_id }) => revision_id === created.draft.id)
+        .map(({ subject_kind }) => subject_kind)
+        .sort(),
+    ).toEqual(["decision", "plan", "requirement", "revision"]);
+
+    const projection = await projectionOf(created.spec, created.draft.id);
+    expect(
+      projection.approvalLedger.subjects.map(
+        ({ classification }) => classification,
+      ),
+    ).toEqual(["combined_act", "combined_act", "combined_act"]);
+    expect(projection.approvalLedger).toMatchObject({
+      satisfied: 3,
+      combinedAct: 3,
+      currentRevision: 0,
+      carried: 0,
+      importSettled: 0,
+      pending: 0,
+      governedBy: "combined_sign_off",
+    });
   });
 
   /**
@@ -656,21 +898,51 @@ describe("ReviewService", () => {
       refusal: { code: "gate_blocked" },
     });
 
-    reviewRepo.saveAssumption({
+    const reopened = await reviewing.requestChanges({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: HUMAN,
+    });
+    if (!reopened.ok) throw new Error(reopened.refusal.instruction);
+    const rejectedAssumptionRow = {
       id: "assumption-1",
       spec_id: created.spec.id,
       number: 1,
       element_id: "decision-1",
       text: "The gate is already enforced.",
       proposed_by_json: JSON.stringify(AGENT),
+      record_version: 1,
       disposition: "rejected",
       disposed_at: "2026-07-18T14:20:00.000Z",
+      withdrawn_at: null,
+      supersedes_assumption_id: null,
+      supersession_operation_id: null,
+      supersession_request_hash: null,
       created_at: "2026-07-18T13:59:00.000Z",
       updated_at: "2026-07-18T14:20:00.000Z",
+    } as const;
+    reviewRepo.insertAssumption(rejectedAssumptionRow);
+    await specs.mutateDraftCitation({
+      operation: "cite",
+      specId: created.spec.id,
+      revisionId: reopened.value.draft.id,
+      assumptionId: rejectedAssumptionRow.id,
+      elementId: "decision-1",
+      expectedCitationVersion: reopened.value.draft.citationVersion,
+      snapshot: assumptionCitationSnapshot(
+        rejectedAssumptionRow,
+        "2026-07-18T14:20:00.000Z",
+      ),
+      updatedAt: "2026-07-18T14:20:00.000Z",
     });
+    await specs.proposeRevision({
+      revisionId: reopened.value.draft.id,
+      proposedAt: "2026-07-18T14:21:00.000Z",
+    });
+    const reviewRevisionId = reopened.value.draft.id;
     const rejectedAssumption = await reviewing.signOffRevision({
       specId: created.spec.id,
-      revisionId: created.draft.id,
+      revisionId: reviewRevisionId,
       approver: "alex",
       actor: HUMAN,
     });
@@ -686,18 +958,18 @@ describe("ReviewService", () => {
 
     await reviewing.comment({
       specId: created.spec.id,
-      revisionId: created.draft.id,
+      revisionId: reviewRevisionId,
       elementId: "requirement-1",
       threadId: "thread-blocking",
       parentCommentId: null,
-      anchor: {},
+      anchor: COMMENT_ANCHOR,
       body: "Blocking",
       blocking: true,
       actor: HUMAN,
     });
     const blockingThread = await reviewing.signOffRevision({
       specId: created.spec.id,
-      revisionId: created.draft.id,
+      revisionId: reviewRevisionId,
       approver: "alex",
       actor: HUMAN,
     });
@@ -1183,7 +1455,7 @@ describe("ReviewService", () => {
       elementId: "requirement-1",
       threadId: "thread-1",
       parentCommentId: null,
-      anchor: {},
+      anchor: COMMENT_ANCHOR,
       body: "Still blocking",
       blocking: true,
       actor: HUMAN,

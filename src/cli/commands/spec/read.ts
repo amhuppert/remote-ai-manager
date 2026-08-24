@@ -26,6 +26,7 @@ import {
 } from "@/lib/specs/draft-health";
 import {
   compareCanonicalSpecBundles,
+  decodeCanonicalSpecBundle,
   renderRevisionMarkdown,
 } from "@/lib/specs/export";
 import { specMeasuresReportSchema } from "@/lib/specs/measures";
@@ -40,6 +41,7 @@ import {
   specLintViewSchema,
   specProjectSearchViewSchema,
   specSearchViewSchema,
+  specSectionViewSchema,
   specShowOutlineViewSchema,
   specStatusViewSchema,
   specSummaryViewSchema,
@@ -83,10 +85,16 @@ import {
   type Omission,
 } from "../../disclosure";
 import { deliveryPlanPreviewText } from "./plan-preview-text";
-import { countOf, gateLines, signOffLines } from "./projection-text";
+import {
+  approvalLedgerLines,
+  countOf,
+  gateLines,
+  signOffLines,
+} from "./projection-text";
 import {
   specGetEnvelopeSchema,
   specLintEnvelopeSchema,
+  specSectionGetEnvelopeSchema,
   specShowArtifactEnvelopeSchema,
   specShowOutlineInlineEnvelopeSchema,
   specShowOutlineSpillEnvelopeSchema,
@@ -443,6 +451,12 @@ function boundStatus(
     boundedItems(items, Math.max(limit, 1), reveal);
   const boundedExecutions = bound(executions, whole);
   const pendingApprovals = bound(status.pendingApprovals, whole);
+  const importCarriedApprovals = bound(status.importCarriedApprovals, whole);
+  // The ledger enumerates every consulted subject, so it is the section most
+  // able to crowd out the rest. Only the enumeration is bounded: the counts
+  // beside it are the account itself, and a truncated account would understate
+  // what is settled — the exact misreading the ledger exists to prevent.
+  const approvalLedgerSubjects = bound(status.approvalLedger.subjects, whole);
   const openQuestions = bound(status.openQuestions, whole);
   const assumptions = bound(status.assumptions, whole);
   const taskPlan = bound(status.taskPlan, `cctl spec show ${status.slug}`);
@@ -450,6 +464,11 @@ function boundStatus(
     status: {
       ...status,
       pendingApprovals: pendingApprovals.items,
+      importCarriedApprovals: importCarriedApprovals.items,
+      approvalLedger: {
+        ...status.approvalLedger,
+        subjects: approvalLedgerSubjects.items,
+      },
       openQuestions: openQuestions.items,
       assumptions: assumptions.items,
       taskPlan: taskPlan.items,
@@ -458,6 +477,8 @@ function boundStatus(
     disclosure: {
       executions: boundedExecutions.omission,
       pendingApprovals: pendingApprovals.omission,
+      importCarriedApprovals: importCarriedApprovals.omission,
+      approvalLedgerSubjects: approvalLedgerSubjects.omission,
       openQuestions: openQuestions.omission,
       assumptions: assumptions.omission,
       taskPlan: taskPlan.omission,
@@ -551,6 +572,10 @@ function statusText(bounded: BoundedStatus): string {
         )),
     "gates:",
     ...gateLines(status.gates),
+    // Read before the outstanding list, because the outstanding list read
+    // alone is the misreading: seven pending subjects beside eight banked ones
+    // is a position, and seven pending subjects alone is a loss.
+    ...approvalLedgerLines(status.approvalLedger),
     // Subject approvals and the revision's own sign-off are separate answers:
     // a consulted human gate stays pending after its last subject approval, so
     // an empty subject list beside a pending gate would name no act at all.
@@ -560,6 +585,17 @@ function statusText(bounded: BoundedStatus): string {
       disclosure.pendingApprovals,
       (approval) => [`  ${approval.gate}: ${approval.subject}`],
     ),
+    // Only when the import settled something: a natively-authored spec has no
+    // such subject, and a section printing `none` on every one of them would
+    // teach a reader to skip the section that matters on the specs that do.
+    ...(status.importCarriedApprovals.length === 0
+      ? []
+      : sectionLines(
+          "import-carried subjects",
+          status.importCarriedApprovals,
+          disclosure.importCarriedApprovals,
+          (approval) => [`  ${approval.gate}: ${approval.subject}`],
+        )),
     "revision sign-off:",
     ...signOffLines(status.revisionSignOff),
     // The feedback half of the review loop: without this line, an agent
@@ -567,7 +603,7 @@ function statusText(bounded: BoundedStatus): string {
     ...(status.openComments === null
       ? []
       : [
-          `open comments: ${status.openComments.count}${status.openComments.blockingCount > 0 ? ` (${status.openComments.blockingCount} blocking)` : ""} on ${status.openComments.subjects.join(", ")}`,
+          `open review threads: ${status.openComments.openThreadCount}${status.openComments.openBlockingThreadCount > 0 ? ` (${status.openComments.openBlockingThreadCount} blocking)` : ""} on ${status.openComments.subjects.join(", ")}`,
           `  read: cctl spec comments ${status.slug} --open`,
         ]),
     ...sectionLines(
@@ -689,17 +725,34 @@ async function readBundleFile(
       ),
     };
   }
-  const parsed = canonicalSpecBundleSchema.safeParse(decoded);
-  if (!parsed.success) {
+  const parsed = decodeCanonicalSpecBundle(decoded);
+  if (!parsed.ok) {
+    logger.debug("cli.spec.integrity_mismatch", {
+      against: filePath,
+      mismatchKind: parsed.code,
+      issuePath: parsed.issue.path,
+    });
     return {
       ok: false,
-      result: usageFailure(
-        `spec verify: --against file ${JSON.stringify(filePath)} is not a canonical spec bundle`,
+      result: integrityFailure(
+        parsed.message,
+        parsed.instruction,
+        {
+          against: filePath,
+          ...(parsed.code === "bundle_format_mismatch"
+            ? {
+                currentFormatVersion: parsed.currentFormatVersion,
+                againstFormatVersion: parsed.againstFormatVersion,
+              }
+            : {}),
+        },
+        [parsed.issue],
         json,
+        parsed.code,
       ),
     };
   }
-  return { ok: true, value: parsed.data };
+  return { ok: true, value: parsed.value };
 }
 
 export async function runSpecList(
@@ -846,12 +899,19 @@ function showOutlineText(outline: SpecShowOutlineView): string {
     (task) =>
       `${task.handle}\ttask\tstatus=${task.status.status}\t${task.summary}`,
   );
+  // Sections are addressed by element id, so the id is the row's first field:
+  // it is the argument `spec section get` takes, and the collection's own next
+  // line names that verb rather than the outline-wide rendered artifact.
+  const sections = outline.sections.map(
+    (section) =>
+      `${section.elementId}\tsection\t${section.role}\t${section.title}`,
+  );
   const disclosure = Object.entries(outline.disclosure).flatMap(
     ([collection, value]) =>
       collection === "next" || typeof value === "string"
         ? []
         : [
-            `${collection}: ${value.total} total, ${value.returned} returned, truncated=${value.truncated ? "yes" : "no"}`,
+            `${collection}: ${value.total} total, ${value.returned} returned, truncated=${value.truncated ? "yes" : "no"}${"next" in value ? `, next: ${value.next}` : ""}`,
           ],
   );
   return `${[
@@ -863,6 +923,8 @@ function showOutlineText(outline: SpecShowOutlineView): string {
     ...(decisions.length === 0 ? ["  none"] : decisions),
     "tasks:",
     ...(tasks.length === 0 ? ["  none"] : tasks),
+    "sections:",
+    ...(sections.length === 0 ? ["  none"] : sections),
     "disclosure:",
     ...disclosure.map((line) => `  ${line}`),
     `next: ${outline.disclosure.next}`,
@@ -1464,7 +1526,7 @@ function commentLines(comment: SpecCommentView): string[] {
 }
 
 function commentsText(slug: string, view: SpecCommentsView): string {
-  const header = `${slug}  comments: ${countOf(view.comments.length, "comment")} shown, ${view.openCount} open${view.openBlockingCount > 0 ? ` (${view.openBlockingCount} blocking)` : ""}`;
+  const header = `${slug}  comments: ${countOf(view.comments.length, "message row")} shown, ${countOf(view.openThreadCount, "open thread")} (${countOf(view.openCount, "open message row")}${view.openBlockingCount > 0 ? `, ${countOf(view.openBlockingCount, "blocking message row")}` : ""})`;
   if (view.comments.length === 0) {
     return `${header}\n`;
   }
@@ -1506,6 +1568,9 @@ export async function runSpecComments(
     slug: slug.value,
     returnedCount: response.value.comments.length,
     openCount: response.value.openCount,
+    openBlockingCount: response.value.openBlockingCount,
+    openThreadCount: response.value.openThreadCount,
+    openBlockingThreadCount: response.value.openBlockingThreadCount,
   });
   return {
     exitCode: EXIT_OK,
@@ -1516,6 +1581,8 @@ export async function runSpecComments(
       comments: response.value.comments,
       openCount: response.value.openCount,
       openBlockingCount: response.value.openBlockingCount,
+      openThreadCount: response.value.openThreadCount,
+      openBlockingThreadCount: response.value.openBlockingThreadCount,
     }),
     stderr: "",
   };
@@ -1709,6 +1776,19 @@ function specGetText(response: SpecElementGetResponse): string {
   return `${[header, ...specGetFieldLines(response, "")].join("\n")}\n`;
 }
 
+/**
+ * One `--revision` flag carries both selectors an agent can hold: the number
+ * every receipt and refusal names, and the opaque id a Studio link carries. A
+ * revision number is always a positive integer with no leading zero, and no
+ * revision id takes that shape, so the value's own digits decide which query
+ * the route is asked — the caller never has to say which kind it holds.
+ */
+function revisionQuery(revision: string | undefined): string {
+  if (revision === undefined) return "";
+  const key = /^[1-9][0-9]*$/u.test(revision) ? "revisionNumber" : "revisionId";
+  return `?${new URLSearchParams({ [key]: revision }).toString()}`;
+}
+
 export async function runSpecGet(
   rest: string[],
   flags: GlobalFlags,
@@ -1726,7 +1806,7 @@ export async function runSpecGet(
   const response = await requestTyped(
     host,
     resolved.context,
-    `${specBasePath(resolved.context, target.value.slug)}/elements/${encodePathSegment(target.value.handle)}`,
+    `${specBasePath(resolved.context, target.value.slug)}/elements/${encodePathSegment(target.value.handle)}${revisionQuery(values["revision"])}`,
     specElementGetResponseSchema,
     "get",
     json,
@@ -1761,6 +1841,73 @@ export async function runSpecGet(
   return {
     exitCode: EXIT_OK,
     stdout: render(json, specGetText(response.value), envelope),
+    stderr: "",
+  };
+}
+
+const SECTION_GET_SHAPE = "cctl spec section get <slug> --id <element-id>";
+
+/**
+ * Sections are the one element kind with no handle, so this read takes the
+ * stable element id `spec show` publishes. Text is depth-complete for the same
+ * reason `spec get` is: it is already the narrowest read, so representation
+ * changes and depth does not.
+ */
+export async function runSpecSectionGet(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "spec section get", json);
+  if (denied) return denied;
+  if (rest.length !== 1) {
+    return usageFailure(
+      `spec section get takes one <slug> — ${SECTION_GET_SHAPE}`,
+      json,
+    );
+  }
+  const slug = validateSlug(rest[0], "section get", json);
+  if (!slug.ok) return slug.result;
+  const elementId = values["id"];
+  if (elementId === undefined) {
+    return usageFailure(
+      `spec section get requires --id; sections have no handle, so their element id is the address — ${SECTION_GET_SHAPE}. Read the ids with \`cctl spec show ${slug.value}\`.`,
+      json,
+    );
+  }
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    `${specBasePath(resolved.context, slug.value)}/sections/${encodePathSegment(elementId)}${revisionQuery(values["revision"])}`,
+    specSectionViewSchema,
+    "section get",
+    json,
+  );
+  if (!response.ok) return response.result;
+  logger.debug("cli.spec.read_complete", {
+    command: "section get",
+    slug: slug.value,
+    elementId,
+    revisionNumber: response.value.revision.number,
+  });
+  const envelope = specSectionGetEnvelopeSchema.parse({
+    ok: true,
+    section: response.value,
+  });
+  const view = response.value;
+  const header = `${view.elementId}\tsection\t${view.role}\trevision ${view.revision.number} (${view.revision.state}, ${view.revision.authoringStage})`;
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `${[header, ...specGetFieldLines(view, "")].join("\n")}\n`,
+      envelope,
+    ),
     stderr: "",
   };
 }
@@ -2303,7 +2450,7 @@ export async function runSpecVerify(
     });
     return integrityFailure(
       `spec ${slug.value} failed integrity verification`,
-      "Restore the approved revision content from a trusted export before continuing.",
+      "Inspect the reported revision mismatch and resolve it in the authoritative spec store, then export a fresh bundle and verify again.",
       { report: report.value },
       [...mismatchIssues(report.value), ...consistencyIssues(report.value)],
       json,

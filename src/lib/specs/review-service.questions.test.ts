@@ -30,6 +30,10 @@ import { createReviewService, type ReviewService } from "./review-service";
 
 const PROJECT_PATH = "/repos/native-sdd-questions";
 const AGENT = { kind: "agent", conversationId: "conversation-1" } as const;
+const LATER_AGENT = {
+  kind: "agent",
+  conversationId: "conversation-2",
+} as const;
 const HUMAN = { kind: "human" } as const;
 
 let db: Db;
@@ -163,6 +167,455 @@ async function createPopulatedSpec() {
 }
 
 describe("ReviewService questions, assumptions, and policy", () => {
+  it("admits later authoring-agent correction, human terminal acts, and no terminal rewrites", async () => {
+    const created = await createPopulatedSpec();
+    const opened = await reviewing.openQuestion({
+      specId: created.spec.id,
+      elementId: "requirement-1",
+      text: "Which validator proves this?",
+      actor: AGENT,
+    });
+    if (!opened.ok) throw new Error("question should open");
+    expect(opened.value.record_version).toBe(1);
+
+    await expect(
+      reviewing.editAttentionRecord({
+        specId: created.spec.id,
+        recordId: opened.value.id,
+        expectedRecordVersion: 1,
+        payload: { kind: "question", text: "Human rewrite" },
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "authoring_agent_required" },
+    });
+    await expect(
+      reviewing.editAttentionRecord({
+        specId: created.spec.id,
+        recordId: opened.value.id,
+        expectedRecordVersion: 1,
+        payload: {
+          kind: "question",
+          text: "Which deterministic validator proves this?",
+        },
+        actor: LATER_AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        operation: "edited",
+        previousRecordVersion: 1,
+        newRecordVersion: 2,
+      },
+    });
+    await expect(
+      reviewing.editAttentionRecord({
+        specId: created.spec.id,
+        recordId: opened.value.id,
+        expectedRecordVersion: 1,
+        payload: { kind: "question", text: "Stale rewrite" },
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "stale_attention_record" },
+    });
+    await expect(
+      reviewing.answerQuestion({
+        specId: created.spec.id,
+        questionId: opened.value.id,
+        recordVersion: 2,
+        answer: "Agents cannot decide the human answer.",
+        actor: LATER_AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "human_act_required" },
+    });
+    await expect(
+      reviewing.answerQuestion({
+        specId: created.spec.id,
+        questionId: opened.value.id,
+        recordVersion: 2,
+        answer: "The deterministic integration suite.",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { status: "answered", record_version: 3 },
+    });
+    await expect(
+      reviewing.editAttentionRecord({
+        specId: created.spec.id,
+        recordId: opened.value.id,
+        expectedRecordVersion: 3,
+        payload: { kind: "question", text: "Rewrite terminal answer" },
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "attention_state_conflict" },
+    });
+
+    const events = db
+      .prepare(
+        `SELECT event_type FROM spec_events
+         WHERE spec_id = ? AND event_type = 'spec-review-record-mutated'
+         ORDER BY id`,
+      )
+      .all(created.spec.id);
+    expect(events).toHaveLength(3);
+  });
+
+  it("refreshes cited snapshots, supersedes once, replays, and withdraws current truth", async () => {
+    const created = await createPopulatedSpec();
+    const proposed = await reviewing.proposeAssumption({
+      specId: created.spec.id,
+      elementId: "requirement-1",
+      text: "The validator is deterministic.",
+      actor: AGENT,
+    });
+    if (!proposed.ok) throw new Error("assumption should be proposed");
+    expect(proposed.value.record_version).toBe(1);
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      citationVersion: 2,
+    });
+
+    await expect(
+      reviewing.editAttentionRecord({
+        specId: created.spec.id,
+        recordId: proposed.value.id,
+        expectedRecordVersion: 1,
+        expectedCitationVersion: 2,
+        payload: {
+          kind: "assumption",
+          text: "The validator is deterministic and durable.",
+        },
+        actor: LATER_AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        previousRecordVersion: 1,
+        newRecordVersion: 2,
+        previousCitationVersion: 2,
+        newCitationVersion: 3,
+      },
+    });
+    expect(
+      (await specs.readRevisionCitations(created.draft.id))[0]?.snapshot.text,
+    ).toBe("The validator is deterministic and durable.");
+
+    await expect(
+      reviewing.disposeAssumption({
+        specId: created.spec.id,
+        assumptionId: proposed.value.id,
+        recordVersion: 2,
+        citationVersion: 3,
+        disposition: "confirmed",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { disposition: "confirmed", record_version: 3 },
+    });
+    await expect(
+      reviewing.disposeAssumption({
+        specId: created.spec.id,
+        assumptionId: proposed.value.id,
+        recordVersion: 3,
+        citationVersion: 4,
+        disposition: "rejected",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "attention_state_conflict" },
+    });
+
+    const supersedeInput = {
+      specId: created.spec.id,
+      assumptionId: proposed.value.id,
+      draftRevisionId: created.draft.id,
+      expectedRecordVersion: 3,
+      expectedCitationVersion: 4,
+      payload: {
+        operationId: "supersede-operation",
+        reason: "The confirmed premise needs correction.",
+        text: "The validator is deterministic under a pinned revision.",
+        attachment: { kind: "element" as const, handle: "R1" },
+        citations: {
+          kind: "replace" as const,
+          elementHandles: ["R1"],
+        },
+      },
+      actor: LATER_AGENT,
+    };
+    const superseded = await reviewing.supersedeAssumption(supersedeInput);
+    expect(superseded).toMatchObject({
+      ok: true,
+      value: {
+        operation: "superseded",
+        newRecordVersion: 4,
+        newCitationVersion: 5,
+        successor: { handle: "A2" },
+        idempotentReplay: false,
+      },
+    });
+    await expect(
+      reviewing.supersedeAssumption(supersedeInput),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        successor: { handle: "A2" },
+        idempotentReplay: true,
+      },
+    });
+    await expect(
+      reviewing.supersedeAssumption({
+        ...supersedeInput,
+        payload: { ...supersedeInput.payload, text: "Conflicting retry" },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "idempotency_conflict" },
+    });
+
+    if (!superseded.ok || superseded.value.successor === undefined) {
+      throw new Error("supersession should return its successor");
+    }
+    await expect(
+      reviewing.withdrawAttentionRecord({
+        specId: created.spec.id,
+        recordId: superseded.value.successor.id,
+        expectedRecordVersion: 1,
+        expectedCitationVersion: 5,
+        reason: "This successor is no longer needed.",
+        actor: LATER_AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        operation: "withdrawn",
+        lifecycle: "withdrawn",
+        newCitationVersion: 6,
+      },
+    });
+    expect(await specs.readRevisionCitations(created.draft.id)).toEqual([]);
+
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T16:00:00.000Z",
+    });
+    const replayWithoutRevision = {
+      ...supersedeInput,
+      draftRevisionId: undefined,
+    };
+    await expect(
+      reviewing.supersedeAssumption(replayWithoutRevision),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        successor: { handle: "A2" },
+        newRecordVersion: 4,
+        newCitationVersion: 6,
+        idempotentReplay: true,
+      },
+    });
+    await expect(
+      reviewing.supersedeAssumption({
+        ...replayWithoutRevision,
+        payload: { ...supersedeInput.payload, text: "Conflicting retry" },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "idempotency_conflict" },
+    });
+
+    await expect(
+      reviewing.supersedeAssumption({
+        ...supersedeInput,
+        draftRevisionId: "revision-missing",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "idempotency_conflict" },
+    });
+
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T16:30:00.000Z",
+    });
+    await specs.createDraftFromBase({
+      id: "revision-replacement",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "design",
+      createdAt: "2026-07-18T16:45:00.000Z",
+    });
+    await expect(
+      reviewing.supersedeAssumption({
+        ...supersedeInput,
+        draftRevisionId: "revision-replacement",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "idempotency_conflict" },
+    });
+    await expect(
+      reviewing.supersedeAssumption(replayWithoutRevision),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        successor: { handle: "A2" },
+        newRecordVersion: 4,
+        newCitationVersion: 6,
+        idempotentReplay: true,
+      },
+    });
+    await expect(
+      reviewing.supersedeAssumption({
+        ...replayWithoutRevision,
+        payload: {
+          ...supersedeInput.payload,
+          operationId: "different-supersession-operation",
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "attention_state_conflict" },
+    });
+
+    await specs.abandon({
+      specId: created.spec.id,
+      abandonedAt: "2026-07-18T17:00:00.000Z",
+      reason: "The product direction changed.",
+      updatedAt: "2026-07-18T17:00:00.000Z",
+    });
+    await expect(
+      reviewing.supersedeAssumption(replayWithoutRevision),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        successor: { handle: "A2" },
+        newRecordVersion: 4,
+        newCitationVersion: 6,
+        idempotentReplay: true,
+      },
+    });
+    await expect(
+      reviewing.supersedeAssumption({
+        ...replayWithoutRevision,
+        payload: { ...supersedeInput.payload, text: "Conflicting retry" },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "idempotency_conflict" },
+    });
+  });
+
+  it("requires a writable draft for a first supersession operation", async () => {
+    const created = await createPopulatedSpec();
+    const proposed = await reviewing.proposeAssumption({
+      specId: created.spec.id,
+      elementId: null,
+      text: "The validator is deterministic.",
+      actor: AGENT,
+    });
+    if (!proposed.ok) throw new Error("assumption should be proposed");
+    await reviewing.disposeAssumption({
+      specId: created.spec.id,
+      assumptionId: proposed.value.id,
+      recordVersion: 1,
+      disposition: "confirmed",
+      actor: HUMAN,
+    });
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T16:00:00.000Z",
+    });
+
+    await expect(
+      reviewing.supersedeAssumption({
+        specId: created.spec.id,
+        assumptionId: proposed.value.id,
+        expectedRecordVersion: 2,
+        expectedCitationVersion: 1,
+        payload: {
+          operationId: "first-supersession-without-draft",
+          reason: "The premise needs correction.",
+          text: "The validator is deterministic under a pinned revision.",
+          attachment: { kind: "spec" },
+          citations: { kind: "clear" },
+        },
+        actor: LATER_AGENT,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "amendment_required" },
+    });
+  });
+
+  it("requires citation CAS before preserving a cited assumption across attachment edits", async () => {
+    const created = await createPopulatedSpec();
+    const proposed = await reviewing.proposeAssumption({
+      specId: created.spec.id,
+      elementId: "requirement-1",
+      text: "The validator is deterministic.",
+      actor: AGENT,
+    });
+    if (!proposed.ok) throw new Error("assumption should be proposed");
+
+    const edit = {
+      specId: created.spec.id,
+      recordId: proposed.value.id,
+      expectedRecordVersion: 1,
+      payload: {
+        kind: "assumption" as const,
+        attachment: { kind: "element" as const, handle: "D1" },
+        citationIntent: { kind: "preserve" as const },
+      },
+      actor: LATER_AGENT,
+    };
+    await expect(reviewing.editAttentionRecord(edit)).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "stale_citation_set" },
+    });
+    await expect(
+      reviewing.editAttentionRecord({
+        ...edit,
+        expectedCitationVersion: 1,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: { code: "stale_citation_set" },
+    });
+    expect(reviewRepo.findAssumptionById(proposed.value.id)).toMatchObject({
+      record_version: 1,
+      element_id: "requirement-1",
+    });
+
+    await expect(
+      reviewing.editAttentionRecord({
+        ...edit,
+        expectedCitationVersion: 2,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        previousRecordVersion: 1,
+        newRecordVersion: 2,
+        previousCitationVersion: 2,
+        newCitationVersion: 3,
+        citationChanges: { refreshed: ["R1"] },
+      },
+    });
+    expect(reviewRepo.findAssumptionById(proposed.value.id)).toMatchObject({
+      record_version: 2,
+      element_id: "decision-1",
+    });
+  });
   it("moves an addressable question from open to answered while preserving provenance and attachment", async () => {
     const created = await createPopulatedSpec();
     const opened = await reviewing.openQuestion({
@@ -180,8 +633,9 @@ describe("ReviewService questions, assumptions, and policy", () => {
     const answered = await reviewing.answerQuestion({
       specId: created.spec.id,
       questionId: opened.value.id,
+      recordVersion: opened.value.record_version,
       answer: "The deterministic integration suite.",
-      actor: AGENT,
+      actor: HUMAN,
     });
     expect(answered).toMatchObject({
       ok: true,
@@ -198,7 +652,7 @@ describe("ReviewService questions, assumptions, and policy", () => {
     ).toEqual(AGENT);
   });
 
-  it("supports human assumption dispositions and refuses changing one cited by approved content", async () => {
+  it("supports one human disposition and refuses terminal rewrites", async () => {
     const created = await createPopulatedSpec();
     const proposed = await reviewing.proposeAssumption({
       specId: created.spec.id,
@@ -215,6 +669,8 @@ describe("ReviewService questions, assumptions, and policy", () => {
     const confirmed = await reviewing.disposeAssumption({
       specId: created.spec.id,
       assumptionId: proposed.value.id,
+      recordVersion: proposed.value.record_version,
+      citationVersion: 2,
       disposition: "confirmed",
       actor: HUMAN,
     });
@@ -249,12 +705,14 @@ describe("ReviewService questions, assumptions, and policy", () => {
     const changed = await reviewing.disposeAssumption({
       specId: created.spec.id,
       assumptionId: proposed.value.id,
+      recordVersion: 2,
+      citationVersion: 3,
       disposition: "rejected",
       actor: HUMAN,
     });
     expect(changed).toMatchObject({
       ok: false,
-      refusal: { code: "amendment_required" },
+      refusal: { code: "attention_state_conflict" },
     });
     expect(reviewRepo.findAssumptionById(proposed.value.id)?.disposition).toBe(
       "confirmed",
@@ -271,11 +729,11 @@ describe("ReviewService questions, assumptions, and policy", () => {
     });
     if (!proposed.ok) throw new Error("assumption should be proposed");
 
-    // No approved revision cites the assumption yet, so rejecting it is a
-    // plain human disposition — the amendment rule does not apply.
     const rejected = await reviewing.disposeAssumption({
       specId: created.spec.id,
       assumptionId: proposed.value.id,
+      recordVersion: proposed.value.record_version,
+      citationVersion: 2,
       disposition: "rejected",
       actor: HUMAN,
     });
@@ -335,6 +793,7 @@ describe("ReviewService questions, assumptions, and policy", () => {
       const disposed = await reviewing.disposeAssumption({
         specId: created.spec.id,
         assumptionId: proposed.value.id,
+        recordVersion: proposed.value.record_version,
         disposition,
         actor: HUMAN,
       });
@@ -342,7 +801,7 @@ describe("ReviewService questions, assumptions, and policy", () => {
     }
   });
 
-  it("does not retroactively treat a post-approval assumption as cited by the earlier revision", async () => {
+  it("requires a draft for attached post-approval assumptions without backfilling frozen truth", async () => {
     const created = await createPopulatedSpec();
     await authoring.proposeRevision({
       specId: created.spec.id,
@@ -367,49 +826,34 @@ describe("ReviewService questions, assumptions, and policy", () => {
       actor: HUMAN,
     });
 
-    const proposed = await reviewing.proposeAssumption({
+    const refused = await reviewing.proposeAssumption({
       specId: created.spec.id,
       elementId: "decision-1",
       text: "This assumption was created after the approved snapshot froze.",
       actor: AGENT,
     });
-    if (!proposed.ok) throw new Error("assumption should be proposed");
-    const firstDisposition = await reviewing.disposeAssumption({
-      specId: created.spec.id,
-      assumptionId: proposed.value.id,
-      disposition: "confirmed",
-      actor: HUMAN,
+    expect(refused).toMatchObject({
+      ok: false,
+      refusal: { code: "amendment_required" },
     });
-    expect(firstDisposition).toMatchObject({
-      ok: true,
-      value: { disposition: "confirmed" },
-    });
-
     const { revision: amendment } = await authoring.openAmendment({
       specId: created.spec.id,
       actor: AGENT,
     });
-    await authoring.proposeRevision({
+    const proposed = await reviewing.proposeAssumption({
       specId: created.spec.id,
-      revisionId: amendment.id,
+      elementId: "decision-1",
+      text: "This assumption belongs only to the amendment.",
       actor: AGENT,
     });
-    await reviewing.signOffRevision({
-      specId: created.spec.id,
-      revisionId: amendment.id,
-      approver: "alex",
-      actor: HUMAN,
-    });
-    const afterCitation = await reviewing.disposeAssumption({
-      specId: created.spec.id,
-      assumptionId: proposed.value.id,
-      disposition: "rejected",
-      actor: HUMAN,
-    });
-    expect(afterCitation).toMatchObject({
-      ok: false,
-      refusal: { code: "amendment_required" },
-    });
+    expect(proposed).toMatchObject({ ok: true });
+    expect(await specs.readRevisionCitations(created.draft.id)).toEqual([]);
+    expect(await specs.readRevisionCitations(amendment.id)).toEqual([
+      expect.objectContaining({
+        assumptionId: proposed.ok ? proposed.value.id : "unreachable",
+        elementId: "decision-1",
+      }),
+    ]);
   });
 
   it("applies a hard-confirmed human policy change prospectively without creating approvals", async () => {

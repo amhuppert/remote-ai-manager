@@ -1,4 +1,5 @@
 import type {
+  ApprovalCitationState,
   ApprovalApplicability,
   ApprovalRecord,
 } from "./approval-applicability";
@@ -20,7 +21,14 @@ import {
   type ResolvedGateDial,
 } from "./policy";
 import {
+  LATER_STAGE_RATIONALE,
+  PLAN_IN_EVERGREEN_RATIONALE,
+  rationaleForCode,
+} from "./refusal-rationale";
+import {
   diffRevisions,
+  type RevisionCitation,
+  type RevisionCitationDiffContext,
   type RevisionElement as DiffRevisionElement,
 } from "./revision-diff";
 import type {
@@ -78,12 +86,16 @@ export interface SignOffReviewSnapshot {
    * unadmitted against the last thing a human approved.
    */
   governanceBaseRevisionRows: DiffRevisionElement[];
+  governanceBaseCitationState: ApprovalCitationState;
   revisionRows: DiffRevisionElement[];
+  citationContractVersion: 1 | 2;
+  citations: readonly RevisionCitation[];
   /**
    * The import baseline revision's rows, null for every spec no import
    * created. See `elementApprovalBasis` for what they carry.
    */
   importBaselineRows: readonly DiffRevisionElement[] | null;
+  importBaselineCitationState: ApprovalCitationState | null;
   blockingThreads: ReviewThreadSnapshot[];
   approvals: ApprovalSnapshot[];
 }
@@ -174,18 +186,25 @@ function allowed(): TransitionDecision {
   return { ok: true };
 }
 
+/**
+ * A code whose reason is the same wherever it is raised gets that reason here
+ * rather than at each predicate; `extra.rationale` is for the codes whose
+ * reason differs per branch.
+ */
 function refused(
   code: RefusalCode,
   unmetConditions: string[],
   instruction: string,
-  findings?: LintFinding[],
+  extra?: { findings?: LintFinding[]; rationale?: string },
 ): TransitionDecision {
+  const rationale = extra?.rationale ?? rationaleForCode(code);
   return {
     ok: false,
     refusal: {
       code,
       unmetConditions,
-      ...(findings === undefined ? {} : { findings }),
+      ...(extra?.findings === undefined ? {} : { findings: extra.findings }),
+      ...(rationale === undefined ? {} : { rationale }),
       instruction,
     },
   };
@@ -263,6 +282,7 @@ export function admitDraftWrite(
         `A ${label} is authored in a delivery plan attempt, not an evergreen revision.`,
       ],
       "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl spec plan edit <slug> --file <plan.json>`.",
+      { rationale: PLAN_IN_EVERGREEN_RATIONALE },
     );
   }
   const dial = resolvedDials[stage];
@@ -274,6 +294,7 @@ export function admitDraftWrite(
     "stage_blocked",
     [`A ${label} cannot be authored during the ${stage} stage.`],
     instruction,
+    { rationale: LATER_STAGE_RATIONALE },
   );
 }
 
@@ -343,8 +364,9 @@ export function consultedAuthoringGates(
   stage: SpecAuthoringStage,
   governanceBaseRows: DiffRevisionElement[],
   revisionRows: DiffRevisionElement[],
+  citations: RevisionCitationDiffContext,
 ): AuthoringGate[] {
-  const diff = diffRevisions(governanceBaseRows, revisionRows);
+  const diff = diffRevisions(governanceBaseRows, revisionRows, citations);
   const baseById = new Map(
     governanceBaseRows.map((row) => [row.elementId, row]),
   );
@@ -408,13 +430,16 @@ export interface ApprovalConditionsContext {
   authoringStage: SpecAuthoringStage;
   revisionId: string;
   governanceBaseRevisionRows: DiffRevisionElement[];
+  governanceBaseCitationState: ApprovalCitationState;
   revisionRows: DiffRevisionElement[];
+  revisionCitationState: ApprovalCitationState;
   approvals: readonly ApprovalSnapshot[];
   /** Element id to the handle the condition text addresses it by. */
   handles: ReadonlyMap<string, string>;
   approvalApplies: ApprovalApplicability;
   /** The import baseline revision's rows; null for a natively authored spec. */
   importBaselineRows: readonly DiffRevisionElement[] | null;
+  importBaselineCitationState: ApprovalCitationState | null;
 }
 
 export function approvalUnmetConditions(
@@ -440,6 +465,14 @@ export function approvalUnmetConditions(
       authoringStage,
       context.governanceBaseRevisionRows,
       context.revisionRows,
+      {
+        baseCitationContractVersion:
+          context.governanceBaseCitationState.citationContractVersion,
+        draftCitationContractVersion:
+          context.revisionCitationState.citationContractVersion,
+        baseCitations: context.governanceBaseCitationState.citations,
+        draftCitations: context.revisionCitationState.citations,
+      },
     ),
   );
   const unmetConditions: string[] = [];
@@ -468,7 +501,9 @@ export function approvalUnmetConditions(
           ),
           subject: { subjectKind: kind, elementId: element.elementId },
           revisionRows: context.revisionRows,
+          revisionCitationState: context.revisionCitationState,
           importBaselineRows: context.importBaselineRows,
+          importBaselineCitationState: context.importBaselineCitationState,
         }) !== null
       ) {
         continue;
@@ -525,11 +560,17 @@ function signOffPreconditions(
     authoringStage,
     revisionId: review.revisionId,
     governanceBaseRevisionRows: review.governanceBaseRevisionRows,
+    governanceBaseCitationState: review.governanceBaseCitationState,
     revisionRows: review.revisionRows,
+    revisionCitationState: {
+      citationContractVersion: review.citationContractVersion,
+      citations: review.citations,
+    },
     approvals: review.approvals,
     handles: handleByElementId(draft),
     approvalApplies,
     importBaselineRows: review.importBaselineRows,
+    importBaselineCitationState: review.importBaselineCitationState,
   });
   const unmetConditions = [
     ...threadConditions,
@@ -545,7 +586,7 @@ function signOffPreconditions(
     signOffFindings.length > 0 ? "lint_blocked" : "gate_blocked",
     unmetConditions,
     "Resolve the sign-off preconditions and sign off again.",
-    signOffFindings.length > 0 ? signOffFindings : undefined,
+    signOffFindings.length > 0 ? { findings: signOffFindings } : undefined,
   );
 }
 
@@ -558,6 +599,13 @@ function proposeDials(
     authoringStage,
     review.governanceBaseRevisionRows,
     review.revisionRows,
+    {
+      baseCitationContractVersion:
+        review.governanceBaseCitationState.citationContractVersion,
+      draftCitationContractVersion: review.citationContractVersion,
+      baseCitations: review.governanceBaseCitationState.citations,
+      draftCitations: review.citations,
+    },
   ).map((gate) => resolveDial(policy, gate));
 }
 
@@ -579,7 +627,7 @@ export function propose(context: ProposeContext): TransitionDecision {
       "lint_blocked",
       health.blockingFindings.map((finding) => finding.message),
       `Nothing was proposed for revision ${context.review.revisionId}. Run \`cctl spec lint ${context.draft.specHandle}\`, resolve every blocking finding it reports, then re-run \`cctl spec propose ${context.draft.specHandle} --notes <notes.md>\`.`,
-      [...health.ordered],
+      { findings: [...health.ordered] },
     );
   }
 

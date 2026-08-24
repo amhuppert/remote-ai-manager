@@ -410,9 +410,9 @@ describe("0024-execution-lease-and-result-deliveries", () => {
         .prepare("SELECT MAX(version) AS version FROM schema_migrations")
         .get(),
     ).toEqual(stampedBefore);
-    // Version 10 is the candidate-unstable halt vocabulary (migration 0031);
-    // this migration's own barrier remains the version-8 stamp asserted above.
-    expect(KNOWN_SCHEMA_VERSION).toBe(10);
+    // Version 11 is the attention-citation cutover (migration 0034); this
+    // migration's own barrier remains the version-8 stamp asserted above.
+    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 
   it("cascades a delivery with its session but survives losing the origin conversation", async () => {

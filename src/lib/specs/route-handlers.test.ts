@@ -9,6 +9,7 @@ import type {
   SpecDeliveryVerdictRow,
   SpecEvidenceRow,
   SpecExecutionRow,
+  SpecEventRow,
   SpecGateAdmissionRow,
   SpecLinkRow,
   SpecProofVerdictRow,
@@ -28,6 +29,7 @@ import {
   specCommentsViewSchema,
   specDetailViewSchema,
   specEditContextViewSchema,
+  specSectionViewSchema,
   specShowOutlineViewSchema,
   specProjectSearchViewSchema,
   specStatusViewSchema,
@@ -55,6 +57,9 @@ const revision: SpecRevision = {
   authoringStage: "plan",
   basedOnRevisionId: null,
   contentHash: null,
+  citationContractVersion: 2,
+  citationVersion: 1,
+  citationHash: "a".repeat(64),
   proposedAt: null,
   approvedAt: null,
   externalDelivery: null,
@@ -169,6 +174,7 @@ const snapshot: SpecRevisionSnapshot = {
       },
     },
   ],
+  assumptionCitations: [],
 };
 
 const question: SpecQuestionRow = {
@@ -178,9 +184,11 @@ const question: SpecQuestionRow = {
   element_id: "requirement-1",
   text: "Which aliases are supported?",
   provenance_json: JSON.stringify({ kind: "agent", conversationId: "conv-1" }),
+  record_version: 1,
   status: "open",
   answer: null,
   answered_at: null,
+  withdrawn_at: null,
   created_at: revision.createdAt,
   updated_at: revision.createdAt,
 };
@@ -195,8 +203,13 @@ const assumption: SpecAssumptionRow = {
     kind: "agent",
     conversationId: "conv-1",
   }),
+  record_version: 1,
   disposition: "rejected",
   disposed_at: "2026-07-18T01:00:00.000Z",
+  withdrawn_at: null,
+  supersedes_assumption_id: null,
+  supersession_operation_id: null,
+  supersession_request_hash: null,
   created_at: revision.createdAt,
   updated_at: revision.createdAt,
 };
@@ -464,7 +477,12 @@ describe("spec read route handlers", () => {
         criteria: { total: 1, returned: 1, truncated: false },
         decisions: { total: 1, returned: 1, truncated: false },
         tasks: { total: 1, returned: 1, truncated: false },
-        sections: { total: 1, returned: 0, truncated: true },
+        sections: {
+          total: 1,
+          returned: 1,
+          truncated: false,
+          next: `cctl spec section get ${spec.slug} --id <element-id>`,
+        },
         next: `cctl spec show ${spec.slug} --rendered`,
       },
     });
@@ -524,6 +542,7 @@ describe("spec read route handlers", () => {
             : {}),
         },
       })),
+      assumptionCitations: [],
     });
     const approvedSnapshot = snapshotFor(approvedRevision, false);
     const amendmentSnapshot = snapshotFor(amendmentRevision, true);
@@ -766,6 +785,7 @@ describe("spec read route handlers", () => {
         ...decisions,
         ...tasks,
       ],
+      assumptionCitations: [],
     };
     const handlers = createSpecRouteHandlers(
       createDeps({
@@ -844,6 +864,7 @@ describe("spec read route handlers", () => {
             revisionId: approvedDesignRevision.id,
           },
         })),
+      assumptionCitations: [],
     };
     const [approvedRequirement, approvedCriterion] =
       approvedDesignSnapshot.elements;
@@ -1281,6 +1302,7 @@ describe("spec read route handlers", () => {
         criterion("criterion-4", 4, pinnedRevision.id),
         criterion("criterion-7", 7, pinnedRevision.id),
       ],
+      assumptionCitations: [],
     };
     const olderSnapshot: SpecRevisionSnapshot = {
       revision: olderRevision,
@@ -1290,6 +1312,7 @@ describe("spec read route handlers", () => {
         criterion("criterion-6", 6, olderRevision.id),
         criterion("criterion-7", 7, olderRevision.id),
       ],
+      assumptionCitations: [],
     };
     const deliveredExecution = execution({
       id: "execution-prior",
@@ -1724,6 +1747,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: target.id },
       })),
+      assumptionCitations: [],
     });
     const snapshotsById = new Map(
       [approvedBase, stranded, forkedPast].map((target) => [
@@ -1799,6 +1823,7 @@ describe("spec read route handlers", () => {
             ...entry,
             version: { ...entry.version, revisionId: target.id },
           })),
+          assumptionCitations: [],
         } satisfies SpecRevisionSnapshot,
       ]),
     );
@@ -1992,10 +2017,18 @@ describe("spec read route handlers", () => {
         handle: "Q1",
         elementId: "requirement-1",
         text: "Which aliases are supported?",
+        recordVersion: 1,
         status: "open",
         answer: null,
         answeredAt: null,
+        withdrawnAt: null,
         provenance: { kind: "agent", conversationId: "conv-1" },
+        presentation: {
+          state: "current",
+          attentionActive: true,
+          lastMutation: null,
+          humanCapability: { kind: "answer", allowed: true },
+        },
         createdAt: revision.createdAt,
         updatedAt: revision.createdAt,
       },
@@ -2017,13 +2050,93 @@ describe("spec read route handlers", () => {
         handle: "A1",
         elementId: "requirement-1",
         text: "SQLite remains authoritative.",
+        recordVersion: 1,
         disposition: "rejected",
         disposedAt: "2026-07-18T01:00:00.000Z",
+        withdrawnAt: null,
         proposedBy: { kind: "agent", conversationId: "conv-1" },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: {
+          revisionId: revision.id,
+          citationVersion: 1,
+          citationHash: "a".repeat(64),
+          citations: [],
+        },
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "dispose",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction:
+              "This assumption is terminal; correct it through supersession.",
+          },
+        },
         createdAt: revision.createdAt,
         updatedAt: revision.createdAt,
       },
     });
+  });
+
+  it("projects typed attention audit events on the detail read", async () => {
+    const auditEvent: SpecEventRow = {
+      id: 12,
+      spec_id: spec.id,
+      occurred_at: revision.createdAt,
+      event_type: "spec-review-record-mutated",
+      actor_json: JSON.stringify({
+        kind: "agent",
+        conversationId: "conv-1",
+      }),
+      payload_json: JSON.stringify({
+        schemaVersion: 1,
+        recordKind: "question",
+        recordId: question.id,
+        recordNumber: question.number,
+        attentionId: question.id,
+        operation: "opened",
+        active: true,
+        before: null,
+        after: {
+          kind: "question",
+          recordId: question.id,
+          number: question.number,
+          recordVersion: question.record_version,
+          text: question.text,
+          elementId: question.element_id,
+          provenance: { kind: "agent", conversationId: "conv-1" },
+          status: question.status,
+          answer: question.answer,
+          answeredAt: question.answered_at,
+          withdrawnAt: question.withdrawn_at,
+          createdAt: question.created_at,
+          updatedAt: question.updated_at,
+        },
+      }),
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({ findEventsBySpecId: () => [auditEvent] }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.attentionAuditEvents).toEqual([
+      expect.objectContaining({
+        kind: "record",
+        eventId: auditEvent.id,
+        actor: { kind: "agent", conversationId: "conv-1" },
+        payload: expect.objectContaining({ operation: "opened" }),
+      }),
+    ]);
   });
 
   it("names the real handle when an element id is addressed as a handle", async () => {
@@ -2045,6 +2158,559 @@ describe("spec read route handlers", () => {
       error: expect.stringContaining("is an element id"),
       code: "invalid_handle",
       details: { handle: "requirement-1", elementHandle: "R1" },
+    });
+  });
+
+  /**
+   * A spec whose revision 2 dropped the requirement revision 1 carried: the
+   * only shape in which a handle resolves nowhere current but somewhere
+   * historical.
+   */
+  function withRetiredRequirement() {
+    const historicalRevision: SpecRevision = {
+      ...revision,
+      state: "approved",
+      contentHash: "revision-1-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const currentRevision: SpecRevision = {
+      ...revision,
+      id: "revision-2",
+      number: 2,
+      basedOnRevisionId: historicalRevision.id,
+    };
+    const retiredRow = {
+      element: {
+        id: "requirement-2",
+        specId: spec.id,
+        kind: "requirement" as const,
+        number: 2,
+        parentElementId: null,
+        createdAt: revision.createdAt,
+      },
+      version: {
+        revisionId: historicalRevision.id,
+        elementId: "requirement-2",
+        position: 4,
+        payload: {
+          kind: "requirement" as const,
+          statement: "The route falls back to older revisions",
+          priority: "must" as const,
+          risk: "low" as const,
+        },
+        payloadHash: "retired-requirement-hash",
+        elementVersion: 1,
+        createdAt: revision.createdAt,
+        updatedAt: revision.createdAt,
+      },
+    };
+    const snapshotsById = new Map<string, SpecRevisionSnapshot>([
+      [
+        historicalRevision.id,
+        {
+          revision: historicalRevision,
+          elements: [...snapshot.elements, retiredRow],
+          assumptionCitations: [],
+        },
+      ],
+      [
+        currentRevision.id,
+        {
+          revision: currentRevision,
+          elements: snapshot.elements.map((row) => ({
+            ...row,
+            version: { ...row.version, revisionId: currentRevision.id },
+          })),
+          assumptionCitations: [],
+        },
+      ],
+    ]);
+    return {
+      historicalRevision,
+      currentRevision,
+      handlers: createSpecRouteHandlers(
+        createDeps({
+          listRevisions: async () => [historicalRevision, currentRevision],
+          getRevisionSnapshot: async (revisionId) =>
+            snapshotsById.get(revisionId) ?? null,
+        }),
+      ),
+    };
+  }
+
+  it("refuses a historical-only handle instead of answering from the older revision", async () => {
+    const { handlers, historicalRevision, currentRevision } =
+      withRetiredRequirement();
+
+    const response = await handlers.getSpecElementGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/elements/R2"),
+      routeContext({ name: "demo", slug: spec.slug, element: "R2" }),
+    );
+
+    expect(response.status).toBe(404);
+    const body: unknown = await response.json();
+    expect(body).toEqual({
+      error: "Spec element exists only in a historical revision",
+      code: "historical_only",
+      details: {
+        handle: "R2",
+        elementId: "requirement-2",
+        lastRevisionId: historicalRevision.id,
+        lastRevisionNumber: 1,
+        currentRevisionId: currentRevision.id,
+        currentRevisionNumber: 2,
+      },
+      instruction:
+        "Read the historical element with `cctl spec get current-slug/R2 --revision 1`. The current revision does not contain this handle.",
+    });
+    // The deleted fallback: the older revision's content is never the answer.
+    expect(body).not.toHaveProperty("element");
+    expect(body).not.toHaveProperty("revision");
+  });
+
+  it("selects a revision by number beside the existing id selector", async () => {
+    const { handlers, historicalRevision } = withRetiredRequirement();
+
+    const byNumber = await handlers.getSpecElementGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/elements/R2?revisionNumber=1",
+      ),
+      routeContext({ name: "demo", slug: spec.slug, element: "R2" }),
+    );
+    expect(byNumber.status).toBe(200);
+    await expect(byNumber.json()).resolves.toMatchObject({
+      handle: "R2",
+      revision: { id: historicalRevision.id, number: 1 },
+      element: { element: { id: "requirement-2" } },
+    });
+
+    const byId = await handlers.getSpecElementGET(
+      new Request(
+        `http://cc.test/api/specs/demo/current-slug/elements/R2?revisionId=${historicalRevision.id}`,
+      ),
+      routeContext({ name: "demo", slug: spec.slug, element: "R2" }),
+    );
+    expect(byId.status).toBe(200);
+    await expect(byId.json()).resolves.toMatchObject({
+      revision: { id: historicalRevision.id },
+    });
+  });
+
+  it("reports an unknown revision selector as a missing revision in either form", async () => {
+    const { handlers } = withRetiredRequirement();
+
+    const unknownNumber = await handlers.getSpecElementGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/elements/R1?revisionNumber=99",
+      ),
+      routeContext({ name: "demo", slug: spec.slug, element: "R1" }),
+    );
+    expect(unknownNumber.status).toBe(404);
+    await expect(unknownNumber.json()).resolves.toEqual({
+      error: "Spec revision not found",
+    });
+
+    const unknownId = await handlers.getSpecElementGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/elements/R1?revisionId=revision-missing",
+      ),
+      routeContext({ name: "demo", slug: spec.slug, element: "R1" }),
+    );
+    expect(unknownId.status).toBe(404);
+    await expect(unknownId.json()).resolves.toEqual({
+      error: "Spec revision not found",
+    });
+  });
+
+  it("leaves Q/A resolution and reference state untouched by the historical refusal", async () => {
+    const { handlers } = withRetiredRequirement();
+
+    // Q/A records are spec-scoped, so they resolve before any revision scan
+    // and never become a historical_only refusal.
+    const questionResponse = await handlers.getSpecElementGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/elements/Q1"),
+      routeContext({ name: "demo", slug: spec.slug, element: "Q1" }),
+    );
+    expect(questionResponse.status).toBe(200);
+    await expect(questionResponse.json()).resolves.toMatchObject({
+      kind: "question",
+      handle: "Q1",
+    });
+
+    const referenceResponse = await handlers.getSpecElementGET(
+      new Request(
+        "http://cc.test/api/specs/demo/current-slug/elements/R1?observedRevision=1",
+      ),
+      routeContext({ name: "demo", slug: spec.slug, element: "R1" }),
+    );
+    expect(referenceResponse.status).toBe(200);
+    await expect(referenceResponse.json()).resolves.toMatchObject({
+      referenceState: {
+        observedRevision: 1,
+        observedPayloadHash: "requirement-hash",
+        latestContainingRevision: 2,
+        latestPayloadHash: "requirement-hash",
+      },
+    });
+  });
+
+  /**
+   * A lineage whose revision 2 dropped one of the two sections revision 1
+   * carried: sections have no handle, so element id is the only address, and
+   * the retired one is the shape the historical refusal has to name.
+   */
+  function withSections() {
+    const historicalRevision: SpecRevision = {
+      ...revision,
+      state: "approved",
+      contentHash: "revision-1-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const currentRevision: SpecRevision = {
+      ...revision,
+      id: "revision-2",
+      number: 2,
+      basedOnRevisionId: historicalRevision.id,
+    };
+    const sectionRow = {
+      element: {
+        id: "problem-section",
+        specId: spec.id,
+        kind: "section" as const,
+        number: null,
+        parentElementId: null,
+        createdAt: revision.createdAt,
+      },
+      version: {
+        revisionId: historicalRevision.id,
+        elementId: "problem-section",
+        position: 4,
+        payload: {
+          kind: "section" as const,
+          role: "intent_problem" as const,
+          title: "Problem",
+          body: "Sections have no read path.",
+        },
+        payloadHash: "problem-section-hash",
+        elementVersion: 3,
+        createdAt: revision.createdAt,
+        updatedAt: revision.createdAt,
+      },
+    };
+    const retiredSectionRow = {
+      ...sectionRow,
+      element: { ...sectionRow.element, id: "retired-section" },
+      version: {
+        ...sectionRow.version,
+        elementId: "retired-section",
+        position: 5,
+        payload: {
+          ...sectionRow.version.payload,
+          role: "context" as const,
+          title: "Retired context",
+        },
+      },
+    };
+    const snapshotsById = new Map<string, SpecRevisionSnapshot>([
+      [
+        historicalRevision.id,
+        {
+          revision: historicalRevision,
+          elements: [...snapshot.elements, sectionRow, retiredSectionRow],
+          assumptionCitations: [],
+        },
+      ],
+      [
+        currentRevision.id,
+        {
+          revision: currentRevision,
+          elements: [...snapshot.elements, sectionRow].map((row) => ({
+            ...row,
+            version: { ...row.version, revisionId: currentRevision.id },
+          })),
+          assumptionCitations: [],
+        },
+      ],
+    ]);
+    return {
+      historicalRevision,
+      currentRevision,
+      handlers: createSpecRouteHandlers(
+        createDeps({
+          listRevisions: async () => [historicalRevision, currentRevision],
+          getRevisionSnapshot: async (revisionId) =>
+            snapshotsById.get(revisionId) ?? null,
+        }),
+      ),
+    };
+  }
+
+  function sectionRequest(
+    handlers: ReturnType<typeof createSpecRouteHandlers>,
+    element: string,
+    search = "",
+  ) {
+    return handlers.getSpecSectionGET(
+      new Request(
+        `http://cc.test/api/specs/demo/current-slug/sections/${element}${search}`,
+      ),
+      routeContext({ name: "demo", slug: spec.slug, element }),
+    );
+  }
+
+  it("returns one current-revision section addressed by its element id", async () => {
+    const { handlers, currentRevision } = withSections();
+
+    const response = await sectionRequest(handlers, "problem-section");
+
+    expect(response.status).toBe(200);
+    const body = specSectionViewSchema.parse(await response.json());
+    expect(body).toEqual({
+      specId: spec.id,
+      slug: spec.slug,
+      kind: "section",
+      // Literal null, not an echoed element id: sections are not addressable
+      // by handle, so nothing downstream can invent one from this read.
+      handle: null,
+      elementId: "problem-section",
+      role: "intent_problem",
+      title: "Problem",
+      body: "Sections have no read path.",
+      elementVersion: 3,
+      position: 4,
+      revision: {
+        id: currentRevision.id,
+        number: 2,
+        state: "draft",
+        authoringStage: "plan",
+      },
+    });
+  });
+
+  it("refuses an element id that resolves to a non-section element", async () => {
+    const { handlers } = withSections();
+
+    const response = await sectionRequest(handlers, "requirement-1");
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Spec element is not a section",
+      code: "not_section",
+      details: {
+        elementId: "requirement-1",
+        kind: "requirement",
+        handle: "R1",
+      },
+      instruction:
+        "Read this requirement with `cctl spec get current-slug/R1`.",
+    });
+  });
+
+  it("names no handle for a non-section element that has none", async () => {
+    const unnumbered = {
+      element: {
+        id: "unnumbered-task",
+        specId: spec.id,
+        kind: "task" as const,
+        number: null,
+        parentElementId: null,
+        createdAt: revision.createdAt,
+      },
+      version: {
+        revisionId: revision.id,
+        elementId: "unnumbered-task",
+        position: 6,
+        payload: {
+          kind: "task" as const,
+          title: "Unnumbered",
+          instructions: "No handle was ever allocated",
+          tracedRequirementElementIds: [],
+          tracedDecisionElementIds: [],
+          coveredCriterionElementIds: [],
+          dependsOnTaskElementIds: [],
+        },
+        payloadHash: "unnumbered-task-hash",
+        elementVersion: 1,
+        createdAt: revision.createdAt,
+        updatedAt: revision.createdAt,
+      },
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === revision.id
+            ? { ...snapshot, elements: [...snapshot.elements, unnumbered] }
+            : null,
+      }),
+    );
+
+    const response = await sectionRequest(handlers, "unnumbered-task");
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Spec element is not a section",
+      code: "not_section",
+      details: {
+        elementId: "unnumbered-task",
+        kind: "task",
+        handle: null,
+      },
+      instruction:
+        "This task has no allocated handle; read the whole revision with `cctl spec show current-slug --rendered`.",
+    });
+  });
+
+  it("reports an unknown element id as a missing section", async () => {
+    const { handlers } = withSections();
+
+    const response = await sectionRequest(handlers, "no-such-section");
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: "Spec section not found",
+      code: "not_found",
+      details: { elementId: "no-such-section" },
+    });
+  });
+
+  it("refuses a historical-only section with a section-shaped recovery command", async () => {
+    const { handlers, historicalRevision, currentRevision } = withSections();
+
+    const response = await sectionRequest(handlers, "retired-section");
+
+    expect(response.status).toBe(404);
+    const body: unknown = await response.json();
+    expect(body).toEqual({
+      error: "Spec element exists only in a historical revision",
+      code: "historical_only",
+      details: {
+        handle: null,
+        elementId: "retired-section",
+        lastRevisionId: historicalRevision.id,
+        lastRevisionNumber: 1,
+        currentRevisionId: currentRevision.id,
+        currentRevisionNumber: 2,
+      },
+      instruction:
+        "Read the historical section with `cctl spec section get current-slug --id retired-section --revision 1`. The current revision does not contain this section.",
+    });
+    expect(body).not.toHaveProperty("body");
+  });
+
+  it("selects a section revision by number or id and refuses an unknown one", async () => {
+    const { handlers, historicalRevision } = withSections();
+
+    const byNumber = await sectionRequest(
+      handlers,
+      "retired-section",
+      "?revisionNumber=1",
+    );
+    expect(byNumber.status).toBe(200);
+    await expect(byNumber.json()).resolves.toMatchObject({
+      elementId: "retired-section",
+      title: "Retired context",
+      revision: { id: historicalRevision.id, number: 1, state: "approved" },
+    });
+
+    const byId = await sectionRequest(
+      handlers,
+      "retired-section",
+      `?revisionId=${historicalRevision.id}`,
+    );
+    expect(byId.status).toBe(200);
+    await expect(byId.json()).resolves.toMatchObject({
+      revision: { id: historicalRevision.id },
+    });
+
+    const unknown = await sectionRequest(
+      handlers,
+      "problem-section",
+      "?revisionNumber=99",
+    );
+    expect(unknown.status).toBe(404);
+    await expect(unknown.json()).resolves.toEqual({
+      error: "Spec revision not found",
+    });
+  });
+
+  it("lists the outline's sections with the read command that reaches one", async () => {
+    const { handlers } = withSections();
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/outline"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = specShowOutlineViewSchema.parse(await response.json());
+    expect(body.sections).toEqual([
+      {
+        elementId: "problem-section",
+        role: "intent_problem",
+        title: "Problem",
+        position: 4,
+        elementVersion: 3,
+      },
+    ]);
+    expect(body.disclosure.sections).toEqual({
+      total: 1,
+      returned: 1,
+      truncated: false,
+      next: "cctl spec section get current-slug --id <element-id>",
+    });
+  });
+
+  it("bounds the outline's sections by the root limit", async () => {
+    const sections = Array.from(
+      { length: SPEC_OUTLINE_ROOT_LIMIT + 1 },
+      (_unused, index) => ({
+        element: {
+          id: `section-${index + 1}`,
+          specId: spec.id,
+          kind: "section" as const,
+          number: null,
+          parentElementId: null,
+          createdAt: revision.createdAt,
+        },
+        version: {
+          revisionId: revision.id,
+          elementId: `section-${index + 1}`,
+          position: snapshot.elements.length + index,
+          payload: {
+            kind: "section" as const,
+            role: "design_narrative" as const,
+            title: `Section ${index + 1}`,
+            body: "Bounded",
+          },
+          payloadHash: `section-hash-${index + 1}`,
+          elementVersion: 1,
+          createdAt: revision.createdAt,
+          updatedAt: revision.createdAt,
+        },
+      }),
+    );
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === revision.id
+            ? { ...snapshot, elements: [...snapshot.elements, ...sections] }
+            : null,
+      }),
+    );
+
+    const response = await handlers.getSpecOutlineGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/outline"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+    const body = specShowOutlineViewSchema.parse(await response.json());
+
+    expect(body.sections).toHaveLength(SPEC_OUTLINE_ROOT_LIMIT);
+    expect(body.disclosure.sections).toMatchObject({
+      total: SPEC_OUTLINE_ROOT_LIMIT + 1,
+      returned: SPEC_OUTLINE_ROOT_LIMIT,
+      truncated: true,
     });
   });
 
@@ -2071,6 +2737,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: candidate.id },
       })),
+      assumptionCitations: [],
     });
     const approvedSnapshot = snapshotFor(approvedRevision);
     const proposedSnapshot = snapshotFor(proposedRevision);
@@ -2190,6 +2857,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: candidate.id },
       })),
+      assumptionCitations: [],
     });
     const handlers = createSpecRouteHandlers(
       createDeps({
@@ -2268,6 +2936,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: candidate.id },
       })),
+      assumptionCitations: [],
     });
     const snapshots = new Map(
       [
@@ -2393,6 +3062,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: proposedRevision.id },
       })),
+      assumptionCitations: [],
     };
     const carriedApprovals: SpecApprovalRow[] = [
       {
@@ -2487,6 +3157,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: target.id },
       })),
+      assumptionCitations: [],
     });
     const handlers = createSpecRouteHandlers(
       createDeps({
@@ -2687,6 +3358,7 @@ describe("spec read route handlers", () => {
         getRevisionSnapshot: async (revisionId) => ({
           revision: revisionId === amendment.id ? amendment : approvedRevision,
           elements: snapshot.elements,
+          assumptionCitations: [],
         }),
         findGateAdmissionsBySpecId: () => [priorAdmission],
       }),
@@ -2744,6 +3416,7 @@ describe("spec read route handlers", () => {
             }
           : row,
       ),
+      assumptionCitations: [],
     };
     const handlers = createSpecRouteHandlers(
       createDeps({ getRevisionSnapshot: async () => lanedSnapshot }),
@@ -2792,6 +3465,7 @@ describe("spec read route handlers", () => {
             }
           : row,
       ),
+      assumptionCitations: [],
     };
     const handlers = createSpecRouteHandlers(
       createDeps({ getRevisionSnapshot: async () => forkedTaskSnapshot }),
@@ -2849,6 +3523,7 @@ describe("spec read route handlers", () => {
             }
           : row,
       ),
+      assumptionCitations: [],
     };
     const handlers = createSpecRouteHandlers(
       createDeps({ getRevisionSnapshot: async () => forkedTaskSnapshot }),
@@ -2907,7 +3582,11 @@ describe("spec read route handlers", () => {
         // consulted again and its earlier admission covers other content.
         getRevisionSnapshot: async (revisionId) =>
           revisionId === amendment.id
-            ? { revision: amendment, elements: snapshot.elements }
+            ? {
+                revision: amendment,
+                elements: snapshot.elements,
+                assumptionCitations: [],
+              }
             : {
                 revision: approvedRevision,
                 elements: [
@@ -2920,6 +3599,7 @@ describe("spec read route handlers", () => {
                   },
                   ...otherRows,
                 ],
+                assumptionCitations: [],
               },
         findGateAdmissionsBySpecId: () => [priorAdmission],
       }),
@@ -3137,6 +3817,7 @@ describe("spec read route handlers", () => {
         ...entry,
         version: { ...entry.version, revisionId: requirementsRevision.id },
       })),
+      assumptionCitations: [],
     };
     const handlers = createSpecRouteHandlers(
       createDeps({
@@ -3195,6 +3876,7 @@ describe("spec read route handlers", () => {
           },
         },
       ],
+      assumptionCitations: [],
     };
     const activeExecution = execution({
       state: "running",
@@ -3608,6 +4290,7 @@ describe("spec read route handlers", () => {
               : row.version.payloadHash,
         },
       })),
+      assumptionCitations: [],
     });
     const snapshots = new Map([
       [revision.id, snapshotAt(revision, "observed-hash")],
@@ -3672,6 +4355,7 @@ describe("spec read route handlers", () => {
         ...row,
         version: { ...row.version, revisionId: approvedRevision.id },
       })),
+      assumptionCitations: [],
     };
     const findings = [
       {
@@ -3779,6 +4463,7 @@ describe("spec read route handlers", () => {
           },
         },
       ],
+      assumptionCitations: [],
     };
     const handlers = createSpecRouteHandlers(
       createDeps({
@@ -3958,13 +4643,29 @@ describe("spec comments route handler", () => {
     created_at: "2026-08-12T00:30:00.000Z",
     updated_at: "2026-08-12T01:00:00.000Z",
   };
+  const openReplyOne: SpecCommentRow = {
+    ...openComment,
+    id: "comment-reply-1",
+    parent_comment_id: openComment.id,
+    body: "The alias should survive the rename.",
+    blocking: 0,
+    created_at: "2026-08-12T00:10:00.000Z",
+    updated_at: "2026-08-12T00:10:00.000Z",
+  };
+  const openReplyTwo: SpecCommentRow = {
+    ...openReplyOne,
+    id: "comment-reply-2",
+    body: "The exported bundle should preserve it too.",
+    created_at: "2026-08-12T00:20:00.000Z",
+    updated_at: "2026-08-12T00:20:00.000Z",
+  };
   const orphanComment: SpecCommentRow = {
     ...openComment,
     id: "comment-3",
     thread_id: "thread-3",
     element_id: "removed-element",
     body: "This element vanished after the comment landed.",
-    blocking: 0,
+    blocking: 1,
     resolution: "open",
     created_at: "2026-08-12T02:00:00.000Z",
     updated_at: "2026-08-12T02:00:00.000Z",
@@ -3974,7 +4675,13 @@ describe("spec comments route handler", () => {
     return createDeps({
       findCommentsByRevision: (revisionId) =>
         revisionId === revision.id
-          ? [openComment, resolvedComment, orphanComment]
+          ? [
+              openComment,
+              resolvedComment,
+              openReplyTwo,
+              orphanComment,
+              openReplyOne,
+            ]
           : [],
     });
   }
@@ -3991,10 +4698,14 @@ describe("spec comments route handler", () => {
     const body = specCommentsViewSchema.parse(await response.json());
     expect(body.specId).toBe(spec.id);
     expect(body.slug).toBe(spec.slug);
-    expect(body.openCount).toBe(2);
-    expect(body.openBlockingCount).toBe(1);
+    expect(body.openCount).toBe(4);
+    expect(body.openBlockingCount).toBe(2);
+    expect(body.openThreadCount).toBe(2);
+    expect(body.openBlockingThreadCount).toBe(2);
     expect(body.comments.map((comment) => comment.id)).toEqual([
       "comment-1",
+      "comment-reply-1",
+      "comment-reply-2",
       "comment-2",
       "comment-3",
     ]);
@@ -4009,7 +4720,7 @@ describe("spec comments route handler", () => {
     });
     // A comment on an element the current revision no longer carries is still
     // returned — with a null handle, not silently dropped.
-    expect(body.comments[2]).toMatchObject({
+    expect(body.comments[4]).toMatchObject({
       handle: null,
       elementId: "removed-element",
     });
@@ -4028,10 +4739,14 @@ describe("spec comments route handler", () => {
     const body = specCommentsViewSchema.parse(await response.json());
     expect(body.comments.map((comment) => comment.id)).toEqual([
       "comment-1",
+      "comment-reply-1",
+      "comment-reply-2",
       "comment-3",
     ]);
-    expect(body.openCount).toBe(2);
-    expect(body.openBlockingCount).toBe(1);
+    expect(body.openCount).toBe(4);
+    expect(body.openBlockingCount).toBe(2);
+    expect(body.openThreadCount).toBe(2);
+    expect(body.openBlockingThreadCount).toBe(2);
   });
 
   it("filters by element handle and by raw element id", async () => {
@@ -4054,12 +4769,28 @@ describe("spec comments route handler", () => {
       specCommentsViewSchema
         .parse(await byHandle.json())
         .comments.map((comment) => comment.id),
-    ).toEqual(["comment-1", "comment-2"]);
+    ).toEqual(["comment-1", "comment-reply-1", "comment-reply-2", "comment-2"]);
     expect(
       specCommentsViewSchema
         .parse(await byId.json())
         .comments.map((comment) => comment.id),
     ).toEqual(["comment-3"]);
+    const byHandleView = specCommentsViewSchema.parse(
+      await handlers
+        .getSpecCommentsGET(
+          new Request(
+            "http://cc.test/api/specs/demo/current-slug/comments?element=R1",
+          ),
+          routeContext({ name: "demo", slug: spec.slug }),
+        )
+        .then((response) => response.json()),
+    );
+    expect(byHandleView).toMatchObject({
+      openCount: 4,
+      openBlockingCount: 2,
+      openThreadCount: 2,
+      openBlockingThreadCount: 2,
+    });
   });
 
   it("counts open comments in status and reroutes nextAction at the review feedback", async () => {
@@ -4073,14 +4804,105 @@ describe("spec comments route handler", () => {
     expect(response.status).toBe(200);
     const status = specStatusViewSchema.parse(await response.json());
     expect(status.openComments).toEqual({
-      count: 2,
-      blockingCount: 1,
+      count: 4,
+      blockingCount: 2,
+      openThreadCount: 2,
+      openBlockingThreadCount: 2,
       subjects: ["R1", "removed-element"],
     });
     // The seeded revision is a draft, so the agent acts next — and the action
     // it is pointed at leads with the feedback instead of a dead approval ask.
     expect(status.nextAction?.instruction).toContain(
       "cctl spec comments current-slug --open",
+    );
+  });
+
+  it("projects spec-wide status counts with canonical lifecycle and blocking semantics", async () => {
+    const historicalRevision: SpecRevision = {
+      ...revision,
+      id: "revision-historical",
+      number: 1,
+      state: "withdrawn",
+    };
+    const currentRevision: SpecRevision = {
+      ...revision,
+      id: "revision-current",
+      number: 2,
+      state: "proposed",
+      basedOnRevisionId: historicalRevision.id,
+      proposedAt: "2026-08-12T00:00:00.000Z",
+    };
+    const snapshotFor = (candidate: SpecRevision): SpecRevisionSnapshot => ({
+      revision: candidate,
+      elements: snapshot.elements.map((row) => ({
+        ...row,
+        version: { ...row.version, revisionId: candidate.id },
+      })),
+      assumptionCitations: [],
+    });
+    const historicalOpen: SpecCommentRow = {
+      ...openComment,
+      id: "comment-historical",
+      thread_id: "thread-historical",
+      element_id: "removed-element",
+      revision_id: historicalRevision.id,
+      blocking: 0,
+      created_at: "2026-08-11T23:00:00.000Z",
+      updated_at: "2026-08-11T23:00:00.000Z",
+    };
+    const currentSettledBlockingRoot: SpecCommentRow = {
+      ...openComment,
+      id: "comment-current-root",
+      thread_id: "thread-current",
+      revision_id: currentRevision.id,
+      resolution: "resolved",
+    };
+    const currentOpenReply: SpecCommentRow = {
+      ...currentSettledBlockingRoot,
+      id: "comment-current-reply",
+      parent_comment_id: currentSettledBlockingRoot.id,
+      body: "This reply keeps the thread open.",
+      blocking: 0,
+      resolution: "open",
+      created_at: "2026-08-12T00:10:00.000Z",
+      updated_at: "2026-08-12T00:10:00.000Z",
+    };
+    const snapshots = new Map(
+      [historicalRevision, currentRevision].map((candidate) => [
+        candidate.id,
+        snapshotFor(candidate),
+      ]),
+    );
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [historicalRevision, currentRevision],
+        getRevisionSnapshot: async (revisionId) =>
+          snapshots.get(revisionId) ?? null,
+        findCommentsByRevision: (revisionId) =>
+          revisionId === historicalRevision.id
+            ? [historicalOpen]
+            : revisionId === currentRevision.id
+              ? [currentSettledBlockingRoot, currentOpenReply]
+              : [],
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.openComments).toEqual({
+      count: 2,
+      blockingCount: 0,
+      openThreadCount: 2,
+      openBlockingThreadCount: 1,
+      subjects: ["removed-element", "R1"],
+    });
+    expect(status.revisionSignOff?.unmetConditions).toContain(
+      "Blocking thread thread-current is unresolved.",
     );
   });
 

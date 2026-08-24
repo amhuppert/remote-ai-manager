@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import type { SpecGatePreset } from "@/lib/specs/schemas";
+import type { SpecProposeApprovalRequest } from "@/lib/specs/view-schemas";
 import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import { runCli } from "../../core";
@@ -62,6 +63,9 @@ function revision(state: "draft" | "approved" = "draft") {
     authoringStage: state === "draft" ? "requirements" : "plan",
     basedOnRevisionId: null,
     contentHash: state === "draft" ? null : "approved-hash",
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "a".repeat(64),
     proposedAt: state === "draft" ? null : CREATED_AT,
     approvedAt: state === "draft" ? null : CREATED_AT,
     createdAt: CREATED_AT,
@@ -79,6 +83,7 @@ function statusBody() {
       {
         id: "question-id-1",
         handle: "Q1",
+        recordVersion: 3,
         text: "Which scope?",
         elementId: null,
       },
@@ -96,7 +101,11 @@ function detailBody(
     spec: { ...spec, gatePolicy: { preset } },
     aliases: [],
     revisions: [current],
-    currentRevision: { revision: current, elements: [] },
+    currentRevision: {
+      revision: current,
+      elements: [],
+      assumptionCitations: [],
+    },
     status: {
       ...statusBody(),
       phase: { primary: state },
@@ -286,12 +295,28 @@ function makeHost(
     preset?: SpecGatePreset;
     /** The approval ask was already open, so no second request was created. */
     alreadyRequested?: boolean;
+    /** The request committed but its Needs You notice may not have landed. */
+    deliveryUncertain?: boolean;
     /** A revision was withdrawn above the base the amendment clones. */
     skippedWithdrawn?: boolean;
     /** Every dial concluded the stage, so the propose absorbed the sign-off. */
     absorbedSignOff?: boolean;
+    /** What the server's post-commit coordinator did about each gate's ask. */
+    proposeApprovalRequests?: readonly SpecProposeApprovalRequest[];
+    /** Exercises rejection of a malformed current-build batch refusal. */
+    omitBatchInstruction?: boolean;
+    /** Exercises terminal-line flattening on authored batch identifiers. */
+    unsafeBatchGuidance?: boolean;
     /** Multiple subjects share the next gate, so one subjectless request covers it. */
     wholeGateNextAction?: boolean;
+    /** A blocking gate carries a subject the import settled, not a human. */
+    importCarried?: boolean;
+    /** Citation state returned by the attention-record read preflight. */
+    assumptionCitationState?: "no-draft" | "uncited" | "cited";
+    /** The read target already has a durable successor. */
+    assumptionSuperseded?: boolean;
+    /** Return an attention edit receipt whose citation versions changed. */
+    citedAttentionReceipt?: boolean;
     /**
      * Blocking finding counts the lint read answers with, consumed in order —
      * the first is the draft before the write, the second after it.
@@ -309,6 +334,37 @@ function makeHost(
   const requests: RecordedRequest[] = [];
   const handle = (value: string) => ({ handle: value });
   let lintReads = 0;
+  // The server's account of the same subjects the pending block enumerates:
+  // R1 outstanding on this revision, R0 already settled — by an ancestor
+  // revision's human approval, or by the import, in step with what the gate
+  // reports as import-carried so the two halves cannot contradict each other.
+  const settledClassification = options.importCarried
+    ? ("import_settled" as const)
+    : ("carried" as const);
+  const approvalLedger = {
+    subjects: [
+      {
+        gate: "requirements" as const,
+        subject: "R0",
+        elementId: "requirement-id-0",
+        classification: settledClassification,
+      },
+      {
+        gate: "requirements" as const,
+        subject: "R1",
+        elementId: "requirement-id-1",
+        classification: "pending" as const,
+      },
+    ],
+    satisfied: 1,
+    carried: options.importCarried ? 0 : 1,
+    currentRevision: 0,
+    importSettled: options.importCarried ? 1 : 0,
+    combinedAct: 0,
+    pending: 1,
+    governedBy: "per_subject" as const,
+    carryRule: "unchanged subject content under the same applicable gate",
+  };
   return {
     requests,
     async fetch(url, init) {
@@ -316,6 +372,113 @@ function makeHost(
       const parsed = new URL(url);
       const pathname = parsed.pathname;
       if (init.method === "GET") {
+        if (pathname.endsWith("/elements/Q1")) {
+          return response({
+            specId: spec.id,
+            slug: spec.slug,
+            kind: "question",
+            handle: "Q1",
+            question: {
+              id: "question-id-1",
+              number: 1,
+              handle: "Q1",
+              elementId: null,
+              text: "Which scope?",
+              recordVersion: 3,
+              status: "open",
+              answer: null,
+              answeredAt: null,
+              withdrawnAt: null,
+              provenance: null,
+              presentation: {
+                state: "current",
+                attentionActive: true,
+                lastMutation: null,
+                humanCapability: { kind: "answer", allowed: true },
+              },
+              createdAt: CREATED_AT,
+              updatedAt: CREATED_AT,
+            },
+          });
+        }
+        if (pathname.endsWith("/elements/A1")) {
+          const citationState = options.assumptionCitationState ?? "no-draft";
+          const currentDraftCitations =
+            citationState === "no-draft"
+              ? null
+              : {
+                  revisionId: "revision-draft",
+                  citationVersion: 2,
+                  citationHash: "a".repeat(64),
+                  citations:
+                    citationState === "uncited"
+                      ? []
+                      : [
+                          {
+                            revisionId: "revision-draft",
+                            specId: spec.id,
+                            elementId: "requirement-id-1",
+                            assumptionId: "assumption-id-1",
+                            elementHandle: "R1",
+                            snapshot: {
+                              schemaVersion: 1,
+                              captureKind: "native",
+                              capturedAt: CREATED_AT,
+                              assumptionId: "assumption-id-1",
+                              number: 1,
+                              recordVersion: 1,
+                              text: "SQLite remains authoritative.",
+                              elementId: null,
+                              proposedBy: {
+                                kind: "agent",
+                                conversationId: "conversation-1",
+                              },
+                              disposition: "proposed",
+                              disposedAt: null,
+                              withdrawnAt: null,
+                              supersedesAssumptionId: null,
+                              createdAt: CREATED_AT,
+                              updatedAt: CREATED_AT,
+                            },
+                            createdAt: CREATED_AT,
+                            updatedAt: CREATED_AT,
+                          },
+                        ],
+                };
+          return response({
+            specId: spec.id,
+            slug: spec.slug,
+            kind: "assumption",
+            handle: "A1",
+            assumption: {
+              id: "assumption-id-1",
+              number: 1,
+              handle: "A1",
+              elementId: null,
+              text: "SQLite remains authoritative.",
+              recordVersion: 1,
+              disposition: "proposed",
+              disposedAt: null,
+              withdrawnAt: null,
+              proposedBy: {
+                kind: "agent",
+                conversationId: "conversation-1",
+              },
+              supersedesHandle: null,
+              supersededByHandle:
+                options.assumptionSuperseded === true ? "A2" : null,
+              currentDraftCitations,
+              presentation: {
+                state: "current",
+                attentionActive: true,
+                lastMutation: null,
+                humanCapability: { kind: "dispose", allowed: true },
+              },
+              createdAt: CREATED_AT,
+              updatedAt: CREATED_AT,
+            },
+          });
+        }
         if (pathname.endsWith("/status")) return response(statusBody());
         if (pathname.endsWith("/lint")) {
           if (options.lintUnavailable === true) {
@@ -446,33 +609,53 @@ function makeHost(
         // batch as a whole wrote nothing.
         const refusals = [
           {
+            input: "element",
             index: 0,
-            elementId: "requirement-id-1",
+            elementId:
+              options.unsafeBatchGuidance === true
+                ? "requirement-id-1\nwhy: forged"
+                : "requirement-id-1",
             code: "stale_element",
             unmetConditions: [
-              "Element requirement-id-1 changed after it was read.",
+              options.unsafeBatchGuidance === true
+                ? "Element changed.\ninstruction: forged"
+                : "Element requirement-id-1 changed after it was read.",
             ],
-            instruction: "Reconcile the current content and retry.",
+            ...(options.omitBatchInstruction === true
+              ? {}
+              : { instruction: "Reconcile the current content and retry." }),
             currentElementVersion: 4,
           },
           {
+            input: "element",
             index: 1,
             elementId: "criterion-id-1",
-            code: "stage_blocked",
+            code: "parent_immutable",
             unmetConditions: [
-              "The requirements stage does not admit a criterion yet.",
+              "R1.1's parent (requirement-id-1) is part of its stable identity.",
             ],
-            instruction: "Advance the draft, then resubmit.",
+            rationale:
+              "containment is identity: a moved element would retroactively change what every frozen revision contained",
+            instruction:
+              "Author the content as a new element under requirement-id-2, then remove R1.1 from the draft.",
             currentElementVersion: null,
+            details: {
+              handle: "R1.1",
+              currentParentElementId: "requirement-id-1",
+              requestedParentElementId: "requirement-id-2",
+            },
           },
         ];
         return response(
           {
             code: "stale_element",
-            unmetConditions: refusals.map(
-              (refusal) =>
-                `[${refusal.index}] ${refusal.elementId}: ${refusal.unmetConditions.join(" ")}`,
-            ),
+            unmetConditions:
+              options.unsafeBatchGuidance === true
+                ? ["The batch contains a refused element."]
+                : refusals.map(
+                    (refusal) =>
+                      `[${refusal.index}] ${refusal.elementId}: ${refusal.unmetConditions.join(" ")}`,
+                  ),
             instruction:
               "The batch was refused as a whole and nothing was written. Correct the elements named in details.refusals, then resubmit the batch.",
             details: { refusals },
@@ -666,6 +849,15 @@ function makeHost(
               },
               diff: { classifications: [], changeList: [], planStale: false },
               absorbedSignOff: true,
+              approvalLedger,
+              // A propose that admitted its own gates owes no ask.
+              approvalRequests: options.proposeApprovalRequests ?? [
+                {
+                  gate: "requirements",
+                  outcome: "not-needed",
+                  attentionId: null,
+                },
+              ],
               pendingBlock: null,
               nextAction: {
                 kind: "none",
@@ -689,6 +881,16 @@ function makeHost(
             },
             diff: { classifications: [], changeList: [], planStale: false },
             absorbedSignOff: false,
+            approvalLedger,
+            // The propose filed the ask its pending gate owes before it
+            // answered, so the caller is told the request already exists.
+            approvalRequests: options.proposeApprovalRequests ?? [
+              {
+                gate: "requirements",
+                outcome: "filed",
+                attentionId: "attention-requirements",
+              },
+            ],
             // The server authors the blocker: which gates the transition
             // consulted, the subject each is waiting on, and the sign-off
             // standing. The stage alone cannot produce any of it.
@@ -704,6 +906,7 @@ function makeHost(
                     governanceBaseRevisionId: null,
                   },
                   subjects: ["R1"],
+                  importCarriedSubjects: options.importCarried ? ["R0"] : [],
                 },
               ],
               outstandingSubjects: [
@@ -764,10 +967,18 @@ function makeHost(
             handle: "Q1",
             elementId: null,
             text: "Which scope?",
+            recordVersion: 2,
             status: "answered",
             answer: "The full scope.",
             answeredAt: CREATED_AT,
+            withdrawnAt: null,
             provenance: null,
+            presentation: {
+              state: "current",
+              attentionActive: false,
+              lastMutation: null,
+              humanCapability: null,
+            },
             createdAt: CREATED_AT,
             updatedAt: CREATED_AT,
           });
@@ -778,9 +989,20 @@ function makeHost(
             handle: "A1",
             elementId: null,
             text: "SQLite remains authoritative.",
+            recordVersion: 1,
             disposition: "proposed",
             disposedAt: null,
+            withdrawnAt: null,
             proposedBy: null,
+            supersedesHandle: null,
+            supersededByHandle: null,
+            currentDraftCitations: null,
+            presentation: {
+              state: "current",
+              attentionActive: true,
+              lastMutation: null,
+              humanCapability: { kind: "dispose", allowed: true },
+            },
             createdAt: CREATED_AT,
             updatedAt: CREATED_AT,
           });
@@ -791,12 +1013,72 @@ function makeHost(
             number: 2,
             elementId: "task-id-1",
             text: "Which retention period applies?",
+            recordVersion: 1,
             status: "open",
             answer: null,
             answeredAt: null,
+            withdrawnAt: null,
             provenance: null,
+            presentation: {
+              state: "current",
+              attentionActive: true,
+              lastMutation: null,
+              humanCapability: { kind: "answer", allowed: true },
+            },
             createdAt: CREATED_AT,
             updatedAt: CREATED_AT,
+          });
+        case "edit-attention":
+          return response(
+            options.citedAttentionReceipt
+              ? {
+                  operation: "edited",
+                  recordKind: "assumption",
+                  recordId: "assumption-id-1",
+                  recordHandle: "A1",
+                  previousRecordVersion: 1,
+                  newRecordVersion: 2,
+                  lifecycle: "proposed",
+                  draftRevisionId: "revision-draft",
+                  previousCitationVersion: 2,
+                  newCitationVersion: 3,
+                  citationChanges: {
+                    added: [],
+                    removed: [],
+                    refreshed: ["R1"],
+                  },
+                  idempotentReplay: false,
+                }
+              : {
+                  operation: "edited",
+                  recordKind: "question",
+                  recordId: "question-id-1",
+                  recordHandle: "Q1",
+                  previousRecordVersion: 3,
+                  newRecordVersion: 4,
+                  lifecycle: "open",
+                  draftRevisionId: null,
+                  previousCitationVersion: null,
+                  newCitationVersion: null,
+                  citationChanges: { added: [], removed: [], refreshed: [] },
+                  idempotentReplay: false,
+                },
+          );
+        case "supersede-assumption":
+          return response({
+            operation: "superseded",
+            recordKind: "assumption",
+            recordId: "assumption-id-1",
+            recordHandle: "A1",
+            previousRecordVersion: 4,
+            newRecordVersion: 4,
+            lifecycle: "confirmed",
+            draftRevisionId: "revision-original",
+            previousCitationVersion: 6,
+            newCitationVersion: 6,
+            citationChanges: { added: [], removed: [], refreshed: [] },
+            successor: { id: "assumption-id-2", handle: "A2" },
+            idempotentReplay: true,
           });
         case "request-approval": {
           // The server, not the CLI, decides the scope: an omitted subject is
@@ -815,6 +1097,10 @@ function makeHost(
             elementId: named === undefined ? null : "requirement-id-1",
             outstandingSubjects: ["R1", "R2"],
             signOffOutstanding: true,
+            deliveryOutcome:
+              options.deliveryUncertain === true
+                ? "delivery-uncertain"
+                : "delivered",
           });
         }
         case "start-execution":
@@ -892,6 +1178,9 @@ function makeHost(
               authoringStage: "plan",
               basedOnRevisionId: "revision-proposed",
             },
+            // Computed against the reopened draft: what the withdrawal cost is
+            // exactly what the ledger of the draft that now exists says.
+            approvalLedger,
           });
         case "abandon-spec":
           return response({
@@ -1133,6 +1422,244 @@ describe("cctl spec write verbs", () => {
     });
   });
 
+  it("edits attention through record CAS without echoing authored content", async () => {
+    const host = makeHost({
+      files: {
+        ".cc/temp/question-update.json": JSON.stringify({
+          kind: "question",
+          text: "Which workloads are in scope?",
+        }),
+      },
+    });
+    const result = await runCli(
+      [
+        "spec",
+        "attention",
+        "edit",
+        "native-sdd",
+        "Q1",
+        "--file",
+        ".cc/temp/question-update.json",
+        "--if-version",
+        "3",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const post = host.requests.find(
+      (request) => request.init.method === "POST",
+    );
+    expect(new URL(post?.url ?? "").pathname).toBe(
+      "/api/specs/demo/native-sdd/actions/edit-attention",
+    );
+    expect(JSON.parse(post?.init.body ?? "null")).toEqual({
+      recordId: "question-id-1",
+      expectedRecordVersion: 3,
+      payload: {
+        kind: "question",
+        text: "Which workloads are in scope?",
+      },
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      attention: {
+        recordHandle: "Q1",
+        previousRecordVersion: 3,
+        newRecordVersion: 4,
+      },
+    });
+    expect(result.stdout).not.toContain("Which workloads are in scope?");
+  });
+
+  it.each(["no-draft", "uncited"] as const)(
+    "allows an attachment-preserve edit without citation CAS when the assumption is %s",
+    async (assumptionCitationState) => {
+      const host = makeHost({
+        assumptionCitationState,
+        files: {
+          ".cc/temp/assumption-update.json": JSON.stringify({
+            kind: "assumption",
+            attachment: { kind: "element", handle: "R1" },
+            citationIntent: { kind: "preserve" },
+          }),
+        },
+      });
+      const result = await runCli(
+        [
+          "spec",
+          "attention",
+          "edit",
+          "native-sdd",
+          "A1",
+          "--file",
+          ".cc/temp/assumption-update.json",
+          "--if-version",
+          "1",
+          "--json",
+        ],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "null")).toEqual({
+        recordId: "assumption-id-1",
+        expectedRecordVersion: 1,
+        payload: {
+          kind: "assumption",
+          attachment: { kind: "element", handle: "R1" },
+          citationIntent: { kind: "preserve" },
+        },
+      });
+    },
+  );
+
+  it("refuses a cited assumption withdrawal without citation CAS before POST", async () => {
+    const host = makeHost({
+      assumptionCitationState: "cited",
+      files: { ".cc/temp/reason.md": "The premise is obsolete.\n" },
+    });
+    const result = await runCli(
+      [
+        "spec",
+        "attention",
+        "withdraw",
+        "native-sdd",
+        "A1",
+        "--reason-file",
+        ".cc/temp/reason.md",
+        "--if-version",
+        "1",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--if-citation-version <n>");
+    expect(actionRequests(host)).toHaveLength(0);
+  });
+
+  it("renders the receipt's previous and new record and citation versions", async () => {
+    const host = makeHost({
+      assumptionCitationState: "cited",
+      citedAttentionReceipt: true,
+      files: {
+        ".cc/temp/assumption-update.json": JSON.stringify({
+          kind: "assumption",
+          text: "SQLite remains the durable authority.",
+        }),
+      },
+    });
+    const result = await runCli(
+      [
+        "spec",
+        "attention",
+        "edit",
+        "native-sdd",
+        "A1",
+        "--file",
+        ".cc/temp/assumption-update.json",
+        "--if-version",
+        "1",
+        "--if-citation-version",
+        "2",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("record versions: 1 -> 2");
+    expect(result.stdout).toContain("citation versions: 2 -> 3");
+
+    const json = await runCli(
+      [
+        "spec",
+        "attention",
+        "edit",
+        "native-sdd",
+        "A1",
+        "--file",
+        ".cc/temp/assumption-update.json",
+        "--if-version",
+        "1",
+        "--if-citation-version",
+        "2",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      attention: {
+        previousRecordVersion: 1,
+        newRecordVersion: 2,
+        previousCitationVersion: 2,
+        newCitationVersion: 3,
+      },
+    });
+  });
+
+  it.each(["no-draft", "cited"] as const)(
+    "resubmits a supersession operation without retargeting its %s replacement state",
+    async (assumptionCitationState) => {
+      const payload = {
+        operationId: "supersede-operation",
+        reason: "The premise needed correction.",
+        text: "SQLite remains authoritative under a pinned revision.",
+        attachment: { kind: "spec" },
+        citations: { kind: "clear" },
+      };
+      const host = makeHost({
+        assumptionCitationState,
+        assumptionSuperseded: true,
+        files: {
+          ".cc/temp/successor.json": JSON.stringify(payload),
+        },
+      });
+      const result = await runCli(
+        [
+          "spec",
+          "attention",
+          "supersede",
+          "native-sdd",
+          "A1",
+          "--file",
+          ".cc/temp/successor.json",
+          "--if-version",
+          "3",
+          "--if-citation-version",
+          "5",
+          "--json",
+        ],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const post = actionRequests(host)[0];
+      expect(new URL(post?.url ?? "").pathname).toBe(
+        "/api/specs/demo/native-sdd/actions/supersede-assumption",
+      );
+      expect(JSON.parse(post?.init.body ?? "null")).toEqual({
+        assumptionId: "assumption-id-1",
+        expectedRecordVersion: 3,
+        expectedCitationVersion: 5,
+        payload,
+      });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        attention: {
+          successor: { handle: "A2" },
+          idempotentReplay: true,
+        },
+      });
+    },
+  );
+
   it("refuses a reply without its thread or body locally", async () => {
     const host = makeHost();
     const missingThread = await runCli(
@@ -1290,6 +1817,37 @@ describe("cctl spec write verbs", () => {
     expect(text.stdout).toContain("acts next: agent");
   });
 
+  /**
+   * The reopen is where the mispricing happens: an author reading only what is
+   * outstanding concludes the withdrawal cost every approval the review had
+   * collected, and re-litigates settled content rather than repairing the one
+   * subject that changed.
+   */
+  it("prices a withdrawal by what carries into the reopened draft, not by what is outstanding", async () => {
+    const text = await runCli(
+      [
+        "spec",
+        "withdraw-proposal",
+        "native-sdd",
+        "--revision",
+        "revision-proposed",
+      ],
+      baseEnv,
+      makeHost(),
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "approval subjects: 1 satisfied (1 carried) · 1 pending",
+    );
+    expect(text.stdout).toContain(
+      "carry rule: unchanged subject content under the same applicable gate",
+    );
+    expect(text.stdout).toContain(
+      "approvals on unchanged subjects carry into the reopened draft; only edited subjects need re-approval",
+    );
+  });
+
   it("refuses a withdraw-proposal with no revision token before any network request", async () => {
     const host = makeHost();
     const result = await runCli(
@@ -1366,6 +1924,23 @@ describe("cctl spec write verbs", () => {
     // the refusal must name the exact surface and question.
     expect(result.stderr).toContain("Spec Studio");
     expect(result.stderr).toContain("Q1");
+  });
+
+  it("answers against the question record version returned by status", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "answer", "native-sdd/Q1", "--answer", "The full scope."],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const post = actionRequests(host)[0];
+    expect(JSON.parse(post?.init.body ?? "null")).toEqual({
+      questionId: "question-id-1",
+      recordVersion: 3,
+      answer: "The full scope.",
+    });
   });
 
   it("names the wrong element kind for a qualified handle this command cannot take", async () => {
@@ -1691,10 +2266,22 @@ describe("cctl spec write verbs", () => {
 
     expect(text.exitCode).toBe(1);
     expect(text.stderr).toContain(
-      "[0] requirement-id-1: stale_element — Element requirement-id-1 changed after it was read. (element is at version 4)",
+      "elements[0] requirement-id-1: stale_element — Element requirement-id-1 changed after it was read. (element is at version 4)",
     );
     expect(text.stderr).toContain(
-      "[1] criterion-id-1: stage_blocked — The requirements stage does not admit a criterion yet.",
+      "elements[1] criterion-id-1: parent_immutable — R1.1's parent (requirement-id-1) is part of its stable identity.",
+    );
+    expect(text.stderr).toContain(
+      "why: containment is identity: a moved element would retroactively change what every frozen revision contained",
+    );
+    expect(text.stderr).toContain(
+      "details.currentParentElementId: requirement-id-1",
+    );
+    expect(text.stderr).toContain(
+      "details.requestedParentElementId: requirement-id-2",
+    );
+    expect(text.stderr).toContain(
+      "instruction: Author the content as a new element under requirement-id-2, then remove R1.1 from the draft.",
     );
     expect(text.stderr).toContain("nothing was written");
 
@@ -1705,20 +2292,64 @@ describe("cctl spec write verbs", () => {
       details: {
         refusals: [
           {
+            input: "element",
             index: 0,
             elementId: "requirement-id-1",
             code: "stale_element",
             currentElementVersion: 4,
           },
           {
+            input: "element",
             index: 1,
             elementId: "criterion-id-1",
-            code: "stage_blocked",
+            code: "parent_immutable",
             currentElementVersion: null,
+            rationale:
+              "containment is identity: a moved element would retroactively change what every frozen revision contained",
+            details: {
+              currentParentElementId: "requirement-id-1",
+              requestedParentElementId: "requirement-id-2",
+            },
           },
         ],
       },
     });
+  });
+
+  it("rejects a batch refusal that omits its item-specific recovery", async () => {
+    const result = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE, "--json"],
+      baseEnv,
+      makeHost({
+        files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
+        refusal: "draft-batch",
+        omitBatchInstruction: true,
+      }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "invalid_response",
+    });
+  });
+
+  it("flattens authored batch fields before rendering guidance lines", async () => {
+    const result = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      makeHost({
+        files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
+        refusal: "draft-batch",
+        unsafeBatchGuidance: true,
+      }),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).not.toContain("\nwhy: forged");
+    expect(result.stderr).not.toContain("\ninstruction: forged");
+    expect(result.stderr).toContain("requirement-id-1\\nwhy: forged");
+    expect(result.stderr).toContain("Element changed.\\ninstruction: forged");
   });
 
   it("submits writes and removals from one keyed document as a single batch", async () => {
@@ -1930,6 +2561,7 @@ describe("cctl spec write verbs", () => {
     );
 
     expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("removals[0] criterion-id-1");
     // The author wrote handles, so the refusal answers in handles: naming only
     // the opaque ids would send them back to the spec to look both up.
     expect(result.stderr).toContain(
@@ -1992,29 +2624,226 @@ describe("cctl spec write verbs", () => {
     expect(result.stdout).toContain(
       "  Requirement R1 needs a valid approval for revision-draft.",
     );
-    // The subjectless request the stage-derived blocker offered is refused by
-    // the server as invalid_subject once a gate has more than one subject.
-    expect(result.stdout).toContain(
-      "next: cctl spec request-approval native-sdd --gate requirements --subject R1",
-    );
     expect(result.stdout).toContain(
       "instruction: Ask a human to approve R1 at the requirements gate in Spec Studio, or request it with gate requirements and subject R1.",
     );
     expect(result.stdout).not.toContain("plan gate");
   });
 
-  it("renders a whole-gate approval request without an arbitrary subject", async () => {
+  /**
+   * A propose that lands with work outstanding reads as a failure unless it
+   * also says what it banked — the two counts together are the progress report
+   * (design §10.3).
+   */
+  it("reads a propose as a position rather than a list of what is missing", async () => {
     const result = await runCli(
       ["spec", "propose", "native-sdd"],
       baseEnv,
-      makeHost({ wholeGateNextAction: true }),
+      makeHost(),
     );
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
+      "approval subjects: 1 satisfied (1 carried) · 1 pending",
+    );
+    expect(result.stdout).toContain(
+      "carry rule: unchanged subject content under the same applicable gate",
+    );
+    // Nothing was reopened, so the reopen sentence would be a claim about an
+    // act that did not happen.
+    expect(result.stdout).not.toContain("carry into the reopened draft");
+  });
+
+  it("names a blocking gate's import-settled subjects beside the ones a human owes", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({ importCarried: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("— subjects: R1");
+    // Dropping these is what lets a reader count the gate's outstanding work
+    // as its whole content, with no human ever having read the rest.
+    expect(result.stdout).toContain(
+      "    import-carried subjects (no human approved them): R0",
+    );
+  });
+
+  /**
+   * The server files the ask its own transition left pending, so the receipt
+   * reports a request that exists rather than a request the caller still owes
+   * (R10.13). Naming `request-approval` here sends an agent to re-file it.
+   */
+  it("names the ask the propose filed and stops pointing at request-approval", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost(),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "approval requests: requirements filed (attention attention-requirements)",
+    );
+    expect(result.stdout).toContain("acts next: human");
+    expect(result.stdout).toContain("next: cctl spec status native-sdd");
+    expect(result.stdout).not.toContain("request-approval");
+  });
+
+  it("names the stable attention id again when the ask was already open", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({
+        proposeApprovalRequests: [
+          {
+            gate: "requirements",
+            outcome: "already-filed",
+            attentionId: "attention-stable",
+          },
+        ],
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "approval requests: requirements already filed (attention attention-stable)",
+    );
+    expect(result.stdout).not.toContain("request-approval");
+  });
+
+  it("renders one line per gate when a cumulative propose asks at more than one", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({
+        proposeApprovalRequests: [
+          {
+            gate: "requirements",
+            outcome: "filed",
+            attentionId: "attention-requirements",
+          },
+          { gate: "plan", outcome: "filed", attentionId: "attention-plan" },
+        ],
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "approval requests:\n  requirements filed (attention attention-requirements)\n  plan filed (attention attention-plan)",
+    );
+    expect(result.stdout).toContain("next: cctl spec status native-sdd");
+  });
+
+  /**
+   * A collapsed or absorbed propose files nothing, so the receipt must not
+   * imply a request exists — and the projection's own next act still stands.
+   */
+  it("reports a gate that needed no ask without claiming a request exists", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({
+        wholeGateNextAction: true,
+        proposeApprovalRequests: [
+          { gate: "requirements", outcome: "not-needed", attentionId: null },
+        ],
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "approval requests: requirements not needed",
+    );
+    expect(result.stdout).not.toContain("attention");
+    // The gate-scoped ask the projection named carries no arbitrary subject.
+    expect(result.stdout).toContain(
       "next: cctl spec request-approval native-sdd --gate requirements",
     );
     expect(result.stdout).not.toContain("--subject R1");
+  });
+
+  it("names request-approval as the repair when the filing itself failed", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({
+        proposeApprovalRequests: [
+          { gate: "requirements", outcome: "not-filed", attentionId: null },
+        ],
+      }),
+    );
+
+    // The proposal itself succeeded: the freeze is committed whatever the
+    // coordinator managed afterwards.
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("state: revision 1 is proposed");
+    expect(result.stdout).toContain(
+      "approval requests: requirements not filed",
+    );
+    expect(result.stdout).toContain("acts next: agent");
+    expect(result.stdout).toContain(
+      "next: cctl spec request-approval native-sdd --gate requirements",
+    );
+  });
+
+  it("names the repair for a durable ask whose notice may not have landed", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({
+        proposeApprovalRequests: [
+          {
+            gate: "requirements",
+            outcome: "delivery-uncertain",
+            attentionId: "attention-requirements",
+          },
+        ],
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "approval requests: requirements filed, notice delivery uncertain (attention attention-requirements)",
+    );
+    expect(result.stdout).toContain(
+      "next: cctl spec request-approval native-sdd --gate requirements",
+    );
+  });
+
+  it("keeps every failed cumulative approval request in the recovery command", async () => {
+    const approvalRequests: SpecProposeApprovalRequest[] = [
+      { gate: "requirements", outcome: "not-filed", attentionId: null },
+      {
+        gate: "plan",
+        outcome: "delivery-uncertain",
+        attentionId: "attention-plan",
+      },
+    ];
+    const recovery =
+      "cctl spec request-approval native-sdd --gate requirements && " +
+      "cctl spec request-approval native-sdd --gate plan";
+    const text = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({ proposeApprovalRequests: approvalRequests }),
+    );
+    const structured = await runCli(
+      ["spec", "propose", "native-sdd", "--json"],
+      baseEnv,
+      makeHost({ proposeApprovalRequests: approvalRequests }),
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(`next: ${recovery}`);
+    expect(text.stdout).toContain("--gate requirements");
+    expect(text.stdout).toContain("--gate plan");
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      next: recovery,
+    });
   });
 
   /**
@@ -2032,6 +2861,10 @@ describe("cctl spec write verbs", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("state: assumption A1 is proposed");
     expect(result.stdout).toContain("acts next: human");
+    expect(result.stdout).toContain(
+      "a human records the assumption's disposition in Spec Studio",
+    );
+    expect(result.stdout).not.toContain("accepts or rejects");
   });
 
   it("sends the notes document the propose was given", async () => {
@@ -2131,6 +2964,7 @@ describe("cctl spec write verbs", () => {
       scope: "gate",
       subject: "requirements",
       elementId: null,
+      deliveryOutcome: "delivered",
     });
     expect(envelope.tokens).toMatchObject({
       attention: "attention-1",
@@ -2138,6 +2972,60 @@ describe("cctl spec write verbs", () => {
       scope: "gate",
     });
     expect(envelope.tokens).not.toHaveProperty("elementId");
+  });
+
+  it("names the delivered notice so text says what the receipt field says", async () => {
+    const result = await runCli(
+      ["spec", "request-approval", "native-sdd", "--gate", "requirements"],
+      baseEnv,
+      makeHost(),
+    );
+
+    expect(result.exitCode).toBe(0);
+    // Whether a human was actually told is the state this act leaves behind,
+    // so the text names it on both arms rather than letting "pending" stand
+    // for delivered and undelivered alike.
+    expect(result.stdout).toContain(
+      "state: requirements approval request is pending — its Needs You notice was delivered",
+    );
+    expect(result.stdout).toContain("acts next: human");
+  });
+
+  it("names the undelivered notice and the re-fire when delivery is uncertain", async () => {
+    const host = makeHost({ deliveryUncertain: true });
+
+    const text = await runCli(
+      ["spec", "request-approval", "native-sdd", "--gate", "requirements"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // The ask committed, so reporting a failure would be false; what is
+    // uncertain is whether a human can see it, which is the agent's to fix.
+    expect(text.stdout).toContain("requested the requirements gate");
+    expect(text.stdout).toContain("may not have been delivered");
+    expect(text.stdout).toContain("acts next: agent");
+    expect(text.stdout).toContain(
+      "next: cctl spec request-approval native-sdd --gate requirements",
+    );
+
+    const result = await runCli(
+      [
+        "spec",
+        "request-approval",
+        "native-sdd",
+        "--gate",
+        "requirements",
+        "--json",
+      ],
+      baseEnv,
+      makeHost({ deliveryUncertain: true }),
+    );
+
+    expect(JSON.parse(result.stdout).request).toMatchObject({
+      deliveryOutcome: "delivery-uncertain",
+    });
   });
 
   it("names the execution an abandon retired", async () => {

@@ -2,6 +2,7 @@ import type {
   SpecAssumptionDisposition,
   SpecAuthoringStage,
   SpecElementKind,
+  SpecElementPayload,
   SpecQuestionStatus,
 } from "./schemas";
 import {
@@ -9,6 +10,12 @@ import {
   type ReferenceSourceElement,
   type SpecReferenceRelation,
 } from "./element-references";
+import {
+  formatElementHandle,
+  isWellFormedElementHandle,
+  parseElementHandle,
+} from "./handles";
+import { extractProseHandleReferences } from "./prose-references";
 
 export type LintSeverity = "blocks_propose" | "blocks_signoff" | "advisory";
 
@@ -321,6 +328,145 @@ function danglingTypedReferenceFinding(
   );
 }
 
+interface ProseField {
+  readonly field: string;
+  readonly text: string;
+}
+
+/**
+ * Every Markdown-rendered string an element carries. Exhaustive per kind — the
+ * `typedReferenceGroups` contract applied to prose instead of ids — so a new
+ * element kind is a compile error here rather than a silently unscanned field.
+ *
+ * `rejectedAlternatives[].label` is excluded: it is plain text, not Markdown,
+ * so a handle-shaped run of characters in it asserts nothing.
+ */
+function proseFields(payload: SpecElementPayload): readonly ProseField[] {
+  switch (payload.kind) {
+    case "section":
+      return [
+        { field: "title", text: payload.title },
+        { field: "body", text: payload.body },
+      ];
+    case "requirement":
+      return [{ field: "statement", text: payload.statement }];
+    case "criterion":
+      return [
+        { field: "text", text: payload.text },
+        ...(payload.validationStrategy.note === undefined
+          ? []
+          : [
+              {
+                field: "validationStrategy.note",
+                text: payload.validationStrategy.note,
+              },
+            ]),
+      ];
+    case "decision":
+      return [
+        { field: "title", text: payload.title },
+        { field: "chosenApproach", text: payload.chosenApproach },
+        { field: "reason", text: payload.reason },
+        ...payload.rejectedAlternatives.map((alternative, index) => ({
+          field: `rejectedAlternatives[${index}].reason`,
+          text: alternative.reason,
+        })),
+      ];
+    case "task":
+      return [
+        { field: "title", text: payload.title },
+        { field: "instructions", text: payload.instructions },
+      ];
+  }
+}
+
+/**
+ * The addressable handle an element answers to as a prose target, or null when
+ * it has none.
+ *
+ * The projection displays an element id when an element has no derived handle —
+ * sections always, and anything not yet numbered — so the `handle` field is a
+ * DISPLAY value, correct for naming the source of a finding but not an address.
+ * Element ids are opaque (`z.string().min(1)`), so admitting one into the target
+ * lookup would let a section whose id reads like `R9` satisfy prose citing a
+ * requirement that does not exist, clearing propose on a phantom. Requiring the
+ * handle to parse as a canonical handle of the element's own kind keeps the two
+ * roles apart — no handle kind is ever `section`, so a section can never become
+ * a target.
+ */
+function addressableHandle(
+  handle: string,
+  kind: SpecElementKind,
+  contextSlug: string,
+): string | null {
+  if (!isWellFormedElementHandle(handle, contextSlug)) return null;
+  const parsed = parseElementHandle(handle, contextSlug);
+  return parsed.kind === kind ? formatElementHandle(parsed, "bare") : null;
+}
+
+/**
+ * A handle written into prose is as much a reference as one written into a
+ * typed id array, and renumbering leaves the prose one pointing at nothing.
+ *
+ * `Qn`/`An` resolve on the existence of the record, whatever its lifecycle
+ * state: a withdrawn question still happened, and a reference to it asserts
+ * that it exists, not that it is still live.
+ */
+function proseReferenceFindings(
+  draft: RevisionSnapshot,
+  records: SpecRecords,
+  elements: readonly RevisionElement[],
+  elementsByHandle: ReadonlyMap<string, RevisionElement>,
+  knownElementsByHandle: ReadonlyMap<string, KnownElementRecord>,
+): LintFinding[] {
+  const recordHandles = new Set([
+    ...(records.questions ?? []).map((question) => question.handle),
+    ...(records.assumptions ?? []).map((assumption) => assumption.handle),
+  ]);
+  const findings: LintFinding[] = [];
+
+  for (const sourceElement of elements) {
+    const reported = new Set<string>();
+    for (const { field, text } of proseFields(sourceElement.payload)) {
+      for (const { token, handle } of extractProseHandleReferences(
+        text,
+        draft.specHandle,
+      )) {
+        const key = `${field}\u0000${token}`;
+        if (reported.has(key)) continue;
+        reported.add(key);
+
+        const bareHandle = formatElementHandle(handle, "bare");
+        const unknown = () =>
+          finding(
+            "9.6.dangling-handle",
+            sourceElement.handle,
+            `${sourceElement.handle} prose references unknown handle ${token} in ${field}.`,
+          );
+
+        if (handle.kind === "question" || handle.kind === "assumption") {
+          if (!recordHandles.has(bareHandle)) findings.push(unknown());
+          continue;
+        }
+        if (elementsByHandle.has(bareHandle)) continue;
+
+        const removed = knownElementsByHandle.get(bareHandle);
+        findings.push(
+          removed === undefined
+            ? unknown()
+            : finding(
+                "9.6.dangling-handle",
+                sourceElement.handle,
+                `${sourceElement.handle} prose references removed ${removed.kind} ${removed.handle} in ${field}.`,
+              ),
+        );
+      }
+    }
+  }
+
+  return findings;
+}
+
 export function lint(
   draft: RevisionSnapshot,
   records: SpecRecords,
@@ -493,6 +639,38 @@ export function lint(
       }
     }
   }
+
+  const knownElementsByHandle = new Map<string, KnownElementRecord>();
+  for (const known of knownElementsById.values()) {
+    const handle = addressableHandle(
+      known.handle,
+      known.kind,
+      draft.specHandle,
+    );
+    if (handle !== null && !knownElementsByHandle.has(handle)) {
+      knownElementsByHandle.set(handle, known);
+    }
+  }
+  const elementsByHandle = new Map<string, RevisionElement>();
+  for (const element of elements) {
+    const handle = addressableHandle(
+      element.handle,
+      element.payload.kind,
+      draft.specHandle,
+    );
+    if (handle !== null && !elementsByHandle.has(handle)) {
+      elementsByHandle.set(handle, element);
+    }
+  }
+  findings.push(
+    ...proseReferenceFindings(
+      draft,
+      records,
+      elements,
+      elementsByHandle,
+      knownElementsByHandle,
+    ),
+  );
 
   for (const sourceElement of elements) {
     for (const reference of elementReferences(sourceElement)) {

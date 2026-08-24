@@ -194,6 +194,28 @@ const PROJECT_SCOPE_INVOCATIONS: {
     },
   },
   {
+    name: "spec section get",
+    argv: ["spec", "section", "get", "feat", "--id", "problem-section"],
+    body: {
+      specId: "spec-1",
+      slug: "feat",
+      kind: "section",
+      handle: null,
+      elementId: "problem-section",
+      role: "intent_problem",
+      title: "Problem",
+      body: "Sections had no narrow read.",
+      elementVersion: 1,
+      position: 0,
+      revision: {
+        id: "revision-1",
+        number: 1,
+        state: "draft",
+        authoringStage: "requirements",
+      },
+    },
+  },
+  {
     name: "spec abandon",
     argv: ["spec", "abandon", "feat", "--reason", "x"],
     body: { spec: { slug: "feat", status: "abandoned" } },

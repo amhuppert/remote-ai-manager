@@ -1,4 +1,15 @@
-import type { ApprovalApplicability } from "./approval-applicability";
+import type {
+  ApprovalApplicability,
+  ApprovalCitationState,
+  ApprovalSubjectKind,
+} from "./approval-applicability";
+import {
+  APPROVAL_CARRY_RULE,
+  emptyApprovalLedger,
+  type ApprovalLedger,
+  type ApprovalLedgerClass,
+  type ApprovalLedgerSubject,
+} from "./approval-ledger";
 import {
   EXECUTION_SCOPED_GATES,
   approvalHeld,
@@ -7,14 +18,21 @@ import {
   parseProvenance,
   type PendingApproval,
 } from "./gate-projection";
-import { elementApprovalBasis } from "./import-baseline";
+import {
+  elementApprovalBasis,
+  type ElementApprovalBasis,
+} from "./import-baseline";
 import type { LintFinding } from "./lint";
 import {
   authoringApprovalsCollapseIntoSignOff,
   dialRequiresHumanApproval,
   resolveDial,
 } from "./policy";
-import { toDiffRows } from "./review-state";
+import {
+  toCitationDiffContext,
+  toDiffCitations,
+  toDiffRows,
+} from "./review-state";
 import type { RevisionElement } from "./revision-diff";
 import {
   specGateSchema,
@@ -174,6 +192,7 @@ export interface AuthoringNextAction {
 
 /** One open review comment, as the projection needs it: where and how hard. */
 export interface OpenCommentSnapshot {
+  threadId: string;
   elementId: string;
   /** The element's handle where the current revision still carries it. */
   handle: string | null;
@@ -183,6 +202,8 @@ export interface OpenCommentSnapshot {
 export interface ProjectedOpenComments {
   count: number;
   blockingCount: number;
+  openThreadCount: number;
+  openBlockingThreadCount: number;
   /** Deduped subject labels — handle when carried, element id otherwise — in first-seen order. */
   subjects: string[];
 }
@@ -197,6 +218,12 @@ export interface AuthoringReviewProjection {
    * authored spec, and empty again once a human approves the subject itself.
    */
   importCarriedApprovals: ImportCarriedApproval[];
+  /**
+   * Every consulted subject with the act that settles it, or that none does.
+   * Read beside `pendingApprovals` rather than derived from it: a collapsed
+   * gate owes no per-subject approval and still governs its subjects.
+   */
+  approvalLedger: ApprovalLedger;
   revisionSignOff: RevisionSignOffProjection | null;
   pendingBlock: AuthoringPendingBlock | null;
   nextAction: AuthoringNextAction;
@@ -218,6 +245,7 @@ export interface AuthoringReviewProjectionInput {
    * outstanding here and settled there.
    */
   importBaselineRows: readonly RevisionElement[] | null;
+  importBaselineCitationState: ApprovalCitationState | null;
   currentExecution: Pick<
     SpecExecutionRow,
     | "id"
@@ -248,7 +276,7 @@ const AUTHORING_GATES: readonly AuthoringGate[] = [
   "plan",
 ];
 
-function isAuthoringGate(gate: SpecGate): gate is AuthoringGate {
+export function isAuthoringGate(gate: SpecGate): gate is AuthoringGate {
   return AUTHORING_GATES.includes(gate as AuthoringGate);
 }
 
@@ -371,18 +399,31 @@ function projectGates(
 
 /**
  * The approvals a human still owes for the current revision (or the selected
- * run), and — separately — the consulted subjects an import admission settles
- * instead. Read off the projected gate states, so a gate that is not consulted
- * cannot contribute a subject and a consulted one cannot hide its subjects.
+ * run), the consulted subjects an import admission settles instead, and the
+ * two-sided ledger over every consulted subject. Read off the projected gate
+ * states, so a gate that is not consulted cannot contribute a subject and a
+ * consulted one cannot hide its subjects.
+ *
+ * The three are derived together because they answer the same question of the
+ * same authority: `approvalHeld` for the human act, `elementApprovalBasis` for
+ * the import admission. Splitting them is what would let a surface report a
+ * subject as banked here and outstanding there.
  */
 function projectPendingApprovals(
   input: AuthoringReviewProjectionInput,
   gates: readonly ProjectedGateStatus[],
-): { pending: PendingApproval[]; importCarried: ImportCarriedApproval[] } {
+): {
+  pending: PendingApproval[];
+  importCarried: ImportCarriedApproval[];
+  ledger: ApprovalLedger;
+} {
   const snapshot = input.snapshot;
-  if (snapshot === null) return { pending: [], importCarried: [] };
+  if (snapshot === null) {
+    return { pending: [], importCarried: [], ledger: emptyApprovalLedger() };
+  }
   const pending: PendingApproval[] = [];
   const importCarried: ImportCarriedApproval[] = [];
+  const ledgerSubjects: ApprovalLedgerSubject[] = [];
   const gatePending = (gate: SpecGate) =>
     gates.some((status) => status.gate === gate && status.state === "pending");
   // R11.5: under the combined dial the sign-off act is itself the approval of
@@ -393,6 +434,29 @@ function projectPendingApprovals(
     snapshot.revision.authoringStage,
   );
   const subjectPending = (gate: SpecGate) => !collapsed && gatePending(gate);
+  // The ledger accounts for every subject of a gate this transition consults
+  // whose dial makes it a human act — including a gate the sign-off already
+  // admitted, which is where the satisfied side of the account lives. A
+  // notify or off dial admits by policy and has no per-subject side at all.
+  const gateLedgered = (gate: SpecGate) =>
+    gates.some(
+      (status) =>
+        status.gate === gate &&
+        dialRequiresHumanApproval(status.dial) &&
+        (status.applicability.reason === "current_stage" ||
+          status.applicability.reason === "changed_since_governance_base"),
+    );
+  // The collapsed dial records every subject through the one sign-off act, so
+  // its subjects become settled exactly when that act exists — as a recorded
+  // approval, or as the absorbed sign-off a propose writes straight onto the
+  // revision.
+  const combinedActRecorded =
+    snapshot.revision.state === "approved" ||
+    input.approvals.some(
+      (candidate) =>
+        candidate.subject_kind === "revision" &&
+        candidate.revision_id === snapshot.revision.id,
+    );
   const handles = new Map(
     snapshot.elements.map((row) => [
       row.element.id,
@@ -402,51 +466,99 @@ function projectPendingApprovals(
   const revisionRows = toDiffRows(snapshot);
   // One authority, asked exactly as `approvalUnmetConditions` asks it: a
   // subject the sign-off no longer owes must not be listed here, and a subject
-  // it does owe must not be hidden here.
+  // it does owe must not be hidden here. The approval row travels with the
+  // basis because which revision the approving human read is the whole
+  // difference between a carried approval and one granted on this revision.
   const settlement = (
-    row: SpecRevisionSnapshot["elements"][number],
-    subjectKind: "requirement" | "decision",
-  ) =>
-    elementApprovalBasis({
-      approvalHeld: approvalHeld(
-        input.approvals,
-        input.applies,
-        subjectKind,
-        row.element.id,
-      ),
-      subject: { subjectKind, elementId: row.element.id },
-      revisionRows,
-      importBaselineRows: input.importBaselineRows,
-    });
+    subjectKind: ApprovalSubjectKind,
+    elementId: string | null,
+  ): {
+    held: SpecApprovalRow | null;
+    basis: ElementApprovalBasis | null;
+  } => {
+    const held = approvalHeld(
+      input.approvals,
+      input.applies,
+      subjectKind,
+      elementId,
+    );
+    return {
+      held,
+      basis: elementApprovalBasis({
+        approvalHeld: held !== null,
+        subject: { subjectKind, elementId },
+        revisionRows,
+        revisionCitationState: {
+          citationContractVersion: snapshot.revision.citationContractVersion,
+          citations: toDiffCitations(snapshot),
+        },
+        importBaselineRows: input.importBaselineRows,
+        importBaselineCitationState: input.importBaselineCitationState,
+      }),
+    };
+  };
+  const classify = (
+    held: SpecApprovalRow | null,
+    basis: ElementApprovalBasis | null,
+  ): ApprovalLedgerClass => {
+    // An import admission settles the subject without anyone reading it, so it
+    // is answered before any human act is named.
+    if (basis === "import_carry_forward") return "import_settled";
+    // Under the collapsed dial nobody is ever asked per subject — yet the
+    // sign-off transaction persists an approval row for every one of them
+    // (R11.5, review-service). Reading those rows first would report each
+    // subject as approved on this revision, which is precisely the act that
+    // never happened, so the recorded combined act answers for them all.
+    if (collapsed && combinedActRecorded) return "combined_act";
+    if (held !== null) {
+      return held.revision_id === snapshot.revision.id
+        ? "current_revision"
+        : "carried";
+    }
+    // Before the combined act the subjects an ancestor sign-off already
+    // approved stay banked above; what is left is outstanding through that one
+    // act rather than individually.
+    return "pending";
+  };
   const recordSubject = (
-    gate: "requirements" | "design",
-    row: SpecRevisionSnapshot["elements"][number],
-    subjectKind: "requirement" | "decision",
+    gate: AuthoringGate,
+    subject: string,
+    elementId: string | null,
+    subjectKind: ApprovalSubjectKind,
   ): void => {
-    const subject = handles.get(row.element.id) ?? row.element.id;
-    const basis = settlement(row, subjectKind);
+    const { held, basis } = settlement(subjectKind, elementId);
+    if (gateLedgered(gate)) {
+      ledgerSubjects.push({
+        gate,
+        subject,
+        elementId,
+        classification: classify(held, basis),
+      });
+    }
+    if (!subjectPending(gate)) return;
     if (basis === null) {
-      pending.push({ gate, subject, elementId: row.element.id });
+      pending.push({ gate, subject, elementId });
       return;
     }
-    if (basis === "import_carry_forward") {
-      importCarried.push({ gate, subject, elementId: row.element.id });
+    // The plan subject is never import-admitted, so a carried-forward subject
+    // always addresses an element.
+    if (basis === "import_carry_forward" && elementId !== null) {
+      importCarried.push({ gate, subject, elementId });
     }
   };
+  const asked = (gate: AuthoringGate) =>
+    subjectPending(gate) || gateLedgered(gate);
   for (const row of snapshot.elements) {
-    if (row.element.kind === "requirement" && subjectPending("requirements")) {
-      recordSubject("requirements", row, "requirement");
+    const subject = handles.get(row.element.id) ?? row.element.id;
+    if (row.element.kind === "requirement" && asked("requirements")) {
+      recordSubject("requirements", subject, row.element.id, "requirement");
     }
-    if (row.element.kind === "decision" && subjectPending("design")) {
-      recordSubject("design", row, "decision");
+    if (row.element.kind === "decision" && asked("design")) {
+      recordSubject("design", subject, row.element.id, "decision");
     }
   }
-  if (
-    snapshot.revision.authoringStage === "plan" &&
-    subjectPending("plan") &&
-    !approvalHeld(input.approvals, input.applies, "plan", null)
-  ) {
-    pending.push({ gate: "plan", subject: "plan", elementId: null });
+  if (snapshot.revision.authoringStage === "plan" && asked("plan")) {
+    recordSubject("plan", "plan", null, "plan");
   }
   for (const gate of ["execution_start", "delivery"] as const) {
     if (
@@ -456,7 +568,28 @@ function projectPendingApprovals(
       pending.push({ gate, subject: gate, elementId: null });
     }
   }
-  return { pending, importCarried };
+  const subjects = inGateOrder(ledgerSubjects);
+  const counted = (classification: ApprovalLedgerClass) =>
+    subjects.filter((entry) => entry.classification === classification).length;
+  const carried = counted("carried");
+  const currentRevision = counted("current_revision");
+  const importSettled = counted("import_settled");
+  const combinedAct = counted("combined_act");
+  return {
+    pending,
+    importCarried,
+    ledger: {
+      subjects,
+      satisfied: carried + currentRevision + importSettled + combinedAct,
+      carried,
+      currentRevision,
+      importSettled,
+      combinedAct,
+      pending: counted("pending"),
+      governedBy: collapsed ? "combined_sign_off" : "per_subject",
+      carryRule: APPROVAL_CARRY_RULE,
+    },
+  };
 }
 
 function projectSignOff(
@@ -494,7 +627,25 @@ function projectSignOff(
               input.governanceBaseSnapshot === null
                 ? []
                 : toDiffRows(input.governanceBaseSnapshot),
+            governanceBaseCitationState:
+              input.governanceBaseSnapshot === null
+                ? {
+                    citationContractVersion:
+                      snapshot.revision.citationContractVersion,
+                    citations: [],
+                  }
+                : {
+                    citationContractVersion:
+                      input.governanceBaseSnapshot.revision
+                        .citationContractVersion,
+                    citations: toDiffCitations(input.governanceBaseSnapshot),
+                  },
             revisionRows: toDiffRows(snapshot),
+            revisionCitationState: {
+              citationContractVersion:
+                snapshot.revision.citationContractVersion,
+              citations: toDiffCitations(snapshot),
+            },
             approvals: input.approvals.flatMap((candidate) =>
               candidate.subject_kind === "revision"
                 ? []
@@ -515,6 +666,7 @@ function projectSignOff(
             ),
             approvalApplies: input.applies,
             importBaselineRows: input.importBaselineRows,
+            importBaselineCitationState: input.importBaselineCitationState,
           }),
         ];
   return {
@@ -635,7 +787,7 @@ function projectPendingBlock(
     display:
       open === null
         ? display
-        : `${display}; ${open.count} open comment${open.count === 1 ? "" : "s"} await${open.count === 1 ? "s" : ""} a response`,
+        : `${display}; ${open.openThreadCount} open thread${open.openThreadCount === 1 ? "" : "s"} await${open.openThreadCount === 1 ? "s" : ""} a response`,
     instruction:
       open === null
         ? instruction
@@ -648,14 +800,29 @@ function projectOpenComments(
 ): ProjectedOpenComments | null {
   const comments = input.openComments ?? [];
   if (comments.length === 0) return null;
-  const subjects: string[] = [];
+  const threads = new Map<string, { label: string; blocking: boolean }>();
   for (const comment of comments) {
-    const label = comment.handle ?? comment.elementId;
+    const existing = threads.get(comment.threadId);
+    if (existing === undefined) {
+      threads.set(comment.threadId, {
+        label: comment.handle ?? comment.elementId,
+        blocking: comment.blocking,
+      });
+      continue;
+    }
+    existing.blocking ||= comment.blocking;
+  }
+  const subjects: string[] = [];
+  for (const { label } of threads.values()) {
     if (!subjects.includes(label)) subjects.push(label);
   }
   return {
     count: comments.length,
     blockingCount: comments.filter((comment) => comment.blocking).length,
+    openThreadCount: threads.size,
+    openBlockingThreadCount: [...threads.values()].filter(
+      (thread) => thread.blocking,
+    ).length,
     subjects,
   };
 }
@@ -669,7 +836,7 @@ function openCommentLead(
   open: ProjectedOpenComments,
   specSlug: string | undefined,
 ): string {
-  return `Open comments on ${open.subjects.join(", ")} await a response — read them with cctl spec comments ${specSlug ?? "<slug>"} --open.`;
+  return `Open review threads on ${open.subjects.join(", ")} await a response — read them with cctl spec comments ${specSlug ?? "<slug>"} --open.`;
 }
 
 function projectNextAction(
@@ -791,6 +958,7 @@ export function authoringReviewProjection(
             ? []
             : toDiffRows(input.governanceBaseSnapshot),
           toDiffRows(input.snapshot),
+          toCitationDiffContext(input.governanceBaseSnapshot, input.snapshot),
         ),
   );
   const gates = projectGates(input, consulted);
@@ -813,6 +981,7 @@ export function authoringReviewProjection(
     gates,
     pendingApprovals: pending,
     importCarriedApprovals: importCarried,
+    approvalLedger: subjects.ledger,
     revisionSignOff: signOff,
     pendingBlock: projectPendingBlock(
       input,

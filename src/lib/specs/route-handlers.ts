@@ -34,6 +34,13 @@ import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/spec-brid
 
 import { draftAuthoringSequence } from "./authoring-sequence";
 import {
+  projectAttentionRecords,
+  type AssumptionAttentionProjection,
+  type AttentionRecordsProjection,
+  type QuestionAttentionProjection,
+} from "./attention-projection";
+import { projectAttentionAuditEvents } from "./attention-audit-events";
+import {
   SpecDraftUnavailableError,
   SpecRevisionInReviewError,
   SpecSlugTakenError,
@@ -71,7 +78,7 @@ import { createSpecEventsPublisher } from "./events";
 import type { LinkedSpecExecutionBindingV2 } from "./execution-binding";
 import {
   loadSpecExportState,
-  renderCanonicalBundle,
+  renderVerifiedCanonicalBundle,
   SpecExportNotFoundError,
   verifyExportState,
   type CanonicalSpecBundle,
@@ -97,6 +104,7 @@ import {
   type PendingApproval,
 } from "./gate-projection";
 import { importBaselineRevisionId } from "./import-baseline";
+import type { ApprovalLedger } from "./approval-ledger";
 import {
   authoringReviewProjection,
   type AuthoringNextAction,
@@ -145,9 +153,12 @@ import {
   type SpecPhaseProjection,
 } from "./phase";
 import { liveProposalProjection } from "./proposal-integrity";
+import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import { proposalNotes } from "./proposal-notes";
 import {
   elementHandleInSnapshot,
+  toCitationDiffContext,
+  toDiffCitations,
   toDiffRows,
   toLintSnapshot,
 } from "./review-state";
@@ -159,8 +170,10 @@ import {
   changeSpecPolicyInputSchema,
   dismissSupersededProposalInputSchema,
   disposeAssumptionInputSchema,
+  editAttentionRecordInputSchema,
   openQuestionInputSchema,
   proposeAssumptionInputSchema,
+  mutateAssumptionCitationInputSchema,
   requestApprovalInputSchema,
   grantGateApprovalInputSchema,
   requestChangesInputSchema,
@@ -169,12 +182,18 @@ import {
   reviewCommentInputSchema,
   approveRemainingAndSignOffInputSchema,
   signOffRevisionInputSchema,
+  supersedeAssumptionInputSchema,
+  withdrawAttentionRecordInputSchema,
   withdrawProposalInputSchema,
   type ReviewService,
 } from "./review-service";
 import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
 import { isWaiverValidForExecution } from "./waiver-staleness";
 import { projectSpecComment } from "./comment-projection";
+import {
+  assembleSpecCommentThreads,
+  summarizeSpecComments,
+} from "./comment-threads";
 import type {
   CriterionDeliveryProjection,
   LiveProposalView,
@@ -191,6 +210,7 @@ import type {
   SpecGateAdmissionView,
   SpecImportRecordView,
   SpecSearchHit,
+  SpecSectionView,
   SpecStartedExecutionView,
   SpecStatusExecution,
   SpecStatusView as PublishedSpecStatusView,
@@ -339,6 +359,7 @@ interface SpecStatusView {
   authoringSequence: RemainingAuthoringSequence | null;
   pendingApprovals: PendingApproval[];
   importCarriedApprovals: ImportCarriedApproval[];
+  approvalLedger: ApprovalLedger;
   applicableGates: SpecGate[];
   revisionSignOff: RevisionSignOffProjection | null;
   pendingBlock: AuthoringPendingBlock | null;
@@ -428,6 +449,7 @@ function createDefaultDeps(): SpecRouteDeps {
     specs,
     review,
     delivery,
+    events: eventsRepo,
     observeLinkedWorkflow: (target: SpecWorkflowCleanupTarget) =>
       createProductionSpecWorkflowCleanupPort().observe(target),
   };
@@ -481,7 +503,7 @@ function createDefaultDeps(): SpecRouteDeps {
     findWaiversByRevision: (revisionId) =>
       delivery.findWaiversByRevision(revisionId),
     async exportSpec(specId) {
-      return renderCanonicalBundle(
+      return renderVerifiedCanonicalBundle(
         await loadSpecExportState(exportDeps, specId),
       );
     },
@@ -609,9 +631,21 @@ async function loadApprovalApplicability(
   );
   return createApprovalApplicability({
     revisionId: current.revision.id,
+    basedOnRevisionId: current.revision.basedOnRevisionId,
     ancestorRevisionIds: ancestorIds(state.revisions, current.revision.id),
     revisionRows: rows.get(current.revision.id) ?? toDiffRows(current),
-    rowsForRevision: (revisionId) => rows.get(revisionId) ?? null,
+    citationContractVersion: current.revision.citationContractVersion,
+    citations: toDiffCitations(current),
+    stateForRevision: (revisionId) => {
+      const snapshot = known.get(revisionId);
+      return snapshot === undefined
+        ? null
+        : {
+            rows: rows.get(revisionId) ?? toDiffRows(snapshot),
+            citationContractVersion: snapshot.revision.citationContractVersion,
+            citations: toDiffCitations(snapshot),
+          };
+    },
   });
 }
 
@@ -963,7 +997,9 @@ function outlineApprovalStatus(
   subjectKind: "requirement" | "decision",
   elementId: string,
 ): "valid" | "stale" | "closed" | "unapproved" {
-  if (approvalHeld(approvals, applies, subjectKind, elementId)) return "valid";
+  if (approvalHeld(approvals, applies, subjectKind, elementId) !== null) {
+    return "valid";
+  }
   const latest = latestApprovalValidity(approvals, subjectKind, elementId);
   return latest === "stale" || latest === "closed" ? latest : "unapproved";
 }
@@ -1069,6 +1105,7 @@ function toSnapshotView(
 ): SpecRevisionSnapshotView {
   return {
     revision: snapshot.revision,
+    assumptionCitations: snapshot.assumptionCitations,
     elements: snapshot.elements.map((row) => ({
       ...row,
       handle: elementHandleInSnapshot(snapshot, row.element.id),
@@ -1339,34 +1376,122 @@ function toGateAdmissionView(
   };
 }
 
-function toQuestionView(row: SpecQuestionRow): SpecQuestionView {
+function toQuestionView(
+  projection: QuestionAttentionProjection,
+): SpecQuestionView {
+  const { row } = projection;
   return {
     id: row.id,
     number: row.number,
     handle: formatBareElementHandle({ kind: "question", number: row.number }),
     elementId: row.element_id,
     text: row.text,
+    recordVersion: row.record_version,
     status: row.status,
     answer: row.answer,
     answeredAt: row.answered_at,
+    withdrawnAt: row.withdrawn_at,
     provenance: parseProvenance(row.provenance_json),
+    presentation: projection.presentation,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-function toAssumptionView(row: SpecAssumptionRow): SpecAssumptionView {
+function toAssumptionView(
+  projection: AssumptionAttentionProjection,
+  assumptionsById: ReadonlyMap<string, SpecAssumptionRow>,
+  draftSnapshot: SpecRevisionSnapshot | null,
+): SpecAssumptionView {
+  const { row } = projection;
+  const handleFor = (assumptionId: string | null): string | null => {
+    if (assumptionId === null) return null;
+    const assumption = assumptionsById.get(assumptionId);
+    return assumption === undefined
+      ? null
+      : formatBareElementHandle({
+          kind: "assumption",
+          number: assumption.number,
+        });
+  };
   return {
     id: row.id,
     number: row.number,
     handle: formatBareElementHandle({ kind: "assumption", number: row.number }),
     elementId: row.element_id,
     text: row.text,
+    recordVersion: row.record_version,
     disposition: row.disposition,
     disposedAt: row.disposed_at,
+    withdrawnAt: row.withdrawn_at,
     proposedBy: parseProvenance(row.proposed_by_json),
+    supersedesHandle: handleFor(row.supersedes_assumption_id),
+    supersededByHandle: handleFor(projection.supersededByAssumptionId),
+    currentDraftCitations:
+      projection.currentDraftCitations === null
+        ? null
+        : {
+            ...projection.currentDraftCitations,
+            citations: projection.currentDraftCitations.citations.map(
+              (citation) => ({
+                ...citation,
+                elementHandle:
+                  draftSnapshot === null
+                    ? null
+                    : elementHandleInSnapshot(
+                        draftSnapshot,
+                        citation.elementId,
+                      ),
+              }),
+            ),
+          },
+    presentation: projection.presentation,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+async function loadAttentionProjection(
+  deps: Pick<
+    SpecRouteDeps,
+    | "listRevisions"
+    | "getRevisionSnapshot"
+    | "findQuestionsBySpecId"
+    | "findAssumptionsBySpecId"
+    | "findEventsBySpecId"
+  >,
+  spec: Spec,
+  revisions?: readonly SpecRevision[],
+): Promise<{
+  readonly projection: AttentionRecordsProjection;
+  readonly draftSnapshot: SpecRevisionSnapshot | null;
+  readonly assumptionsById: ReadonlyMap<string, SpecAssumptionRow>;
+}> {
+  const revisionRows = revisions ?? (await deps.listRevisions(spec.id));
+  const snapshots = (
+    await Promise.all(
+      revisionRows.map((revision) => deps.getRevisionSnapshot(revision.id)),
+    )
+  ).filter((snapshot): snapshot is SpecRevisionSnapshot => snapshot !== null);
+  const draftSnapshot =
+    snapshots.find((snapshot) => snapshot.revision.state === "draft") ?? null;
+  const assumptions = deps.findAssumptionsBySpecId(spec.id);
+  return {
+    projection: projectAttentionRecords({
+      spec,
+      revisions: revisionRows,
+      currentDraftSnapshot: draftSnapshot,
+      frozenSnapshots: snapshots.filter(
+        (snapshot) => snapshot.revision.state !== "draft",
+      ),
+      questions: deps.findQuestionsBySpecId(spec.id),
+      assumptions,
+      events: deps.findEventsBySpecId(spec.id),
+    }),
+    draftSnapshot,
+    assumptionsById: new Map(
+      assumptions.map((assumption) => [assumption.id, assumption]),
+    ),
   };
 }
 
@@ -1378,6 +1503,7 @@ async function buildStatus(
   loadedAdmissions?: readonly SpecGateAdmissionRow[],
 ): Promise<SpecStatusView> {
   const revisionId = state.currentRevision?.id ?? null;
+  const attention = await loadAttentionProjection(deps, spec, state.revisions);
   const approvals = deps.findApprovalsBySpecId(spec.id);
   const reconciled =
     loadedExecutions ?? (await loadReconciledExecutions(deps, spec));
@@ -1404,6 +1530,14 @@ async function buildStatus(
       : await deps.getRevisionSnapshot(importBaselineRevision);
   const importBaselineRows =
     importBaselineSnapshot === null ? null : toDiffRows(importBaselineSnapshot);
+  const importBaselineCitationState =
+    importBaselineSnapshot === null
+      ? null
+      : {
+          citationContractVersion:
+            importBaselineSnapshot.revision.citationContractVersion,
+          citations: toDiffCitations(importBaselineSnapshot),
+        };
   // Sign-off is blocked by unresolved blocking threads and sign-off lint as
   // well as by outstanding subjects, so the status projection reads the same
   // three sources the sign-off transition does. The findings tier rides this
@@ -1414,36 +1548,65 @@ async function buildStatus(
   const signOffFindings =
     health.groups.find((group) => group.severity === "blocks_signoff")
       ?.findings ?? [];
-  const revisionComments =
-    revisionId === null ? [] : deps.findCommentsByRevision(revisionId);
   const statusHandles =
     state.currentSnapshot === null
       ? new Map<string, string>()
       : handlesByElementId(spec, state.currentSnapshot);
+  const specComments = state.revisions
+    .flatMap((candidate) => deps.findCommentsByRevision(candidate.id))
+    .map((row) =>
+      projectSpecComment(row, {
+        handleByElementId: statusHandles,
+        revisionNumberById,
+      }),
+    );
+  const commentThreads = assembleSpecCommentThreads(specComments);
+  const openCommentThreads = commentThreads.filter((thread) => thread.open);
+  const commentSummary = summarizeSpecComments(specComments);
+  const statusOpenComments: ProjectedOpenComments | null =
+    commentSummary.openCount === 0
+      ? null
+      : {
+          count: commentSummary.openCount,
+          blockingCount: commentSummary.openBlockingCount,
+          openThreadCount: commentSummary.openThreadCount,
+          openBlockingThreadCount: commentSummary.openBlockingThreadCount,
+          subjects: [
+            ...new Set(
+              openCommentThreads.map(
+                (thread) => thread.root.handle ?? thread.root.elementId,
+              ),
+            ),
+          ],
+        };
   const projection = authoringReviewProjection({
     policy: spec.gatePolicy,
     snapshot: state.currentSnapshot,
     governanceBaseSnapshot: state.governanceBaseSnapshot,
     importBaselineRows,
+    importBaselineCitationState,
     approvals,
     admissions,
     currentExecution: selectedExecution,
     revisionNumberById,
     applies,
-    blockingThreads: revisionComments
-      .filter((comment) => comment.blocking === 1)
-      .map((comment) => ({
-        handle: comment.thread_id,
-        resolved: comment.resolution !== "open",
+    blockingThreads: commentThreads
+      .filter(
+        (thread) =>
+          thread.root.revisionId === revisionId &&
+          thread.messages.some((comment) => comment.blocking),
+      )
+      .map((thread) => ({
+        handle: thread.threadId,
+        resolved: !thread.open,
       })),
     signOffFindings,
-    openComments: revisionComments
-      .filter((comment) => comment.resolution === "open")
-      .map((comment) => ({
-        elementId: comment.element_id,
-        handle: statusHandles.get(comment.element_id) ?? null,
-        blocking: comment.blocking === 1,
-      })),
+    openComments: openCommentThreads.map((thread) => ({
+      threadId: thread.threadId,
+      elementId: thread.root.elementId,
+      handle: thread.root.handle,
+      blocking: thread.blocking,
+    })),
     specSlug: spec.slug,
   });
   const criteria = deliveryCriteria(
@@ -1483,33 +1646,35 @@ async function buildStatus(
           }),
     pendingApprovals: projection.pendingApprovals,
     importCarriedApprovals: projection.importCarriedApprovals,
+    approvalLedger: projection.approvalLedger,
     applicableGates: projection.applicableGates,
     revisionSignOff: projection.revisionSignOff,
     pendingBlock: projection.pendingBlock,
     nextAction: projection.nextAction,
-    openComments: projection.openComments,
-    openQuestions: deps
-      .findQuestionsBySpecId(spec.id)
-      .filter((question) => question.status === "open")
-      .map((question) => ({
-        id: question.id,
+    openComments: statusOpenComments,
+    openQuestions: attention.projection.currentQuestions
+      .filter(({ presentation }) => presentation.attentionActive)
+      .map(({ row }) => ({
+        id: row.id,
         handle: formatBareElementHandle({
           kind: "question",
-          number: question.number,
+          number: row.number,
         }),
-        text: question.text,
-        elementId: question.element_id,
+        text: row.text,
+        elementId: row.element_id,
       })),
-    assumptions: deps.findAssumptionsBySpecId(spec.id).map((assumption) => ({
-      id: assumption.id,
-      handle: formatBareElementHandle({
-        kind: "assumption",
-        number: assumption.number,
-      }),
-      text: assumption.text,
-      disposition: assumption.disposition,
-      elementId: assumption.element_id,
-    })),
+    assumptions: attention.projection.currentAssumptions
+      .filter(({ presentation }) => presentation.attentionActive)
+      .map(({ row }) => ({
+        id: row.id,
+        handle: formatBareElementHandle({
+          kind: "assumption",
+          number: row.number,
+        }),
+        text: row.text,
+        disposition: row.disposition,
+        elementId: row.element_id,
+      })),
     taskPlan: taskPlanStatus(state.currentSnapshot),
     draftHealth:
       revisionId === null
@@ -1638,6 +1803,23 @@ function outlineDisclosure(total: number, returned: number) {
   return { total, returned, truncated: returned < total };
 }
 
+/**
+ * Sections are revealed one at a time by element id, not by re-rendering the
+ * spec, so their disclosure names its own command. Without it the listed ids
+ * would have no advertised reader and the outline would be the only place a
+ * section is ever visible.
+ */
+function outlineSectionsDisclosure(
+  specSlug: string,
+  total: number,
+  returned: number,
+) {
+  return {
+    ...outlineDisclosure(total, returned),
+    next: `cctl spec section get ${specSlug} --id <element-id>`,
+  };
+}
+
 function outlineSummary(text: string): string {
   const singleLine = text.replace(/\s+/gu, " ").trim();
   if (singleLine.length <= SPEC_OUTLINE_SUMMARY_LIMIT) return singleLine;
@@ -1697,12 +1879,13 @@ async function buildOutline(
       requirements: [],
       decisions: [],
       tasks: [],
+      sections: [],
       disclosure: {
         requirements: empty,
         criteria: empty,
         decisions: empty,
         tasks: empty,
-        sections: empty,
+        sections: outlineSectionsDisclosure(spec.slug, 0, 0),
         next: `cctl spec show ${spec.slug} --rendered`,
       },
     };
@@ -1851,6 +2034,23 @@ async function buildOutline(
           ]
         : [],
   );
+  // Sections have no handle, so `addressableOutlineRow` cannot select them:
+  // their element id IS the address, and it is what `spec section get` takes.
+  const sections: SpecShowOutlineView["sections"] = ordered
+    .flatMap((row) =>
+      row.version.payload.kind === "section"
+        ? [
+            {
+              elementId: row.element.id,
+              role: row.version.payload.role,
+              title: row.version.payload.title,
+              position: row.version.position,
+              elementVersion: row.version.elementVersion,
+            },
+          ]
+        : [],
+    )
+    .slice(0, SPEC_OUTLINE_ROOT_LIMIT);
   const tasks: SpecShowOutlineView["tasks"] = taskEntries.flatMap(
     ({ row, handle }) =>
       row.version.payload.kind === "task"
@@ -1880,12 +2080,17 @@ async function buildOutline(
     requirements,
     decisions,
     tasks,
+    sections,
     disclosure: {
       requirements: outlineDisclosure(counts.requirements, requirements.length),
       criteria: outlineDisclosure(counts.criteria, returnedCriteria),
       decisions: outlineDisclosure(counts.decisions, decisions.length),
       tasks: outlineDisclosure(counts.tasks, tasks.length),
-      sections: outlineDisclosure(counts.sections, 0),
+      sections: outlineSectionsDisclosure(
+        spec.slug,
+        counts.sections,
+        sections.length,
+      ),
       next: `cctl spec show ${spec.slug} --rendered`,
     },
   };
@@ -2041,6 +2246,70 @@ async function latestContainingElement(
     if (row !== undefined) {
       return { snapshot, row };
     }
+  }
+  return null;
+}
+
+function sectionNotFound(elementId: string): Response {
+  return notFound("Spec section not found", "not_found", { elementId });
+}
+
+/**
+ * The one reading of the `?revisionId=` / `?revisionNumber=` selector both
+ * narrow reads share. `selected` is reported separately from the resolved row
+ * because the two failures differ: an unselected read falls back to the current
+ * snapshot, while a selector that names nothing is a missing revision.
+ */
+function selectRevision(
+  searchParams: URLSearchParams,
+  revisions: readonly SpecRevision[],
+): { selected: boolean; revision: SpecRevision | null } {
+  const targetRevisionId = searchParams.get("revisionId");
+  const selected =
+    targetRevisionId !== null || searchParams.has("revisionNumber");
+  if (!selected) return { selected: false, revision: null };
+  const targetRevisionNumber = z.coerce
+    .number()
+    .int()
+    .positive()
+    .safeParse(searchParams.get("revisionNumber"));
+  return {
+    selected: true,
+    revision:
+      revisions.find((revision) =>
+        targetRevisionId !== null
+          ? revision.id === targetRevisionId
+          : targetRevisionNumber.success &&
+            revision.number === targetRevisionNumber.data,
+      ) ?? null,
+  };
+}
+
+/**
+ * The newest revision whose handle allocation still names an element. It exists
+ * only to name a `historical_only` refusal: an element read without an explicit
+ * revision selector never answers from a revision this scan finds.
+ */
+async function latestRevisionContainingHandle(
+  deps: SpecRouteDeps,
+  spec: Spec,
+  revisions: readonly SpecRevision[],
+  handle: string,
+): Promise<{
+  snapshot: SpecRevisionSnapshot;
+  row: SpecRevisionElement;
+} | null> {
+  const ordered = [...revisions].sort(
+    (left, right) => right.number - left.number,
+  );
+  for (const revision of ordered) {
+    const snapshot = await deps.getRevisionSnapshot(revision.id);
+    if (snapshot === null) continue;
+    const handles = handlesByElementId(spec, snapshot);
+    const row = snapshot.elements.find(
+      (candidate) => handles.get(candidate.element.id) === handle,
+    );
+    if (row !== undefined) return { snapshot, row };
   }
   return null;
 }
@@ -2255,6 +2524,11 @@ export function createSpecRouteHandlers(
         .map((candidate) => [candidate.revision.id, candidate]),
     );
     const specEvents = deps.findEventsBySpecId(resolved.value.spec.id);
+    const attention = await loadAttentionProjection(
+      deps,
+      resolved.value.spec,
+      state.revisions,
+    );
     const liveProposals = await buildLiveProposals(
       deps,
       state.revisions,
@@ -2342,12 +2616,25 @@ export function createSpecRouteHandlers(
       elementStatuses,
       status,
       linkedTickets,
-      questions: deps
-        .findQuestionsBySpecId(resolved.value.spec.id)
-        .map(toQuestionView),
-      assumptions: deps
-        .findAssumptionsBySpecId(resolved.value.spec.id)
-        .map(toAssumptionView),
+      questions: [
+        ...attention.projection.currentQuestions,
+        ...attention.projection.history.flatMap((record) =>
+          record.kind === "question" ? [record] : [],
+        ),
+      ].map(toQuestionView),
+      assumptions: [
+        ...attention.projection.currentAssumptions,
+        ...attention.projection.history.flatMap((record) =>
+          record.kind === "assumption" ? [record] : [],
+        ),
+      ].map((projection) =>
+        toAssumptionView(
+          projection,
+          attention.assumptionsById,
+          attention.draftSnapshot,
+        ),
+      ),
+      attentionAuditEvents: projectAttentionAuditEvents(specEvents),
       importRecord: importRecordView(specEvents, resolved.value.spec.id),
     });
   }
@@ -2420,20 +2707,19 @@ export function createSpecRouteHandlers(
           comment.elementId === elementFilter) &&
         (!openOnly || comment.resolution === "open"),
     );
-    const openViews = views.filter((comment) => comment.resolution === "open");
+    const commentSummary = summarizeSpecComments(views);
     logger.debug("specs.routes.comments.complete", {
       projectName: resolved.value.projectName,
       specId: spec.id,
       commentCount: views.length,
       returnedCount: comments.length,
-      openCount: openViews.length,
+      ...commentSummary,
     });
     const view: SpecCommentsView = {
       specId: spec.id,
       slug: spec.slug,
       comments,
-      openCount: openViews.length,
-      openBlockingCount: openViews.filter((comment) => comment.blocking).length,
+      ...commentSummary,
     };
     return NextResponse.json(view);
   }
@@ -2565,10 +2851,10 @@ export function createSpecRouteHandlers(
     return NextResponse.json({ revisionId: lintRevision.id, findings });
   }
 
-  function resolveQuestionOrAssumption(
+  async function resolveQuestionOrAssumption(
     spec: Spec,
     requestedHandle: string,
-  ): Response | null {
+  ): Promise<Response | null> {
     let parsed: ParsedElementHandle;
     try {
       parsed = parseElementHandle(requestedHandle, spec.slug);
@@ -2578,10 +2864,14 @@ export function createSpecRouteHandlers(
       return null;
     }
     if (parsed.kind === "question") {
-      const row = deps
-        .findQuestionsBySpecId(spec.id)
-        .find((candidate) => candidate.number === parsed.number);
-      if (row === undefined) return notFound("Spec question not found");
+      const attention = await loadAttentionProjection(deps, spec);
+      const projection = [
+        ...attention.projection.currentQuestions,
+        ...attention.projection.history.flatMap((record) =>
+          record.kind === "question" ? [record] : [],
+        ),
+      ].find(({ row }) => row.number === parsed.number);
+      if (projection === undefined) return notFound("Spec question not found");
       return NextResponse.json({
         specId: spec.id,
         slug: spec.slug,
@@ -2590,14 +2880,19 @@ export function createSpecRouteHandlers(
           kind: "question",
           number: parsed.number,
         }),
-        question: toQuestionView(row),
+        question: toQuestionView(projection),
       });
     }
     if (parsed.kind === "assumption") {
-      const row = deps
-        .findAssumptionsBySpecId(spec.id)
-        .find((candidate) => candidate.number === parsed.number);
-      if (row === undefined) return notFound("Spec assumption not found");
+      const attention = await loadAttentionProjection(deps, spec);
+      const projection = [
+        ...attention.projection.currentAssumptions,
+        ...attention.projection.history.flatMap((record) =>
+          record.kind === "assumption" ? [record] : [],
+        ),
+      ].find(({ row }) => row.number === parsed.number);
+      if (projection === undefined)
+        return notFound("Spec assumption not found");
       return NextResponse.json({
         specId: spec.id,
         slug: spec.slug,
@@ -2606,7 +2901,11 @@ export function createSpecRouteHandlers(
           kind: "assumption",
           number: parsed.number,
         }),
-        assumption: toAssumptionView(row),
+        assumption: toAssumptionView(
+          projection,
+          attention.assumptionsById,
+          attention.draftSnapshot,
+        ),
       });
     }
     return null;
@@ -2621,60 +2920,73 @@ export function createSpecRouteHandlers(
     const { element: requestedHandle } = await context.params;
     // Q/A records are spec-scoped, not revision-scoped: resolve them before
     // any snapshot work so they never fall into the older-revision scan.
-    const recordResponse = resolveQuestionOrAssumption(
+    const recordResponse = await resolveQuestionOrAssumption(
       resolved.value.spec,
       requestedHandle ?? "",
     );
     if (recordResponse !== null) return recordResponse;
     const state = await loadCurrentState(deps, resolved.value.spec.id);
     const searchParams = new URL(request.url).searchParams;
-    const targetRevisionId = searchParams.get("revisionId");
+    const selection = selectRevision(searchParams, state.revisions);
+    const revisionSelected = selection.selected;
     const observedRevision = z.coerce
       .number()
       .int()
       .positive()
       .safeParse(searchParams.get("observedRevision"));
-    const targetRevision =
-      targetRevisionId === null
-        ? null
-        : state.revisions.find((revision) => revision.id === targetRevisionId);
-    if (targetRevisionId !== null && targetRevision === undefined) {
+    if (revisionSelected && selection.revision === null) {
       return notFound("Spec revision not found");
     }
+    const targetRevision = selection.revision;
     const targetSnapshot =
-      targetRevision === null || targetRevision === undefined
+      targetRevision === null
         ? state.currentSnapshot
         : await deps.getRevisionSnapshot(targetRevision.id);
     if (targetSnapshot === null) return notFound("Spec element not found");
 
-    let snapshot = targetSnapshot;
-    let handles = handlesByElementId(resolved.value.spec, snapshot);
-    let row = snapshot.elements.find(
+    const snapshot = targetSnapshot;
+    const handles = handlesByElementId(resolved.value.spec, snapshot);
+    const row = snapshot.elements.find(
       ({ element }) => handles.get(element.id) === requestedHandle,
     );
-    if (row === undefined && targetRevisionId === null) {
-      const olderRevisions = [...state.revisions]
-        .filter((candidate) => candidate.id !== snapshot.revision.id)
-        .sort((left, right) => right.number - left.number);
-      for (const candidate of olderRevisions) {
-        const candidateSnapshot = await deps.getRevisionSnapshot(candidate.id);
-        if (candidateSnapshot === null) continue;
-        const candidateHandles = handlesByElementId(
-          resolved.value.spec,
-          candidateSnapshot,
-        );
-        const candidateRow = candidateSnapshot.elements.find(
-          ({ element }) => candidateHandles.get(element.id) === requestedHandle,
-        );
-        if (candidateRow === undefined) continue;
-        snapshot = candidateSnapshot;
-        handles = candidateHandles;
-        row = candidateRow;
-        break;
-      }
-    }
     if (row === undefined) {
       const address = requestedHandle ?? "";
+      // A handle the current revision retired still resolves in the revision
+      // that last carried it. Answering from that revision silently hands back
+      // withdrawn content as if it were current, so the older revisions are
+      // scanned only to name the one an explicit archaeological read needs.
+      if (!revisionSelected) {
+        const historical = await latestRevisionContainingHandle(
+          deps,
+          resolved.value.spec,
+          state.revisions.filter(
+            (candidate) => candidate.id !== snapshot.revision.id,
+          ),
+          address,
+        );
+        if (historical !== null) {
+          const lastRevision = historical.snapshot.revision;
+          logger.debug("specs.routes.element.historical_only", {
+            projectName: resolved.value.projectName,
+            specId: resolved.value.spec.id,
+            handle: address,
+            lastRevisionNumber: lastRevision.number,
+          });
+          return notFound(
+            "Spec element exists only in a historical revision",
+            "historical_only",
+            {
+              handle: address,
+              elementId: historical.row.element.id,
+              lastRevisionId: lastRevision.id,
+              lastRevisionNumber: lastRevision.number,
+              currentRevisionId: snapshot.revision.id,
+              currentRevisionNumber: snapshot.revision.number,
+            },
+            `Read the historical element with \`cctl spec get ${resolved.value.spec.slug}/${address} --revision ${lastRevision.number}\`. The current revision does not contain this handle.`,
+          );
+        }
+      }
       // A well-formed handle that resolves to nothing is a genuine miss; an
       // ill-formed one is a mis-addressed element, so its refusal teaches the
       // grammar and names the real handle when the value is an element id.
@@ -2738,6 +3050,118 @@ export function createSpecRouteHandlers(
       evidenceState,
       referenceState,
     });
+  }
+
+  /**
+   * The narrow section read. Sections carry no handle, so this is the only
+   * address they have; a dedicated view keeps the element read's approval,
+   * evidence, and reference blocks — all meaningless for a section — out of
+   * the contract instead of filling them with nulls.
+   */
+  async function getSpecSectionGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { element: requestedId } = await context.params;
+    const elementId = requestedId ?? "";
+    const state = await loadCurrentState(deps, resolved.value.spec.id);
+    const searchParams = new URL(request.url).searchParams;
+    const selection = selectRevision(searchParams, state.revisions);
+    if (selection.selected && selection.revision === null) {
+      return notFound("Spec revision not found");
+    }
+    const snapshot =
+      selection.revision === null
+        ? state.currentSnapshot
+        : await deps.getRevisionSnapshot(selection.revision.id);
+    if (snapshot === null) return sectionNotFound(elementId);
+
+    const row = snapshot.elements.find(
+      (candidate) => candidate.element.id === elementId,
+    );
+    if (row === undefined) {
+      // Same rule as the element read: a retired id resolves in the revision
+      // that last carried it, and that revision is named rather than answered
+      // from, so an authoring read never sees withdrawn content as current.
+      if (!selection.selected) {
+        const historical = await latestContainingElement(
+          deps,
+          state.revisions.filter(
+            (candidate) => candidate.id !== snapshot.revision.id,
+          ),
+          elementId,
+        );
+        if (historical !== null) {
+          const lastRevision = historical.snapshot.revision;
+          logger.debug("specs.routes.section.historical_only", {
+            projectName: resolved.value.projectName,
+            specId: resolved.value.spec.id,
+            elementId,
+            lastRevisionNumber: lastRevision.number,
+          });
+          return notFound(
+            "Spec element exists only in a historical revision",
+            "historical_only",
+            {
+              handle: null,
+              elementId,
+              lastRevisionId: lastRevision.id,
+              lastRevisionNumber: lastRevision.number,
+              currentRevisionId: snapshot.revision.id,
+              currentRevisionNumber: snapshot.revision.number,
+            },
+            `Read the historical section with \`cctl spec section get ${resolved.value.spec.slug} --id ${elementId} --revision ${lastRevision.number}\`. The current revision does not contain this section.`,
+          );
+        }
+      }
+      return sectionNotFound(elementId);
+    }
+
+    const payload = row.version.payload;
+    if (payload.kind !== "section") {
+      const handle = elementHandleInSnapshot(snapshot, row.element.id);
+      logger.debug("specs.routes.section.not_section", {
+        projectName: resolved.value.projectName,
+        specId: resolved.value.spec.id,
+        elementId,
+        kind: payload.kind,
+      });
+      return notFound(
+        "Spec element is not a section",
+        "not_section",
+        { elementId, kind: payload.kind, handle },
+        handle === null
+          ? `This ${payload.kind} has no allocated handle; read the whole revision with \`cctl spec show ${resolved.value.spec.slug} --rendered\`.`
+          : `Read this ${payload.kind} with \`cctl spec get ${resolved.value.spec.slug}/${handle}\`.`,
+      );
+    }
+
+    logger.debug("specs.routes.section.complete", {
+      projectName: resolved.value.projectName,
+      specId: resolved.value.spec.id,
+      elementId,
+      revisionNumber: snapshot.revision.number,
+    });
+    return NextResponse.json({
+      specId: resolved.value.spec.id,
+      slug: resolved.value.spec.slug,
+      kind: "section",
+      handle: null,
+      elementId: row.element.id,
+      role: payload.role,
+      title: payload.title,
+      body: payload.body,
+      elementVersion: row.version.elementVersion,
+      position: row.version.position,
+      revision: {
+        id: snapshot.revision.id,
+        number: snapshot.revision.number,
+        state: snapshot.revision.state,
+        authoringStage: snapshot.revision.authoringStage,
+      },
+    } satisfies SpecSectionView);
   }
 
   async function searchSpecGET(
@@ -2945,6 +3369,7 @@ export function createSpecRouteHandlers(
     const diff = diffRevisions(
       fromSnapshot === null ? [] : toDiffRows(fromSnapshot),
       toDiffRows(toSnapshot),
+      toCitationDiffContext(fromSnapshot, toSnapshot),
     );
     const changeByElementId = new Map(
       diff.changeList.map((change) => [change.elementId, change]),
@@ -3025,6 +3450,7 @@ export function createSpecRouteHandlers(
     getSpecLintGET,
     getSpecDeltaGET,
     getSpecElementGET,
+    getSpecSectionGET,
     searchSpecGET,
     searchProjectSpecsGET,
     getSpecDiffGET,
@@ -3045,6 +3471,7 @@ export const specEditContextGET = withTracing(handlers.getSpecEditContextGET);
 export const specLintGET = withTracing(handlers.getSpecLintGET);
 export const specDeltaGET = withTracing(handlers.getSpecDeltaGET);
 export const specElementGET = withTracing(handlers.getSpecElementGET);
+export const specSectionGET = withTracing(handlers.getSpecSectionGET);
 export const specSearchGET = withTracing(handlers.searchSpecGET);
 export const specProjectSearchGET = withTracing(handlers.searchProjectSpecsGET);
 export const specDiffGET = withTracing(handlers.getSpecDiffGET);
@@ -3105,6 +3532,11 @@ export interface SpecWriteRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
   resolveSpec(projectPath: string, slug: string): Promise<Spec | null>;
   getServices(projectPath: string): Promise<SpecMutationServices>;
+  listRevisions(specId: string): Promise<SpecRevision[]>;
+  getRevisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
+  findQuestionsBySpecId(specId: string): SpecQuestionRow[];
+  findAssumptionsBySpecId(specId: string): SpecAssumptionRow[];
+  findEventsBySpecId(specId: string): SpecEventRow[];
 }
 
 const createSpecBodySchema = createAuthoringSpecInputSchema.omit({
@@ -3237,6 +3669,24 @@ const disposeAssumptionBodySchema = disposeAssumptionInputSchema.omit({
   specId: true,
   actor: true,
 });
+const editAttentionRecordBodySchema = editAttentionRecordInputSchema.omit({
+  specId: true,
+  actor: true,
+});
+const withdrawAttentionRecordBodySchema =
+  withdrawAttentionRecordInputSchema.omit({
+    specId: true,
+    actor: true,
+  });
+const supersedeAssumptionBodySchema = supersedeAssumptionInputSchema.omit({
+  specId: true,
+  actor: true,
+});
+const mutateAssumptionCitationBodySchema =
+  mutateAssumptionCitationInputSchema.omit({
+    specId: true,
+    actor: true,
+  });
 const changePolicyBodySchema = changeSpecPolicyInputSchema.omit({
   specId: true,
   actor: true,
@@ -3389,7 +3839,12 @@ async function parseActionBody<T>(
 }
 
 function refusalStatus(refusal: Pick<Refusal, "code">): number {
-  if (refusal.code === "human_act_required") return 403;
+  if (
+    refusal.code === "human_act_required" ||
+    refusal.code === "authoring_agent_required"
+  ) {
+    return 403;
+  }
   if (refusal.code === "validation") return 400;
   if (refusal.code === "not_found") return 404;
   return 409;
@@ -3474,6 +3929,7 @@ function humanActRequiredResponse(action: string): Response {
   return specRefusalResponse({
     code: "human_act_required",
     unmetConditions: [`${action} is a human-only Spec Studio action.`],
+    rationale: HUMAN_ACT_REQUIRED_RATIONALE,
     instruction: HUMAN_ONLY_ACTIONS.get(action) ?? BROWSER_SESSION_REMEDY,
   });
 }
@@ -3661,13 +4117,21 @@ async function invokeAction<T>(
 }
 
 function createDefaultWriteDeps(): SpecWriteRouteDeps {
+  const db = getStateDb();
+  const specs = createSpecsRepo(db, getSharedWriteQueue());
+  const review = createSpecReviewRepo(db);
+  const events = createSpecEventsRepo(db);
   return {
     auth: createAgentAuth(),
     resolveProjectPath: defaultResolveProjectPath,
     async resolveSpec(projectPath, slug) {
-      const repo = createSpecsRepo(getStateDb(), getSharedWriteQueue());
-      return repo.resolve(projectPath, slug);
+      return specs.resolve(projectPath, slug);
     },
+    listRevisions: (specId) => specs.listRevisions(specId),
+    getRevisionSnapshot: (revisionId) => specs.getRevisionSnapshot(revisionId),
+    findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
+    findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
+    findEventsBySpecId: (specId) => events.findBySpecId(specId),
     async getServices(projectPath) {
       const { createProductionSpecRouteServices } =
         await import("./service-factory");
@@ -3753,6 +4217,46 @@ export function createSpecWriteRouteHandlers(
         specId,
         actor: actor.value,
       });
+      const questionView = async (questionId: string) => {
+        const attention = await loadAttentionProjection(
+          deps,
+          resolved.value.spec,
+        );
+        const projection = [
+          ...attention.projection.currentQuestions,
+          ...attention.projection.history.flatMap((record) =>
+            record.kind === "question" ? [record] : [],
+          ),
+        ].find(({ row }) => row.id === questionId);
+        if (projection === undefined) {
+          throw new Error(
+            `question projection missing after mutation: ${questionId}`,
+          );
+        }
+        return toQuestionView(projection);
+      };
+      const assumptionView = async (assumptionId: string) => {
+        const attention = await loadAttentionProjection(
+          deps,
+          resolved.value.spec,
+        );
+        const projection = [
+          ...attention.projection.currentAssumptions,
+          ...attention.projection.history.flatMap((record) =>
+            record.kind === "assumption" ? [record] : [],
+          ),
+        ].find(({ row }) => row.id === assumptionId);
+        if (projection === undefined) {
+          throw new Error(
+            `assumption projection missing after mutation: ${assumptionId}`,
+          );
+        }
+        return toAssumptionView(
+          projection,
+          attention.assumptionsById,
+          attention.draftSnapshot,
+        );
+      };
 
       switch (action) {
         case "draft-upsert":
@@ -3901,7 +4405,7 @@ export function createSpecWriteRouteHandlers(
                 withReviewIdentity(input),
               );
               return result.ok
-                ? { ...result, value: toQuestionView(result.value) }
+                ? { ...result, value: await questionView(result.value.id) }
                 : result;
             },
           );
@@ -3914,7 +4418,7 @@ export function createSpecWriteRouteHandlers(
                 withReviewIdentity(input),
               );
               return result.ok
-                ? { ...result, value: toQuestionView(result.value) }
+                ? { ...result, value: await questionView(result.value.id) }
                 : result;
             },
           );
@@ -3927,7 +4431,7 @@ export function createSpecWriteRouteHandlers(
                 withReviewIdentity(input),
               );
               return result.ok
-                ? { ...result, value: toAssumptionView(result.value) }
+                ? { ...result, value: await assumptionView(result.value.id) }
                 : result;
             },
           );
@@ -3944,9 +4448,40 @@ export function createSpecWriteRouteHandlers(
                 withReviewIdentity(input),
               );
               return result.ok
-                ? { ...result, value: toAssumptionView(result.value) }
+                ? { ...result, value: await assumptionView(result.value.id) }
                 : result;
             },
+          );
+        case "edit-attention":
+          return invokeAction(request, editAttentionRecordBodySchema, (input) =>
+            services.review.editAttentionRecord(withReviewIdentity(input)),
+          );
+        case "withdraw-attention":
+          return invokeAction(
+            request,
+            withdrawAttentionRecordBodySchema,
+            (input) =>
+              services.review.withdrawAttentionRecord(
+                withReviewIdentity(input),
+              ),
+          );
+        case "supersede-assumption":
+          return invokeAction(request, supersedeAssumptionBodySchema, (input) =>
+            services.review.supersedeAssumption(withReviewIdentity(input)),
+          );
+        case "cite-assumption":
+          return invokeAction(
+            request,
+            mutateAssumptionCitationBodySchema,
+            (input) =>
+              services.review.citeAssumption(withReviewIdentity(input)),
+          );
+        case "uncite-assumption":
+          return invokeAction(
+            request,
+            mutateAssumptionCitationBodySchema,
+            (input) =>
+              services.review.unciteAssumption(withReviewIdentity(input)),
           );
         case "change-policy":
           return invokeAction(request, changePolicyBodySchema, (input) =>

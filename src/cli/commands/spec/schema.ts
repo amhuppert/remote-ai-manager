@@ -229,6 +229,11 @@ function positionNotes(baseVersionPhrase: string): string[] {
   return [
     "position: one global order per revision, sorted by position then elementId. Omit position on create to append after the current last element; omit it on update to keep the element's current slot.",
     "Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak.",
+    // The generated shape presents parentElementId as an ordinary writable
+    // field, which reads as an invitation to rehome an element. The rule has to
+    // be stated where the write is authored, not only inside the refusal an
+    // already-written document earns.
+    "parentElementId cannot change after creation. A create must state it — the elementId of the containing element, or null for a top-level one — and an update may leave it out, because an update cannot move anything. An update that names a DIFFERENT parent, including null against a real parent, is refused with parent_immutable and nothing is written: a moved element would retroactively change what every frozen revision contained. To place content elsewhere, write a new element under the parent you want and `cctl spec remove` the old one.",
     `elementId is caller-assigned and stable — reuse it to update the element, paired with ${baseVersionPhrase}.`,
     // Learned by refusal in the field (#60): an ABANDONED spec still owns its
     // ids, so the convention has to be stated before the first write, not
@@ -500,6 +505,7 @@ function batchDocument(): SchemaDocument {
       // would send an author looking for a field that is not in the refusal.
       "A stale write refuses with the winning element version in both forms; only the lone-object form also returns the winning content. Re-read the element to see what a batch lost to.",
       "Element kinds may be mixed, but each one must be admitted by the draft's current authoring stage — the same rule a single write obeys.",
+      "A refusal is reported against the index of the element that earned it, so an omitted or contradicted parentElementId names the item to fix rather than the batch.",
       ...positionNotes("this element's own baseElementVersion"),
       DRAFT_REINTRODUCTION_NOTE,
       ...BASE_VERSION_NOTES,
@@ -748,6 +754,7 @@ const readEnvelopeReferenceSchema = z
             "spec status",
             "spec lint",
             "spec get",
+            "spec section get",
           ]),
           view: z
             .enum(["summary", "outline", "bounded", "rendered", "full"])
@@ -825,6 +832,13 @@ const READ_ENVELOPE_REFERENCE: z.infer<typeof readEnvelopeReferenceSchema> = {
       disclosure:
         "element is the complete addressed view; content-element identity is also hoisted beside it",
     },
+    {
+      command: "spec section get",
+      view: null,
+      payloadFields: [...SPEC_READ_ENVELOPE_FIELDS.section],
+      disclosure:
+        "section is the complete view of one handle-less section, addressed by --id and carrying handle: null literally; elementVersion is the compare-and-swap token for the next draft",
+    },
   ],
   revisionRoles: {
     baseRevision:
@@ -846,12 +860,15 @@ function readEnvelopeDocument(): SchemaDocument {
       "cctl spec status <slug>",
       "cctl spec lint <slug>",
       "cctl spec get <slug>/<handle>",
+      "cctl spec section get <slug> --id <element-id>",
     ],
     jsonSchema: schema,
     enums: collectEnums(schema, ""),
     example: READ_ENVELOPE_REFERENCE,
     notes: [
-      "Every success envelope carries ok: true. Show is flattened: command, view, storage, spec identity, revision, and the selected view fields are siblings rather than a named show payload. Status, lint, and get keep their named payloads under status, lint, and element.",
+      "Every success envelope carries ok: true. Show is flattened: command, view, storage, spec identity, revision, and the selected view fields are siblings rather than a named show payload. Status, lint, get, and section get keep their named payloads under status, lint, element, and section.",
+      "`spec get` and `spec section get` partition the addressable content: a handled element is read by <slug>/<handle>, and a section — which has no handle — is read by --id <element-id> from the ids `spec show` lists. The section payload's handle is literally null, so nothing derives a handle from it.",
+      "Both narrow reads answer only from the current revision unless --revision selects one, taking either a revision number or a revision id; an element the current revision retired is refused with historical_only naming the revision that last carried it.",
       "Show summary and outline, and both status views, normally use storage: inline. If either text or JSON serialization would exceed the stdout budget, storage: artifact and reason: stdout_budget_exceeded point to the exact inline envelope in artifact.path. Show rendered and show full always use storage: artifact.",
       "Status is a two-level ladder: the default bounded view prints the same rows as its text sections and accounts for the rest under disclosure, and `--full` returns every row.",
       "baseRevision is the currentRevision lineage head's immediate basedOnRevisionId parent; it is the review comparison base, not a synonym for an approved revision.",

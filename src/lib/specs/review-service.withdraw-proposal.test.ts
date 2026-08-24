@@ -30,6 +30,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { WITHDRAW_AFTER_ENGAGEMENT_RATIONALE } from "./refusal-rationale";
 import { createReviewService, type ReviewService } from "./review-service";
 import type { ActorProvenance, SpecGatePolicy } from "./schemas";
 
@@ -271,6 +272,42 @@ describe("withdrawProposal", () => {
     });
   });
 
+  /**
+   * The receipt is where a reopen is priced. Reading only what the reopened
+   * draft still owes says every approval the attempt collected is gone, so the
+   * withdrawal answers with both sides of the account of the draft that now
+   * exists — never of the revision it withdrew.
+   */
+  it("answers with the approval ledger of the reopened draft", async () => {
+    const { specId, revisionId } = await proposeSpec("ledger");
+
+    const result = await reviewing.withdrawProposal({
+      specId,
+      revisionId,
+      actor: PROPOSER,
+    });
+
+    if (!result.ok) throw new Error("the withdrawal was refused");
+    expect(result.value.approvalLedger).toMatchObject({
+      satisfied: 0,
+      carried: 0,
+      currentRevision: 0,
+      importSettled: 0,
+      combinedAct: 0,
+      governedBy: "per_subject",
+      carryRule: "unchanged subject content under the same applicable gate",
+    });
+    // The subjects are the reopened draft's, addressed by its own handles.
+    expect(
+      result.value.approvalLedger.subjects.map(
+        ({ gate, subject, classification }) => [gate, subject, classification],
+      ),
+    ).toEqual([
+      ["requirements", "R1", "pending"],
+      ["design", "D1", "pending"],
+    ]);
+  });
+
   it("clears the ended attempt's authoring attention and leaves nothing open", async () => {
     const { specId, revisionId } = await proposeSpec("attention");
     const requested = await reviewing.requestApproval({
@@ -444,6 +481,58 @@ describe("withdrawProposal", () => {
     expect((await specs.findRevision(revisionId))?.state).toBe("proposed");
   });
 
+  // The principle used to ride along at the end of the instruction, where it
+  // read as an aside on the recovery step. As a typed field it is the reason
+  // the refusal exists, and the instruction is left saying only what to do.
+  it("carries the withdraw-after-engagement principle as a typed rationale, not as instruction prose", async () => {
+    const { specId, revisionId } = await proposeSpec("typed-rationale");
+    const approved = await reviewing.approveItem({
+      specId,
+      revisionId,
+      subjectKind: "requirement",
+      elementId: "typed-rationale-r1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(approved.ok).toBe(true);
+
+    const result = await reviewing.withdrawProposal({
+      specId,
+      revisionId,
+      actor: PROPOSER,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      refusal: {
+        code: "gate_blocked",
+        unmetConditions: [
+          "Revision 1 is no longer an untouched proposal: a human has already approved or unapproved content on it.",
+        ],
+        rationale: WITHDRAW_AFTER_ENGAGEMENT_RATIONALE,
+        instruction:
+          "Ask a human to Request Changes on this revision in Spec Studio.",
+      },
+    });
+  });
+
+  // A rationale explains a "no". A receipt for something that happened has
+  // nothing to justify, so nothing on the success path carries the field.
+  it("puts no rationale on the receipt for a withdrawal that succeeds", async () => {
+    // The slug must not contain the word the assertion scans for: element ids
+    // derived from it surface in the receipt's approval ledger.
+    const { specId, revisionId } = await proposeSpec("bare-success-receipt");
+
+    const result = await reviewing.withdrawProposal({
+      specId,
+      revisionId,
+      actor: PROPOSER,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("rationale");
+  });
+
   it("refuses once a human resolved or dismissed a review thread", async () => {
     const { specId, revisionId } = await proposeSpec("resolved-thread");
     await reviewing.comment({
@@ -452,7 +541,17 @@ describe("withdrawProposal", () => {
       elementId: "resolved-thread-r1",
       threadId: "thread-1",
       parentCommentId: null,
-      anchor: { quote: "A proposing agent" },
+      anchor: {
+        sectionId: "requirements",
+        headingLabel: "Requirements",
+        line: 1,
+        charStart: 0,
+        charEnd: 17,
+        quote: "A proposing agent",
+        prefix: "",
+        suffix: "",
+        docRevision: revisionId,
+      },
       body: "Name the refusal code.",
       blocking: true,
       actor: HUMAN,
@@ -480,7 +579,17 @@ describe("withdrawProposal", () => {
       elementId: "open-comment-r1",
       threadId: "thread-open",
       parentCommentId: null,
-      anchor: { quote: "A proposing agent" },
+      anchor: {
+        sectionId: "requirements",
+        headingLabel: "Requirements",
+        line: 1,
+        charStart: 0,
+        charEnd: 17,
+        quote: "A proposing agent",
+        prefix: "",
+        suffix: "",
+        docRevision: revisionId,
+      },
       body: "This needs a refusal code.",
       blocking: true,
       actor: HUMAN,

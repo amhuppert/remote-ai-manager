@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { emptyApprovalLedger } from "./approval-ledger";
 import {
   specStatusViewSchema as clientSpecStatusViewSchema,
   specSummaryViewSchema as clientSpecSummaryViewSchema,
@@ -19,6 +20,7 @@ describe("Spec Studio query contracts", () => {
       phase: { primary: "draft", authoringStage: "plan" },
       gates: [],
       pendingApprovals: [],
+      approvalLedger: emptyApprovalLedger(),
       openQuestions: [],
       assumptions: [],
       taskPlan: [

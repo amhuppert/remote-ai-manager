@@ -49,6 +49,10 @@ function draftDetailFixture(): SpecDetailView {
       ...entry,
       version: { ...entry.version, revisionId: "revision-2" },
     })),
+    assumptionCitations: snapshot.assumptionCitations.map((citation) => ({
+      ...citation,
+      revisionId: "revision-2",
+    })),
   };
   return detail;
 }
@@ -156,6 +160,10 @@ describe("SpecElementReader", () => {
               }
             : {}),
         },
+      })),
+      assumptionCitations: approved.assumptionCitations.map((citation) => ({
+        ...citation,
+        revisionId: draftRevision.id,
       })),
     };
 

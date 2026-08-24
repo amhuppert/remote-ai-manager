@@ -40,6 +40,7 @@ import {
 } from "./delivery-plan-hash";
 import type { SpecEventsPublisher } from "./events";
 import { dialRequiresHumanApproval, resolveDial } from "./policy";
+import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import type { SpecPolicyAdmissionNotifier } from "./policy-admissions";
 import {
   deliveryPlanDocumentDiff,
@@ -1582,6 +1583,7 @@ function humanSignoff(slug: string): PlanResult<never> {
       unmetConditions: [
         "The execution-start policy requires a human sign-off.",
       ],
+      rationale: HUMAN_ACT_REQUIRED_RATIONALE,
       instruction: `Sign off the candidate in Spec Studio before starting ${slug}.`,
     },
   };
@@ -1594,6 +1596,7 @@ function humanReaffirmation(slug: string): PlanResult<never> {
       unmetConditions: [
         "A pending reaffirmation must be confirmed by a human.",
       ],
+      rationale: HUMAN_ACT_REQUIRED_RATIONALE,
       instruction: `Reaffirm the criterion in Spec Studio, then re-read \`cctl spec plan status ${slug}\`.`,
     },
   };

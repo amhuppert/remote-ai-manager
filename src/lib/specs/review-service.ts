@@ -1,13 +1,19 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { createLogger } from "@/lib/logging";
+import { commentAnchorSchema } from "@/lib/document-comments/schemas";
 import {
   actorProvenanceSchema,
+  specAssumptionCitationsMutatedEventPayloadSchema,
+  specAttentionEditPayloadSchema,
+  specAttentionMutationReceiptSchema,
   specApprovalRequestScopeSchema,
   specAssumptionDispositionSchema,
   specGateSchema,
   specGatePolicySchema,
+  specReviewRecordMutatedEventPayloadSchema,
+  specSupersedeAssumptionPayloadSchema,
   type ActorProvenance,
   type AgentActorProvenance,
   type Spec,
@@ -16,12 +22,16 @@ import {
   type SpecGate,
   type SpecGatePolicy,
   type SpecApprovalRow,
+  type SpecAssumptionCitation,
   type SpecAssumptionRow,
+  type SpecAttentionMutationReceipt,
   type SpecCommentRow,
   type SpecQuestionRow,
+  type SpecRecordAuditSnapshot,
   type SpecRevision,
   type SpecRevisionSnapshot,
   type SpecRevisionSupersession,
+  type SpecSupersedeAssumptionPayload,
 } from "@/lib/specs/schemas";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type {
@@ -37,12 +47,18 @@ import type {
 import { stableStringify } from "@/lib/state-store/serialization";
 
 import { draftAuthoringSequence } from "./authoring-sequence";
+import {
+  assumptionAuditSnapshot,
+  assumptionCitationSnapshot,
+  questionAuditSnapshot,
+} from "./attention-records";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
 } from "./events";
 import { formatBareElementHandle } from "./handles";
 import { COMBINED_APPROVAL_DIAL, resolveDial } from "./policy";
+import { rationaleForCode } from "./refusal-rationale";
 import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
@@ -53,7 +69,11 @@ import {
   validateApprovalRequest,
   EXECUTION_SCOPED_GATES,
 } from "./gate-projection";
-import { authoringReviewProjection } from "./authoring-review-projection";
+import { emptyApprovalLedger, type ApprovalLedger } from "./approval-ledger";
+import {
+  authoringReviewProjection,
+  type AuthoringReviewProjection,
+} from "./authoring-review-projection";
 import { lint } from "./lint";
 import {
   dismissSupersededHumanActRefusal,
@@ -66,7 +86,11 @@ import {
   evaluateProposalWithdrawal,
   proposalAuthor,
 } from "./proposal-withdrawal";
-import { loadProposalState, type LoadedProposalState } from "./review-state";
+import {
+  elementHandleInSnapshot,
+  loadProposalState,
+  type LoadedProposalState,
+} from "./review-state";
 import { governanceBaseRevisionId } from "./revision-lineage";
 import {
   approveElement,
@@ -97,9 +121,9 @@ export const reviewCommentInputSchema = reviewIdentitySchema
   .extend({
     elementId: z.string().min(1),
     threadId: z.string().min(1),
-    parentCommentId: z.string().min(1).nullable(),
-    anchor: z.unknown(),
-    body: z.string(),
+    parentCommentId: z.null(),
+    anchor: commentAnchorSchema,
+    body: z.string().trim().min(1),
     blocking: z.boolean(),
   })
   .strict();
@@ -238,6 +262,7 @@ export const answerQuestionInputSchema = z
   .object({
     specId: z.string().min(1),
     questionId: z.string().min(1),
+    recordVersion: z.number().int().positive(),
     answer: z.string(),
     actor: actorProvenanceSchema,
   })
@@ -270,6 +295,21 @@ export const requestApprovalInputSchema = reviewIdentitySchema
   .strict();
 export type RequestApprovalInput = z.infer<typeof requestApprovalInputSchema>;
 
+/**
+ * Whether the human-facing Needs You notice for a durably committed request
+ * reached the notification layer. It is never a verdict on the request itself:
+ * `delivery-uncertain` means the ask exists and only its notice may be
+ * missing, which repeating `request-approval` re-fires against the same
+ * attention id.
+ */
+const approvalRequestDeliveryOutcomeSchema = z.enum([
+  "delivered",
+  "delivery-uncertain",
+]);
+type ApprovalRequestDeliveryOutcome = z.infer<
+  typeof approvalRequestDeliveryOutcomeSchema
+>;
+
 export const approvalRequestReceiptSchema = requestApprovalInputSchema
   .omit({ specId: true, actor: true })
   .extend({
@@ -293,22 +333,115 @@ export const approvalRequestReceiptSchema = requestApprovalInputSchema
     outstandingSubjects: z.array(z.string().min(1)),
     /** Whether a human sign-off is still owed, which no item approval gives. */
     signOffOutstanding: z.boolean(),
+    /** Whether the Needs You notice for this request reached the human. */
+    deliveryOutcome: approvalRequestDeliveryOutcomeSchema,
   })
   .strict();
 export type ApprovalRequestReceipt = z.infer<
   typeof approvalRequestReceiptSchema
 >;
 
+/**
+ * The request as the transaction committed it. Delivery is attempted only
+ * after the commit, so the outcome cannot be known inside it — the two are
+ * kept apart rather than defaulted to a value the commit never observed.
+ */
+type CommittedApprovalRequest = Omit<ApprovalRequestReceipt, "deliveryOutcome">;
+
 export const disposeAssumptionInputSchema = z
   .object({
     specId: z.string().min(1),
     assumptionId: z.string().min(1),
-    disposition: specAssumptionDispositionSchema.exclude(["proposed"]),
+    recordVersion: z.number().int().positive(),
+    citationVersion: z.number().int().positive().optional(),
+    disposition: specAssumptionDispositionSchema.exclude([
+      "proposed",
+      "withdrawn",
+    ]),
     actor: actorProvenanceSchema,
   })
   .strict();
 export type DisposeAssumptionInput = z.infer<
   typeof disposeAssumptionInputSchema
+>;
+
+export const editAttentionRecordInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    recordId: z.string().min(1),
+    expectedRecordVersion: z.number().int().positive(),
+    expectedCitationVersion: z.number().int().positive().optional(),
+    payload: specAttentionEditPayloadSchema,
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type EditAttentionRecordInput = z.infer<
+  typeof editAttentionRecordInputSchema
+>;
+
+export const withdrawAttentionRecordInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    recordId: z.string().min(1),
+    expectedRecordVersion: z.number().int().positive(),
+    expectedCitationVersion: z.number().int().positive().optional(),
+    reason: z.string().min(1),
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type WithdrawAttentionRecordInput = z.infer<
+  typeof withdrawAttentionRecordInputSchema
+>;
+
+export const supersedeAssumptionInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    assumptionId: z.string().min(1),
+    draftRevisionId: z.string().min(1).optional(),
+    expectedRecordVersion: z.number().int().positive(),
+    expectedCitationVersion: z.number().int().positive(),
+    payload: specSupersedeAssumptionPayloadSchema,
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type SupersedeAssumptionInput = z.infer<
+  typeof supersedeAssumptionInputSchema
+>;
+
+function supersessionRequestHash(input: {
+  specId: string;
+  predecessorAssumptionId: string;
+  draftRevisionId: string;
+  payload: SpecSupersedeAssumptionPayload;
+}): string {
+  return createHash("sha256")
+    .update(stableStringify({ schemaVersion: 1, ...input }))
+    .digest("hex");
+}
+
+function supersessionReplayCandidates(
+  repo: SpecsRepoTransaction,
+  specId: string,
+  requestedRevisionId: string | undefined,
+): SpecRevision[] {
+  if (requestedRevisionId === undefined) return repo.listRevisions(specId);
+  const revision = repo.findRevision(requestedRevisionId);
+  if (revision === null || revision.specId !== specId) return [];
+  return [revision];
+}
+
+export const mutateAssumptionCitationInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    assumptionId: z.string().min(1),
+    revisionId: z.string().min(1),
+    elementHandle: z.string().min(1),
+    expectedCitationVersion: z.number().int().positive(),
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type MutateAssumptionCitationInput = z.infer<
+  typeof mutateAssumptionCitationInputSchema
 >;
 
 export const changeSpecPolicyInputSchema = z
@@ -375,6 +508,18 @@ class CombinedSignOffRefusedError extends Error {
   }
 }
 
+/**
+ * What ending a review attempt leaves behind: the revision it withdrew, the
+ * draft it reopened, and the approval account of that draft. The ledger rides
+ * the act because the receipt is exactly where a reopen is misread as losing
+ * every approval the attempt collected.
+ */
+export interface ReopenedProposal {
+  withdrawn: SpecRevision;
+  draft: SpecRevision;
+  approvalLedger: ApprovalLedger;
+}
+
 export interface ReviewService {
   comment(input: ReviewCommentInput): Promise<ReviewResult<SpecCommentRow>>;
   replyToThread(
@@ -385,7 +530,7 @@ export interface ReviewService {
   ): Promise<ReviewResult<SpecCommentRow[]>>;
   requestChanges(
     input: RequestChangesInput,
-  ): Promise<ReviewResult<{ withdrawn: SpecRevision; draft: SpecRevision }>>;
+  ): Promise<ReviewResult<ReopenedProposal>>;
   approveItem(input: ApproveItemInput): Promise<ReviewResult<SpecApprovalRow>>;
   unapproveItem(
     input: UnapproveItemInput,
@@ -417,7 +562,7 @@ export interface ReviewService {
    */
   withdrawProposal(
     input: WithdrawProposalInput,
-  ): Promise<ReviewResult<{ withdrawn: SpecRevision; draft: SpecRevision }>>;
+  ): Promise<ReviewResult<ReopenedProposal>>;
   /**
    * The human exit from a proposal an approved revision forked past (#50).
    * Deliberately not `requestChanges`: reopening the stranded content as a
@@ -439,6 +584,21 @@ export interface ReviewService {
   answerQuestion(
     input: AnswerQuestionInput,
   ): Promise<ReviewResult<SpecQuestionRow>>;
+  editAttentionRecord(
+    input: EditAttentionRecordInput,
+  ): Promise<ReviewResult<SpecAttentionMutationReceipt>>;
+  withdrawAttentionRecord(
+    input: WithdrawAttentionRecordInput,
+  ): Promise<ReviewResult<SpecAttentionMutationReceipt>>;
+  supersedeAssumption(
+    input: SupersedeAssumptionInput,
+  ): Promise<ReviewResult<SpecAttentionMutationReceipt>>;
+  citeAssumption(
+    input: MutateAssumptionCitationInput,
+  ): Promise<ReviewResult<SpecAttentionMutationReceipt>>;
+  unciteAssumption(
+    input: MutateAssumptionCitationInput,
+  ): Promise<ReviewResult<SpecAttentionMutationReceipt>>;
   proposeAssumption(
     input: ProposeAssumptionInput,
   ): Promise<ReviewResult<SpecAssumptionRow>>;
@@ -514,6 +674,12 @@ export interface SpecReviewFeedbackNotice {
   /** The commented element id; null for revision-level acts. */
   subject: string | null;
   threadId: string | null;
+  /**
+   * The reopened draft's approval account, on the acts that reopen one; null
+   * on every other kind, which changes no approval and would be asserting a
+   * position it did not create.
+   */
+  approvalLedger: ApprovalLedger | null;
   proposer: AgentActorProvenance | null;
   occurredAt: string;
 }
@@ -569,7 +735,41 @@ function refused(
   unmetConditions: string[],
   instruction: string,
 ): ReviewResult<never> {
-  return { ok: false, refusal: { code, unmetConditions, instruction } };
+  // The reason belongs to the code, so this service states it on the same
+  // terms as the transition predicates that raise it elsewhere.
+  const rationale = rationaleForCode(code);
+  return {
+    ok: false,
+    refusal: {
+      code,
+      unmetConditions,
+      ...(rationale === undefined ? {} : { rationale }),
+      instruction,
+    },
+  };
+}
+
+/**
+ * Announces an act that has already committed. A notifier throw here is a
+ * delivery gap, never a failure of the act: propagating it would convert a
+ * durable review act into a 5xx and invite a retry of work that already
+ * happened. Callers report the returned outcome rather than re-deriving it.
+ */
+function notifyAfterCommit(
+  event: string,
+  fields: Record<string, unknown>,
+  notify: () => void,
+): ApprovalRequestDeliveryOutcome {
+  try {
+    notify();
+    return "delivered";
+  } catch (error) {
+    logger.warn(event, {
+      ...fields,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "delivery-uncertain";
+  }
 }
 
 function requireReviewTarget(
@@ -627,6 +827,324 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         );
   }
 
+  function authoringAgentRequired(
+    actor: ActorProvenance,
+  ): ReviewResult<never> | null {
+    return actor.kind === "agent"
+      ? null
+      : refused(
+          "authoring_agent_required",
+          ["Attention record correction is an authoring-agent act."],
+          "Run this correction from an authenticated authoring conversation.",
+        );
+  }
+
+  function abandonedSpecRefusal(spec: Spec): ReviewResult<never> | null {
+    return spec.abandonedAt === null
+      ? null
+      : refused(
+          "attention_state_conflict",
+          ["The spec is abandoned and its attention register is read-only."],
+          "Read the retained attention history; no further mutation is admitted.",
+        );
+  }
+
+  function staleAttentionRefusal(): ReviewResult<never> {
+    return refused(
+      "stale_attention_record",
+      ["The attention record changed after the supplied record version."],
+      "Re-read the Q/A record and reconsider the mutation.",
+    );
+  }
+
+  function staleCitationRefusal(): ReviewResult<never> {
+    return refused(
+      "stale_citation_set",
+      ["The draft citation set changed after the supplied citation version."],
+      "Re-read the current draft citation set and reconsider the mutation.",
+    );
+  }
+
+  function attentionStateRefusal(instruction: string): ReviewResult<never> {
+    return refused(
+      "attention_state_conflict",
+      ["The attention record lifecycle no longer admits this act."],
+      instruction,
+    );
+  }
+
+  function resolveElementId(
+    snapshot: SpecRevisionSnapshot,
+    handle: string,
+  ): string | null {
+    return (
+      snapshot.elements.find(
+        ({ element }) =>
+          elementHandleInSnapshot(snapshot, element.id) === handle,
+      )?.element.id ?? null
+    );
+  }
+
+  function appendRecordMutation(input: {
+    spec: Spec;
+    actor: ActorProvenance;
+    occurredAt: string;
+    operation:
+      | "opened"
+      | "proposed"
+      | "edited"
+      | "answered"
+      | "disposed"
+      | "withdrawn"
+      | "superseded";
+    before: SpecRecordAuditSnapshot | null;
+    after: SpecRecordAuditSnapshot;
+    reason?: string;
+    successorAssumptionId?: string;
+    active: boolean;
+  }): void {
+    const payload = specReviewRecordMutatedEventPayloadSchema.parse({
+      schemaVersion: 1,
+      recordKind: input.after.kind,
+      recordId: input.after.recordId,
+      recordNumber: input.after.number,
+      attentionId: input.after.recordId,
+      operation: input.operation,
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+      ...(input.successorAssumptionId === undefined
+        ? {}
+        : { successorAssumptionId: input.successorAssumptionId }),
+      active: input.active,
+      before: input.before,
+      after: input.after,
+    });
+    deps.events.appendDurableInTransaction({
+      specId: input.spec.id,
+      occurredAt: input.occurredAt,
+      actor: input.actor,
+      durableEventType: "spec-review-record-mutated",
+      durablePayload: payload,
+    });
+  }
+
+  function appendCitationMutation(input: {
+    spec: Spec;
+    actor: ActorProvenance;
+    occurredAt: string;
+    beforeRevision: SpecRevision;
+    beforeCitations: SpecRevisionSnapshot["assumptionCitations"];
+    outcome: Extract<
+      ReturnType<SpecsRepoTransaction["replaceAssumptionDraftCitations"]>,
+      { kind: "success" }
+    >;
+  }): void {
+    const beforeByKey = new Map(
+      input.beforeCitations.map((citation) => [
+        `${citation.elementId}\u0000${citation.assumptionId}`,
+        citation,
+      ]),
+    );
+    const afterByKey = new Map(
+      input.outcome.citations.map((citation) => [
+        `${citation.elementId}\u0000${citation.assumptionId}`,
+        citation,
+      ]),
+    );
+    const payload = specAssumptionCitationsMutatedEventPayloadSchema.parse({
+      schemaVersion: 1,
+      revisionId: input.beforeRevision.id,
+      beforeCitationVersion: input.beforeRevision.citationVersion,
+      afterCitationVersion: input.outcome.revision.citationVersion,
+      beforeCitationHash: input.beforeRevision.citationHash,
+      afterCitationHash: input.outcome.revision.citationHash,
+      added: input.outcome.added.map(({ elementId, assumptionId }) => {
+        const citation = afterByKey.get(`${elementId}\u0000${assumptionId}`);
+        if (citation === undefined) throw new Error("added citation missing");
+        return { elementId, assumptionId, snapshot: citation.snapshot };
+      }),
+      removed: input.outcome.removed.map(({ elementId, assumptionId }) => {
+        const citation = beforeByKey.get(`${elementId}\u0000${assumptionId}`);
+        if (citation === undefined) throw new Error("removed citation missing");
+        return { elementId, assumptionId, snapshot: citation.snapshot };
+      }),
+      refreshed: input.outcome.refreshed.map(({ elementId, assumptionId }) => {
+        const key = `${elementId}\u0000${assumptionId}`;
+        const before = beforeByKey.get(key);
+        const after = afterByKey.get(key);
+        if (before === undefined || after === undefined) {
+          throw new Error("refreshed citation snapshot missing");
+        }
+        return {
+          elementId,
+          assumptionId,
+          beforeSnapshot: before.snapshot,
+          afterSnapshot: after.snapshot,
+        };
+      }),
+    });
+    deps.events.appendDurableInTransaction({
+      specId: input.spec.id,
+      occurredAt: input.occurredAt,
+      actor: input.actor,
+      durableEventType: "spec-assumption-citations-mutated",
+      durablePayload: payload,
+    });
+  }
+
+  function citationsForAssumption(
+    repo: SpecsRepoTransaction,
+    revisionId: string,
+    assumptionId: string,
+  ): SpecAssumptionCitation[] {
+    return repo
+      .readRevisionCitations(revisionId)
+      .filter((citation) => citation.assumptionId === assumptionId);
+  }
+
+  function assumptionSuccessorId(
+    specId: string,
+    assumptionId: string,
+  ): string | null {
+    return (
+      deps.review
+        .findAssumptionsBySpecId(specId)
+        .find(
+          (assumption) => assumption.supersedes_assumption_id === assumptionId,
+        )?.id ?? null
+    );
+  }
+
+  function citationHandles(
+    snapshot: SpecRevisionSnapshot,
+    references: readonly { elementId: string }[],
+  ): string[] {
+    return references
+      .map(({ elementId }) => elementHandleInSnapshot(snapshot, elementId))
+      .filter((handle): handle is string => handle !== null)
+      .sort();
+  }
+
+  function frozenRevisionCites(
+    repo: SpecsRepoTransaction,
+    specId: string,
+    assumptionId: string,
+  ): boolean {
+    return repo
+      .listRevisions(specId)
+      .filter((revision) => revision.state !== "draft")
+      .some((revision) =>
+        repo
+          .readRevisionCitations(revision.id)
+          .some((citation) => citation.assumptionId === assumptionId),
+      );
+  }
+
+  function currentContentSnapshot(
+    repo: SpecsRepoTransaction,
+    specId: string,
+  ): SpecRevisionSnapshot | null {
+    const draft = repo.findDraft(specId);
+    if (draft !== null) return repo.getRevisionSnapshot(draft.id);
+    const latest = latestRevision(repo.listRevisions(specId));
+    return latest === null ? null : repo.getRevisionSnapshot(latest.id);
+  }
+
+  function citationOutcomeRefusal(
+    outcome: Exclude<
+      ReturnType<SpecsRepoTransaction["replaceAssumptionDraftCitations"]>,
+      { kind: "success" }
+    >,
+  ): ReviewResult<never> {
+    if (outcome.kind === "stale_version") return staleCitationRefusal();
+    if (outcome.kind === "illegal_lifecycle") {
+      return refused(
+        "amendment_required",
+        ["Citation truth is frozen outside a writable draft."],
+        "Open an amendment and retry against its citation version.",
+      );
+    }
+    return refused(
+      "not_found",
+      ["The draft, assumption, or cited element was not found."],
+      "Re-read the current draft and attention register.",
+    );
+  }
+
+  function recordOutcomeRefusal(
+    outcome:
+      | Exclude<
+          ReturnType<SpecReviewRepo["updateOpenQuestion"]>,
+          { kind: "success" }
+        >
+      | Exclude<
+          ReturnType<SpecReviewRepo["updateProposedAssumption"]>,
+          { kind: "success" }
+        >,
+  ): ReviewResult<never> {
+    if (outcome.kind === "stale_version") return staleAttentionRefusal();
+    if (outcome.kind === "illegal_lifecycle") {
+      return attentionStateRefusal(
+        "Read the terminal record; correct a disposed assumption by superseding it.",
+      );
+    }
+    return refused(
+      "not_found",
+      ["Attention record not found."],
+      "Re-read the attention register.",
+    );
+  }
+
+  function attentionReceipt(input: {
+    operation: SpecAttentionMutationReceipt["operation"];
+    before: SpecQuestionRow | SpecAssumptionRow;
+    after: SpecQuestionRow | SpecAssumptionRow;
+    draftRevisionId: string | null;
+    beforeCitationVersion: number | null;
+    afterCitationVersion: number | null;
+    added?: string[];
+    removed?: string[];
+    refreshed?: string[];
+    successor?: SpecAssumptionRow;
+    idempotentReplay?: boolean;
+  }): SpecAttentionMutationReceipt {
+    const recordKind = "status" in input.after ? "question" : "assumption";
+    return specAttentionMutationReceiptSchema.parse({
+      operation: input.operation,
+      recordKind,
+      recordId: input.after.id,
+      recordHandle: formatBareElementHandle({
+        kind: recordKind,
+        number: input.after.number,
+      }),
+      previousRecordVersion: input.before.record_version,
+      newRecordVersion: input.after.record_version,
+      lifecycle:
+        recordKind === "question"
+          ? (input.after as SpecQuestionRow).status
+          : (input.after as SpecAssumptionRow).disposition,
+      draftRevisionId: input.draftRevisionId,
+      previousCitationVersion: input.beforeCitationVersion,
+      newCitationVersion: input.afterCitationVersion,
+      citationChanges: {
+        added: input.added ?? [],
+        removed: input.removed ?? [],
+        refreshed: input.refreshed ?? [],
+      },
+      ...(input.successor === undefined
+        ? {}
+        : {
+            successor: {
+              id: input.successor.id,
+              handle: formatBareElementHandle({
+                kind: "assumption",
+                number: input.successor.number,
+              }),
+            },
+          }),
+      idempotentReplay: input.idempotentReplay ?? false,
+    });
+  }
+
   function grantNoticeFor(
     spec: Spec,
     notice: Pick<
@@ -657,6 +1175,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     subject: string | null,
     threadId: string | null,
     occurredAt: string,
+    approvalLedger: ApprovalLedger | null,
   ): void {
     const proposer = proposalAuthor(
       deps.attention.findBySpecId(spec.id),
@@ -673,6 +1192,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       subject,
       threadId,
       proposer,
+      approvalLedger,
       occurredAt,
     });
   }
@@ -1085,6 +1605,31 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     for (const event of prepared) deps.events.publishAfterCommit(event);
   }
 
+  /**
+   * Retires the Needs You rows for asks that ended without an answer. The act
+   * that ended them is already durable, so this is announcement work: a
+   * notifier failure leaves a stale queue row behind and is logged, never
+   * charged back to the caller whose withdrawal or retirement did land.
+   */
+  function notifyRequestsClosed(
+    specId: string,
+    attentionIds: string[],
+    reason: string,
+    occurredAt: string,
+  ): void {
+    notifyAfterCommit(
+      "specs.review.approval_requests_closed_notify_failed",
+      { specId, attentionIds },
+      () =>
+        deps.notifier?.approvalRequestsClosed({
+          specId,
+          attentionIds,
+          reason,
+          occurredAt,
+        }),
+    );
+  }
+
   function approvalForSubject(
     specId: string,
     revisionId: string,
@@ -1395,6 +1940,16 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       target.revision.authoringStage,
       loaded.reviewSnapshot.governanceBaseRevisionRows,
       loaded.reviewSnapshot.revisionRows,
+      {
+        baseCitationContractVersion:
+          loaded.reviewSnapshot.governanceBaseCitationState
+            .citationContractVersion,
+        draftCitationContractVersion:
+          loaded.reviewSnapshot.citationContractVersion,
+        baseCitations:
+          loaded.reviewSnapshot.governanceBaseCitationState.citations,
+        draftCitations: loaded.reviewSnapshot.citations,
+      },
     ).map((gate) => ({
       gate,
       dial: resolveDial(target.spec.gatePolicy, gate),
@@ -1564,25 +2119,24 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
   }
 
   /**
-   * The subjects the projection still owes on this revision, in gate order.
-   * Derived here rather than taken from the caller: "what is still outstanding"
-   * has exactly one answer, and a list the client assembled a moment earlier
-   * can name a subject the policy collapsed or miss one a concurrent write
-   * opened. Under the combined dial the projection owes none — sign-off itself
-   * records them — so this act adds no second copy.
+   * The one authoring projection this service reads, inside the transaction
+   * that is about to change what it describes. Both the subjects an act still
+   * owes and the ledger a receipt reports come from this single read, so the
+   * two can never disagree about the same revision.
    */
-  function outstandingAuthoringSubjects(
+  function authoringProjection(
     repo: SpecsRepoTransaction,
     spec: Spec,
     snapshot: SpecRevisionSnapshot,
     loaded: LoadedProposalState,
-  ): ApprovalSubject[] {
+  ): AuthoringReviewProjection {
     const revisions = repo.listRevisions(spec.id);
-    const projection = authoringReviewProjection({
+    return authoringReviewProjection({
       policy: spec.gatePolicy,
       snapshot,
       governanceBaseSnapshot: loaded.governanceBaseSnapshot,
       importBaselineRows: loaded.importBaselineRows,
+      importBaselineCitationState: loaded.importBaselineCitationState,
       approvals: deps.review.findApprovalsBySpecId(spec.id),
       admissions: deps.review.findGateAdmissionsBySpecId(spec.id),
       currentExecution: currentExecution(
@@ -1597,6 +2151,47 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         (finding) => finding.severity === "blocks_signoff",
       ),
     });
+  }
+
+  /**
+   * The approval account of the draft a reopen just opened — never of the
+   * revision it withdrew. Read after the reopen commits its rows so it
+   * describes the position the author is actually in: what carried across the
+   * reopen, and what only editing changed.
+   *
+   * An unreadable draft asserts nothing rather than reporting an empty account
+   * as "everything is outstanding".
+   */
+  function reopenedApprovalLedger(
+    repo: SpecsRepoTransaction,
+    spec: Spec,
+    draft: SpecRevision,
+  ): ApprovalLedger {
+    const snapshot = repo.getRevisionSnapshot(draft.id);
+    if (snapshot === null) return emptyApprovalLedger();
+    return authoringProjection(
+      repo,
+      spec,
+      snapshot,
+      loadProposalState(repo, deps.review, deps.links, spec, snapshot),
+    ).approvalLedger;
+  }
+
+  /**
+   * The subjects the projection still owes on this revision, in gate order.
+   * Derived here rather than taken from the caller: "what is still outstanding"
+   * has exactly one answer, and a list the client assembled a moment earlier
+   * can name a subject the policy collapsed or miss one a concurrent write
+   * opened. Under the combined dial the projection owes none — sign-off itself
+   * records them — so this act adds no second copy.
+   */
+  function outstandingAuthoringSubjects(
+    repo: SpecsRepoTransaction,
+    spec: Spec,
+    snapshot: SpecRevisionSnapshot,
+    loaded: LoadedProposalState,
+  ): ApprovalSubject[] {
+    const projection = authoringProjection(repo, spec, snapshot, loaded);
     return projection.pendingApprovals.flatMap((pending): ApprovalSubject[] => {
       if (pending.elementId !== null && pending.gate === "requirements")
         return [{ subjectKind: "requirement", elementId: pending.elementId }];
@@ -1727,6 +2322,167 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     };
   }
 
+  async function mutateAssumptionCitation(
+    input: MutateAssumptionCitationInput,
+    operation: "cite" | "uncite",
+  ): Promise<ReviewResult<SpecAttentionMutationReceipt>> {
+    const parsed = mutateAssumptionCitationInputSchema.parse(input);
+    const actorRefusal = authoringAgentRequired(parsed.actor);
+    if (actorRefusal !== null) return actorRefusal;
+    const occurredAt = now();
+    const transaction = await deps.specs.transaction(
+      `specs.review.${operation}-assumption`,
+      (repo) => {
+        const spec = repo.findById(parsed.specId);
+        const assumption = deps.review.findAssumptionById(parsed.assumptionId);
+        if (
+          spec === null ||
+          assumption === null ||
+          assumption.spec_id !== parsed.specId
+        ) {
+          return {
+            result: refused(
+              "not_found",
+              ["Assumption not found."],
+              "Re-read the attention register.",
+            ),
+            prepared: [],
+          };
+        }
+        const abandonedRefusal = abandonedSpecRefusal(spec);
+        if (abandonedRefusal !== null) {
+          return { result: abandonedRefusal, prepared: [] };
+        }
+        const draft = repo.findDraft(spec.id);
+        const snapshot =
+          draft === null ? null : repo.getRevisionSnapshot(draft.id);
+        if (
+          draft === null ||
+          snapshot === null ||
+          draft.id !== parsed.revisionId
+        ) {
+          return {
+            result: refused(
+              "amendment_required",
+              ["Citation mutations must target the current writable draft."],
+              "Open or re-read the amendment and retry against its revision id.",
+            ),
+            prepared: [],
+          };
+        }
+        if (draft.citationVersion !== parsed.expectedCitationVersion) {
+          return { result: staleCitationRefusal(), prepared: [] };
+        }
+        if (
+          operation === "cite" &&
+          (!["proposed", "confirmed", "deferred"].includes(
+            assumption.disposition,
+          ) ||
+            assumptionSuccessorId(spec.id, assumption.id) !== null)
+        ) {
+          return {
+            result: attentionStateRefusal(
+              "Rejected, withdrawn, and superseded assumptions cannot gain citations.",
+            ),
+            prepared: [],
+          };
+        }
+        const elementId = resolveElementId(snapshot, parsed.elementHandle);
+        if (elementId === null) {
+          return {
+            result: refused(
+              "not_found",
+              ["Citation element handle not found in the current draft."],
+              "Re-read the draft and choose an existing element handle.",
+            ),
+            prepared: [],
+          };
+        }
+        const outcome = repo.mutateDraftCitation(
+          operation === "cite"
+            ? {
+                operation,
+                revisionId: draft.id,
+                specId: spec.id,
+                assumptionId: assumption.id,
+                elementId,
+                expectedCitationVersion: parsed.expectedCitationVersion,
+                snapshot: assumptionCitationSnapshot(assumption, occurredAt),
+                updatedAt: occurredAt,
+              }
+            : {
+                operation,
+                revisionId: draft.id,
+                specId: spec.id,
+                assumptionId: assumption.id,
+                elementId,
+                expectedCitationVersion: parsed.expectedCitationVersion,
+                updatedAt: occurredAt,
+              },
+        );
+        if (outcome.kind !== "success") {
+          return {
+            result: citationOutcomeRefusal(outcome),
+            prepared: [],
+          };
+        }
+        if (outcome.changed) {
+          appendCitationMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            beforeRevision: draft,
+            beforeCitations: snapshot.assumptionCitations,
+            outcome,
+          });
+        }
+        return {
+          result: {
+            ok: true,
+            value: attentionReceipt({
+              operation: operation === "cite" ? "cited" : "uncited",
+              before: assumption,
+              after: assumption,
+              draftRevisionId: draft.id,
+              beforeCitationVersion: draft.citationVersion,
+              afterCitationVersion: outcome.revision.citationVersion,
+              added: citationHandles(snapshot, outcome.added),
+              removed: citationHandles(snapshot, outcome.removed),
+              refreshed: citationHandles(snapshot, outcome.refreshed),
+              idempotentReplay: !outcome.changed,
+            }),
+          } as ReviewResult<SpecAttentionMutationReceipt>,
+          prepared: outcome.changed
+            ? [
+                appendAttentionEvent(
+                  spec,
+                  parsed.actor,
+                  occurredAt,
+                  `assumption-${operation}d`,
+                  assumption.id,
+                  assumption.disposition === "proposed",
+                ),
+              ]
+            : [],
+        };
+      },
+    );
+    publishAll(transaction.prepared);
+    logger.info(`specs.review.${operation}_assumption.complete`, {
+      specId: parsed.specId,
+      assumptionId: parsed.assumptionId,
+      revisionId: parsed.revisionId,
+      ok: transaction.result.ok,
+      ...(transaction.result.ok
+        ? {
+            citationVersion: transaction.result.value.newCitationVersion,
+            idempotentReplay: transaction.result.value.idempotentReplay,
+          }
+        : { refusalCode: transaction.result.refusal.code }),
+    });
+    return transaction.result;
+  }
+
   return {
     async comment(input) {
       const parsed = reviewCommentInputSchema.parse(input);
@@ -1752,12 +2508,38 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
+          if (target.spec.abandonedAt !== null) {
+            return {
+              result: refused(
+                "gate_blocked",
+                ["Comments cannot be added to an abandoned spec."],
+                "Restore or replace the spec before reviewing it.",
+              ),
+              prepared: [],
+            };
+          }
           if (target.revision.state !== "proposed") {
             return {
               result: refused(
                 "gate_blocked",
                 ["Comments are review actions on proposed revisions."],
                 "Propose a revision before reviewing it.",
+              ),
+              prepared: [],
+            };
+          }
+          const snapshot = repo.getRevisionSnapshot(parsed.revisionId);
+          const carriesElement = snapshot?.elements.some(
+            ({ element }) => element.id === parsed.elementId,
+          );
+          if (carriesElement !== true) {
+            return {
+              result: refused(
+                "not_found",
+                [
+                  `Element ${parsed.elementId} is not carried by the proposed revision.`,
+                ],
+                "Refresh Spec Studio and comment on an element in the current proposal.",
               ),
               prepared: [],
             };
@@ -1805,6 +2587,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           parsed.elementId,
           parsed.threadId,
           occurredAt,
+          null,
         );
       }
       return transaction.result;
@@ -1916,6 +2699,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           transaction.result.value.element_id,
           transaction.result.value.thread_id,
           occurredAt,
+          null,
         );
       }
       logger.info("specs.review.reply.complete", {
@@ -2012,6 +2796,8 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
 
     async openQuestion(input) {
       const parsed = openQuestionInputSchema.parse(input);
+      const actorRefusal = authoringAgentRequired(parsed.actor);
+      if (actorRefusal !== null) return actorRefusal;
       const occurredAt = now();
       const transaction = await deps.specs.transaction(
         "specs.review.open-question",
@@ -2026,6 +2812,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               ),
               prepared: [],
             };
+          }
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
           }
           if (
             parsed.elementId !== null &&
@@ -2047,17 +2837,36 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             element_id: parsed.elementId,
             text: parsed.text,
             provenance_json: stableStringify(parsed.actor),
+            record_version: 1,
             status: "open",
             answer: null,
             answered_at: null,
+            withdrawn_at: null,
             created_at: occurredAt,
             updated_at: occurredAt,
           };
-          deps.review.saveQuestion(row);
+          const inserted = deps.review.insertQuestion(row);
+          if (inserted.kind !== "success") {
+            return {
+              result: attentionStateRefusal(
+                "Retry after re-reading the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "opened",
+            before: null,
+            after: questionAuditSnapshot(inserted.row),
+            active: true,
+          });
           return {
             result: {
               ok: true,
-              value: row,
+              value: inserted.row,
             } as ReviewResult<SpecQuestionRow>,
             prepared: [
               appendAttentionEvent(
@@ -2082,6 +2891,8 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
 
     async answerQuestion(input) {
       const parsed = answerQuestionInputSchema.parse(input);
+      const actorRefusal = humanRequired(parsed.actor);
+      if (actorRefusal !== null) return actorRefusal;
       const occurredAt = now();
       const transaction = await deps.specs.transaction(
         "specs.review.answer-question",
@@ -2102,28 +2913,47 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
+          }
+          if (current.record_version !== parsed.recordVersion) {
+            return { result: staleAttentionRefusal(), prepared: [] };
+          }
           if (current.status !== "open") {
             return {
-              result: refused(
-                "gate_blocked",
-                ["Only an open question can be answered."],
+              result: attentionStateRefusal(
                 "Open a new question if further clarification is needed.",
               ),
               prepared: [],
             };
           }
-          const row: SpecQuestionRow = {
-            ...current,
-            status: "answered",
+          const updated = deps.review.answerOpenQuestion({
+            id: current.id,
+            expectedRecordVersion: parsed.recordVersion,
             answer: parsed.answer,
-            answered_at: occurredAt,
-            updated_at: occurredAt,
-          };
-          deps.review.saveQuestion(row);
+            answeredAt: occurredAt,
+            updatedAt: occurredAt,
+          });
+          if (updated.kind !== "success") {
+            return {
+              result: recordOutcomeRefusal(updated),
+              prepared: [],
+            };
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "answered",
+            before: questionAuditSnapshot(current),
+            after: questionAuditSnapshot(updated.row),
+            active: false,
+          });
           return {
             result: {
               ok: true,
-              value: row,
+              value: updated.row,
             } as ReviewResult<SpecQuestionRow>,
             prepared: [
               appendAttentionEvent(
@@ -2131,7 +2961,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 parsed.actor,
                 occurredAt,
                 "question-answered",
-                row.id,
+                updated.row.id,
                 false,
               ),
             ],
@@ -2147,15 +2977,994 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       return transaction.result;
     },
 
+    async editAttentionRecord(input) {
+      const parsed = editAttentionRecordInputSchema.parse(input);
+      const actorRefusal = authoringAgentRequired(parsed.actor);
+      if (actorRefusal !== null) return actorRefusal;
+      const occurredAt = now();
+      const transaction = await deps.specs.transaction(
+        "specs.review.edit-attention-record",
+        (repo) => {
+          const spec = repo.findById(parsed.specId);
+          if (spec === null) {
+            return {
+              result: refused(
+                "not_found",
+                ["Spec not found."],
+                "Re-read the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
+          }
+
+          if (parsed.payload.kind === "question") {
+            const current = deps.review.findQuestionById(parsed.recordId);
+            if (current === null || current.spec_id !== spec.id) {
+              return {
+                result: refused(
+                  "not_found",
+                  ["Question not found."],
+                  "Re-read the attention register.",
+                ),
+                prepared: [],
+              };
+            }
+            if (current.record_version !== parsed.expectedRecordVersion) {
+              return { result: staleAttentionRefusal(), prepared: [] };
+            }
+            if (current.status !== "open") {
+              return {
+                result: attentionStateRefusal(
+                  "Answered and withdrawn questions are immutable history.",
+                ),
+                prepared: [],
+              };
+            }
+            const snapshot = currentContentSnapshot(repo, spec.id);
+            const elementId =
+              parsed.payload.attachment === undefined
+                ? current.element_id
+                : parsed.payload.attachment.kind === "spec"
+                  ? null
+                  : snapshot === null
+                    ? null
+                    : resolveElementId(
+                        snapshot,
+                        parsed.payload.attachment.handle,
+                      );
+            if (
+              parsed.payload.attachment?.kind === "element" &&
+              elementId === null
+            ) {
+              return {
+                result: refused(
+                  "not_found",
+                  ["Question attachment handle not found in current content."],
+                  "Re-read the spec and choose an existing element handle.",
+                ),
+                prepared: [],
+              };
+            }
+            const updated = deps.review.updateOpenQuestion({
+              id: current.id,
+              expectedRecordVersion: parsed.expectedRecordVersion,
+              text: parsed.payload.text ?? current.text,
+              elementId,
+              updatedAt: occurredAt,
+            });
+            if (updated.kind !== "success") {
+              return {
+                result: recordOutcomeRefusal(updated),
+                prepared: [],
+              };
+            }
+            appendRecordMutation({
+              spec,
+              actor: parsed.actor,
+              occurredAt,
+              operation: "edited",
+              before: questionAuditSnapshot(current),
+              after: questionAuditSnapshot(updated.row),
+              active: true,
+            });
+            return {
+              result: {
+                ok: true,
+                value: attentionReceipt({
+                  operation: "edited",
+                  before: current,
+                  after: updated.row,
+                  draftRevisionId: null,
+                  beforeCitationVersion: null,
+                  afterCitationVersion: null,
+                }),
+              } as ReviewResult<SpecAttentionMutationReceipt>,
+              prepared: [
+                appendAttentionEvent(
+                  spec,
+                  parsed.actor,
+                  occurredAt,
+                  "question-edited",
+                  current.id,
+                  true,
+                ),
+              ],
+            };
+          }
+
+          const current = deps.review.findAssumptionById(parsed.recordId);
+          if (current === null || current.spec_id !== spec.id) {
+            return {
+              result: refused(
+                "not_found",
+                ["Assumption not found."],
+                "Re-read the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          if (current.record_version !== parsed.expectedRecordVersion) {
+            return { result: staleAttentionRefusal(), prepared: [] };
+          }
+          if (current.disposition !== "proposed") {
+            return {
+              result: attentionStateRefusal(
+                "Disposed assumptions are corrected by supersession.",
+              ),
+              prepared: [],
+            };
+          }
+          const draft = repo.findDraft(spec.id);
+          const draftSnapshot =
+            draft === null ? null : repo.getRevisionSnapshot(draft.id);
+          if (
+            frozenRevisionCites(repo, spec.id, current.id) &&
+            draft === null
+          ) {
+            return {
+              result: refused(
+                "amendment_required",
+                ["The proposed assumption is cited by frozen revision truth."],
+                "Open an amendment before correcting the assumption.",
+              ),
+              prepared: [],
+            };
+          }
+          const contentSnapshot = currentContentSnapshot(repo, spec.id);
+          const elementId =
+            parsed.payload.attachment === undefined
+              ? current.element_id
+              : parsed.payload.attachment.kind === "spec"
+                ? null
+                : contentSnapshot === null
+                  ? null
+                  : resolveElementId(
+                      contentSnapshot,
+                      parsed.payload.attachment.handle,
+                    );
+          if (
+            parsed.payload.attachment?.kind === "element" &&
+            elementId === null
+          ) {
+            return {
+              result: refused(
+                "not_found",
+                ["Assumption attachment handle not found in current content."],
+                "Re-read the spec and choose an existing element handle.",
+              ),
+              prepared: [],
+            };
+          }
+          const currentCitations =
+            draft === null
+              ? []
+              : citationsForAssumption(repo, draft.id, current.id);
+          let replacementElementIds: string[] | null = null;
+          if (parsed.payload.citationIntent?.kind === "replace") {
+            if (
+              draft === null ||
+              draftSnapshot === null ||
+              parsed.payload.citationIntent.revisionId !== draft.id
+            ) {
+              return {
+                result: refused(
+                  "amendment_required",
+                  [
+                    "Citation replacement must name the current writable draft.",
+                  ],
+                  "Open or re-read the amendment and retry against its revision id.",
+                ),
+                prepared: [],
+              };
+            }
+            replacementElementIds =
+              parsed.payload.citationIntent.elementHandles.map((handle) =>
+                resolveElementId(draftSnapshot, handle),
+              ) as Array<string | null> as string[];
+            if (replacementElementIds.some((id) => id === null)) {
+              return {
+                result: refused(
+                  "not_found",
+                  [
+                    "One or more citation handles are not in the current draft.",
+                  ],
+                  "Re-read the current draft and choose existing element handles.",
+                ),
+                prepared: [],
+              };
+            }
+          } else if (
+            (parsed.payload.text !== undefined ||
+              parsed.payload.attachment !== undefined) &&
+            currentCitations.length > 0
+          ) {
+            replacementElementIds = currentCitations.map(
+              (citation) => citation.elementId,
+            );
+          }
+          if (
+            replacementElementIds !== null &&
+            (draft === null ||
+              draftSnapshot === null ||
+              parsed.expectedCitationVersion === undefined ||
+              parsed.expectedCitationVersion !== draft.citationVersion)
+          ) {
+            return { result: staleCitationRefusal(), prepared: [] };
+          }
+          const updated = deps.review.updateProposedAssumption({
+            id: current.id,
+            expectedRecordVersion: parsed.expectedRecordVersion,
+            text: parsed.payload.text ?? current.text,
+            elementId,
+            updatedAt: occurredAt,
+          });
+          if (updated.kind !== "success") {
+            return {
+              result: recordOutcomeRefusal(updated),
+              prepared: [],
+            };
+          }
+          let citationOutcome: Extract<
+            ReturnType<SpecsRepoTransaction["replaceAssumptionDraftCitations"]>,
+            { kind: "success" }
+          > | null = null;
+          if (
+            replacementElementIds !== null &&
+            draft !== null &&
+            draftSnapshot !== null
+          ) {
+            const outcome = repo.replaceAssumptionDraftCitations({
+              revisionId: draft.id,
+              specId: spec.id,
+              expectedCitationVersion: draft.citationVersion,
+              replacements: [
+                {
+                  assumptionId: current.id,
+                  elementIds: replacementElementIds,
+                  snapshot: assumptionCitationSnapshot(updated.row, occurredAt),
+                },
+              ],
+              updatedAt: occurredAt,
+            });
+            if (outcome.kind !== "success") {
+              throw new Error(
+                `assumption edit citation mutation failed: ${outcome.kind}`,
+              );
+            }
+            citationOutcome = outcome;
+            if (outcome.changed) {
+              appendCitationMutation({
+                spec,
+                actor: parsed.actor,
+                occurredAt,
+                beforeRevision: draft,
+                beforeCitations: draftSnapshot.assumptionCitations,
+                outcome,
+              });
+            }
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "edited",
+            before: assumptionAuditSnapshot(current, null),
+            after: assumptionAuditSnapshot(updated.row, null),
+            active: true,
+          });
+          const changedCitations =
+            citationOutcome?.changed === true && draftSnapshot !== null;
+          return {
+            result: {
+              ok: true,
+              value: attentionReceipt({
+                operation: "edited",
+                before: current,
+                after: updated.row,
+                draftRevisionId: changedCitations ? (draft?.id ?? null) : null,
+                beforeCitationVersion: changedCitations
+                  ? (draft?.citationVersion ?? null)
+                  : null,
+                afterCitationVersion: changedCitations
+                  ? (citationOutcome?.revision.citationVersion ?? null)
+                  : null,
+                added:
+                  changedCitations && citationOutcome !== null
+                    ? citationHandles(draftSnapshot, citationOutcome.added)
+                    : [],
+                removed:
+                  changedCitations && citationOutcome !== null
+                    ? citationHandles(draftSnapshot, citationOutcome.removed)
+                    : [],
+                refreshed:
+                  changedCitations && citationOutcome !== null
+                    ? citationHandles(draftSnapshot, citationOutcome.refreshed)
+                    : [],
+              }),
+            } as ReviewResult<SpecAttentionMutationReceipt>,
+            prepared: [
+              appendAttentionEvent(
+                spec,
+                parsed.actor,
+                occurredAt,
+                "assumption-edited",
+                current.id,
+                true,
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      logger.info("specs.review.edit_attention_record.complete", {
+        specId: parsed.specId,
+        recordId: parsed.recordId,
+        ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? {
+              recordVersion: transaction.result.value.newRecordVersion,
+              citationVersion:
+                transaction.result.value.newCitationVersion ?? undefined,
+            }
+          : { refusalCode: transaction.result.refusal.code }),
+      });
+      return transaction.result;
+    },
+
+    async withdrawAttentionRecord(input) {
+      const parsed = withdrawAttentionRecordInputSchema.parse(input);
+      const actorRefusal = authoringAgentRequired(parsed.actor);
+      if (actorRefusal !== null) return actorRefusal;
+      const occurredAt = now();
+      const transaction = await deps.specs.transaction(
+        "specs.review.withdraw-attention-record",
+        (repo) => {
+          const spec = repo.findById(parsed.specId);
+          if (spec === null) {
+            return {
+              result: refused(
+                "not_found",
+                ["Spec not found."],
+                "Re-read the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
+          }
+          const question = deps.review.findQuestionById(parsed.recordId);
+          if (question !== null && question.spec_id === spec.id) {
+            if (question.record_version !== parsed.expectedRecordVersion) {
+              return { result: staleAttentionRefusal(), prepared: [] };
+            }
+            if (question.status !== "open") {
+              return {
+                result: attentionStateRefusal(
+                  "Only an open question can be withdrawn.",
+                ),
+                prepared: [],
+              };
+            }
+            const updated = deps.review.withdrawOpenQuestion({
+              id: question.id,
+              expectedRecordVersion: parsed.expectedRecordVersion,
+              withdrawnAt: occurredAt,
+              updatedAt: occurredAt,
+            });
+            if (updated.kind !== "success") {
+              return {
+                result: recordOutcomeRefusal(updated),
+                prepared: [],
+              };
+            }
+            appendRecordMutation({
+              spec,
+              actor: parsed.actor,
+              occurredAt,
+              operation: "withdrawn",
+              before: questionAuditSnapshot(question),
+              after: questionAuditSnapshot(updated.row),
+              reason: parsed.reason,
+              active: false,
+            });
+            return {
+              result: {
+                ok: true,
+                value: attentionReceipt({
+                  operation: "withdrawn",
+                  before: question,
+                  after: updated.row,
+                  draftRevisionId: null,
+                  beforeCitationVersion: null,
+                  afterCitationVersion: null,
+                }),
+              } as ReviewResult<SpecAttentionMutationReceipt>,
+              prepared: [
+                appendAttentionEvent(
+                  spec,
+                  parsed.actor,
+                  occurredAt,
+                  "question-withdrawn",
+                  question.id,
+                  false,
+                ),
+              ],
+            };
+          }
+
+          const current = deps.review.findAssumptionById(parsed.recordId);
+          if (current === null || current.spec_id !== spec.id) {
+            return {
+              result: refused(
+                "not_found",
+                ["Attention record not found."],
+                "Re-read the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          if (current.record_version !== parsed.expectedRecordVersion) {
+            return { result: staleAttentionRefusal(), prepared: [] };
+          }
+          if (current.disposition !== "proposed") {
+            return {
+              result: attentionStateRefusal(
+                "Only a proposed assumption can be withdrawn.",
+              ),
+              prepared: [],
+            };
+          }
+          const draft = repo.findDraft(spec.id);
+          const draftSnapshot =
+            draft === null ? null : repo.getRevisionSnapshot(draft.id);
+          if (
+            frozenRevisionCites(repo, spec.id, current.id) &&
+            draft === null
+          ) {
+            return {
+              result: refused(
+                "amendment_required",
+                ["The assumption is cited by frozen revision truth."],
+                "Open an amendment before withdrawing the assumption.",
+              ),
+              prepared: [],
+            };
+          }
+          const currentCitations =
+            draft === null
+              ? []
+              : citationsForAssumption(repo, draft.id, current.id);
+          if (
+            currentCitations.length > 0 &&
+            (draft === null ||
+              parsed.expectedCitationVersion === undefined ||
+              parsed.expectedCitationVersion !== draft.citationVersion)
+          ) {
+            return { result: staleCitationRefusal(), prepared: [] };
+          }
+          const updated = deps.review.withdrawProposedAssumption({
+            id: current.id,
+            expectedRecordVersion: parsed.expectedRecordVersion,
+            withdrawnAt: occurredAt,
+            updatedAt: occurredAt,
+          });
+          if (updated.kind !== "success") {
+            return {
+              result: recordOutcomeRefusal(updated),
+              prepared: [],
+            };
+          }
+          let citationOutcome: Extract<
+            ReturnType<SpecsRepoTransaction["replaceAssumptionDraftCitations"]>,
+            { kind: "success" }
+          > | null = null;
+          if (
+            currentCitations.length > 0 &&
+            draft !== null &&
+            draftSnapshot !== null
+          ) {
+            const outcome = repo.replaceAssumptionDraftCitations({
+              revisionId: draft.id,
+              specId: spec.id,
+              expectedCitationVersion: draft.citationVersion,
+              replacements: [
+                {
+                  assumptionId: current.id,
+                  elementIds: [],
+                  snapshot: assumptionCitationSnapshot(updated.row, occurredAt),
+                },
+              ],
+              updatedAt: occurredAt,
+            });
+            if (outcome.kind !== "success") {
+              throw new Error(
+                `assumption withdrawal citation mutation failed: ${outcome.kind}`,
+              );
+            }
+            citationOutcome = outcome;
+            if (outcome.changed) {
+              appendCitationMutation({
+                spec,
+                actor: parsed.actor,
+                occurredAt,
+                beforeRevision: draft,
+                beforeCitations: draftSnapshot.assumptionCitations,
+                outcome,
+              });
+            }
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "withdrawn",
+            before: assumptionAuditSnapshot(current, null),
+            after: assumptionAuditSnapshot(updated.row, null),
+            reason: parsed.reason,
+            active: false,
+          });
+          const changedCitations =
+            citationOutcome?.changed === true && draftSnapshot !== null;
+          return {
+            result: {
+              ok: true,
+              value: attentionReceipt({
+                operation: "withdrawn",
+                before: current,
+                after: updated.row,
+                draftRevisionId: draft?.id ?? null,
+                beforeCitationVersion: changedCitations
+                  ? (draft?.citationVersion ?? null)
+                  : null,
+                afterCitationVersion: changedCitations
+                  ? (citationOutcome?.revision.citationVersion ?? null)
+                  : null,
+                removed:
+                  changedCitations && citationOutcome !== null
+                    ? citationHandles(draftSnapshot, citationOutcome.removed)
+                    : [],
+              }),
+            } as ReviewResult<SpecAttentionMutationReceipt>,
+            prepared: [
+              appendAttentionEvent(
+                spec,
+                parsed.actor,
+                occurredAt,
+                "assumption-withdrawn",
+                current.id,
+                false,
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      logger.info("specs.review.withdraw_attention_record.complete", {
+        specId: parsed.specId,
+        recordId: parsed.recordId,
+        ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? {
+              recordVersion: transaction.result.value.newRecordVersion,
+              citationVersion:
+                transaction.result.value.newCitationVersion ?? undefined,
+            }
+          : { refusalCode: transaction.result.refusal.code }),
+      });
+      return transaction.result;
+    },
+
+    async citeAssumption(input) {
+      return mutateAssumptionCitation(input, "cite");
+    },
+
+    async unciteAssumption(input) {
+      return mutateAssumptionCitation(input, "uncite");
+    },
+
+    async supersedeAssumption(input) {
+      const parsed = supersedeAssumptionInputSchema.parse(input);
+      const actorRefusal = authoringAgentRequired(parsed.actor);
+      if (actorRefusal !== null) return actorRefusal;
+      const occurredAt = now();
+      const transaction = await deps.specs.transaction(
+        "specs.review.supersede-assumption",
+        (repo) => {
+          const spec = repo.findById(parsed.specId);
+          if (spec === null) {
+            return {
+              result: refused(
+                "not_found",
+                ["Assumption not found."],
+                "Re-read the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          const existingOperation = deps.review
+            .findAssumptionsBySpecId(spec.id)
+            .find(
+              (assumption) =>
+                assumption.supersession_operation_id ===
+                parsed.payload.operationId,
+            );
+          if (existingOperation !== undefined) {
+            if (
+              existingOperation.supersedes_assumption_id !== parsed.assumptionId
+            ) {
+              return {
+                result: refused(
+                  "idempotency_conflict",
+                  [
+                    "The supersession operation id was already used for different input.",
+                  ],
+                  "Generate a new operation id after re-reading the existing successor.",
+                ),
+                prepared: [],
+              };
+            }
+            const operationRevision = supersessionReplayCandidates(
+              repo,
+              spec.id,
+              parsed.draftRevisionId,
+            ).find(
+              (revision) =>
+                supersessionRequestHash({
+                  specId: parsed.specId,
+                  predecessorAssumptionId: parsed.assumptionId,
+                  draftRevisionId: revision.id,
+                  payload: parsed.payload,
+                }) === existingOperation.supersession_request_hash,
+            );
+            if (operationRevision === undefined) {
+              return {
+                result: refused(
+                  "idempotency_conflict",
+                  [
+                    "The supersession operation id was already used for different input.",
+                  ],
+                  "Generate a new operation id after re-reading the existing successor.",
+                ),
+                prepared: [],
+              };
+            }
+            const predecessor = deps.review.findAssumptionById(
+              parsed.assumptionId,
+            );
+            if (predecessor === null || predecessor.spec_id !== spec.id) {
+              return {
+                result: refused(
+                  "not_found",
+                  ["Supersession replay state was not found."],
+                  "Verify the spec's durable attention and revision state.",
+                ),
+                prepared: [],
+              };
+            }
+            return {
+              result: {
+                ok: true,
+                value: attentionReceipt({
+                  operation: "superseded",
+                  before: predecessor,
+                  after: predecessor,
+                  draftRevisionId: operationRevision.id,
+                  beforeCitationVersion: operationRevision.citationVersion,
+                  afterCitationVersion: operationRevision.citationVersion,
+                  successor: existingOperation,
+                  idempotentReplay: true,
+                }),
+              } as ReviewResult<SpecAttentionMutationReceipt>,
+              prepared: [],
+            };
+          }
+          const current = deps.review.findAssumptionById(parsed.assumptionId);
+          if (current === null || current.spec_id !== parsed.specId) {
+            return {
+              result: refused(
+                "not_found",
+                ["Assumption not found."],
+                "Re-read the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
+          }
+          const existingSuccessorId = assumptionSuccessorId(
+            spec.id,
+            current.id,
+          );
+          if (existingSuccessorId !== null) {
+            return {
+              result: refused(
+                "attention_state_conflict",
+                [
+                  `${formatBareElementHandle({ kind: "assumption", number: current.number })} is already superseded by ${existingSuccessorId}.`,
+                ],
+                "Read the existing successor before deciding whether it needs correction.",
+              ),
+              prepared: [],
+            };
+          }
+          const draft = repo.findDraft(spec.id);
+          const draftSnapshot =
+            draft === null ? null : repo.getRevisionSnapshot(draft.id);
+          if (
+            draft === null ||
+            draftSnapshot === null ||
+            draft.id !== parsed.draftRevisionId
+          ) {
+            return {
+              result: refused(
+                "amendment_required",
+                ["Supersession requires the current writable amendment draft."],
+                "Open or re-read the amendment and retry against its revision id.",
+              ),
+              prepared: [],
+            };
+          }
+          const requestHash = supersessionRequestHash({
+            specId: parsed.specId,
+            predecessorAssumptionId: parsed.assumptionId,
+            draftRevisionId: draft.id,
+            payload: parsed.payload,
+          });
+          if (current.record_version !== parsed.expectedRecordVersion) {
+            return { result: staleAttentionRefusal(), prepared: [] };
+          }
+          if (
+            !["confirmed", "rejected", "deferred"].includes(current.disposition)
+          ) {
+            return {
+              result: attentionStateRefusal(
+                "Only a disposed assumption can be corrected by supersession.",
+              ),
+              prepared: [],
+            };
+          }
+          if (draft.citationVersion !== parsed.expectedCitationVersion) {
+            return { result: staleCitationRefusal(), prepared: [] };
+          }
+          const elementId =
+            parsed.payload.attachment.kind === "spec"
+              ? null
+              : resolveElementId(
+                  draftSnapshot,
+                  parsed.payload.attachment.handle,
+                );
+          if (
+            parsed.payload.attachment.kind === "element" &&
+            elementId === null
+          ) {
+            return {
+              result: refused(
+                "not_found",
+                ["Successor attachment handle not found in the current draft."],
+                "Re-read the draft and choose an existing element handle.",
+              ),
+              prepared: [],
+            };
+          }
+          const targetElementIds =
+            parsed.payload.citations.kind === "clear"
+              ? []
+              : parsed.payload.citations.elementHandles.map((handle) =>
+                  resolveElementId(draftSnapshot, handle),
+                );
+          if (targetElementIds.some((id) => id === null)) {
+            return {
+              result: refused(
+                "not_found",
+                [
+                  "One or more successor citation handles are not in the current draft.",
+                ],
+                "Re-read the draft and choose existing element handles.",
+              ),
+              prepared: [],
+            };
+          }
+          const successorId = newId("assumption");
+          const inserted = deps.review.insertAssumptionSuccessor({
+            predecessorId: current.id,
+            specId: spec.id,
+            expectedRecordVersion: parsed.expectedRecordVersion,
+            operationId: parsed.payload.operationId,
+            requestHash,
+            successor: {
+              id: successorId,
+              elementId,
+              text: parsed.payload.text,
+              proposedByJson: stableStringify(parsed.actor),
+              createdAt: occurredAt,
+              updatedAt: occurredAt,
+            },
+          });
+          if (inserted.kind === "stale_version") {
+            return { result: staleAttentionRefusal(), prepared: [] };
+          }
+          if (inserted.kind === "idempotency_conflict") {
+            return {
+              result: refused(
+                "idempotency_conflict",
+                [
+                  "The supersession operation id was already used for different input.",
+                ],
+                "Generate a new operation id after re-reading the existing successor.",
+              ),
+              prepared: [],
+            };
+          }
+          if (inserted.kind !== "success") {
+            return {
+              result: attentionStateRefusal(
+                "Re-read the predecessor and its existing successor before retrying.",
+              ),
+              prepared: [],
+            };
+          }
+          if (inserted.idempotentReplay) {
+            throw new Error("supersession replay bypassed service preflight");
+          }
+          const citationOutcome = repo.replaceAssumptionDraftCitations({
+            revisionId: draft.id,
+            specId: spec.id,
+            expectedCitationVersion: draft.citationVersion,
+            replacements: [
+              {
+                assumptionId: current.id,
+                elementIds: [],
+                snapshot: assumptionCitationSnapshot(current, occurredAt),
+              },
+              {
+                assumptionId: inserted.successor.id,
+                elementIds: targetElementIds.filter(
+                  (id): id is string => id !== null,
+                ),
+                snapshot: assumptionCitationSnapshot(
+                  inserted.successor,
+                  occurredAt,
+                ),
+              },
+            ],
+            updatedAt: occurredAt,
+          });
+          if (citationOutcome.kind !== "success") {
+            throw new Error(
+              `assumption supersession citation mutation failed: ${citationOutcome.kind}`,
+            );
+          }
+          if (citationOutcome.changed) {
+            appendCitationMutation({
+              spec,
+              actor: parsed.actor,
+              occurredAt,
+              beforeRevision: draft,
+              beforeCitations: draftSnapshot.assumptionCitations,
+              outcome: citationOutcome,
+            });
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "superseded",
+            before: assumptionAuditSnapshot(current, null),
+            after: assumptionAuditSnapshot(
+              inserted.predecessor,
+              inserted.successor.id,
+            ),
+            reason: parsed.payload.reason,
+            successorAssumptionId: inserted.successor.id,
+            active: false,
+          });
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "proposed",
+            before: null,
+            after: assumptionAuditSnapshot(inserted.successor, null),
+            active: true,
+          });
+          return {
+            result: {
+              ok: true,
+              value: attentionReceipt({
+                operation: "superseded",
+                before: current,
+                after: inserted.predecessor,
+                draftRevisionId: draft.id,
+                beforeCitationVersion: citationOutcome.changed
+                  ? draft.citationVersion
+                  : null,
+                afterCitationVersion: citationOutcome.changed
+                  ? citationOutcome.revision.citationVersion
+                  : null,
+                added: citationHandles(draftSnapshot, citationOutcome.added),
+                removed: citationHandles(
+                  draftSnapshot,
+                  citationOutcome.removed,
+                ),
+                refreshed: citationHandles(
+                  draftSnapshot,
+                  citationOutcome.refreshed,
+                ),
+                successor: inserted.successor,
+              }),
+            } as ReviewResult<SpecAttentionMutationReceipt>,
+            prepared: [
+              appendAttentionEvent(
+                spec,
+                parsed.actor,
+                occurredAt,
+                "assumption-superseded",
+                current.id,
+                false,
+              ),
+              appendAttentionEvent(
+                spec,
+                parsed.actor,
+                occurredAt,
+                "assumption-proposed",
+                inserted.successor.id,
+                true,
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      logger.info("specs.review.supersede_assumption.complete", {
+        specId: parsed.specId,
+        assumptionId: parsed.assumptionId,
+        draftRevisionId: parsed.draftRevisionId,
+        ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? {
+              recordVersion: transaction.result.value.newRecordVersion,
+              citationVersion:
+                transaction.result.value.newCitationVersion ?? undefined,
+              successorId: transaction.result.value.successor?.id,
+              idempotentReplay: transaction.result.value.idempotentReplay,
+            }
+          : { refusalCode: transaction.result.refusal.code }),
+      });
+      return transaction.result;
+    },
+
     async proposeAssumption(input) {
       const parsed = proposeAssumptionInputSchema.parse(input);
-      if (parsed.actor.kind !== "agent") {
-        return refused(
-          "gate_blocked",
-          ["Assumptions are proposed by agents for human disposition."],
-          "Record a human decision as intent or ask an agent to propose the assumption.",
-        );
-      }
+      const actorRefusal = authoringAgentRequired(parsed.actor);
+      if (actorRefusal !== null) return actorRefusal;
       const occurredAt = now();
       const transaction = await deps.specs.transaction(
         "specs.review.propose-assumption",
@@ -2171,18 +3980,42 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
-          if (
-            parsed.elementId !== null &&
-            !elementBelongsToSpec(repo, spec.id, parsed.elementId)
-          ) {
-            return {
-              result: refused(
-                "not_found",
-                ["Assumption attachment element not found."],
-                "Refresh the spec and choose an existing element.",
-              ),
-              prepared: [],
-            };
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
+          }
+          const draft = repo.findDraft(spec.id);
+          const draftSnapshot =
+            draft === null ? null : repo.getRevisionSnapshot(draft.id);
+          if (parsed.elementId !== null) {
+            if (draft === null || draftSnapshot === null) {
+              return {
+                result: refused(
+                  "amendment_required",
+                  [
+                    "An attached assumption must become revision-owned truth in a writable draft.",
+                  ],
+                  "Open an amendment, then propose the attached assumption again.",
+                ),
+                prepared: [],
+              };
+            }
+            if (
+              !draftSnapshot.elements.some(
+                ({ element }) => element.id === parsed.elementId,
+              )
+            ) {
+              return {
+                result: refused(
+                  "not_found",
+                  [
+                    "Assumption attachment element not found in the current draft.",
+                  ],
+                  "Refresh the draft and choose an existing element.",
+                ),
+                prepared: [],
+              };
+            }
           }
           const row: SpecAssumptionRow = {
             id: newId("assumption"),
@@ -2191,16 +4024,69 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             element_id: parsed.elementId,
             text: parsed.text,
             proposed_by_json: stableStringify(parsed.actor),
+            record_version: 1,
             disposition: "proposed",
             disposed_at: null,
+            withdrawn_at: null,
+            supersedes_assumption_id: null,
+            supersession_operation_id: null,
+            supersession_request_hash: null,
             created_at: occurredAt,
             updated_at: occurredAt,
           };
-          deps.review.saveAssumption(row);
+          const inserted = deps.review.insertAssumption(row);
+          if (inserted.kind !== "success") {
+            return {
+              result: attentionStateRefusal(
+                "Retry after re-reading the attention register.",
+              ),
+              prepared: [],
+            };
+          }
+          if (
+            parsed.elementId !== null &&
+            draft !== null &&
+            draftSnapshot !== null
+          ) {
+            const citationOutcome = repo.mutateDraftCitation({
+              operation: "cite",
+              revisionId: draft.id,
+              specId: spec.id,
+              assumptionId: inserted.row.id,
+              elementId: parsed.elementId,
+              expectedCitationVersion: draft.citationVersion,
+              snapshot: assumptionCitationSnapshot(inserted.row, occurredAt),
+              updatedAt: occurredAt,
+            });
+            if (citationOutcome.kind !== "success") {
+              throw new Error(
+                `attached assumption citation failed: ${citationOutcome.kind}`,
+              );
+            }
+            if (citationOutcome.changed) {
+              appendCitationMutation({
+                spec,
+                actor: parsed.actor,
+                occurredAt,
+                beforeRevision: draft,
+                beforeCitations: draftSnapshot.assumptionCitations,
+                outcome: citationOutcome,
+              });
+            }
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "proposed",
+            before: null,
+            after: assumptionAuditSnapshot(inserted.row, null),
+            active: true,
+          });
           return {
             result: {
               ok: true,
-              value: row,
+              value: inserted.row,
             } as ReviewResult<SpecAssumptionRow>,
             prepared: [
               appendAttentionEvent(
@@ -2208,7 +4094,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 parsed.actor,
                 occurredAt,
                 "assumption-proposed",
-                row.id,
+                inserted.row.id,
                 true,
               ),
             ],
@@ -2275,6 +4161,8 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               snapshot,
               governanceBaseSnapshot: loaded?.governanceBaseSnapshot ?? null,
               importBaselineRows: loaded?.importBaselineRows ?? null,
+              importBaselineCitationState:
+                loaded?.importBaselineCitationState ?? null,
               approvals,
               admissions: deps.review.findGateAdmissionsBySpecId(
                 target.spec.id,
@@ -2311,7 +4199,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               result: {
                 ok: false,
                 refusal: validation.refusal,
-              } satisfies ReviewResult<ApprovalRequestReceipt>,
+              } satisfies ReviewResult<CommittedApprovalRequest>,
               prepared: [],
             };
           }
@@ -2385,7 +4273,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                   signOffOutstanding: request.signOffOutstanding,
                   alreadyRequested: true,
                 },
-              } satisfies ReviewResult<ApprovalRequestReceipt>,
+              } satisfies ReviewResult<CommittedApprovalRequest>,
               prepared: [],
             };
           }
@@ -2415,7 +4303,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             (candidate) => candidate.attentionId,
           );
 
-          const value: ApprovalRequestReceipt = {
+          const value: CommittedApprovalRequest = {
             attentionId: newId("attention"),
             revisionId: identityRevisionId,
             gate: parsed.gate,
@@ -2428,7 +4316,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           };
           requestedNotice = noticeFor(value.attentionId);
           return {
-            result: { ok: true, value } as ReviewResult<ApprovalRequestReceipt>,
+            result: {
+              ok: true,
+              value,
+            } as ReviewResult<CommittedApprovalRequest>,
             prepared: [
               ...retired.map((candidate) =>
                 appendRequestRetirement(
@@ -2469,16 +4360,29 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       );
       publishAll(transaction.prepared);
       if (transaction.result.ok && retiredAttentionIds.length > 0) {
-        deps.notifier?.approvalRequestsClosed({
-          specId: parsed.specId,
-          attentionIds: retiredAttentionIds,
-          reason:
-            "this request predates approval request scope and was replaced",
+        notifyRequestsClosed(
+          parsed.specId,
+          retiredAttentionIds,
+          "this request predates approval request scope and was replaced",
           occurredAt,
-        });
+        );
       }
+      // The outcome names the delivery of THIS request's notice alone, because
+      // that is the one a repeat of this command re-fires. A retirement notice
+      // that failed is logged above and no repeat reaches it, so reporting the
+      // request as uncertain would point at a recovery that does not recover.
+      let deliveryOutcome: ApprovalRequestDeliveryOutcome = "delivered";
       if (transaction.result.ok && requestedNotice !== null) {
-        deps.notifier?.approvalRequested(requestedNotice);
+        const notice = requestedNotice;
+        deliveryOutcome = notifyAfterCommit(
+          "specs.review.approval_request_notify_failed",
+          {
+            specId: parsed.specId,
+            attentionId: transaction.result.value.attentionId,
+            gate: parsed.gate,
+          },
+          () => deps.notifier?.approvalRequested(notice),
+        );
       }
       logger.info("specs.review.approval_requested", {
         specId: parsed.specId,
@@ -2486,10 +4390,18 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         gate: parsed.gate,
         ok: transaction.result.ok,
         ...(transaction.result.ok
-          ? { alreadyRequested: transaction.result.value.alreadyRequested }
+          ? {
+              alreadyRequested: transaction.result.value.alreadyRequested,
+              deliveryOutcome,
+            }
           : { refusalCode: transaction.result.refusal.code }),
       });
-      return transaction.result;
+      return transaction.result.ok
+        ? {
+            ok: true,
+            value: { ...transaction.result.value, deliveryOutcome },
+          }
+        : transaction.result;
     },
 
     async disposeAssumption(input) {
@@ -2516,24 +4428,31 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
-          const citedByApprovedRevision =
-            current.element_id !== null &&
-            repo
-              .listRevisions(spec.id)
-              .filter((revision) => revision.state === "approved")
-              .some(
-                (revision) =>
-                  revision.proposedAt !== null &&
-                  current.created_at <= revision.proposedAt &&
-                  repo
-                    .getRevisionSnapshot(revision.id)
-                    ?.elements.some(
-                      ({ element }) => element.id === current.element_id,
-                    ) === true,
-              );
+          const abandonedRefusal = abandonedSpecRefusal(spec);
+          if (abandonedRefusal !== null) {
+            return { result: abandonedRefusal, prepared: [] };
+          }
+          if (current.record_version !== parsed.recordVersion) {
+            return { result: staleAttentionRefusal(), prepared: [] };
+          }
+          if (current.disposition !== "proposed") {
+            return {
+              result: attentionStateRefusal(
+                "Correct a disposed assumption by superseding it from an amendment draft.",
+              ),
+              prepared: [],
+            };
+          }
+          const draft = repo.findDraft(spec.id);
+          const draftSnapshot =
+            draft === null ? null : repo.getRevisionSnapshot(draft.id);
+          const draftCitations =
+            draft === null
+              ? []
+              : citationsForAssumption(repo, draft.id, current.id);
           if (
-            current.disposition !== parsed.disposition &&
-            citedByApprovedRevision
+            frozenRevisionCites(repo, spec.id, current.id) &&
+            draft === null
           ) {
             return {
               result: refused(
@@ -2542,24 +4461,83 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                   `${formatBareElementHandle({
                     kind: "assumption",
                     number: current.number,
-                  })} is cited by approved content and cannot change in place.`,
+                  })} is cited by frozen revision truth and has no writable amendment.`,
                 ],
-                "Open an amendment and update the cited content before changing this disposition.",
+                "Open an amendment before recording the disposition.",
               ),
               prepared: [],
             };
           }
-          const row: SpecAssumptionRow = {
-            ...current,
+          if (
+            draftCitations.length > 0 &&
+            (draft === null ||
+              parsed.citationVersion === undefined ||
+              parsed.citationVersion !== draft.citationVersion)
+          ) {
+            return { result: staleCitationRefusal(), prepared: [] };
+          }
+          const updated = deps.review.disposeProposedAssumption({
+            id: current.id,
+            expectedRecordVersion: parsed.recordVersion,
             disposition: parsed.disposition,
-            disposed_at: occurredAt,
-            updated_at: occurredAt,
-          };
-          deps.review.saveAssumption(row);
+            disposedAt: occurredAt,
+            updatedAt: occurredAt,
+          });
+          if (updated.kind !== "success") {
+            return {
+              result: recordOutcomeRefusal(updated),
+              prepared: [],
+            };
+          }
+          if (
+            draftCitations.length > 0 &&
+            draft !== null &&
+            draftSnapshot !== null
+          ) {
+            const citationOutcome = repo.replaceAssumptionDraftCitations({
+              revisionId: draft.id,
+              specId: spec.id,
+              expectedCitationVersion: draft.citationVersion,
+              replacements: [
+                {
+                  assumptionId: updated.row.id,
+                  elementIds: draftCitations.map(
+                    (citation) => citation.elementId,
+                  ),
+                  snapshot: assumptionCitationSnapshot(updated.row, occurredAt),
+                },
+              ],
+              updatedAt: occurredAt,
+            });
+            if (citationOutcome.kind !== "success") {
+              throw new Error(
+                `assumption disposition citation refresh failed: ${citationOutcome.kind}`,
+              );
+            }
+            if (citationOutcome.changed) {
+              appendCitationMutation({
+                spec,
+                actor: parsed.actor,
+                occurredAt,
+                beforeRevision: draft,
+                beforeCitations: draftSnapshot.assumptionCitations,
+                outcome: citationOutcome,
+              });
+            }
+          }
+          appendRecordMutation({
+            spec,
+            actor: parsed.actor,
+            occurredAt,
+            operation: "disposed",
+            before: assumptionAuditSnapshot(current, null),
+            after: assumptionAuditSnapshot(updated.row, null),
+            active: false,
+          });
           return {
             result: {
               ok: true,
-              value: row,
+              value: updated.row,
             } as ReviewResult<SpecAssumptionRow>,
             prepared: [
               appendAttentionEvent(
@@ -2567,7 +4545,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 parsed.actor,
                 occurredAt,
                 "assumption-disposed",
-                row.id,
+                updated.row.id,
                 false,
               ),
             ],
@@ -2715,10 +4693,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           );
           if (!reopened.ok)
             return {
-              result: { ok: false, refusal: reopened.refusal } as ReviewResult<{
-                withdrawn: SpecRevision;
-                draft: SpecRevision;
-              }>,
+              result: {
+                ok: false,
+                refusal: reopened.refusal,
+              } as ReviewResult<ReopenedProposal>,
               prepared: [],
             };
           const { withdrawn, draft } = reopened;
@@ -2728,10 +4706,18 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             target.revision.id,
           );
           return {
-            result: { ok: true, value: { withdrawn, draft } } as ReviewResult<{
-              withdrawn: SpecRevision;
-              draft: SpecRevision;
-            }>,
+            result: {
+              ok: true,
+              value: {
+                withdrawn,
+                draft,
+                approvalLedger: reopenedApprovalLedger(
+                  repo,
+                  target.spec,
+                  draft,
+                ),
+              },
+            } as ReviewResult<ReopenedProposal>,
             prepared: [
               appendEvent(
                 target.spec,
@@ -2761,12 +4747,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       // execution-start ask belongs to the execution, which an ended review
       // attempt does not touch (R3.6).
       if (transaction.result.ok && endedRequests.length > 0) {
-        deps.notifier?.approvalRequestsClosed({
-          specId: parsed.specId,
-          attentionIds: endedRequests.map((request) => request.attentionId),
-          reason: "the revision it asked about was sent back for changes",
+        notifyRequestsClosed(
+          parsed.specId,
+          endedRequests.map((request) => request.attentionId),
+          "the revision it asked about was sent back for changes",
           occurredAt,
-        });
+        );
       }
       // The moment the draft reopens is the moment the proposer can act — the
       // feedback notice is what tells it to read the comments and repair.
@@ -2778,6 +4764,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           null,
           null,
           occurredAt,
+          transaction.result.value.approvalLedger,
         );
       }
       return transaction.result;
@@ -3010,6 +4997,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             null,
             null,
             transaction.signedOff.occurredAt,
+            null,
           );
         }
       }
@@ -3055,6 +5043,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             null,
             null,
             transaction.signedOff.occurredAt,
+            null,
           );
         }
       }
@@ -3293,12 +5282,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       );
       publishAll(transaction.prepared);
       if (transaction.result.ok && endedRequests.length > 0) {
-        deps.notifier?.approvalRequestsClosed({
-          specId: parsed.specId,
-          attentionIds: endedRequests.map((request) => request.attentionId),
-          reason: "the revision it asked about was withdrawn",
+        notifyRequestsClosed(
+          parsed.specId,
+          endedRequests.map((request) => request.attentionId),
+          "the revision it asked about was withdrawn",
           occurredAt,
-        });
+        );
       }
       return transaction.result;
     },
@@ -3393,12 +5382,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       );
       publishAll(transaction.prepared);
       if (transaction.result.ok && endedRequests.length > 0) {
-        deps.notifier?.approvalRequestsClosed({
-          specId: parsed.specId,
-          attentionIds: endedRequests.map((request) => request.attentionId),
-          reason: closedReason,
+        notifyRequestsClosed(
+          parsed.specId,
+          endedRequests.map((request) => request.attentionId),
+          closedReason,
           occurredAt,
-        });
+        );
       }
       logger.info("specs.review.dismiss_superseded_proposal.complete", {
         specId: parsed.specId,
@@ -3452,10 +5441,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               result: {
                 ok: false,
                 refusal: decision.refusal,
-              } as ReviewResult<{
-                withdrawn: SpecRevision;
-                draft: SpecRevision;
-              }>,
+              } as ReviewResult<ReopenedProposal>,
               prepared: [],
             };
           const reopened = withdrawAndOpenDraft(
@@ -3466,10 +5452,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           );
           if (!reopened.ok)
             return {
-              result: { ok: false, refusal: reopened.refusal } as ReviewResult<{
-                withdrawn: SpecRevision;
-                draft: SpecRevision;
-              }>,
+              result: {
+                ok: false,
+                refusal: reopened.refusal,
+              } as ReviewResult<ReopenedProposal>,
               prepared: [],
             };
           const { withdrawn, draft } = reopened;
@@ -3478,10 +5464,18 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             target.revision.id,
           );
           return {
-            result: { ok: true, value: { withdrawn, draft } } as ReviewResult<{
-              withdrawn: SpecRevision;
-              draft: SpecRevision;
-            }>,
+            result: {
+              ok: true,
+              value: {
+                withdrawn,
+                draft,
+                approvalLedger: reopenedApprovalLedger(
+                  repo,
+                  target.spec,
+                  draft,
+                ),
+              },
+            } as ReviewResult<ReopenedProposal>,
             prepared: [
               appendProposalWithdrawnEvent(
                 target.spec,
@@ -3506,12 +5500,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       );
       publishAll(transaction.prepared);
       if (transaction.result.ok && endedRequests.length > 0) {
-        deps.notifier?.approvalRequestsClosed({
-          specId: parsed.specId,
-          attentionIds: endedRequests.map((request) => request.attentionId),
-          reason: closedReason,
+        notifyRequestsClosed(
+          parsed.specId,
+          endedRequests.map((request) => request.attentionId),
+          closedReason,
           occurredAt,
-        });
+        );
       }
       logger.info("specs.review.withdraw_proposal.complete", {
         specId: parsed.specId,

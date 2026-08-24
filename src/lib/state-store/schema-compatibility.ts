@@ -2,7 +2,10 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { createLogger } from "@/lib/logging";
-import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
+import {
+  atomicWriteJson,
+  atomicWriteJsonSync,
+} from "@/lib/shared/atomic-write-json";
 
 const logger = createLogger("state-store/schema-compatibility");
 
@@ -145,6 +148,19 @@ export async function publishSchemaCompatibilityBarrier(
 ): Promise<void> {
   const markerPath = schemaCompatibilityBarrierPath(configDir, version);
   await atomicWriteJson(markerPath, { version });
+  logPublishedBarrier(version, markerPath);
+}
+
+export function publishSchemaCompatibilityBarrierSync(
+  configDir: string,
+  version: number,
+): void {
+  const markerPath = schemaCompatibilityBarrierPath(configDir, version);
+  atomicWriteJsonSync(markerPath, { version });
+  logPublishedBarrier(version, markerPath);
+}
+
+function logPublishedBarrier(version: number, markerPath: string): void {
   logger.info("state-store.schema_compatibility_barrier_published", {
     version,
     markerPath,

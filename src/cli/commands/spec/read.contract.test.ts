@@ -24,8 +24,13 @@ import {
 import { narrowEvidenceKinds } from "@/lib/state-store/migrations/0009-narrow-evidence-kinds";
 import { stableStringify } from "@/lib/state-store/serialization";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
-import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import {
+  computeSpecElementPayloadHash,
+  computeSpecRevisionCitationHash,
+  createSpecsRepo,
+} from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type {
@@ -69,6 +74,9 @@ const revision: SpecRevision = {
   authoringStage: "plan",
   basedOnRevisionId: null,
   contentHash: null,
+  citationContractVersion: 2,
+  citationVersion: 1,
+  citationHash: "0".repeat(64),
   proposedAt: null,
   approvedAt: null,
   externalDelivery: null,
@@ -77,6 +85,7 @@ const revision: SpecRevision = {
 
 const snapshot: SpecRevisionSnapshot = {
   revision,
+  assumptionCitations: [],
   elements: [
     {
       element: {
@@ -192,6 +201,36 @@ const snapshot: SpecRevisionSnapshot = {
   ],
 };
 
+/**
+ * The one element kind with no handle. Its element id is the whole address, so
+ * it is what the outline has to publish and `spec section get` has to take.
+ */
+const sectionRow = {
+  element: {
+    id: "problem-section",
+    specId: spec.id,
+    kind: "section" as const,
+    number: null,
+    parentElementId: null,
+    createdAt: CREATED_AT,
+  },
+  version: {
+    revisionId: revision.id,
+    elementId: "problem-section",
+    position: 4,
+    payload: {
+      kind: "section" as const,
+      role: "intent_problem" as const,
+      title: "Problem",
+      body: "Sections had no narrow read.",
+    },
+    payloadHash: "problem-section-hash",
+    elementVersion: 2,
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  },
+};
+
 // The amendment's own requirements admission, so a reader can tell who
 // admitted the revision being read from who admitted an earlier one.
 const currentRequirementsAdmission: SpecGateAdmissionRow = {
@@ -216,6 +255,9 @@ const approvedPredecessor: SpecRevision = {
   authoringStage: "requirements",
   basedOnRevisionId: null,
   contentHash: "approved-hash",
+  citationContractVersion: 2,
+  citationVersion: 1,
+  citationHash: "0".repeat(64),
   proposedAt: CREATED_AT,
   approvedAt: CREATED_AT,
   externalDelivery: null,
@@ -227,6 +269,77 @@ const priorRequirementsAdmission: SpecGateAdmissionRow = {
   spec_id: spec.id,
   gate: "requirements",
   basis: "human_approval",
+  approval_id: null,
+  revision_id: approvedPredecessor.id,
+  execution_id: null,
+  actor_json: JSON.stringify({ kind: "human" }),
+  created_at: CREATED_AT,
+};
+
+/**
+ * A requirement only the amendment carries. Without it nothing the
+ * requirements gate governs has changed, the gate is not consulted at all, and
+ * the subject the predecessor settled leaves the account entirely — so a
+ * settled subject is only observable beside an outstanding sibling.
+ */
+const amendedRequirement: SpecRevisionSnapshot["elements"][number] = {
+  element: {
+    id: "requirement-2",
+    specId: spec.id,
+    kind: "requirement",
+    number: 2,
+    parentElementId: null,
+    createdAt: CREATED_AT,
+  },
+  version: {
+    revisionId: revision.id,
+    elementId: "requirement-2",
+    position: 4,
+    payload: {
+      kind: "requirement",
+      statement: "Amendments state what changed.",
+      priority: "must",
+      risk: "medium",
+    },
+    payloadHash: "requirement-2-hash",
+    elementVersion: 1,
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  },
+};
+
+/**
+ * The predecessor's content: R1 and its criterion, byte-identical to what the
+ * amendment still carries, so the subject fingerprint matches and whatever
+ * settled it there settles it here.
+ */
+const settledBaseSnapshot: SpecRevisionSnapshot = {
+  revision: approvedPredecessor,
+  assumptionCitations: [],
+  elements: snapshot.elements.filter(
+    ({ element }) =>
+      element.id === "requirement-1" || element.id === "criterion-1",
+  ),
+};
+
+/** A human approval of R1 granted on the predecessor, not on the amendment. */
+const carriedRequirementApproval: SpecApprovalRow = {
+  id: "approval-1",
+  spec_id: spec.id,
+  subject_kind: "requirement",
+  element_id: "requirement-1",
+  revision_id: approvedPredecessor.id,
+  approver: "alex",
+  granted_at: CREATED_AT,
+  validity: "valid",
+};
+
+/** The admission that makes the predecessor an import baseline. */
+const importRequirementsAdmission: SpecGateAdmissionRow = {
+  id: "admission-import",
+  spec_id: spec.id,
+  gate: "requirements",
+  basis: "import",
   approval_id: null,
   revision_id: approvedPredecessor.id,
   execution_id: null,
@@ -295,9 +408,11 @@ const question: SpecQuestionRow = {
     kind: "agent",
     conversationId: "conversation-1",
   }),
+  record_version: 1,
   status: "open",
   answer: null,
   answered_at: null,
+  withdrawn_at: null,
   created_at: CREATED_AT,
   updated_at: CREATED_AT,
 };
@@ -312,8 +427,13 @@ const assumption: SpecAssumptionRow = {
     kind: "agent",
     conversationId: "conversation-1",
   }),
+  record_version: 1,
   disposition: "proposed",
   disposed_at: null,
+  withdrawn_at: null,
+  supersedes_assumption_id: null,
+  supersession_operation_id: null,
+  supersession_request_hash: null,
   created_at: CREATED_AT,
   updated_at: CREATED_AT,
 };
@@ -355,30 +475,118 @@ const resolvedReviewComment: SpecCommentRow = {
   updated_at: "2026-07-18T02:00:00.000Z",
 };
 
-const bundle = {
-  markdownFiles: [
-    {
-      path: "revisions/0001-draft.md",
-      content: "# Native SDD\n\n- Revision: 1\n",
+const openReviewReply: SpecCommentRow = {
+  ...reviewComment,
+  id: "comment-reply-1",
+  parent_comment_id: reviewComment.id,
+  body: "Yes, aliases remain part of the exported identity.",
+  author_json: JSON.stringify({
+    kind: "agent",
+    conversationId: "conversation-2",
+  }),
+  blocking: 0,
+  created_at: "2026-07-18T00:30:00.000Z",
+  updated_at: "2026-07-18T00:30:00.000Z",
+};
+
+const canonicalSnapshot: SpecRevisionSnapshot = {
+  revision: {
+    ...revision,
+    citationHash: computeSpecRevisionCitationHash(
+      revision.citationContractVersion,
+      [],
+    ),
+  },
+  assumptionCitations: [],
+  elements: snapshot.elements.slice(0, 3).map((row) => ({
+    ...row,
+    version: {
+      ...row.version,
+      payloadHash: computeSpecElementPayloadHash(row.version.payload),
     },
-  ],
-  // The manifest the export renderer produces, cut down to the revisions and
-  // elements the CLI's export summary counts.
-  manifest: `${JSON.stringify({
-    formatVersion: 3,
-    spec: { slug: "native-sdd" },
-    revisions: [
+  })),
+};
+
+const bundle = renderCanonicalBundle({
+  spec,
+  revisions: [{ snapshot: canonicalSnapshot }],
+  approvals: [],
+  gateAdmissions: [],
+  questions: [],
+  assumptions: [],
+  executions: [],
+  attentionAuditEvents: [],
+});
+
+function renderSensitiveCanonicalBundle(values: {
+  question: string;
+  answer: string;
+  assumption: string;
+  reason: string;
+}): CanonicalSpecBundle {
+  const decisionPayload = {
+    kind: "decision" as const,
+    title: "Keep verification diagnostics value-free",
+    chosenApproach: "Report only the first canonical difference path.",
+    reason: values.reason,
+    rejectedAlternatives: [],
+    tracedRequirementElementIds: ["requirement-1"],
+  };
+  const sensitiveSnapshot: SpecRevisionSnapshot = {
+    ...canonicalSnapshot,
+    elements: [
+      ...canonicalSnapshot.elements,
       {
-        id: revision.id,
-        elements: [
-          { id: "requirement-1" },
-          { id: "criterion-1" },
-          { id: "task-1" },
-        ],
+        element: {
+          id: "decision-1",
+          specId: spec.id,
+          kind: "decision",
+          number: 1,
+          parentElementId: null,
+          createdAt: CREATED_AT,
+        },
+        version: {
+          revisionId: revision.id,
+          elementId: "decision-1",
+          position: canonicalSnapshot.elements.length,
+          payload: decisionPayload,
+          payloadHash: computeSpecElementPayloadHash(decisionPayload),
+          elementVersion: 1,
+          createdAt: CREATED_AT,
+          updatedAt: CREATED_AT,
+        },
       },
     ],
-  })}\n`,
-};
+  };
+
+  return renderCanonicalBundle({
+    spec,
+    revisions: [{ snapshot: sensitiveSnapshot }],
+    approvals: [],
+    gateAdmissions: [],
+    questions: [
+      {
+        ...question,
+        text: values.question,
+        record_version: 2,
+        status: "answered",
+        answer: values.answer,
+        answered_at: CREATED_AT,
+      },
+    ],
+    assumptions: [
+      {
+        ...assumption,
+        text: values.assumption,
+        record_version: 2,
+        disposition: "confirmed",
+        disposed_at: CREATED_AT,
+      },
+    ],
+    executions: [],
+    attentionAuditEvents: [],
+  });
+}
 
 // A second spec in the same project, under a different preset, so a
 // project-wide search has more than one spec to reconcile and the per-hit
@@ -399,6 +607,7 @@ const siblingRevision: SpecRevision = {
 
 const siblingSnapshot: SpecRevisionSnapshot = {
   revision: siblingRevision,
+  assumptionCitations: [],
   elements: [
     {
       element: {
@@ -450,6 +659,9 @@ const lineageRevisions: SpecRevision[] = [
     authoringStage: "requirements",
     basedOnRevisionId: null,
     contentHash: "lineage-hash-1",
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "1".repeat(64),
     proposedAt: CREATED_AT,
     approvedAt: CREATED_AT,
     externalDelivery: null,
@@ -463,6 +675,9 @@ const lineageRevisions: SpecRevision[] = [
     authoringStage: "design",
     basedOnRevisionId: LINEAGE_REVISION_IDS.approved,
     contentHash: "lineage-hash-2",
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "2".repeat(64),
     proposedAt: CREATED_AT,
     approvedAt: null,
     externalDelivery: null,
@@ -476,6 +691,9 @@ const lineageRevisions: SpecRevision[] = [
     authoringStage: "plan",
     basedOnRevisionId: LINEAGE_REVISION_IDS.proposed,
     contentHash: null,
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "2".repeat(64),
     proposedAt: null,
     approvedAt: null,
     externalDelivery: null,
@@ -570,6 +788,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
     LINEAGE_REVISION_IDS.approved,
     {
       revision: lineageRevisions[0]!,
+      assumptionCitations: [],
       elements: [
         lineageRow(
           LINEAGE_REVISION_IDS.approved,
@@ -599,6 +818,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
     LINEAGE_REVISION_IDS.proposed,
     {
       revision: lineageRevisions[1]!,
+      assumptionCitations: [],
       elements: [
         lineageRow(
           LINEAGE_REVISION_IDS.proposed,
@@ -630,6 +850,7 @@ const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
     LINEAGE_REVISION_IDS.draft,
     {
       revision: lineageRevisions[2]!,
+      assumptionCitations: [],
       elements: [
         lineageRow(
           LINEAGE_REVISION_IDS.draft,
@@ -801,8 +1022,16 @@ function makeHost(
     >;
     /** Seed a second spec so project-wide search spans more than one. */
     sibling?: boolean;
+    /**
+     * Seed an amendment over an approved predecessor that already settled R1 —
+     * by a human approval a human granted there, or by the import that created
+     * the spec. Either way R2 is new and still outstanding.
+     */
+    settled?: "approval" | "import";
     /** Pin the seeded draft at this authoring stage. */
     draftStage?: SpecRevision["authoringStage"];
+    /** Run the seeded spec under a different gate preset. */
+    preset?: Spec["gatePolicy"]["preset"];
     /**
      * Point the seeded plan at a criterion id the revision does not carry —
      * the shape an amendment that forked past its own content leaves behind.
@@ -827,12 +1056,18 @@ function makeHost(
     questionTextBytes?: number;
     /** Append this many tasks, to overflow the bounded plan-task section. */
     extraTaskCount?: number;
+    /** Seed a handle-less section, the only content `spec section get` reads. */
+    sections?: boolean;
+    /** Append this many requirements, to overflow the bounded ledger rows. */
+    extraRequirementCount?: number;
     /** Seed review comments on the current revision. */
     comments?: readonly SpecCommentRow[];
     /** Inflate one element past the known cctl stdout pipe ceiling. */
     largeBodyBytes?: number;
     /** Inflate display metadata without changing the canonical slug. */
     specNameBytes?: number;
+    /** Return this canonical artifact from the export read boundary. */
+    exportBundle?: CanonicalSpecBundle;
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -852,10 +1087,15 @@ function makeHost(
       ? {}
       : { authoringStage: options.draftStage }),
   };
-  const seededSpec =
-    options.specNameBytes === undefined
-      ? spec
-      : { ...spec, name: "n".repeat(options.specNameBytes) };
+  const seededSpec: Spec = {
+    ...spec,
+    ...(options.specNameBytes === undefined
+      ? {}
+      : { name: "n".repeat(options.specNameBytes) }),
+    ...(options.preset === undefined
+      ? {}
+      : { gatePolicy: { preset: options.preset } }),
+  };
   const contentSnapshot: SpecRevisionSnapshot =
     options.largeBodyBytes === undefined
       ? snapshot
@@ -922,11 +1162,51 @@ function makeHost(
             ),
           ],
         };
+  const ledgeredSnapshot: SpecRevisionSnapshot =
+    options.extraRequirementCount === undefined
+      ? paddedSnapshot
+      : {
+          ...paddedSnapshot,
+          elements: [
+            ...paddedSnapshot.elements,
+            ...Array.from(
+              { length: options.extraRequirementCount },
+              (_unused, index) => {
+                const number = index + 3;
+                return {
+                  element: {
+                    id: `requirement-${number}`,
+                    specId: spec.id,
+                    kind: "requirement" as const,
+                    number,
+                    parentElementId: null,
+                    createdAt: CREATED_AT,
+                  },
+                  version: {
+                    revisionId: revision.id,
+                    elementId: `requirement-${number}`,
+                    position: paddedSnapshot.elements.length + index,
+                    payload: {
+                      kind: "requirement" as const,
+                      statement: `Padding requirement ${number}.`,
+                      priority: "should" as const,
+                      risk: "low" as const,
+                    },
+                    payloadHash: `requirement-${number}-hash`,
+                    elementVersion: 1,
+                    createdAt: CREATED_AT,
+                    updatedAt: CREATED_AT,
+                  },
+                };
+              },
+            ),
+          ],
+        };
   const plannedSnapshot: SpecRevisionSnapshot =
     options.unplannedCoverage === true
       ? {
-          ...paddedSnapshot,
-          elements: paddedSnapshot.elements.map((row) =>
+          ...ledgeredSnapshot,
+          elements: ledgeredSnapshot.elements.map((row) =>
             row.version.payload.kind === "task"
               ? {
                   ...row,
@@ -941,7 +1221,7 @@ function makeHost(
               : row,
           ),
         }
-      : paddedSnapshot;
+      : ledgeredSnapshot;
   const seededSnapshot: SpecRevisionSnapshot =
     options.orphanedCoverage === true || options.orphanedDependency === true
       ? {
@@ -977,6 +1257,23 @@ function makeHost(
           ),
         }
       : plannedSnapshot;
+  const sectionedSnapshot: SpecRevisionSnapshot =
+    options.sections === true
+      ? {
+          ...seededSnapshot,
+          elements: [...seededSnapshot.elements, sectionRow],
+        }
+      : seededSnapshot;
+  // Chained onto the sectioned snapshot rather than the seeded one so the two
+  // seeds compose: whichever the served snapshot carries, the lint snapshot
+  // below is computed over the same element set the read verbs return.
+  const settledSnapshot: SpecRevisionSnapshot =
+    options.settled === undefined
+      ? sectionedSnapshot
+      : {
+          ...sectionedSnapshot,
+          elements: [...sectionedSnapshot.elements, amendedRequirement],
+        };
   const handlers = createSpecRouteHandlers({
     ...baseDeps,
     async listSpecs() {
@@ -994,31 +1291,45 @@ function makeHost(
         return [siblingRevision];
       }
       if (options.lineage) return lineageRevisions;
-      return options.priorAdmission
+      return options.priorAdmission || options.settled !== undefined
         ? [approvedPredecessor, amendedDraft]
         : [stagedRevision];
+    },
+    findApprovalsBySpecId() {
+      return options.settled === "approval" ? [carriedRequirementApproval] : [];
     },
     async getRevisionSnapshot(revisionId) {
       if (options.sibling && revisionId === siblingRevision.id) {
         return siblingSnapshot;
       }
       if (options.lineage) return lineageSnapshots.get(revisionId) ?? null;
+      if (options.settled !== undefined) {
+        if (revisionId === approvedPredecessor.id) return settledBaseSnapshot;
+        return revisionId === revision.id
+          ? { ...settledSnapshot, revision: amendedDraft }
+          : null;
+      }
       if (!options.priorAdmission) {
         return revisionId === revision.id
-          ? { ...seededSnapshot, revision: stagedRevision }
+          ? { ...sectionedSnapshot, revision: stagedRevision }
           : null;
       }
       if (revisionId === approvedPredecessor.id) {
-        return { revision: approvedPredecessor, elements: [] };
+        return {
+          revision: approvedPredecessor,
+          elements: [],
+          assumptionCitations: [],
+        };
       }
       return revisionId === revision.id
-        ? { ...seededSnapshot, revision: amendedDraft }
+        ? { ...sectionedSnapshot, revision: amendedDraft }
         : null;
     },
     findGateAdmissionsBySpecId() {
       return [
         ...(options.priorAdmission ? [priorRequirementsAdmission] : []),
         ...(options.currentAdmission ? [currentRequirementsAdmission] : []),
+        ...(options.settled === "import" ? [importRequirementsAdmission] : []),
       ];
     },
     findExecutionsBySpecId() {
@@ -1045,8 +1356,11 @@ function makeHost(
       if (lintedRevisionId !== revision.id) return [];
       return lint(
         toLintSnapshot(seededSpec, {
-          ...seededSnapshot,
-          revision: options.priorAdmission ? amendedDraft : stagedRevision,
+          ...settledSnapshot,
+          revision:
+            options.priorAdmission || options.settled !== undefined
+              ? amendedDraft
+              : stagedRevision,
         }),
         {},
       );
@@ -1068,6 +1382,8 @@ function makeHost(
                 revisionId: revision.id,
                 expectedContentHash: "expected-hash",
                 actualContentHash: "tampered-hash",
+                expectedCitationHash: "1".repeat(64),
+                actualCitationHash: "2".repeat(64),
                 mismatchedElementIds: ["requirement-1"],
               },
             ],
@@ -1079,6 +1395,9 @@ function makeHost(
             mismatches: [],
             consistencyFindings: [],
           };
+    },
+    async exportSpec() {
+      return options.exportBundle ?? bundle;
     },
   });
 
@@ -1122,6 +1441,15 @@ function makeHost(
       if (tail === "lint") return handlers.getSpecLintGET(request, context);
       if (tail === "elements") {
         return handlers.getSpecElementGET(request, {
+          params: Promise.resolve({
+            name,
+            slug,
+            element: decodeURIComponent(segments[5] ?? ""),
+          }),
+        });
+      }
+      if (tail === "sections") {
+        return handlers.getSpecSectionGET(request, {
           params: Promise.resolve({
             name,
             slug,
@@ -1241,6 +1569,36 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
       "/api/specs/demo/native-sdd/outline",
       "/api/specs/demo/native-sdd/outline",
+    ]);
+  });
+
+  it("publishes outline section ids with the read that reaches one", async () => {
+    const host = makeHost({ sections: true });
+    const text = await runCli(["spec", "show", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "show", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode, text.stderr).toBe(0);
+    // The element id is the whole point: without it in text mode the verb the
+    // disclosure names cannot be run from what `spec show` printed.
+    expect(text.stdout).toContain(
+      "problem-section\tsection\tintent_problem\tProblem",
+    );
+    expect(text.stdout).toContain(
+      "sections: 1 total, 1 returned, truncated=no, next: cctl spec section get native-sdd --id <element-id>",
+    );
+
+    expect(JSON.parse(structured.stdout).sections).toEqual([
+      {
+        elementId: "problem-section",
+        role: "intent_problem",
+        title: "Problem",
+        position: 4,
+        elementVersion: 2,
+      },
     ]);
   });
 
@@ -1701,6 +2059,97 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
   });
 
+  it("accounts for both sides of the approval ledger and names the rule that carries it", async () => {
+    const host = makeHost();
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    // Nothing is settled on a first draft, and the pending count alone is the
+    // half that gets misread — the mechanism line says why anything ever
+    // carries, printed exactly where the wrong inference happens.
+    expect(text.stdout).toContain("approval subjects: 0 satisfied · 2 pending");
+    expect(text.stdout).toContain(
+      "carry rule: unchanged subject content under the same applicable gate",
+    );
+  });
+
+  it("counts an ancestor-revision approval as carried, not as newly granted", async () => {
+    const host = makeHost({ settled: "approval" });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    // R1 is unchanged since the approved predecessor a human read, so its
+    // approval carries; R2 and the plan are what the amendment still owes.
+    expect(text.stdout).toContain(
+      "approval subjects: 1 satisfied (1 carried) · 2 pending",
+    );
+    expect(text.stdout).toContain(
+      "pending subject approvals: 2 total, 2 shown",
+    );
+    expect(text.stdout).toContain("  requirements: R2");
+    // Nothing was import-admitted here, so the section that would say so is
+    // absent rather than printing an empty account.
+    expect(text.stdout).not.toContain("import-carried subjects:");
+  });
+
+  /**
+   * A collapsed dial asks for nothing per subject, so a bare "0 satisfied"
+   * would read as "this spec governs nothing". The ledger names the act that
+   * governs them instead — never a zero-count account, never "not applicable".
+   */
+  it("names the act that governs a collapsed gate's subjects before its sign-off", async () => {
+    const host = makeHost({ preset: "fast-path" });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "approval subjects: 0 satisfied · 2 pending — governed by the combined sign-off, which is outstanding",
+    );
+    expect(text.stdout).toContain(
+      "carry rule: unchanged subject content under the same applicable gate",
+    );
+  });
+
+  it("names the subjects an import settled, which no human approved", async () => {
+    const host = makeHost({ settled: "import" });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // Counted apart from the human approvals: absence from the pending list is
+    // how a reader concludes "approved", and no human read this content.
+    expect(text.stdout).toContain(
+      "approval subjects: 1 satisfied (1 import-settled) · 2 pending",
+    );
+    expect(text.stdout).toContain("import-carried subjects: 1 total, 1 shown");
+    expect(text.stdout).toContain("  requirements: R1");
+
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.status.approvalLedger).toMatchObject({
+      satisfied: 1,
+      carried: 0,
+      currentRevision: 0,
+      importSettled: 1,
+      combinedAct: 0,
+      pending: 2,
+      governedBy: "per_subject",
+      carryRule: "unchanged subject content under the same applicable gate",
+    });
+    // The existing halves keep their exact meanings beside the ledger.
+    expect(envelope.status.importCarriedApprovals).toEqual([
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+    ]);
+    expect(envelope.disclosure.importCarriedApprovals).toEqual({
+      total: 1,
+      returned: 1,
+      truncated: false,
+    });
+  });
+
   it("prints the whole lint panel grouped by severity, flagging what would block propose", async () => {
     const host = makeHost({ unplannedCoverage: true });
     const text = await runCli(["spec", "lint", "native-sdd"], baseEnv, host);
@@ -1787,6 +2236,46 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     // A section that dropped nothing names no follow-up: there is no rest.
     expect(text.stdout).not.toContain("assumptions: 1 total, 1 shown — rest");
+  });
+
+  /**
+   * The ledger enumerates every consulted subject, so it is the largest section
+   * status carries — and the only one the text tier never prints row by row. It
+   * is bounded like the rest, but its counts are the account itself: truncating
+   * those would understate what is settled, which is the misreading the ledger
+   * exists to prevent.
+   */
+  it("bounds the ledger rows while its counts still account for every subject", async () => {
+    const host = makeHost({ extraRequirementCount: 10 });
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(structured.exitCode).toBe(0);
+    const envelope = JSON.parse(structured.stdout);
+    expect(envelope.status.approvalLedger.subjects).toHaveLength(10);
+    expect(envelope.status.approvalLedger).toMatchObject({
+      satisfied: 0,
+      pending: 12,
+    });
+    expect(envelope.disclosure.approvalLedgerSubjects).toEqual({
+      total: 12,
+      returned: 10,
+      truncated: true,
+      reveal: "cctl spec status native-sdd --full",
+    });
+
+    const full = await runCli(
+      ["spec", "status", "native-sdd", "--json", "--full"],
+      baseEnv,
+      host,
+    );
+    expect(full.exitCode).toBe(0);
+    expect(JSON.parse(full.stdout).status.approvalLedger.subjects).toHaveLength(
+      12,
+    );
   });
 
   it("names the outline read as the rest of a truncated plan-task section", async () => {
@@ -1883,12 +2372,12 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
   it("reports open comments in status text and points at the comments verb", async () => {
     const host = makeHost({
-      comments: [reviewComment, resolvedReviewComment],
+      comments: [reviewComment, openReviewReply, resolvedReviewComment],
     });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
 
     expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("open comments: 1 (1 blocking) on R1");
+    expect(text.stdout).toContain("open review threads: 1 (1 blocking) on R1");
     expect(text.stdout).toContain(
       "  read: cctl spec comments native-sdd --open",
     );
@@ -1904,7 +2393,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
   it("reads review comments as typed rows and renders them for humans", async () => {
     const host = makeHost({
-      comments: [reviewComment, resolvedReviewComment],
+      comments: [reviewComment, openReviewReply, resolvedReviewComment],
     });
     const text = await runCli(
       ["spec", "comments", "native-sdd"],
@@ -1914,7 +2403,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain(
-      "native-sdd  comments: 2 comments shown, 1 open (1 blocking)",
+      "native-sdd  comments: 3 message rows shown, 1 open thread (2 open message rows, 1 blocking message row)",
     );
     expect(text.stdout).toContain("R1  open [blocking]  by human rev 1");
     expect(text.stdout).toContain("  > resolves renamed specs");
@@ -1930,11 +2419,15 @@ describe("cctl spec read verbs against seeded read routes", () => {
       ok: boolean;
       openCount: number;
       openBlockingCount: number;
+      openThreadCount: number;
+      openBlockingThreadCount: number;
       comments: Record<string, unknown>[];
     };
     expect(body.ok).toBe(true);
-    expect(body.openCount).toBe(1);
+    expect(body.openCount).toBe(2);
     expect(body.openBlockingCount).toBe(1);
+    expect(body.openThreadCount).toBe(1);
+    expect(body.openBlockingThreadCount).toBe(1);
     expect(body.comments[0]).toMatchObject({
       handle: "R1",
       threadId: "thread-1",
@@ -1952,7 +2445,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
   it("narrows comments by open state and element at the route, not in the client", async () => {
     const host = makeHost({
-      comments: [reviewComment, resolvedReviewComment],
+      comments: [reviewComment, openReviewReply, resolvedReviewComment],
     });
     const open = await runCli(
       ["spec", "comments", "native-sdd", "--open", "--json"],
@@ -1964,13 +2457,16 @@ describe("cctl spec read verbs against seeded read routes", () => {
     const openBody = JSON.parse(open.stdout) as {
       comments: { id: string }[];
       openCount: number;
+      openThreadCount: number;
     };
     expect(openBody.comments.map((comment) => comment.id)).toEqual([
       "comment-1",
+      "comment-reply-1",
     ]);
     // Spec-wide counts survive filtering, so a narrowed read still reports
     // total outstanding feedback.
-    expect(openBody.openCount).toBe(1);
+    expect(openBody.openCount).toBe(2);
+    expect(openBody.openThreadCount).toBe(1);
     expect(new URL(host.requests[0]?.url ?? "").search).toBe("?open=true");
 
     const byElement = await runCli(
@@ -1981,7 +2477,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(byElement.exitCode).toBe(0);
     expect(
       (JSON.parse(byElement.stdout) as { comments: { id: string }[] }).comments,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   it("refuses a typo'd element filter rather than answering with an empty list", async () => {
@@ -2090,6 +2586,243 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
     expect(JSON.parse(qualified.stdout).element.handle).toBe("R1");
     expect(JSON.parse(bare.stdout).element.handle).toBe("R1");
+  });
+
+  /**
+   * The lineage draft dropped the task its two ancestors carried, so `T1` is
+   * the one handle that resolves nowhere current and somewhere historical.
+   */
+  it("refuses a historical-only handle with its recovery command in text and JSON", async () => {
+    const text = await runCli(
+      ["spec", "get", "native-sdd/T1"],
+      baseEnv,
+      makeHost({ lineage: true }),
+    );
+    const structured = await runCli(
+      ["spec", "get", "native-sdd/T1", "--json"],
+      baseEnv,
+      makeHost({ lineage: true }),
+    );
+
+    const recovery = "cctl spec get native-sdd/T1 --revision 2";
+    expect(structured.exitCode).not.toBe(0);
+    const envelope = JSON.parse(structured.stdout) as Record<string, unknown>;
+    expect(envelope.error).toBe(
+      "Spec element exists only in a historical revision",
+    );
+    expect(envelope.code).toBe("historical_only");
+    const details = {
+      handle: "T1",
+      elementId: "lineage-task-1",
+      lastRevisionId: "lineage-revision-2",
+      lastRevisionNumber: 2,
+      currentRevisionId: "lineage-revision-3",
+      currentRevisionNumber: 3,
+    };
+    expect(envelope.details).toEqual(details);
+    expect(envelope.instruction).toContain(recovery);
+
+    expect(text.exitCode).not.toBe(0);
+    expect(text.stderr).toContain(
+      "Spec element exists only in a historical revision",
+    );
+    expect(text.stderr).toContain(recovery);
+    // Text/JSON parity asserted over the whole details block rather than a
+    // hand-picked subset: a fact the refusal gains cannot then be rendered in
+    // one mode and silently dropped from the other.
+    for (const [field, value] of Object.entries(details)) {
+      expect(text.stderr).toContain(`  details.${field}: ${value}`);
+    }
+  });
+
+  it("sends --revision as a number or an id by its digit shape", async () => {
+    const byNumber = makeHost({ lineage: true });
+    const byId = makeHost({ lineage: true });
+    const numbered = await runCli(
+      ["spec", "get", "native-sdd/T1", "--revision", "2", "--json"],
+      baseEnv,
+      byNumber,
+    );
+    const identified = await runCli(
+      [
+        "spec",
+        "get",
+        "native-sdd/T1",
+        "--revision",
+        "lineage-revision-2",
+        "--json",
+      ],
+      baseEnv,
+      byId,
+    );
+
+    expect(numbered.exitCode, numbered.stderr).toBe(0);
+    expect(new URL(byNumber.requests[0]?.url ?? "").search).toBe(
+      "?revisionNumber=2",
+    );
+    expect(identified.exitCode, identified.stderr).toBe(0);
+    expect(new URL(byId.requests[0]?.url ?? "").search).toBe(
+      "?revisionId=lineage-revision-2",
+    );
+    expect(JSON.parse(identified.stdout).element.revision.id).toBe(
+      "lineage-revision-2",
+    );
+  });
+
+  it("names the revision a historical read answered from in its header", async () => {
+    const result = await runCli(
+      ["spec", "get", "native-sdd/T1", "--revision", "2"],
+      baseEnv,
+      makeHost({ lineage: true }),
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("native-sdd/T1\ttask\trevision 2");
+  });
+
+  it("reads one section by element id in a named envelope and depth-complete text", async () => {
+    const host = makeHost({ sections: true });
+    const text = await runCli(
+      ["spec", "section", "get", "native-sdd", "--id", "problem-section"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode, text.stderr).toBe(0);
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/specs/demo/native-sdd/sections/problem-section",
+    );
+    // The narrowest read is depth-complete: every field JSON carries appears as
+    // a `path: value` line, so text mode changes representation, not depth.
+    expect(text.stdout).toContain(
+      "problem-section\tsection\tintent_problem\trevision 1",
+    );
+    for (const line of [
+      "slug: native-sdd",
+      "kind: section",
+      // Sections have no handle at all; text says so rather than omitting it.
+      "handle: none",
+      "elementId: problem-section",
+      "role: intent_problem",
+      "title: Problem",
+      "body: Sections had no narrow read.",
+      "elementVersion: 2",
+      "position: 4",
+      "revision.number: 1",
+      "revision.state: draft",
+      "revision.authoringStage: plan",
+    ]) {
+      expect(text.stdout, line).toContain(line);
+    }
+    expect(text.stdout.trimStart()).not.toMatch(/^\{/u);
+  });
+
+  it("carries the section read under its own envelope payload", async () => {
+    const result = await runCli(
+      [
+        "spec",
+        "section",
+        "get",
+        "native-sdd",
+        "--id",
+        "problem-section",
+        "--json",
+      ],
+      baseEnv,
+      makeHost({ sections: true }),
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      section: {
+        specId: spec.id,
+        slug: "native-sdd",
+        kind: "section",
+        handle: null,
+        elementId: "problem-section",
+        role: "intent_problem",
+        title: "Problem",
+        body: "Sections had no narrow read.",
+        elementVersion: 2,
+        position: 4,
+        revision: {
+          id: revision.id,
+          number: 1,
+          state: "draft",
+          authoringStage: "plan",
+        },
+      },
+    });
+  });
+
+  it("requires --id and names the address it takes", async () => {
+    const host = makeHost({ sections: true });
+    const missing = await runCli(
+      ["spec", "section", "get", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(missing.exitCode).toBe(2);
+    expect(missing.stderr).toContain(
+      "cctl spec section get <slug> --id <element-id>",
+    );
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("surfaces the server's non-section refusal with the read that fits", async () => {
+    const result = await runCli(
+      ["spec", "section", "get", "native-sdd", "--id", "requirement-1"],
+      baseEnv,
+      makeHost({ sections: true }),
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Spec element is not a section");
+    expect(result.stderr).toContain("cctl spec get native-sdd/R1");
+  });
+
+  it("sends a section --revision as a number or an id by its digit shape", async () => {
+    const byNumber = makeHost({ sections: true });
+    const byId = makeHost({ sections: true });
+    await runCli(
+      [
+        "spec",
+        "section",
+        "get",
+        "native-sdd",
+        "--id",
+        "problem-section",
+        "--revision",
+        "1",
+        "--json",
+      ],
+      baseEnv,
+      byNumber,
+    );
+    await runCli(
+      [
+        "spec",
+        "section",
+        "get",
+        "native-sdd",
+        "--id",
+        "problem-section",
+        "--revision",
+        revision.id,
+        "--json",
+      ],
+      baseEnv,
+      byId,
+    );
+
+    expect(new URL(byNumber.requests[0]?.url ?? "").search).toBe(
+      "?revisionNumber=1",
+    );
+    expect(new URL(byId.requests[0]?.url ?? "").search).toBe(
+      `?revisionId=${revision.id}`,
+    );
   });
 
   it("searches requirement text", async () => {
@@ -2500,7 +3233,156 @@ describe("cctl spec read verbs against seeded read routes", () => {
       report: { ok: true, checkedRevisionIds: [revision.id] },
       against,
     });
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/verify",
+      "/api/specs/demo/native-sdd/export",
+    ]);
   });
+
+  it.each([
+    {
+      label: "a missing format discriminator",
+      expectedCode: "bundle_format_mismatch",
+      expectedPath: "bundle.manifest.formatVersion",
+      bundle: (() => {
+        const manifest = JSON.parse(bundle.manifest) as Record<string, unknown>;
+        delete manifest.formatVersion;
+        return { ...bundle, manifest: `${stableStringify(manifest)}\n` };
+      })(),
+    },
+    {
+      label: "an older canonical format",
+      expectedCode: "bundle_format_mismatch",
+      expectedPath: "bundle.manifest.formatVersion",
+      bundle: {
+        ...bundle,
+        manifest: `${stableStringify({
+          ...JSON.parse(bundle.manifest),
+          formatVersion: 3,
+        })}\n`,
+      },
+    },
+    {
+      label: "a future canonical format",
+      expectedCode: "bundle_format_mismatch",
+      expectedPath: "bundle.manifest.formatVersion",
+      bundle: {
+        ...bundle,
+        manifest: `${stableStringify({
+          ...JSON.parse(bundle.manifest),
+          formatVersion: 5,
+        })}\n`,
+      },
+    },
+    {
+      label: "a malformed canonical manifest",
+      expectedCode: "integrity_mismatch",
+      expectedPath: "bundle.manifest",
+      bundle: { ...bundle, manifest: "{\n" },
+    },
+    {
+      label: "tampered rendered markdown",
+      expectedCode: "integrity_mismatch",
+      expectedPath: "bundle.markdownFiles[0].content",
+      bundle: {
+        ...bundle,
+        markdownFiles: bundle.markdownFiles.map((file, index) =>
+          index === 0
+            ? { ...file, content: `${file.content}tampered\n` }
+            : file,
+        ),
+      },
+    },
+  ])(
+    "strictly rejects $label before contacting the server",
+    async ({ expectedCode, expectedPath, bundle: againstBundle }) => {
+      const against = "/tmp/native-sdd.json";
+      const host = makeHost({
+        files: { [against]: JSON.stringify(againstBundle) },
+      });
+
+      const result = await runCli(
+        ["spec", "verify", "native-sdd", "--against", against, "--json"],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        code: expectedCode,
+        issues: [{ path: expectedPath }],
+      });
+      expect(host.requests).toHaveLength(0);
+      expect(host.written.size).toBe(0);
+    },
+  );
+
+  it.each([
+    {
+      field: "question",
+      expectedPath: "bundle.manifest.questions[0].text",
+    },
+    {
+      field: "answer",
+      expectedPath: "bundle.manifest.questions[0].answer",
+    },
+    {
+      field: "assumption",
+      expectedPath: "bundle.manifest.assumptions[0].text",
+    },
+    {
+      field: "reason",
+      expectedPath: "bundle.manifest.revisions[0].elements[3].payload.reason",
+    },
+  ] as const)(
+    "reports a value-free path when valid bundles differ in sensitive $field text",
+    async ({ field, expectedPath }) => {
+      const currentValues = {
+        question: "CURRENT QUESTION BODY marker-question-current",
+        answer: "CURRENT ANSWER BODY marker-answer-current",
+        assumption: "CURRENT ASSUMPTION BODY marker-assumption-current",
+        reason: "CURRENT REASON BODY marker-reason-current",
+      };
+      const againstValues = {
+        ...currentValues,
+        [field]: `AGAINST ${field.toUpperCase()} BODY marker-${field}-against`,
+      };
+      const current = renderSensitiveCanonicalBundle(currentValues);
+      const againstBundle = renderSensitiveCanonicalBundle(againstValues);
+      const againstPath = "/tmp/sensitive-native-sdd.json";
+      const host = makeHost({
+        exportBundle: current,
+        files: { [againstPath]: JSON.stringify(againstBundle) },
+      });
+
+      const result = await runCli(
+        ["spec", "verify", "native-sdd", "--against", againstPath, "--json"],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        code: "integrity_mismatch",
+        details: { against: againstPath },
+        issues: [{ path: expectedPath }],
+      });
+      expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+        "/api/specs/demo/native-sdd/verify",
+        "/api/specs/demo/native-sdd/export",
+      ]);
+      expect(host.written.size).toBe(0);
+      for (const body of [
+        ...Object.values(currentValues),
+        ...Object.values(againstValues),
+      ]) {
+        expect(result.stdout).not.toContain(body);
+        expect(result.stderr).not.toContain(body);
+      }
+    },
+  );
 
   it("exits 1 with integrity_mismatch for a tampered spec", async () => {
     const result = await runCli(
@@ -2513,8 +3395,11 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: false,
       code: "integrity_mismatch",
+      instruction:
+        "Inspect the reported revision mismatch and resolve it in the authoritative spec store, then export a fresh bundle and verify again.",
       details: { report: { ok: false } },
     });
+    expect(result.stdout).not.toMatch(/restore|import/i);
   });
 
   // The project-wide search route used to sit beside [slug] as a static
@@ -2755,13 +3640,17 @@ describe("cctl spec verify --against across migration 0009", () => {
   function makePersistenceHost(
     db: Db,
     files: Map<string, string>,
-  ): CliHost & { written: Map<string, string> } {
+  ): CliHost & {
+    written: Map<string, string>;
+    requests: RecordedRequest[];
+  } {
     const specs = createSpecsRepo(db, createWriteQueue());
     const review = createSpecReviewRepo(db);
     const exportDeps = {
       specs,
       review,
       delivery: createSpecDeliveryRepo(db),
+      events: createSpecEventsRepo(db),
       // The legacy bundle fixture launches no workflows; verification still
       // reads through the seam so its answer comes from the same shape.
       async observeLinkedWorkflow() {
@@ -2788,9 +3677,12 @@ describe("cctl spec verify --against across migration 0009", () => {
       },
     });
     const written = new Map<string, string>();
+    const requests: RecordedRequest[] = [];
     return {
       written,
+      requests,
       async fetch(url, init) {
+        requests.push({ url, init });
         const segments = new URL(url).pathname.split("/").filter(Boolean);
         const name = decodeURIComponent(segments[2] ?? "");
         const slug = decodeURIComponent(segments[3] ?? "");
@@ -2861,7 +3753,7 @@ describe("cctl spec verify --against across migration 0009", () => {
   ): CanonicalSpecBundle {
     const legacyContentHash = contentHashOf(AFFECTED_ELEMENTS);
     const manifest = manifestShapeSchema.parse(JSON.parse(current.manifest));
-    expect(manifest.formatVersion).toBe(3);
+    expect(manifest.formatVersion).toBe(4);
     const revision = manifest.revisions[0];
     if (revision === undefined) throw new Error("manifest revision missing");
     const migratedContentHash = revision.contentHash;
@@ -2951,7 +3843,7 @@ describe("cctl spec verify --against across migration 0009", () => {
     });
   });
 
-  it("proves affected old bundles mismatch at exit 1 while unaffected old bundles still match", async () => {
+  it("rejects affected pre-narrowing content locally while unaffected bundles still match", async () => {
     const db = seedLegacyCliWorld();
     const files = new Map<string, string>();
     const host = makePersistenceHost(db, files);
@@ -2982,13 +3874,14 @@ describe("cctl spec verify --against across migration 0009", () => {
       manifestShapeSchema.parse(
         JSON.parse(bundleShapeSchema.parse(JSON.parse(oldCleanRaw)).manifest),
       ).formatVersion,
-    ).toBe(3);
+    ).toBe(4);
     await expect(
       loadSpecExportState(
         {
           specs,
           review,
           delivery: createSpecDeliveryRepo(db),
+          events: createSpecEventsRepo(db),
           async observeLinkedWorkflow() {
             return { kind: "missing" as const };
           },
@@ -3018,9 +3911,9 @@ describe("cctl spec verify --against across migration 0009", () => {
       });
     }
 
-    // (4) The affected spec's pre-narrowing bundle mismatches at exit 1: the
-    // canonical content genuinely changed under the approved vocabulary
-    // migration, and the remedy is re-exporting.
+    // (4) The affected spec's pre-narrowing body is not valid format-4
+    // content. Strict decode refuses it before live verification; re-exporting
+    // is the supported way to produce a canonical artifact after migration.
     const affectedExport = await runCli(
       ["spec", "export", "legacy-evidence", "--stdout", "--json"],
       baseEnv,
@@ -3032,6 +3925,7 @@ describe("cctl spec verify --against across migration 0009", () => {
     );
     const oldAffected = reconstructPreNarrowingBundle(currentAffected);
     files.set("/tmp/affected-old.json", JSON.stringify(oldAffected));
+    const requestsBeforeMismatch = host.requests.length;
     const mismatch = await runCli(
       [
         "spec",
@@ -3047,9 +3941,16 @@ describe("cctl spec verify --against across migration 0009", () => {
     expect(mismatch.exitCode).toBe(1);
     expect(JSON.parse(mismatch.stdout)).toMatchObject({
       ok: false,
-      error: "spec legacy-evidence differs from /tmp/affected-old.json",
+      code: "integrity_mismatch",
+      error: "canonical bundle failed strict format-4 verification",
       details: { against: "/tmp/affected-old.json" },
+      issues: [
+        {
+          path: "bundle.manifest.revisions[0].elements[1].payload.validationStrategy.kinds[0]",
+        },
+      ],
     });
+    expect(host.requests).toHaveLength(requestsBeforeMismatch);
 
     // (5) The unaffected spec's pre-migration content still matches at exit 0
     // when reconstructed in the current bundle format.

@@ -155,6 +155,18 @@ describe("render — reminders tier (tier 2)", () => {
     expect(out).toBe("body\nreminder: only reminder\n");
   });
 
+  // A rationale explains a refusal. The success renderer has no path to a
+  // `why:` line at all, so a stray field on a success envelope stays data
+  // rather than becoming a guidance line the reader has to weigh.
+  it("never emits a why: line on a success render", () => {
+    const out = render(false, "body\n", {
+      ok: true,
+      rationale: "the constraint is deliberate",
+      hint: "carry on",
+    });
+    expect(out).toBe("body\nhint: carry on\n");
+  });
+
   it("passes reminders through the JSON envelope unchanged", () => {
     const out = render(true, "ignored\n", {
       ok: true,

@@ -6,6 +6,9 @@ import type { SpecDetailView } from "@/lib/specs/queries";
 import {
   DraftBlocked,
   InReview,
+  OverviewGroupedThreads,
+  OverviewReviewThreads,
+  OverviewReviewThreadsMobile,
   QuestionsAndAssumptions,
 } from "./SpecDetailPage.stories";
 
@@ -51,4 +54,47 @@ describe("Spec detail story fixtures", () => {
       ).toBe(true);
     },
   );
+
+  it.each([
+    ["desktop", OverviewReviewThreads],
+    ["mobile", OverviewReviewThreadsMobile],
+  ])(
+    "keeps the %s Overview conversation on one current prose root",
+    (_name, story) => {
+      const detail = storyDetail(story);
+      const current = detail.currentRevision?.revision;
+      const roots = detail.comments.filter(
+        ({ parentCommentId }) => parentCommentId === null,
+      );
+
+      expect(current?.state).toBe("proposed");
+      expect(roots).toHaveLength(1);
+      expect(detail.comments).toHaveLength(2);
+      expect(new Set(detail.comments.map(({ threadId }) => threadId))).toEqual(
+        new Set(["overview-thread-1"]),
+      );
+      expect(roots[0]).toMatchObject({
+        elementId: "section-intent",
+        revisionId: current?.id,
+      });
+    },
+  );
+
+  it("keeps grouped Overview pins backed by two roots on the same current passage", () => {
+    const detail = storyDetail(OverviewGroupedThreads);
+    const roots = detail.comments.filter(
+      ({ parentCommentId }) => parentCommentId === null,
+    );
+
+    expect(roots).toHaveLength(2);
+    expect(new Set(roots.map(({ threadId }) => threadId))).toEqual(
+      new Set(["overview-thread-1", "overview-thread-2"]),
+    );
+    expect(new Set(roots.map(({ elementId }) => elementId))).toEqual(
+      new Set(["section-intent"]),
+    );
+    expect(new Set(roots.map(({ quote }) => quote))).toEqual(
+      new Set(["Native spec-driven development"]),
+    );
+  });
 });

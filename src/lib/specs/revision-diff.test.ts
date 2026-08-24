@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { SpecElementPayload } from "./schemas";
-import type { RevisionElement } from "./revision-diff";
+import type {
+  SpecAssumptionCitationSnapshot,
+  SpecElementPayload,
+} from "./schemas";
+import type { RevisionCitation, RevisionElement } from "./revision-diff";
 import { diffRevisions } from "./revision-diff";
 
 function element(
@@ -55,6 +58,36 @@ function task(
     tracedDecisionElementIds: scope.decisions ?? [],
     coveredCriterionElementIds: scope.criteria ?? ["criterion-1"],
     dependsOnTaskElementIds: scope.dependencies ?? [],
+  };
+}
+
+function citation(
+  elementId: string,
+  assumptionId: string,
+  number: number,
+  overrides: Partial<SpecAssumptionCitationSnapshot> = {},
+): RevisionCitation {
+  return {
+    elementId,
+    assumptionId,
+    snapshot: {
+      schemaVersion: 1,
+      captureKind: "native",
+      capturedAt: "2026-08-23T10:00:00.000Z",
+      assumptionId,
+      number,
+      recordVersion: 1,
+      text: `Premise ${number}`,
+      elementId,
+      proposedBy: { kind: "agent", conversationId: "conversation-diff" },
+      disposition: "proposed",
+      disposedAt: null,
+      withdrawnAt: null,
+      supersedesAssumptionId: null,
+      createdAt: "2026-08-23T09:00:00.000Z",
+      updatedAt: "2026-08-23T09:00:00.000Z",
+      ...overrides,
+    },
   };
 }
 
@@ -349,5 +382,143 @@ describe("revision diff classification", () => {
         summary: "Removed acceptance criterion: IDs survive edits",
       },
     ]);
+  });
+});
+
+describe("revision citation diff", () => {
+  const rows = [
+    element("requirement-1", "same-r1", requirement("Stable premise")),
+    element("decision-1", "same-d1", decision("Premise ownership")),
+  ];
+
+  it("emits citation add and removal entries and marks their subjects modified", () => {
+    const result = diffRevisions(rows, rows, {
+      baseCitationContractVersion: 2,
+      draftCitationContractVersion: 2,
+      baseCitations: [citation("requirement-1", "assumption-1", 1)],
+      draftCitations: [citation("decision-1", "assumption-2", 2)],
+    });
+
+    expect(result.classifications).toEqual([
+      {
+        elementId: "requirement-1",
+        kind: "requirement",
+        classification: "modified",
+        directlyChanged: true,
+      },
+      {
+        elementId: "decision-1",
+        kind: "decision",
+        classification: "modified",
+        directlyChanged: true,
+      },
+    ]);
+    expect(result.changeList).toEqual([
+      {
+        elementId: "decision-1",
+        kind: "assumption_citation",
+        assumptionId: "assumption-2",
+        change: "citation_added",
+        summary: "Added assumption A2 citation to decision-1.",
+      },
+      {
+        elementId: "requirement-1",
+        kind: "assumption_citation",
+        assumptionId: "assumption-1",
+        change: "citation_removed",
+        summary: "Removed assumption A1 citation from requirement-1.",
+      },
+    ]);
+  });
+
+  it("represents a move as one deterministic remove plus add", () => {
+    const premise = citation("requirement-1", "assumption-1", 1);
+    const moved = { ...premise, elementId: "decision-1" };
+    const result = diffRevisions(rows, rows, {
+      baseCitationContractVersion: 2,
+      draftCitationContractVersion: 2,
+      baseCitations: [premise],
+      draftCitations: [moved],
+    });
+
+    expect(
+      result.changeList.map(({ change, elementId }) => [change, elementId]),
+    ).toEqual([
+      ["citation_added", "decision-1"],
+      ["citation_removed", "requirement-1"],
+    ]);
+  });
+
+  it("detects cited snapshot changes even when the element payload is unchanged", () => {
+    const before = citation("requirement-1", "assumption-1", 1);
+    const after = citation("requirement-1", "assumption-1", 1, {
+      recordVersion: 2,
+      text: "Corrected premise",
+      disposition: "rejected",
+      disposedAt: "2026-08-23T10:30:00.000Z",
+      updatedAt: "2026-08-23T10:30:00.000Z",
+    });
+
+    expect(
+      diffRevisions(rows, rows, {
+        baseCitationContractVersion: 2,
+        draftCitationContractVersion: 2,
+        baseCitations: [before],
+        draftCitations: [after],
+      }).changeList,
+    ).toEqual([
+      {
+        elementId: "requirement-1",
+        kind: "assumption_citation",
+        assumptionId: "assumption-1",
+        change: "citation_snapshot_changed",
+        summary:
+          "Updated assumption A1 citation on requirement-1 (proposed → rejected).",
+      },
+    ]);
+  });
+
+  it("reports a citation contract boundary with no element changes", () => {
+    expect(
+      diffRevisions(rows, rows, {
+        baseCitationContractVersion: 1,
+        draftCitationContractVersion: 2,
+        baseCitations: [],
+        draftCitations: [],
+      }).changeList,
+    ).toEqual([
+      {
+        elementId: "revision",
+        kind: "citation_contract",
+        change: "citation_contract_changed",
+        summary: "Changed assumption citation contract from 1 to 2.",
+      },
+    ]);
+  });
+
+  it("sorts citation changes without mutating either input", () => {
+    const baseCitations = [
+      citation("requirement-1", "assumption-2", 2),
+      citation("decision-1", "assumption-1", 1),
+    ];
+    const draftCitations: RevisionCitation[] = [];
+    const before = structuredClone(baseCitations);
+
+    const result = diffRevisions(rows, rows, {
+      baseCitationContractVersion: 2,
+      draftCitationContractVersion: 2,
+      baseCitations,
+      draftCitations,
+    });
+
+    expect(
+      result.changeList
+        .filter((change) => change.kind === "assumption_citation")
+        .map((change) => [change.elementId, change.assumptionId]),
+    ).toEqual([
+      ["decision-1", "assumption-1"],
+      ["requirement-1", "assumption-2"],
+    ]);
+    expect(baseCitations).toEqual(before);
   });
 });

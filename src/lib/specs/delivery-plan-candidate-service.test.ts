@@ -79,11 +79,15 @@ function pinnedRevision(): SpecRevisionSnapshot {
       authoringStage: "plan",
       basedOnRevisionId: null,
       contentHash: "sha256:pinned",
+      citationContractVersion: 2,
+      citationVersion: 1,
+      citationHash: "0".repeat(64),
       proposedAt: NOW,
       approvedAt: NOW,
       externalDelivery: null,
       createdAt: NOW,
     },
+    assumptionCitations: [],
     elements: criteria.map((criterionId, index) => ({
       element: {
         id: criterionId,

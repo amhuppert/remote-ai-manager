@@ -121,6 +121,13 @@ describe("native /spec first-save visibility", () => {
       resolveProjectPath: async (name) =>
         name === "demo" ? PROJECT_PATH : null,
       resolveSpec: (projectPath, slug) => specs.resolve(projectPath, slug),
+      listRevisions: (specId) => specs.listRevisions(specId),
+      getRevisionSnapshot: (revisionId) =>
+        specs.getRevisionSnapshot(revisionId),
+      findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
+      findAssumptionsBySpecId: (specId) =>
+        review.findAssumptionsBySpecId(specId),
+      findEventsBySpecId: (specId) => eventRepo.findBySpecId(specId),
       getServices: async () => services,
     };
     const readDeps: SpecRouteDeps = {
@@ -523,7 +530,9 @@ describe("native /spec first-save visibility", () => {
     );
 
     expect(refused.exitCode).toBe(1);
-    expect(refused.stderr).toContain("[0] requirement-1: stale_element");
+    expect(refused.stderr).toContain(
+      "elements[0] requirement-1: stale_element",
+    );
     expect(refused.stderr).toContain("element is at version 1");
     // All-or-nothing: the second element was a legal create and still must not
     // survive the refusal.

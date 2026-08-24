@@ -122,6 +122,68 @@ describe("shared CLI refusal-envelope contract", () => {
     expect(text.stderr).toContain("/srv/cc/bin/cctl");
   });
 
+  // The rationale answers "why is this refused" once, so the agent stops
+  // hunting for a workaround. It sits after the unmet conditions (the what)
+  // and before the instruction (the do-now), because a reader who has already
+  // been told what to do next will not read back up for the reason.
+  it("renders a refusal rationale as a why: line between the conditions and the instruction", async () => {
+    const rationale =
+      "requirements settle before design so solution choices cannot shape the contract around themselves";
+    const instruction =
+      "Advance the requirements stage before authoring design content.";
+    const result = await classify(409, {
+      code: "stage_blocked",
+      unmetConditions: [
+        "A design cannot be authored during the requirements stage.",
+      ],
+      rationale,
+      instruction,
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected error result");
+    expect(result.rationale).toBe(rationale);
+
+    const text = failureFromRequest(result, false);
+    const lines = text.stderr.split("\n");
+    const conditionLine = lines.findIndex((line) =>
+      line.includes(
+        "A design cannot be authored during the requirements stage.",
+      ),
+    );
+    const whyLine = lines.indexOf(`why: ${rationale}`);
+    const instructionLine = lines.indexOf(`instruction: ${instruction}`);
+    expect(conditionLine).toBeGreaterThanOrEqual(0);
+    expect(whyLine).toBeGreaterThan(conditionLine);
+    expect(instructionLine).toBeGreaterThan(whyLine);
+
+    const rendered = failureFromRequest(result, true);
+    expect(JSON.parse(rendered.stdout) as JsonEnvelope).toMatchObject({
+      ok: false,
+      code: "stage_blocked",
+      rationale,
+      instruction,
+    });
+  });
+
+  it("renders no why: line for a refusal that carries no rationale", async () => {
+    const result = await classify(409, {
+      code: "gate_blocked",
+      unmetConditions: ["Only a proposed revision can be signed off."],
+      instruction: "Propose the draft revision before signing it off.",
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("expected error result");
+    expect(result.rationale).toBeUndefined();
+
+    expect(failureFromRequest(result, false).stderr).not.toContain("why:");
+    const envelope = JSON.parse(
+      failureFromRequest(result, true).stdout,
+    ) as JsonEnvelope;
+    expect("rationale" in envelope).toBe(false);
+  });
+
   it("carries lint_blocked findings in code-discriminated details", async () => {
     const findings = [
       {

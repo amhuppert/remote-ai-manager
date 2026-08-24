@@ -8,19 +8,22 @@ import type {
 } from "@recogito/react-text-annotator";
 import "@recogito/react-text-annotator/react-text-annotator.css";
 import { useEffect, useMemo, type ReactNode } from "react";
-import type { ResolvedComment } from "../types";
+import type {
+  MarkdownAnnotationTarget,
+  ResolvedMarkdownAnnotation,
+} from "@/components/document-viewer/annotation-contract";
 import {
-  commentsToTextAnnotations,
-  highlightStyleForComments,
+  highlightStyleForAnnotations,
+  markdownAnnotationsToTextAnnotations,
 } from "./build-annotations";
 
 interface RecogitoAnnotatorProps {
   /** The rendered markdown (or any DOM) the annotator selects over. */
   children: ReactNode;
   /** Resolved comments to paint as status-styled highlights. */
-  comments?: ResolvedComment[];
+  annotations?: readonly ResolvedMarkdownAnnotation[];
   /** Invoked with the comment id when a highlighted passage is clicked. */
-  onOpenComment?: (commentId: string) => void;
+  onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
   /** Any change re-syncs highlights against the current DOM (e.g. content). */
   syncSignal?: string | null;
 }
@@ -32,30 +35,33 @@ interface RecogitoAnnotatorProps {
  * whenever the comments or the underlying document content change.
  */
 function AnnotationSync({
-  comments,
-  onOpenComment,
+  annotations,
+  onActivateAnnotation,
   syncSignal,
 }: {
-  comments: ResolvedComment[];
-  onOpenComment?: (commentId: string) => void;
+  annotations: readonly ResolvedMarkdownAnnotation[];
+  onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
   syncSignal?: string | null;
 }): null {
   const anno = useAnnotator<RecogitoTextAnnotator>();
 
   useEffect(() => {
     if (!anno) return;
-    const annotations = commentsToTextAnnotations(comments, anno.element);
-    anno.setAnnotations(annotations, true);
-  }, [anno, comments, syncSignal]);
+    const next = markdownAnnotationsToTextAnnotations(
+      annotations,
+      anno.element,
+    );
+    anno.setAnnotations(next, true);
+  }, [anno, annotations, syncSignal]);
 
   useEffect(() => {
-    if (!anno || !onOpenComment) return;
+    if (!anno || !onActivateAnnotation) return;
     const handler = (annotation: TextAnnotation): void => {
-      onOpenComment(annotation.id);
+      onActivateAnnotation({ kind: "annotation", id: annotation.id });
     };
     anno.on("clickAnnotation", handler);
     return () => anno.off("clickAnnotation", handler);
-  }, [anno, onOpenComment]);
+  }, [anno, onActivateAnnotation]);
 
   return null;
 }
@@ -75,11 +81,14 @@ function AnnotationSync({
  */
 export default function RecogitoAnnotator({
   children,
-  comments = [],
-  onOpenComment,
+  annotations = [],
+  onActivateAnnotation,
   syncSignal,
 }: RecogitoAnnotatorProps): React.JSX.Element {
-  const style = useMemo(() => highlightStyleForComments(comments), [comments]);
+  const style = useMemo(
+    () => highlightStyleForAnnotations(annotations),
+    [annotations],
+  );
   return (
     <Annotorious>
       {/* TextAnnotator renders an `.r6o-annotatable` wrapper around `children`.
@@ -114,8 +123,8 @@ export default function RecogitoAnnotator({
         {children}
       </TextAnnotator>
       <AnnotationSync
-        comments={comments}
-        onOpenComment={onOpenComment}
+        annotations={annotations}
+        onActivateAnnotation={onActivateAnnotation}
         syncSignal={syncSignal}
       />
     </Annotorious>

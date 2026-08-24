@@ -12,9 +12,16 @@ import userEvent from "@testing-library/user-event";
 
 import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import type { CommentAnchor } from "@/lib/document-comments/schemas";
+import {
+  APPROVAL_CARRY_RULE,
+  type ApprovalLedger,
+  type ApprovalLedgerSubject,
+} from "@/lib/specs/approval-ledger";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import type { SpecApprovalRow } from "@/lib/specs/schemas";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
+import type { SpecCommentView } from "@/lib/specs/view-schemas";
 
 import SpecDetailPage from "./SpecDetailPage";
 import {
@@ -126,10 +133,39 @@ const detailRevision = {
   authoringStage: "plan",
   basedOnRevisionId: "revision-3",
   contentHash: "revision-4-hash",
+  citationContractVersion: 2,
+  citationVersion: 1,
+  citationHash: "a".repeat(64),
   proposedAt: NOW,
   approvedAt: null,
   createdAt: NOW,
 } as const;
+
+/**
+ * The server's two-sided approval account for a seeded status, with the counts
+ * derived from the subjects so a fixture cannot claim a total its own rows
+ * contradict.
+ */
+function ledgerOf(subjects: ApprovalLedgerSubject[]): ApprovalLedger {
+  const counted = (classification: ApprovalLedgerSubject["classification"]) =>
+    subjects.filter((subject) => subject.classification === classification)
+      .length;
+  const carried = counted("carried");
+  const currentRevision = counted("current_revision");
+  const importSettled = counted("import_settled");
+  const combinedAct = counted("combined_act");
+  return {
+    subjects,
+    satisfied: carried + currentRevision + importSettled + combinedAct,
+    carried,
+    currentRevision,
+    importSettled,
+    combinedAct,
+    pending: counted("pending"),
+    governedBy: "per_subject",
+    carryRule: APPROVAL_CARRY_RULE,
+  };
+}
 
 function detailPayload(
   sectionBody = "Lifecycle spine: draft, review, execution, delivery.",
@@ -279,6 +315,7 @@ function detailPayload(
           },
         },
       ],
+      assumptionCitations: [],
     },
     currentApprovedRevision: null,
     executionRevisionSnapshots: [],
@@ -393,6 +430,26 @@ function detailPayload(
         { gate: "design", subject: "D1", elementId: "decision-1" },
         { gate: "plan", subject: "plan", elementId: null },
       ],
+      approvalLedger: ledgerOf([
+        {
+          gate: "requirements",
+          subject: "R1",
+          elementId: "requirement-1",
+          classification: "current_revision",
+        },
+        {
+          gate: "design",
+          subject: "D1",
+          elementId: "decision-1",
+          classification: "pending",
+        },
+        {
+          gate: "plan",
+          subject: "plan",
+          elementId: null,
+          classification: "pending",
+        },
+      ]),
       openQuestions: [],
       coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
       delivery,
@@ -472,6 +529,7 @@ function reviewDetailPayload() {
   const baseSnapshot = {
     revision: baseRevision,
     elements: [...baseElements, retiredSection],
+    assumptionCitations: [],
   };
 
   return {
@@ -504,6 +562,20 @@ function reviewDetailPayload() {
         { gate: "requirements", subject: "R1", elementId: "requirement-1" },
         { gate: "plan", subject: "plan", elementId: null },
       ],
+      approvalLedger: ledgerOf([
+        {
+          gate: "requirements",
+          subject: "R1",
+          elementId: "requirement-1",
+          classification: "pending",
+        },
+        {
+          gate: "plan",
+          subject: "plan",
+          elementId: null,
+          classification: "pending",
+        },
+      ]),
     },
     baseRevision: baseSnapshot,
     currentApprovedRevision: baseSnapshot,
@@ -553,6 +625,7 @@ function initialReviewDetailPayload() {
       ...entry,
       version: { ...entry.version, revisionId: initialRevision.id },
     })),
+    assumptionCitations: [],
   };
   return {
     ...payload,
@@ -688,6 +761,7 @@ describe("Spec Studio detail routes", () => {
         phase: { primary: "executing", authoringFacet: "in_review" },
         gates: [],
         pendingApprovals: [],
+        approvalLedger: ledgerOf([]),
         openQuestions: [],
         coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
         delivery: {
@@ -743,42 +817,71 @@ describe("Spec Studio detail routes", () => {
 
   it("persists a prose selection as a spec review comment", async () => {
     pathname = "/specs/command-center/native-sdd";
-    const payload = detailPayload();
-    api.json("GET", "/api/specs/command-center/native-sdd", payload);
-    // The comment write path still answers with the raw persisted row, so the
-    // POST fixture keeps the snake_case row shape even though the GET detail
-    // view now serves camelCase comment views.
-    api.json("POST", "/api/specs/command-center/native-sdd/actions/comment", {
-      id: "comment-selection",
-      spec_id: executingSpec.id,
-      thread_id: "thread-selection",
-      parent_comment_id: null,
-      element_id: "section-intent",
-      anchor_json: JSON.stringify({
-        sectionId: "intent",
-        headingLabel: "Intent",
-        line: 1,
-        charStart: 0,
-        charEnd: 9,
-        quote: "Lifecycle",
-        prefix: "",
-        suffix: " spine",
-        docRevision: "revision-4-hash",
-      }),
-      revision_id: detailRevision.id,
-      body: "Keep the lifecycle sequence explicit.",
-      author_json: JSON.stringify({ kind: "human" }),
-      blocking: 0,
-      resolution: "open",
-      created_at: NOW,
-      updated_at: NOW,
-    });
+    const sectionBody =
+      "The first paragraph establishes context.\n\nThe second paragraph keeps the lifecycle sequence explicit.";
+    const payload = { ...detailPayload(sectionBody), comments: [] };
+    let persistedComment: SpecCommentView | null = null;
+    api.reply("GET", "/api/specs/command-center/native-sdd", () => ({
+      json: {
+        ...payload,
+        comments: persistedComment === null ? [] : [persistedComment],
+      },
+    }));
+    api.reply(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/comment",
+      (request) => {
+        const body = request.jsonBody as {
+          revisionId: string;
+          elementId: string;
+          threadId: string;
+          parentCommentId: null;
+          anchor: CommentAnchor;
+          body: string;
+          blocking: boolean;
+        };
+        persistedComment = {
+          id: "comment-selection",
+          threadId: body.threadId,
+          parentCommentId: null,
+          elementId: body.elementId,
+          handle: null,
+          revisionId: body.revisionId,
+          revisionNumber: detailRevision.number,
+          anchor: body.anchor,
+          quote: body.anchor.quote,
+          body: body.body,
+          author: { kind: "human" },
+          blocking: body.blocking,
+          resolution: "open",
+          createdAt: NOW,
+          updatedAt: NOW,
+        };
+        return {
+          json: {
+            id: persistedComment.id,
+            spec_id: executingSpec.id,
+            thread_id: persistedComment.threadId,
+            parent_comment_id: null,
+            element_id: persistedComment.elementId,
+            anchor_json: JSON.stringify(persistedComment.anchor),
+            revision_id: persistedComment.revisionId,
+            body: persistedComment.body,
+            author_json: JSON.stringify({ kind: "human" }),
+            blocking: 0,
+            resolution: "open",
+            created_at: NOW,
+            updated_at: NOW,
+          },
+        };
+      },
+    );
     const user = userEvent.setup();
     const { container } = renderWithQuery(<SpecDetailPage />);
-    const quote = "draft, review";
+    const quote = "lifecycle sequence";
 
     await screen.findByText(
-      "Lifecycle spine: draft, review, execution, delivery.",
+      "The second paragraph keeps the lifecycle sequence explicit.",
     );
     await waitFor(() =>
       expect(
@@ -792,6 +895,10 @@ describe("Spec Studio detail routes", () => {
     stubSelectionOverText(container, quote);
     fireEvent.pointerUp(document);
     await user.click(screen.getByRole("button", { name: "Comment" }));
+    expect(
+      screen.getByRole("button", { name: "Add comment" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add & send" })).toBeNull();
     await user.type(
       screen.getByRole("textbox", { name: "Comment note" }),
       "Keep the lifecycle sequence explicit.",
@@ -807,10 +914,359 @@ describe("Spec Studio detail routes", () => {
       ).toMatchObject({
         revisionId: detailRevision.id,
         elementId: "section-intent",
+        parentCommentId: null,
         body: "Keep the lifecycle sequence explicit.",
-        anchor: { quote },
+        anchor: { line: 3, quote },
       }),
     );
+    const posted = api.requestsTo(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/comment",
+    )[0]?.jsonBody as { threadId: string };
+    const thread = await screen.findByTestId(
+      `review-thread-${posted.threadId}`,
+    );
+    await waitFor(() =>
+      expect(within(thread).queryByText("Stale anchor")).toBeNull(),
+    );
+    expect(screen.queryByRole("textbox", { name: "Comment note" })).toBeNull();
+  });
+
+  it("renders a prose root and agent reply as one anchored semantic thread", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    const payload = detailPayload();
+    const root = {
+      ...payload.comments[0]!,
+      anchor: {
+        ...payload.comments[0]!.anchor,
+        sectionId: "",
+        headingLabel: "",
+      },
+    };
+    api.json("GET", "/api/specs/command-center/native-sdd", {
+      ...payload,
+      comments: [
+        root,
+        {
+          id: "comment-1-agent-reply",
+          threadId: "thread-1",
+          parentCommentId: "comment-1",
+          elementId: "section-intent",
+          handle: null,
+          revisionId: detailRevision.id,
+          revisionNumber: detailRevision.number,
+          anchor: root.anchor,
+          quote: root.quote,
+          body: "The delivery outcome is now explicit.",
+          author: {
+            kind: "agent",
+            conversationId: "conversation/prose-reply",
+            backend: "claude",
+          },
+          blocking: false,
+          resolution: "open",
+          createdAt: "2026-07-18T12:05:00.000Z",
+          updatedAt: "2026-07-18T12:05:00.000Z",
+        },
+      ],
+    });
+
+    renderWithQuery(<SpecDetailPage />);
+
+    const thread = await screen.findByTestId("review-thread-thread-1");
+    expect(within(thread).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(thread).getAllByText(/Lifecycle/)).toHaveLength(1);
+    expect(thread).toHaveTextContent("Root");
+    expect(thread).toHaveTextContent("Reply");
+    expect(thread).toHaveTextContent("Operator");
+    expect(thread).toHaveTextContent("Claude agent");
+    expect(
+      within(thread).getByRole("link", {
+        name: "Open conversation from Claude agent (conversation/prose-reply)",
+      }),
+    ).toHaveAttribute("href", "/conversations?c=conversation%2Fprose-reply");
+    expect(within(thread).queryByText("Stale anchor")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "1 review thread on this passage" }),
+    ).toBeInTheDocument();
+  });
+
+  it("logs aggregate prose reanchor outcomes after live annotation resolution", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    const payload = detailPayload();
+    payload.comments = payload.comments.map((comment) => ({
+      ...comment,
+      anchor: { ...comment.anchor, sectionId: "", headingLabel: "" },
+    }));
+    api.json("GET", "/api/specs/command-center/native-sdd", payload);
+    const debug = vi
+      .spyOn(console, "debug")
+      .mockImplementation(() => undefined);
+
+    const { container } = renderWithQuery(<SpecDetailPage />);
+
+    await screen.findByTestId("review-thread-thread-1");
+    await waitFor(() =>
+      expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
+    );
+    await waitFor(() =>
+      expect(debug).toHaveBeenCalledWith("spec_studio.comment.reanchor", {
+        module: "spec-studio-comments",
+        specId: payload.spec.id,
+        revisionId: detailRevision.id,
+        anchored: 1,
+        reanchored: 0,
+        stale: 0,
+        orphaned: 0,
+      }),
+    );
+  });
+
+  it("retains a prose comment draft when persistence is refused", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    api.json("GET", "/api/specs/command-center/native-sdd", {
+      ...detailPayload(),
+      comments: [],
+    });
+    api.reply("POST", "/api/specs/command-center/native-sdd/actions/comment", {
+      status: 409,
+      json: { error: "Revision is no longer proposed" },
+    });
+    const user = userEvent.setup();
+    const { container } = renderWithQuery(<SpecDetailPage />);
+    const quote = "draft, review";
+
+    await screen.findByText(
+      "Lifecycle spine: draft, review, execution, delivery.",
+    );
+    await waitFor(() =>
+      expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
+    );
+    stubSelectionOverText(container, quote);
+    fireEvent.pointerUp(document);
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+    const note = screen.getByRole("textbox", { name: "Comment note" });
+    await user.type(note, "Keep this exact operator draft.");
+    await user.click(screen.getByRole("button", { name: "Add comment" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Revision is no longer proposed",
+    );
+    expect(note).toHaveValue("Keep this exact operator draft.");
+    expect(note).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("dialog", { name: "Add comment" })).toBeVisible();
+  });
+
+  it.each([
+    { label: "draft", state: "draft" as const, abandoned: false },
+    { label: "approved", state: "approved" as const, abandoned: false },
+    { label: "withdrawn", state: "withdrawn" as const, abandoned: false },
+    { label: "abandoned", state: "proposed" as const, abandoned: true },
+  ])(
+    "does not offer prose root composition for a $label revision",
+    async ({ state, abandoned }) => {
+      pathname = "/specs/command-center/native-sdd";
+      const payload = detailPayload();
+      api.json("GET", "/api/specs/command-center/native-sdd", {
+        ...payload,
+        spec: abandoned
+          ? {
+              ...payload.spec,
+              abandonedAt: NOW,
+              abandonedReason: "No longer pursued",
+            }
+          : payload.spec,
+        currentRevision: {
+          ...payload.currentRevision,
+          revision: { ...payload.currentRevision.revision, state },
+        },
+        comments: [],
+      });
+      const { container } = renderWithQuery(<SpecDetailPage />);
+
+      await screen.findByText(
+        "Lifecycle spine: draft, review, execution, delivery.",
+      );
+      await waitFor(() =>
+        expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
+      );
+      stubSelectionOverText(container, "draft, review");
+      fireEvent.pointerUp(document);
+
+      expect(screen.queryByRole("button", { name: "Comment" })).toBeNull();
+    },
+  );
+
+  it("focuses the matching thread group when a shared prose pin is activated", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    const payload = detailPayload();
+    const anchor = {
+      ...payload.comments[0]!.anchor,
+      sectionId: "",
+      headingLabel: "",
+    };
+    api.json("GET", "/api/specs/command-center/native-sdd", {
+      ...payload,
+      comments: [
+        { ...payload.comments[0]!, anchor },
+        {
+          ...payload.comments[0]!,
+          id: "comment-2",
+          threadId: "thread-2",
+          anchor,
+          body: "Keep the state transition visible too.",
+          createdAt: "2026-07-18T12:01:00.000Z",
+          updatedAt: "2026-07-18T12:01:00.000Z",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<SpecDetailPage />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "2 review threads on this passage",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("group", {
+        name: "2 review threads on this passage",
+      }),
+    ).toHaveFocus();
+    expect(screen.getAllByTestId(/review-thread-thread-/)).toHaveLength(2);
+  });
+
+  it("places historical and invalid roots once in the named Overview fallback", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    const payload = reviewDetailPayload();
+    const invalidRoot = {
+      ...payload.comments[0]!,
+      id: "comment-invalid-root-a",
+      threadId: "thread-invalid",
+      body: "First competing root.",
+    };
+    api.json("GET", "/api/specs/command-center/native-sdd", {
+      ...payload,
+      comments: [
+        ...payload.comments,
+        invalidRoot,
+        {
+          ...invalidRoot,
+          id: "comment-invalid-root-b",
+          body: "Second competing root.",
+          createdAt: "2026-07-18T12:02:00.000Z",
+          updatedAt: "2026-07-18T12:02:00.000Z",
+        },
+      ],
+    });
+
+    renderWithQuery(<SpecDetailPage />);
+
+    const heading = await screen.findByRole("heading", {
+      name: "Review threads without inline placement",
+    });
+    const fallback = heading.closest("section");
+    expect(fallback).not.toBeNull();
+    expect(
+      within(fallback!).getAllByTestId("review-thread-thread-orphaned"),
+    ).toHaveLength(1);
+    expect(
+      within(fallback!).getAllByTestId("review-thread-thread-invalid"),
+    ).toHaveLength(1);
+    expect(
+      within(fallback!).getByText("Thread data incomplete"),
+    ).toBeInTheDocument();
+    expect(
+      within(fallback!).queryByTestId("review-thread-thread-1"),
+    ).toBeNull();
+  });
+
+  it.each([
+    { label: "approved", abandoned: false },
+    { label: "abandoned", abandoned: true },
+  ])(
+    "keeps a current structured thread visible exactly once in Overview after the spec is $label",
+    async ({ abandoned }) => {
+      pathname = "/specs/command-center/native-sdd";
+      const payload = reviewDetailPayload();
+      const current = payload.currentRevision;
+      const structuredRoot = {
+        ...payload.comments[0]!,
+        id: "comment-structured-root",
+        threadId: "thread-structured",
+        elementId: "requirement-1",
+        handle: "R1",
+        anchor: {
+          ...payload.comments[0]!.anchor,
+          sectionId: "R1",
+          headingLabel: "R1",
+          quote: "Every spec",
+          charEnd: 10,
+        },
+        quote: "Every spec",
+        body: "Keep this requirement feedback visible after review ends.",
+      };
+      api.json("GET", "/api/specs/command-center/native-sdd", {
+        ...payload,
+        spec: abandoned
+          ? {
+              ...payload.spec,
+              abandonedAt: NOW,
+              abandonedReason: "No longer pursued",
+            }
+          : payload.spec,
+        currentRevision: abandoned
+          ? current
+          : {
+              ...current,
+              revision: {
+                ...current.revision,
+                state: "approved",
+                approvedAt: NOW,
+              },
+            },
+        liveProposals: abandoned ? payload.liveProposals : [],
+        comments: [structuredRoot],
+      });
+
+      renderWithQuery(<SpecDetailPage />);
+
+      const heading = await screen.findByRole("heading", {
+        name: "Review threads without inline placement",
+      });
+      const fallback = heading.closest("section");
+      expect(fallback).not.toBeNull();
+      expect(
+        within(fallback!).getAllByTestId("review-thread-thread-structured"),
+      ).toHaveLength(1);
+      expect(
+        screen.getAllByTestId("review-thread-thread-structured"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("omits Overview thread chrome when there are no comments", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    api.json("GET", "/api/specs/command-center/native-sdd", {
+      ...detailPayload(),
+      comments: [],
+    });
+
+    const { container } = renderWithQuery(<SpecDetailPage />);
+
+    await screen.findByText(
+      "Lifecycle spine: draft, review, execution, delivery.",
+    );
+    expect(container.querySelector("[data-thread-id]")).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "Intent review threads" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Review threads without inline placement",
+      }),
+    ).toBeNull();
   });
 
   it("updates an open detail view when an agent draft SSE event arrives", async () => {
@@ -976,6 +1432,16 @@ describe("Spec Studio detail routes", () => {
           basedOnRevisionId: detailRevision.id,
           proposedAt: null,
         },
+        // The reopened draft's account: R1 is unchanged, so the approval a
+        // human granted on the revision this act withdrew still stands.
+        approvalLedger: ledgerOf([
+          {
+            gate: "requirements",
+            subject: "R1",
+            elementId: "requirement-1",
+            classification: "carried",
+          },
+        ]),
       },
     );
     const user = userEvent.setup();
@@ -1016,7 +1482,11 @@ describe("Spec Studio detail routes", () => {
 
     const thread = await screen.findByTestId("review-thread-thread-orphaned");
     expect(within(thread).getByText("Orphaned")).toBeInTheDocument();
-    expect(within(thread).getByText("Original revision 3")).toBeInTheDocument();
+    expect(
+      within(thread).getByRole("heading", {
+        name: "Review thread · Revision 3 · section-retired",
+      }),
+    ).toBeInTheDocument();
     expect(within(thread).getByText(/Retired wording/)).toBeInTheDocument();
     expect(
       within(thread).getByText("Preserve why this context was removed."),

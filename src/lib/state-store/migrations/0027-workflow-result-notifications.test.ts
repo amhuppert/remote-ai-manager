@@ -72,11 +72,11 @@ describe("0027-workflow-result-notifications", () => {
     expect(db.prepare("SELECT id, source FROM notifications").all()).toEqual([
       { id: "notification-1", source: "job" },
     ]);
-    // This migration's own breaking version is 8; later cutovers (0030, 0031)
-    // raise the application constant past it.
+    // This migration's own breaking version is 8; later cutovers (0030, 0031,
+    // and 0034) raise the application constant past it.
     expect(
       db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
     ).toEqual({ version: 8 });
-    expect(KNOWN_SCHEMA_VERSION).toBe(10);
+    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 });

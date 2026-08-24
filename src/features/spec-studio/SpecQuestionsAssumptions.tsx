@@ -1,80 +1,139 @@
 "use client";
 
-import { useState } from "react";
-
-import { CompactMarkdown } from "@/components/markdown/Markdown";
-import { CopyReferenceControl } from "@/components/references/SpecRefChips";
-import { Button } from "@/components/ui/Button";
-import { FormGroup, FormInput, FormLabel } from "@/components/ui/FormField";
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
-import { buildSpecReadCommand } from "@/lib/prompt-editor/spec-reference-contract";
+import type { SpecPhaseProjection } from "@/lib/specs/phase";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
+import type { SpecAssumptionDisposition } from "@/lib/specs/schemas";
 import {
   specAssumptionViewSchema,
   specQuestionViewSchema,
   type SpecAssumptionView,
+  type SpecAttentionAuditEventView,
   type SpecDetailView,
+  type SpecLintView,
   type SpecQuestionView,
-} from "@/lib/specs/queries";
-import type {
-  ActorProvenance,
-  SpecAssumptionDisposition,
-} from "@/lib/specs/schemas";
-import { cn } from "@/lib/ui/cn";
+} from "@/lib/specs/view-schemas";
 
-import { importProvenance, settledAtImport } from "./presentation";
+import SpecAttentionRegister from "./SpecAttentionRegister";
+import { importProvenance } from "./presentation";
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-questions");
 
 export interface AnswerQuestionPanelInput {
   questionId: string;
+  recordVersion: number;
   answer: string;
 }
 
-export type AssumptionDispositionChoice = Exclude<
+export type AssumptionDispositionChoice = Extract<
   SpecAssumptionDisposition,
-  "proposed"
+  "confirmed" | "rejected" | "deferred"
 >;
 
 export interface DisposeAssumptionPanelInput {
   assumptionId: string;
+  recordVersion: number;
+  citationVersion?: number;
   disposition: AssumptionDispositionChoice;
 }
 
-type QaPendingAction = "answer-question" | "dispose-assumption" | null;
+type AttentionHistoryEntry =
+  | { kind: "question"; record: SpecQuestionView }
+  | { kind: "assumption"; record: SpecAssumptionView };
 
-const questionStatusPresentation: Record<
-  SpecQuestionView["status"],
-  { label: string; tone: StatusChipTone }
-> = {
-  open: { label: "Open", tone: "amber" },
-  answered: { label: "Answered", tone: "green" },
+const questionOrder: Record<SpecQuestionView["status"], number> = {
+  open: 0,
+  answered: 1,
+  withdrawn: 2,
 };
 
-const dispositionPresentation: Record<
-  SpecAssumptionDisposition,
-  { label: string; tone: StatusChipTone }
-> = {
-  proposed: { label: "Proposed", tone: "amber" },
-  confirmed: { label: "Confirmed", tone: "green" },
-  rejected: { label: "Rejected", tone: "red" },
-  deferred: { label: "Deferred", tone: "neutral" },
+const assumptionOrder: Record<SpecAssumptionDisposition, number> = {
+  proposed: 0,
+  confirmed: 1,
+  rejected: 2,
+  deferred: 3,
+  withdrawn: 4,
 };
 
-const dispositionChoiceClass: Record<AssumptionDispositionChoice, string> = {
-  confirmed:
-    "border-green-dim text-green hover:border-green hover:bg-green-glow aria-pressed:border-green aria-pressed:bg-green-glow",
-  rejected:
-    "border-red-dim text-red hover:border-red hover:bg-red-glow aria-pressed:border-red aria-pressed:bg-red-glow",
-  deferred:
-    "border-border-default text-text-tertiary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary aria-pressed:border-border-strong aria-pressed:bg-bg-hover aria-pressed:text-text-primary",
-};
+function byRecordNumber<T extends { number: number }>(
+  left: T,
+  right: T,
+): number {
+  return left.number - right.number;
+}
 
-function provenanceLabel(provenance: ActorProvenance | null): string | null {
-  if (provenance === null) return null;
-  return provenance.kind === "agent" ? "Agent" : "Operator";
+function currentQuestions(
+  questions: readonly SpecQuestionView[],
+): SpecQuestionView[] {
+  return questions
+    .filter(({ presentation }) => presentation.state === "current")
+    .sort(
+      (left, right) =>
+        questionOrder[left.status] - questionOrder[right.status] ||
+        byRecordNumber(left, right),
+    );
+}
+
+function currentAssumptions(
+  assumptions: readonly SpecAssumptionView[],
+): SpecAssumptionView[] {
+  return assumptions
+    .filter(({ presentation }) => presentation.state === "current")
+    .sort(
+      (left, right) =>
+        assumptionOrder[left.disposition] -
+          assumptionOrder[right.disposition] || byRecordNumber(left, right),
+    );
+}
+
+function recordHistory(
+  questions: readonly SpecQuestionView[],
+  assumptions: readonly SpecAssumptionView[],
+): AttentionHistoryEntry[] {
+  return [
+    ...questions
+      .filter(({ presentation }) => presentation.state === "history")
+      .map((record) => ({ kind: "question" as const, record })),
+    ...assumptions
+      .filter(({ presentation }) => presentation.state === "history")
+      .map((record) => ({ kind: "assumption" as const, record })),
+  ].sort(
+    (left, right) =>
+      right.record.updatedAt.localeCompare(left.record.updatedAt) ||
+      left.record.handle.localeCompare(right.record.handle),
+  );
+}
+
+function historyReasons(
+  events: readonly SpecAttentionAuditEventView[],
+): Record<string, string> {
+  const reasons: Record<string, string> = {};
+  for (const event of events) {
+    if (event.kind !== "record" || event.payload.reason === undefined) continue;
+    reasons[event.payload.recordId] = event.payload.reason;
+  }
+  return reasons;
+}
+
+export function blockingAssumptionIdsFromLint(
+  assumptions: readonly SpecAssumptionView[],
+  findings: SpecLintView["findings"],
+): string[] {
+  const blockingHandles = new Set(
+    findings.flatMap((finding) => {
+      if (
+        finding.ruleId !== "9.8.rejected-cited-assumption" ||
+        finding.severity !== "blocks_signoff"
+      ) {
+        return [];
+      }
+      return finding.message.match(/\bA[1-9]\d*\b/g) ?? [];
+    }),
+  );
+  return assumptions
+    .filter(({ handle }) => blockingHandles.has(handle))
+    .map(({ id }) => id);
 }
 
 export function SpecQuestionsAssumptions({
@@ -83,383 +142,49 @@ export function SpecQuestionsAssumptions({
   projectName,
   slug,
   revision,
+  phase,
   elementHandlesById,
-  pendingAction,
-  error,
-  importedAt,
+  importedAt = null,
+  targetHandle = null,
+  blockingAssumptionIds = [],
+  historyReasonsById = {},
+  showIntro = true,
   onAnswerQuestion,
   onDisposeAssumption,
-  readOnly = false,
 }: {
-  questions: SpecQuestionView[];
-  assumptions: SpecAssumptionView[];
+  questions: readonly SpecQuestionView[];
+  assumptions: readonly SpecAssumptionView[];
   projectName: string;
   slug: string;
   revision: number;
+  phase: SpecPhaseProjection;
   elementHandlesById: ReadonlyMap<string, string>;
-  pendingAction: QaPendingAction;
-  error: string | null;
-  /** When the spec was imported, or null for a spec authored here. */
-  importedAt: string | null;
-  onAnswerQuestion(input: AnswerQuestionPanelInput): void;
-  onDisposeAssumption(input: DisposeAssumptionPanelInput): void;
-  readOnly?: boolean;
+  importedAt?: string | null;
+  targetHandle?: string | null;
+  blockingAssumptionIds?: readonly string[];
+  historyReasonsById?: Readonly<Record<string, string>>;
+  showIntro?: boolean;
+  onAnswerQuestion(input: AnswerQuestionPanelInput): Promise<void>;
+  onDisposeAssumption(input: DisposeAssumptionPanelInput): Promise<void>;
 }): React.JSX.Element {
   return (
-    <div className="grid gap-lg">
-      {error !== null && (
-        <div
-          role="alert"
-          className="rounded-lg border border-solid border-red-dim bg-red-glow p-md font-mono text-[0.72rem] text-red"
-        >
-          {error}
-        </div>
-      )}
-
-      <section
-        aria-label="Questions"
-        className="rounded-lg border border-solid border-border-subtle bg-bg-surface"
-      >
-        <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-lg py-md">
-          <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-            Questions
-          </h2>
-          <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
-            Open questions block ambiguity from silently becoming scope.
-          </p>
-        </div>
-        <div className="grid gap-sm p-md">
-          {questions.length === 0 ? (
-            <span className="rounded-md border border-dashed border-border-dim px-md py-sm font-mono text-[0.68rem] text-text-tertiary">
-              No questions recorded for this spec.
-            </span>
-          ) : (
-            questions.map((question) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                projectName={projectName}
-                slug={slug}
-                revision={revision}
-                elementHandlesById={elementHandlesById}
-                pendingAction={pendingAction}
-                importedAt={importedAt}
-                onAnswerQuestion={onAnswerQuestion}
-                readOnly={readOnly}
-              />
-            ))
-          )}
-        </div>
-      </section>
-
-      <section
-        aria-label="Assumptions"
-        className="rounded-lg border border-solid border-border-subtle bg-bg-surface"
-      >
-        <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-lg py-md">
-          <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-            Assumptions
-          </h2>
-          <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
-            Agents propose; only the operator confirms, rejects, or defers.
-          </p>
-        </div>
-        <div className="grid gap-sm p-md">
-          {assumptions.length === 0 ? (
-            <span className="rounded-md border border-dashed border-border-dim px-md py-sm font-mono text-[0.68rem] text-text-tertiary">
-              No assumptions proposed for this spec.
-            </span>
-          ) : (
-            assumptions.map((assumption) => (
-              <AssumptionCard
-                key={assumption.id}
-                assumption={assumption}
-                projectName={projectName}
-                slug={slug}
-                revision={revision}
-                elementHandlesById={elementHandlesById}
-                pendingAction={pendingAction}
-                importedAt={importedAt}
-                onDisposeAssumption={onDisposeAssumption}
-                readOnly={readOnly}
-              />
-            ))
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function AttachmentChip({
-  elementId,
-  elementHandlesById,
-}: {
-  elementId: string | null;
-  elementHandlesById: ReadonlyMap<string, string>;
-}): React.JSX.Element {
-  if (elementId === null) {
-    // Spec-level records are not citations: a rejected spec-level assumption
-    // never blocks sign-off (rule 9.8 applies to attached assumptions only).
-    return <StatusChip tone="neutral">Spec-level</StatusChip>;
-  }
-  const handle = elementHandlesById.get(elementId);
-  return (
-    <StatusChip tone="cyan">
-      {handle === undefined ? "Attached" : `Attached to ${handle}`}
-    </StatusChip>
-  );
-}
-
-function QuestionCard({
-  question,
-  projectName,
-  slug,
-  revision,
-  elementHandlesById,
-  pendingAction,
-  importedAt,
-  onAnswerQuestion,
-  readOnly,
-}: {
-  question: SpecQuestionView;
-  projectName: string;
-  slug: string;
-  revision: number;
-  elementHandlesById: ReadonlyMap<string, string>;
-  pendingAction: QaPendingAction;
-  importedAt: string | null;
-  onAnswerQuestion(input: AnswerQuestionPanelInput): void;
-  readOnly: boolean;
-}): React.JSX.Element {
-  const [answer, setAnswer] = useState("");
-  const status = questionStatusPresentation[question.status];
-  const askedBy = provenanceLabel(question.provenance);
-  const answeredAtImport = settledAtImport(question.answeredAt, importedAt);
-
-  return (
-    <article
-      id={question.handle}
-      data-spec-element={question.handle}
-      tabIndex={-1}
-      className="rounded-md border border-solid border-border-dim bg-bg-base p-md focus-visible:[outline:2px_solid_var(--color-cyan)]"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-sm">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-sm">
-            <span className="font-mono text-[0.72rem] font-bold text-cyan">
-              {question.handle}
-            </span>
-            <StatusChip tone={status.tone}>{status.label}</StatusChip>
-            <AttachmentChip
-              elementId={question.elementId}
-              elementHandlesById={elementHandlesById}
-            />
-            {askedBy !== null && (
-              <span className="font-mono text-[0.66rem] tracking-[0.06em] text-text-tertiary uppercase">
-                Asked by {askedBy}
-              </span>
-            )}
-          </div>
-          <div className="mt-xs min-w-0">
-            <CompactMarkdown content={question.text} />
-          </div>
-        </div>
-        <CopyReferenceControl
-          referenceType="question"
-          attrs={{
-            projectName,
-            slug,
-            handle: question.handle,
-            name: question.text,
-            revision: String(revision),
-            readCommand: buildSpecReadCommand(
-              projectName,
-              slug,
-              question.handle,
-            ),
-          }}
-        />
-      </div>
-
-      {question.status === "answered" ? (
-        <div className="mt-md rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm">
-          <span className="font-mono text-[0.64rem] tracking-[0.06em] text-text-tertiary uppercase">
-            {answeredAtImport ? "Answered at import" : "Answer"}
-          </span>
-          <div className="mt-xs min-w-0">
-            <CompactMarkdown content={question.answer ?? ""} />
-          </div>
-        </div>
-      ) : readOnly ? (
-        <p className="mt-md mb-0 rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm text-[0.8125rem] leading-relaxed text-text-secondary">
-          No answer was recorded before this spec was abandoned.
-        </p>
-      ) : (
-        <div className="mt-md grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm max-768:grid-cols-1">
-          <FormGroup layoutClassName="mb-0">
-            <FormLabel htmlFor={`question-answer-${question.id}`}>
-              Answer
-            </FormLabel>
-            <FormInput
-              id={`question-answer-${question.id}`}
-              aria-label={`Answer for ${question.handle}`}
-              value={answer}
-              onChange={(event) => setAnswer(event.currentTarget.value)}
-              placeholder="Record the human decision"
-            />
-          </FormGroup>
-          <Button
-            size="sm"
-            loading={pendingAction === "answer-question"}
-            disabled={answer.trim().length === 0}
-            aria-label={`Record answer for ${question.handle}`}
-            onClick={() =>
-              onAnswerQuestion({
-                questionId: question.id,
-                answer: answer.trim(),
-              })
-            }
-          >
-            Record answer
-          </Button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function AssumptionCard({
-  assumption,
-  projectName,
-  slug,
-  revision,
-  elementHandlesById,
-  pendingAction,
-  importedAt,
-  onDisposeAssumption,
-  readOnly,
-}: {
-  assumption: SpecAssumptionView;
-  projectName: string;
-  slug: string;
-  revision: number;
-  elementHandlesById: ReadonlyMap<string, string>;
-  pendingAction: QaPendingAction;
-  importedAt: string | null;
-  onDisposeAssumption(input: DisposeAssumptionPanelInput): void;
-  readOnly: boolean;
-}): React.JSX.Element {
-  const [selectedDisposition, setSelectedDisposition] = useState<
-    "" | AssumptionDispositionChoice
-  >(assumption.disposition === "proposed" ? "" : assumption.disposition);
-  const disposition = dispositionPresentation[assumption.disposition];
-  const proposedBy = provenanceLabel(assumption.proposedBy);
-  const disposedAtImport = settledAtImport(assumption.disposedAt, importedAt);
-  const canSave =
-    selectedDisposition !== "" &&
-    selectedDisposition !== assumption.disposition;
-
-  return (
-    <article
-      id={assumption.handle}
-      data-spec-element={assumption.handle}
-      tabIndex={-1}
-      className="rounded-md border border-solid border-border-dim bg-bg-base p-md focus-visible:[outline:2px_solid_var(--color-cyan)]"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-sm">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-sm">
-            <span className="font-mono text-[0.72rem] font-bold text-cyan">
-              {assumption.handle}
-            </span>
-            {/* The tone still encodes the disposition, which is real; only the
-                label says who took it. Neutralising the pill would hide a
-                settled assumption behind its provenance. */}
-            <StatusChip tone={disposition.tone}>
-              {disposedAtImport
-                ? `${disposition.label} at import`
-                : disposition.label}
-            </StatusChip>
-            <AttachmentChip
-              elementId={assumption.elementId}
-              elementHandlesById={elementHandlesById}
-            />
-            {proposedBy !== null && (
-              <span className="font-mono text-[0.66rem] tracking-[0.06em] text-text-tertiary uppercase">
-                Proposed by {proposedBy}
-              </span>
-            )}
-          </div>
-          <div className="mt-xs min-w-0">
-            <CompactMarkdown content={assumption.text} />
-          </div>
-        </div>
-        <CopyReferenceControl
-          referenceType="assumption"
-          attrs={{
-            projectName,
-            slug,
-            handle: assumption.handle,
-            name: assumption.text,
-            revision: String(revision),
-            readCommand: buildSpecReadCommand(
-              projectName,
-              slug,
-              assumption.handle,
-            ),
-          }}
-        />
-      </div>
-
-      {!readOnly && (
-        <div className="mt-md grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm max-768:grid-cols-1">
-          <fieldset className="m-0 border-0 p-0">
-            <legend className="mb-sm font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-              Disposition
-            </legend>
-            <div className="flex flex-wrap gap-xs">
-              {(
-                [
-                  ["confirmed", "Confirm"],
-                  ["rejected", "Reject"],
-                  ["deferred", "Defer"],
-                ] as const
-              ).map(([choice, label]) => (
-                <button
-                  key={choice}
-                  type="button"
-                  aria-label={`${label} ${assumption.handle}`}
-                  aria-pressed={selectedDisposition === choice}
-                  onClick={() => setSelectedDisposition(choice)}
-                  className={cn(
-                    "min-h-[32px] cursor-pointer rounded-sm border border-solid bg-transparent px-md font-mono text-[0.7rem] font-semibold transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]",
-                    dispositionChoiceClass[choice],
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-          <Button
-            size="sm"
-            loading={pendingAction === "dispose-assumption"}
-            disabled={!canSave}
-            aria-label={`Save disposition for ${assumption.handle}`}
-            onClick={() => {
-              if (selectedDisposition === "") return;
-              onDisposeAssumption({
-                assumptionId: assumption.id,
-                disposition: selectedDisposition,
-              });
-            }}
-          >
-            Save disposition
-          </Button>
-        </div>
-      )}
-    </article>
+    <SpecAttentionRegister
+      projectName={projectName}
+      slug={slug}
+      revision={revision}
+      phase={phase}
+      questions={currentQuestions(questions)}
+      assumptions={currentAssumptions(assumptions)}
+      history={recordHistory(questions, assumptions)}
+      elementHandlesById={elementHandlesById}
+      blockingAssumptionIds={blockingAssumptionIds}
+      historyReasonsById={historyReasonsById}
+      importedAt={importedAt}
+      targetHandle={targetHandle}
+      showIntro={showIntro}
+      onAnswerQuestion={onAnswerQuestion}
+      onDisposeAssumption={onDisposeAssumption}
+    />
   );
 }
 
@@ -484,8 +209,6 @@ function elementHandleIndex(detail: SpecDetailView): Map<string, string> {
         break;
     }
   }
-  // Criterion handles derive from the parent requirement's number, so they
-  // resolve in a second pass once every requirement is indexed.
   for (const entry of snapshot.elements) {
     if (
       entry.version.payload.kind !== "criterion" ||
@@ -504,14 +227,14 @@ function elementHandleIndex(detail: SpecDetailView): Map<string, string> {
 export default function SpecQuestionsAssumptionsPanel({
   detail,
   projectName,
+  targetHandle = null,
+  blockingAssumptionIds = [],
 }: {
   detail: SpecDetailView;
   projectName: string;
+  targetHandle?: string | null;
+  blockingAssumptionIds?: readonly string[];
 }): React.JSX.Element {
-  const [actionFailure, setActionFailure] = useState<{
-    action: string;
-    message: string;
-  } | null>(null);
   const answerQuestion = useSpecActionMutation<
     AnswerQuestionPanelInput,
     SpecQuestionView
@@ -529,62 +252,78 @@ export default function SpecQuestionsAssumptionsPanel({
     specAssumptionViewSchema,
     { specId: detail.spec.id, eventTypes: ["spec-attention-changed"] },
   );
-
-  function mutationCallbacks(action: string) {
-    return {
-      onSuccess: () => {
-        setActionFailure(null);
-        logger.info("spec_studio.qa_action.completed", {
-          action,
-          specId: detail.spec.id,
-        });
-      },
-      onError: (mutationError: Error) => {
-        setActionFailure({ action, message: mutationError.message });
-        logger.warn("spec_studio.qa_action.failed", {
-          action,
-          specId: detail.spec.id,
-          error: mutationError.message,
-        });
-      },
-    };
-  }
-
-  const pendingAction: QaPendingAction = answerQuestion.isPending
-    ? "answer-question"
-    : disposeAssumption.isPending
-      ? "dispose-assumption"
-      : null;
   const revision = Math.max(
     1,
-    ...detail.revisions.map((revision) => revision.number),
+    ...detail.revisions.map((candidate) => candidate.number),
   );
-
   const readOnly = detail.spec.abandonedAt !== null;
+
+  async function answer(input: AnswerQuestionPanelInput): Promise<void> {
+    try {
+      await answerQuestion.mutateAsync(input);
+      logger.info("spec_studio.qa_action.completed", {
+        action: "answer-question",
+        specId: detail.spec.id,
+        questionId: input.questionId,
+        recordVersion: input.recordVersion,
+      });
+    } catch (error) {
+      logger.warn("spec_studio.qa_action.failed", {
+        action: "answer-question",
+        specId: detail.spec.id,
+        questionId: input.questionId,
+        recordVersion: input.recordVersion,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  async function dispose(input: DisposeAssumptionPanelInput): Promise<void> {
+    try {
+      await disposeAssumption.mutateAsync(input);
+      logger.info("spec_studio.qa_action.completed", {
+        action: "dispose-assumption",
+        specId: detail.spec.id,
+        assumptionId: input.assumptionId,
+        recordVersion: input.recordVersion,
+        citationVersion: input.citationVersion,
+        disposition: input.disposition,
+      });
+    } catch (error) {
+      logger.warn("spec_studio.qa_action.failed", {
+        action: "dispose-assumption",
+        specId: detail.spec.id,
+        assumptionId: input.assumptionId,
+        recordVersion: input.recordVersion,
+        citationVersion: input.citationVersion,
+        disposition: input.disposition,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
 
   return (
     <div className="grid gap-lg">
-      {readOnly && <SpecReadOnlyNotice reason={detail.spec.abandonedReason} />}
+      {readOnly ? (
+        <SpecReadOnlyNotice reason={detail.spec.abandonedReason} />
+      ) : null}
       <SpecQuestionsAssumptions
         questions={detail.questions}
         assumptions={detail.assumptions}
         projectName={projectName}
         slug={detail.spec.slug}
         revision={revision}
+        phase={detail.status.phase}
         elementHandlesById={elementHandleIndex(detail)}
-        pendingAction={pendingAction}
-        error={actionFailure?.message ?? null}
         importedAt={importProvenance(detail.gateAdmissions)?.at ?? null}
-        onAnswerQuestion={(input) =>
-          answerQuestion.mutate(input, mutationCallbacks("answer-question"))
-        }
-        onDisposeAssumption={(input) =>
-          disposeAssumption.mutate(
-            input,
-            mutationCallbacks("dispose-assumption"),
-          )
-        }
-        readOnly={readOnly}
+        targetHandle={targetHandle}
+        blockingAssumptionIds={blockingAssumptionIds}
+        historyReasonsById={historyReasons(detail.attentionAuditEvents)}
+        showIntro={false}
+        onAnswerQuestion={answer}
+        onDisposeAssumption={dispose}
       />
     </div>
   );

@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const authoringLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: () => authoringLogger,
 }));
 
 import { deriveNotificationOutcomes } from "@/components/session/sidebar/active-work-adapters";
@@ -26,9 +28,11 @@ import type { SpecGatePolicy } from "@/lib/specs/schemas";
 
 import {
   createAuthoringService,
+  type ApprovalRequestPort,
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import type { SpecPolicyAdmissionNotifier } from "./policy-admissions";
 
 const PROJECT_PATH = "/repos/authoring-policy-admissions";
 const PROJECT_NAME = "authoring-policy-admissions-project";
@@ -41,8 +45,13 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
   let reviewRepo: ReturnType<typeof createSpecReviewRepo>;
   let notificationsRepo: ReturnType<typeof createNotificationsRepo>;
   let pushed: Notification[];
+  let policyAdmissionResponder: SpecPolicyAdmissionNotifier["policyAdmitted"];
+  let approvalRequestCalls: Parameters<
+    ApprovalRequestPort["requestApproval"]
+  >[0][];
 
   beforeEach(() => {
+    vi.clearAllMocks();
     db = _createTestDb({ inMemory: true });
     db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
     pushed = [];
@@ -68,6 +77,8 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       },
       getProjectDisplayName: () => PROJECT_NAME,
     });
+    policyAdmissionResponder = (notice) => notifier.policyAdmitted(notice);
+    approvalRequestCalls = [];
     specs = createSpecsRepo(db, writeQueue);
     authoring = createAuthoringService({
       specs,
@@ -78,7 +89,31 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
         publish: () => ({ delivered: true }),
       }),
       waivers: createSpecDeliveryRepo(db),
-      policyNotifier: notifier,
+      policyNotifier: {
+        policyAdmitted(notice) {
+          policyAdmissionResponder(notice);
+        },
+      },
+      approvalRequests: {
+        requestApproval(input) {
+          approvalRequestCalls.push(input);
+          return Promise.resolve({
+            ok: true,
+            value: {
+              revisionId: input.revisionId,
+              gate: input.gate,
+              subject: input.gate,
+              scope: "gate",
+              attentionId: `attention-${input.gate}`,
+              alreadyRequested: false,
+              elementId: null,
+              outstandingSubjects: [],
+              signOffOutstanding: true,
+              deliveryOutcome: "delivered",
+            },
+          });
+        },
+      },
       newId(prefix) {
         idSequence += 1;
         return `${prefix}-${idSequence}`;
@@ -219,5 +254,62 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       notificationsRepo.findSpecNotificationsBySpecId(created.spec.id),
     ).toHaveLength(2);
     expect(pushed).toHaveLength(2);
+  });
+
+  it("keeps a committed proposal successful and files pending asks when a Notify notice throws", async () => {
+    const authoredBody = "Notify-dial admissions surface post hoc.";
+    policyAdmissionResponder = () => {
+      throw new Error(authoredBody);
+    };
+
+    const { created, proposed } = await proposeSpec("notify-failure", {
+      preset: "contract-bearing",
+      overrides: { requirements: "notify" },
+    });
+
+    expect(proposed).toMatchObject({
+      ok: true,
+      revision: { id: created.draft.id, state: "proposed" },
+      approvalRequests: [
+        { gate: "requirements", outcome: "not-needed", attentionId: null },
+        {
+          gate: "design",
+          outcome: "filed",
+          attentionId: "attention-design",
+        },
+      ],
+    });
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "proposed",
+    });
+    expect(approvalRequestCalls).toEqual([
+      {
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        gate: "design",
+        actor: AGENT,
+      },
+    ]);
+
+    const admission = reviewRepo
+      .findGateAdmissionsByRevision(created.draft.id)
+      .find(
+        (candidate) =>
+          candidate.gate === "requirements" &&
+          candidate.basis === "notify_policy",
+      );
+    expect(admission).toBeDefined();
+    expect(authoringLogger.warn).toHaveBeenCalledWith(
+      "specs.authoring.propose_revision.policy_notification_failed",
+      {
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        gate: "requirements",
+        admissionId: admission?.id,
+      },
+    );
+    expect(JSON.stringify(authoringLogger.warn.mock.calls)).not.toContain(
+      authoredBody,
+    );
   });
 });

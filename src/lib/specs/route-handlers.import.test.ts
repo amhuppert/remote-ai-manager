@@ -86,13 +86,14 @@ beforeEach(() => {
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
   const events = createSpecEventsRepo(fixture.db);
+  const review = createSpecReviewRepo(fixture.db);
   // Only the import slot is real: this exercises the whole import path end to
   // end through the transport, and the other mutation services are unreachable
   // from the `import` action.
   const services = {
     import: createImportService({
       specs: fixture.specs,
-      review: createSpecReviewRepo(fixture.db),
+      review,
       links: createSpecLinksRepo(fixture.db),
       events: createSpecEventsPublisher({
         appendInTransaction: events.appendInTransaction,
@@ -104,6 +105,12 @@ beforeEach(() => {
     auth,
     resolveProjectPath: async (name) => (name === "demo" ? PROJECT_PATH : null),
     resolveSpec: async () => null,
+    listRevisions: (specId) => fixture.specs.listRevisions(specId),
+    getRevisionSnapshot: (revisionId) =>
+      fixture.specs.getRevisionSnapshot(revisionId),
+    findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
+    findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
+    findEventsBySpecId: (specId) => events.findBySpecId(specId),
     getServices: async () => services,
   };
   handlers = createSpecWriteRouteHandlers(deps);

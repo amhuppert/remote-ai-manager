@@ -1,7 +1,7 @@
 import { useState, type ComponentProps, type ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import {
   specDetailViewSchema,
@@ -225,6 +225,72 @@ function withProse(detail: SpecDetailView): SpecDetailView {
   };
 }
 
+function withOverviewReviewThreads(
+  detail: SpecDetailView,
+  grouped = false,
+): SpecDetailView {
+  const snapshot = detail.currentRevision;
+  if (snapshot === null) {
+    throw new Error("Overview thread story requires a current revision");
+  }
+  const revision = snapshot.revision;
+  const anchor = {
+    sectionId: "",
+    headingLabel: "",
+    line: 1,
+    charStart: 0,
+    charEnd: 30,
+    quote: "Native spec-driven development",
+    prefix: "",
+    suffix: " keeps the contract",
+    docRevision: revision.contentHash,
+  };
+  const root = {
+    id: "overview-root-1",
+    threadId: "overview-thread-1",
+    parentCommentId: null,
+    elementId: "section-intent",
+    handle: null,
+    revisionId: revision.id,
+    revisionNumber: revision.number,
+    anchor,
+    quote: anchor.quote,
+    body: "Keep the durable contract explicit in the opening sentence.",
+    author: { kind: "human" as const },
+    blocking: false,
+    resolution: "open" as const,
+    createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+    updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+  };
+  const reply = {
+    ...root,
+    id: "overview-reply-1",
+    parentCommentId: root.id,
+    body: "The sentence now carries the durable-contract guarantee.",
+    author: {
+      kind: "agent" as const,
+      conversationId: "conversation-overview-thread",
+      backend: "claude",
+    },
+    createdAt: "2026-08-22T12:05:00.000Z",
+    updatedAt: "2026-08-22T12:05:00.000Z",
+  };
+  const groupedRoot = {
+    ...root,
+    id: "overview-root-2",
+    threadId: "overview-thread-2",
+    body: "Call out criterion-level proof before the reader reaches the rail.",
+    blocking: true,
+    createdAt: "2026-08-22T12:06:00.000Z",
+    updatedAt: "2026-08-22T12:06:00.000Z",
+  };
+
+  return parsedDetail({
+    ...detail,
+    comments: grouped ? [root, reply, groupedRoot] : [root, reply],
+  });
+}
+
 /**
  * Every story detail — including the phase mutations below — re-parses
  * through the full response schema, so a story-only variant cannot drift into
@@ -268,6 +334,10 @@ function snapshotFor(
         ...entry,
         version: { ...entry.version, revisionId: revision.id },
       })),
+    assumptionCitations: source.assumptionCitations.map((citation) => ({
+      ...citation,
+      revisionId: revision.id,
+    })),
   };
 }
 
@@ -317,10 +387,18 @@ function withQuestionsAndAssumptions(detail: SpecDetailView): SpecDetailView {
         handle: "Q1",
         elementId: "requirement-1",
         text: "Which gate owns pinned-scope validation?",
+        recordVersion: 1,
         status: "open",
         answer: null,
         answeredAt: null,
+        withdrawnAt: null,
         provenance: { kind: "human" },
+        presentation: {
+          state: "current",
+          attentionActive: true,
+          lastMutation: null,
+          humanCapability: { kind: "answer", allowed: true },
+        },
         createdAt: SPEC_CONTROLS_FIXTURE_NOW,
         updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
       },
@@ -330,10 +408,24 @@ function withQuestionsAndAssumptions(detail: SpecDetailView): SpecDetailView {
         handle: "Q2",
         elementId: null,
         text: "Does review retain raw diff access?",
+        recordVersion: 1,
         status: "answered",
         answer: "Yes, as a secondary inspection surface.",
         answeredAt: SPEC_CONTROLS_FIXTURE_NOW,
+        withdrawnAt: null,
         provenance: { kind: "agent", conversationId: "conversation-1" },
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "answer",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This question is terminal.",
+          },
+        },
         createdAt: SPEC_CONTROLS_FIXTURE_NOW,
         updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
       },
@@ -345,11 +437,22 @@ function withQuestionsAndAssumptions(detail: SpecDetailView): SpecDetailView {
         handle: "A1",
         elementId: "requirement-1",
         text: "The gate screen can reuse the pinned scope projection.",
+        recordVersion: 1,
         disposition: "proposed",
         disposedAt: null,
+        withdrawnAt: null,
         proposedBy: {
           kind: "agent",
           conversationId: "conversation-1",
+        },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: true,
+          lastMutation: null,
+          humanCapability: { kind: "dispose", allowed: true },
         },
         createdAt: SPEC_CONTROLS_FIXTURE_NOW,
         updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
@@ -360,9 +463,26 @@ function withQuestionsAndAssumptions(detail: SpecDetailView): SpecDetailView {
         handle: "A2",
         elementId: null,
         text: "Historical raw diffs use the same formatter.",
+        recordVersion: 1,
         disposition: "deferred",
         disposedAt: SPEC_CONTROLS_FIXTURE_NOW,
+        withdrawnAt: null,
         proposedBy: { kind: "human" },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "dispose",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This assumption is terminal.",
+          },
+        },
         createdAt: SPEC_CONTROLS_FIXTURE_NOW,
         updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
       },
@@ -619,6 +739,58 @@ export const ExpandedStructureRail: Story = {
 
 export const InReview: Story = {
   args: { detail: detailFor("in_review") },
+};
+
+export const OverviewReviewThreads: Story = {
+  args: {
+    detail: withOverviewReviewThreads(detailFor("in_review")),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const thread = await canvas.findByTestId("review-thread-overview-thread-1");
+    await expect(within(thread).getAllByRole("listitem")).toHaveLength(2);
+    await expect(within(thread).getByText("Claude agent")).toBeVisible();
+    await waitFor(() => {
+      expect(within(thread).queryByText("Stale anchor")).toBeNull();
+    });
+  },
+};
+
+export const OverviewGroupedThreads: Story = {
+  args: {
+    detail: withOverviewReviewThreads(detailFor("in_review"), true),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      await canvas.findByRole("button", {
+        name: "2 review threads on this passage",
+      }),
+    );
+    await expect(
+      canvas.getByRole("group", {
+        name: "2 review threads on this passage",
+      }),
+    ).toHaveFocus();
+  },
+};
+
+export const OverviewReviewThreadsMobile: Story = {
+  args: {
+    detail: withOverviewReviewThreads(detailFor("in_review")),
+  },
+  parameters: {
+    viewport: {
+      defaultViewport: "overview-thread-mobile",
+      viewports: {
+        "overview-thread-mobile": {
+          name: "Overview thread mobile",
+          styles: { width: "390px", height: "844px" },
+          type: "mobile",
+        },
+      },
+    },
+  },
 };
 
 export const DraftBlocked: Story = {

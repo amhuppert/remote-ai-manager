@@ -202,6 +202,15 @@ export function isWellFormedElementHandle(
 }
 
 /**
+ * The read that takes an element id. Named wherever a value is identified as
+ * one, because the commonest reason an element id reaches a handle-taking
+ * command is a SECTION — the one element kind with no handle to convert to, so
+ * restating the handle grammar alone would leave that caller with no read.
+ */
+const ELEMENT_ID_READ =
+  "Sections have no handle and are read by element id with `cctl spec section get <slug> --id <element-id>`.";
+
+/**
  * Explain why a value is not an element handle. Element ids are caller-chosen
  * strings, so the grammar alone cannot prove one was supplied: a caller-owned
  * handle map (when the reader has a snapshot in hand) names the real handle,
@@ -215,10 +224,10 @@ export function explainInvalidElementHandle(
   const bare = separatorIndex === -1 ? input : input.slice(separatorIndex + 1);
   const knownHandle = handleByElementId?.get(bare);
   if (knownHandle !== undefined && knownHandle !== bare) {
-    return `${JSON.stringify(bare)} is an element id, not an element handle; its handle is ${knownHandle}. ${ELEMENT_HANDLE_FORMAT}`;
+    return `${JSON.stringify(bare)} is an element id, not an element handle; its handle is ${knownHandle}. ${ELEMENT_HANDLE_FORMAT} ${ELEMENT_ID_READ}`;
   }
   if (ELEMENT_ID_SHAPE.test(bare)) {
-    return `${JSON.stringify(input)} looks like an element id, not an element handle. ${ELEMENT_HANDLE_FORMAT}`;
+    return `${JSON.stringify(input)} looks like an element id, not an element handle. ${ELEMENT_HANDLE_FORMAT} ${ELEMENT_ID_READ}`;
   }
   return `${JSON.stringify(input)} is not a valid element handle. ${ELEMENT_HANDLE_FORMAT}`;
 }

@@ -196,9 +196,11 @@ function maximalQuestion(): SpecQuestionRow {
       backend: "codex",
       sourceRevisionId: REVISION_ID,
     }),
+    record_version: 3,
     status: "answered",
     answer: "The Spec Studio evidence panel.",
     answered_at: "2026-07-18T09:03:00.000Z",
+    withdrawn_at: null,
     created_at: "2026-07-18T09:02:00.000Z",
     updated_at: "2026-07-18T09:03:30.000Z",
   });
@@ -217,10 +219,44 @@ function maximalAssumption(): SpecAssumptionRow {
       backend: "codex",
       source: { type: "question", number: 12 },
     }),
+    record_version: 4,
     disposition: "deferred",
     disposed_at: "2026-07-18T09:05:00.000Z",
+    withdrawn_at: null,
+    supersedes_assumption_id: null,
+    supersession_operation_id: null,
+    supersession_request_hash: null,
     created_at: "2026-07-18T09:04:00.000Z",
     updated_at: "2026-07-18T09:05:30.000Z",
+  });
+}
+
+function openQuestion(): SpecQuestionRow {
+  return specQuestionRowSchema.parse({
+    ...maximalQuestion(),
+    id: "question-review-open",
+    number: 13,
+    record_version: 1,
+    status: "open",
+    answer: null,
+    answered_at: null,
+    withdrawn_at: null,
+    created_at: "2026-07-18T10:00:00.000Z",
+    updated_at: "2026-07-18T10:00:00.000Z",
+  });
+}
+
+function proposedAssumption(): SpecAssumptionRow {
+  return specAssumptionRowSchema.parse({
+    ...maximalAssumption(),
+    id: "assumption-review-proposed",
+    number: 10,
+    record_version: 1,
+    disposition: "proposed",
+    disposed_at: null,
+    withdrawn_at: null,
+    created_at: "2026-07-18T10:00:00.000Z",
+    updated_at: "2026-07-18T10:00:00.000Z",
   });
 }
 
@@ -300,9 +336,10 @@ describe("spec-review-repo durability contract", () => {
     await assertRoundTripDurability({
       label: "spec-question",
       schema: specQuestionRowSchema,
+      fieldPolicies: { withdrawn_at: "not-persisted" },
       buildMaximalFixture: maximalQuestion,
       persist: (fixture) => {
-        repo.saveQuestion(fixture);
+        repo.insertQuestion(fixture);
         return fixture;
       },
       reload: (fixture) => repo.findQuestionById(fixture.id),
@@ -311,9 +348,15 @@ describe("spec-review-repo durability contract", () => {
     await assertRoundTripDurability({
       label: "spec-assumption",
       schema: specAssumptionRowSchema,
+      fieldPolicies: {
+        withdrawn_at: "not-persisted",
+        supersedes_assumption_id: "not-persisted",
+        supersession_operation_id: "not-persisted",
+        supersession_request_hash: "not-persisted",
+      },
       buildMaximalFixture: maximalAssumption,
       persist: (fixture) => {
-        repo.saveAssumption(fixture);
+        repo.insertAssumption(fixture);
         return fixture;
       },
       reload: (fixture) => repo.findAssumptionById(fixture.id),
@@ -369,12 +412,227 @@ describe("spec-review-repo durability contract", () => {
     "persists assumption disposition %s",
     (disposition) => {
       const assumption = maximalAssumption();
-      repo.saveAssumption({ ...assumption, disposition });
-      expect(repo.findAssumptionById(assumption.id)?.disposition).toBe(
+      const disposed =
+        disposition === "proposed" ? null : assumption.disposed_at;
+      const fixture = specAssumptionRowSchema.parse({
+        ...assumption,
+        id: `assumption-review-${disposition}`,
+        number:
+          20 +
+          ["proposed", "confirmed", "rejected", "deferred"].indexOf(
+            disposition,
+          ),
+        record_version: 1,
+        disposition,
+        disposed_at: disposed,
+        updated_at: disposed ?? assumption.created_at,
+      });
+      repo.insertAssumption(fixture);
+      expect(repo.findAssumptionById(fixture.id)?.disposition).toBe(
         disposition,
       );
     },
   );
+
+  it("guards question edits and answers by lifecycle and record version", () => {
+    const original = openQuestion();
+    expect(repo.insertQuestion(original)).toMatchObject({ kind: "success" });
+
+    const edited = repo.updateOpenQuestion({
+      id: original.id,
+      expectedRecordVersion: 1,
+      text: "Which durable delivery surface proves this criterion?",
+      elementId: null,
+      updatedAt: "2026-07-18T10:01:00.000Z",
+    });
+    expect(edited).toMatchObject({
+      kind: "success",
+      row: {
+        record_version: 2,
+        number: original.number,
+        provenance_json: original.provenance_json,
+        created_at: original.created_at,
+        status: "open",
+      },
+    });
+    expect(
+      repo.updateOpenQuestion({
+        id: original.id,
+        expectedRecordVersion: 1,
+        text: "A stale overwrite",
+        elementId: original.element_id,
+        updatedAt: "2026-07-18T10:02:00.000Z",
+      }),
+    ).toEqual({ kind: "stale_version", currentVersion: 2 });
+
+    expect(
+      repo.answerOpenQuestion({
+        id: original.id,
+        expectedRecordVersion: 2,
+        answer: "The revision-owned proof projection.",
+        answeredAt: "2026-07-18T10:03:00.000Z",
+        updatedAt: "2026-07-18T10:03:00.000Z",
+      }),
+    ).toMatchObject({
+      kind: "success",
+      row: { record_version: 3, status: "answered" },
+    });
+    expect(
+      repo.answerOpenQuestion({
+        id: original.id,
+        expectedRecordVersion: 3,
+        answer: "A second answer must not overwrite the human result.",
+        answeredAt: "2026-07-18T10:04:00.000Z",
+        updatedAt: "2026-07-18T10:04:00.000Z",
+      }),
+    ).toEqual({
+      kind: "illegal_lifecycle",
+      currentVersion: 3,
+    });
+    expect(repo.findQuestionById(original.id)?.answer).toBe(
+      "The revision-owned proof projection.",
+    );
+  });
+
+  it("guards assumption edits and the first terminal disposition", () => {
+    const original = proposedAssumption();
+    expect(repo.insertAssumption(original)).toMatchObject({ kind: "success" });
+
+    expect(
+      repo.updateProposedAssumption({
+        id: original.id,
+        expectedRecordVersion: 1,
+        text: "The validator resolves the revision-owned workflow run.",
+        elementId: null,
+        updatedAt: "2026-07-18T10:01:00.000Z",
+      }),
+    ).toMatchObject({
+      kind: "success",
+      row: {
+        record_version: 2,
+        proposed_by_json: original.proposed_by_json,
+        created_at: original.created_at,
+        disposition: "proposed",
+      },
+    });
+    expect(
+      repo.disposeProposedAssumption({
+        id: original.id,
+        expectedRecordVersion: 1,
+        disposition: "confirmed",
+        disposedAt: "2026-07-18T10:02:00.000Z",
+        updatedAt: "2026-07-18T10:02:00.000Z",
+      }),
+    ).toEqual({ kind: "stale_version", currentVersion: 2 });
+    expect(
+      repo.disposeProposedAssumption({
+        id: original.id,
+        expectedRecordVersion: 2,
+        disposition: "confirmed",
+        disposedAt: "2026-07-18T10:03:00.000Z",
+        updatedAt: "2026-07-18T10:03:00.000Z",
+      }),
+    ).toMatchObject({
+      kind: "success",
+      row: { record_version: 3, disposition: "confirmed" },
+    });
+    expect(
+      repo.disposeProposedAssumption({
+        id: original.id,
+        expectedRecordVersion: 3,
+        disposition: "rejected",
+        disposedAt: "2026-07-18T10:04:00.000Z",
+        updatedAt: "2026-07-18T10:04:00.000Z",
+      }),
+    ).toEqual({ kind: "illegal_lifecycle", currentVersion: 3 });
+    expect(repo.findAssumptionById(original.id)?.disposition).toBe("confirmed");
+  });
+
+  it("allocates one stable successor and makes ambiguous retries idempotent", () => {
+    const predecessor = maximalAssumption();
+    repo.insertAssumption(predecessor);
+    db.prepare(
+      `INSERT INTO spec_counters (spec_id, scope_key, last_number)
+       VALUES (?, 'A', ?)`,
+    ).run(SPEC_ID, predecessor.number);
+
+    const input = {
+      predecessorId: predecessor.id,
+      specId: SPEC_ID,
+      expectedRecordVersion: predecessor.record_version,
+      operationId: "supersede-operation-1",
+      requestHash: "a".repeat(64),
+      successor: {
+        id: "assumption-review-successor-attempt-1",
+        elementId: ELEMENT_ID,
+        text: "The revision-owned validator resolves the workflow run.",
+        proposedByJson: predecessor.proposed_by_json,
+        createdAt: "2026-07-18T10:10:00.000Z",
+        updatedAt: "2026-07-18T10:10:00.000Z",
+      },
+    } as const;
+
+    const admitted = repo.insertAssumptionSuccessor(input);
+    expect(admitted).toMatchObject({
+      kind: "success",
+      idempotentReplay: false,
+      predecessor: { record_version: predecessor.record_version + 1 },
+      successor: {
+        id: input.successor.id,
+        number: predecessor.number + 1,
+        record_version: 1,
+        supersedes_assumption_id: predecessor.id,
+      },
+    });
+
+    expect(
+      repo.insertAssumptionSuccessor({
+        ...input,
+        successor: {
+          ...input.successor,
+          id: "assumption-review-successor-retry",
+        },
+      }),
+    ).toMatchObject({
+      kind: "success",
+      idempotentReplay: true,
+      successor: { id: input.successor.id, number: predecessor.number + 1 },
+    });
+    expect(
+      repo.insertAssumptionSuccessor({
+        ...input,
+        requestHash: "b".repeat(64),
+      }),
+    ).toMatchObject({
+      kind: "idempotency_conflict",
+      successorId: input.successor.id,
+    });
+    expect(
+      repo.insertAssumptionSuccessor({
+        ...input,
+        operationId: "supersede-operation-2",
+        requestHash: "c".repeat(64),
+        expectedRecordVersion: predecessor.record_version + 1,
+      }),
+    ).toMatchObject({
+      kind: "illegal_lifecycle",
+      currentVersion: predecessor.record_version + 1,
+      successorId: input.successor.id,
+    });
+    expect(
+      repo
+        .findAssumptionsBySpecId(SPEC_ID)
+        .filter((row) => row.supersedes_assumption_id === predecessor.id),
+    ).toHaveLength(1);
+    expect(
+      db
+        .prepare(
+          `SELECT last_number FROM spec_counters
+           WHERE spec_id = ? AND scope_key = 'A'`,
+        )
+        .get(SPEC_ID),
+    ).toEqual({ last_number: predecessor.number + 1 });
+  });
 
   it("persists an import-basis admission that no approval row backs", () => {
     // An imported spec crosses its authoring gates on an external document's

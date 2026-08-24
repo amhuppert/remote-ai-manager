@@ -14,6 +14,7 @@ import {
   specAssumptionElementViewSchema,
   specElementViewSchema,
   specQuestionElementViewSchema,
+  specSectionViewSchema,
   specShowOutlineViewSchema,
   specStatusViewSchema,
   specSummaryViewSchema,
@@ -205,6 +206,8 @@ const specStatusDisclosureSchema = z
   .object({
     executions: omissionSchema,
     pendingApprovals: omissionSchema,
+    importCarriedApprovals: omissionSchema,
+    approvalLedgerSubjects: omissionSchema,
     openQuestions: omissionSchema,
     assumptions: omissionSchema,
     taskPlan: omissionSchema,
@@ -316,6 +319,18 @@ export const specGetEnvelopeSchema = z.union([
   specAssumptionGetEnvelopeSchema,
 ]);
 
+/**
+ * The section read keeps its own payload name rather than joining the `get`
+ * union: `element` there is a handle-addressed view, and a caller matching on
+ * that field would otherwise receive a row it cannot address the same way.
+ */
+export const specSectionGetEnvelopeSchema = z
+  .object({
+    ok: z.literal(true),
+    section: specSectionViewSchema,
+  })
+  .strict();
+
 export type SpecShowArtifact = z.infer<typeof specShowArtifactSchema>;
 export type SpecShowArtifactRevision = z.infer<
   typeof specShowArtifactRevisionSchema
@@ -357,4 +372,5 @@ export const SPEC_READ_ENVELOPE_FIELDS = {
     specQuestionGetEnvelopeSchema,
     specAssumptionGetEnvelopeSchema,
   ]),
+  section: payloadFields([specSectionGetEnvelopeSchema]),
 } as const;

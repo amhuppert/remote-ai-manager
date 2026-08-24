@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { WITHDRAW_AFTER_ENGAGEMENT_RATIONALE } from "./refusal-rationale";
 import {
   agentActorProvenanceSchema,
   type ActorProvenance,
@@ -183,8 +184,9 @@ export function evaluateProposalWithdrawal(
         unmetConditions: [
           `Revision ${revision.number} is no longer an untouched proposal: ${humanAct}.`,
         ],
+        rationale: WITHDRAW_AFTER_ENGAGEMENT_RATIONALE,
         instruction:
-          "Ask a human to Request Changes on this revision in Spec Studio. An attempt a human has acted on ends on their terms, not by the author erasing it.",
+          "Ask a human to Request Changes on this revision in Spec Studio.",
       },
     };
   }

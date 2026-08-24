@@ -238,6 +238,8 @@ export const IntegrityMismatch: Story = {
             revisionId: "revision-1",
             expectedContentHash: "expected-hash",
             actualContentHash: "actual-hash",
+            expectedCitationHash: "1".repeat(64),
+            actualCitationHash: "2".repeat(64),
             mismatchedElementIds: ["requirement-1"],
           },
         ],

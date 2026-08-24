@@ -12,7 +12,7 @@ import {
   SpecRevisionInReviewError,
   StageBlockedWriteError,
 } from "./authoring-service";
-import type { Spec, SpecRevision } from "./schemas";
+import type { Spec, SpecAssumptionRow, SpecRevision } from "./schemas";
 import {
   createSpecWriteRouteHandlers,
   type SpecMutationServices,
@@ -39,6 +39,9 @@ function revision(
     authoringStage: "plan",
     basedOnRevisionId: null,
     contentHash: null,
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "a".repeat(64),
     proposedAt: null,
     approvedAt: null,
     externalDelivery: null,
@@ -185,7 +188,21 @@ function createServices() {
       bulkApprove: vi.fn(),
       openQuestion: vi.fn(async (input: unknown) => ({
         ok: true as const,
-        value: { id: "question-1", number: 1, input },
+        value: {
+          id: "question-1",
+          spec_id: spec.id,
+          number: 1,
+          element_id: null,
+          text: (input as { text: string }).text,
+          provenance_json: JSON.stringify({ kind: "human" }),
+          record_version: 1,
+          status: "open" as const,
+          answer: null,
+          answered_at: null,
+          withdrawn_at: null,
+          created_at: "2026-07-18T00:00:00.000Z",
+          updated_at: "2026-07-18T00:00:00.000Z",
+        },
       })),
       answerQuestion: vi.fn(),
       proposeAssumption: vi.fn(),
@@ -201,12 +218,22 @@ function createServices() {
             kind: "agent",
             conversationId: "conversation-agent",
           }),
+          record_version: 2,
           disposition: "confirmed" as const,
           disposed_at: "2026-07-18T01:00:00.000Z",
+          withdrawn_at: null,
+          supersedes_assumption_id: null,
+          supersession_operation_id: null,
+          supersession_request_hash: null,
           created_at: "2026-07-18T00:00:00.000Z",
           updated_at: "2026-07-18T01:00:00.000Z",
         },
       })),
+      editAttentionRecord: vi.fn(),
+      withdrawAttentionRecord: vi.fn(),
+      supersedeAssumption: vi.fn(),
+      citeAssumption: vi.fn(),
+      unciteAssumption: vi.fn(),
       changePolicy: vi.fn(),
     },
     evidence: {
@@ -241,7 +268,30 @@ function createServices() {
   } as unknown as SpecMutationServices;
 }
 
-function createDeps(services: SpecMutationServices): SpecWriteRouteDeps {
+function createDeps(
+  services: SpecMutationServices,
+  overrides: Partial<SpecWriteRouteDeps> = {},
+): SpecWriteRouteDeps {
+  const currentRevision = revision({
+    id: "revision-1",
+    number: 1,
+    state: "draft",
+  });
+  const defaultQuestion = {
+    id: "question-1",
+    spec_id: spec.id,
+    number: 1,
+    element_id: null,
+    text: "Question",
+    provenance_json: JSON.stringify({ kind: "human" }),
+    record_version: 1,
+    status: "open" as const,
+    answer: null,
+    answered_at: null,
+    withdrawn_at: null,
+    created_at: "2026-07-18T00:00:00.000Z",
+    updated_at: "2026-07-18T00:00:00.000Z",
+  };
   return {
     auth,
     resolveProjectPath: async (name) =>
@@ -249,10 +299,111 @@ function createDeps(services: SpecMutationServices): SpecWriteRouteDeps {
     resolveSpec: async (projectPath, slug) =>
       projectPath === spec.projectPath && slug === spec.slug ? spec : null,
     getServices: async () => services,
+    listRevisions: async () => [currentRevision],
+    getRevisionSnapshot: async (revisionId) =>
+      revisionId === currentRevision.id
+        ? {
+            revision: currentRevision,
+            elements: [],
+            assumptionCitations: [],
+          }
+        : null,
+    findQuestionsBySpecId: () => [defaultQuestion],
+    findAssumptionsBySpecId: () => [],
+    findEventsBySpecId: () => [],
+    ...overrides,
   };
 }
 
 describe("spec write route handlers", () => {
+  it("maps authoring-agent-only attention refusals to HTTP 403", async () => {
+    const services = createServices();
+    vi.mocked(services.review.editAttentionRecord).mockResolvedValueOnce({
+      ok: false as const,
+      refusal: {
+        code: "authoring_agent_required" as const,
+        unmetConditions: ["Attention correction is an agent act."],
+        instruction: "Run the correction from an authoring conversation.",
+      },
+    });
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.specActionPOST(
+      postRequest({
+        recordId: "question-1",
+        expectedRecordVersion: 1,
+        payload: { kind: "question", text: "Corrected question" },
+      }),
+      routeContext("edit-attention"),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "authoring_agent_required",
+    });
+  });
+
+  it("admits an operation-id supersession replay without a draft revision", async () => {
+    const services = createServices();
+    vi.mocked(services.review.supersedeAssumption).mockResolvedValueOnce({
+      ok: true,
+      value: {
+        operation: "superseded",
+        recordKind: "assumption",
+        recordId: "assumption-1",
+        recordHandle: "A1",
+        previousRecordVersion: 4,
+        newRecordVersion: 4,
+        lifecycle: "confirmed",
+        draftRevisionId: "revision-original",
+        previousCitationVersion: 6,
+        newCitationVersion: 6,
+        citationChanges: { added: [], removed: [], refreshed: [] },
+        successor: { id: "assumption-2", handle: "A2" },
+        idempotentReplay: true,
+      },
+    });
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+    const payload = {
+      operationId: "supersede-operation",
+      reason: "The premise needed correction.",
+      text: "The validator is deterministic under a pinned revision.",
+      attachment: { kind: "spec" as const },
+      citations: { kind: "clear" as const },
+    };
+
+    const response = await handlers.specActionPOST(
+      postRequest(
+        {
+          assumptionId: "assumption-1",
+          expectedRecordVersion: 3,
+          expectedCitationVersion: 5,
+          payload,
+        },
+        {
+          authorization: "Bearer valid",
+          "x-cc-conversation-id": "conversation-agent",
+          "x-cc-agent-backend": "codex",
+        },
+      ),
+      routeContext("supersede-assumption"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(services.review.supersedeAssumption).toHaveBeenCalledWith({
+      specId: spec.id,
+      assumptionId: "assumption-1",
+      expectedRecordVersion: 3,
+      expectedCitationVersion: 5,
+      payload,
+      actor: {
+        kind: "agent",
+        conversationId: "conversation-agent",
+        backend: "codex",
+      },
+    });
+  });
+
   it("refuses every human-only action from agent transport before parsing", async () => {
     const services = createServices();
     const handlers = createSpecWriteRouteHandlers(createDeps(services));
@@ -390,7 +541,7 @@ describe("spec write route handlers", () => {
 
   it("returns the winning draft on a stale-stage advance conflict", async () => {
     const services = createServices();
-    const currentRevision = {
+    const currentRevision: SpecRevision = {
       id: "revision-2",
       specId: spec.id,
       number: 2,
@@ -398,6 +549,9 @@ describe("spec write route handlers", () => {
       authoringStage: "design" as const,
       basedOnRevisionId: "revision-1",
       contentHash: null,
+      citationContractVersion: 2,
+      citationVersion: 1,
+      citationHash: "0".repeat(64),
       proposedAt: null,
       approvedAt: null,
       externalDelivery: null,
@@ -619,24 +773,40 @@ describe("spec write route handlers", () => {
         kind: "agent",
         conversationId: "conversation-agent",
       }),
+      record_version: 1,
       disposition: "proposed" as const,
       disposed_at: null,
+      withdrawn_at: null,
+      supersedes_assumption_id: null,
+      supersession_operation_id: null,
+      supersession_request_hash: null,
       created_at: "2026-07-18T00:00:00.000Z",
       updated_at: "2026-07-18T00:00:00.000Z",
     };
-    vi.mocked(services.review.proposeAssumption).mockResolvedValueOnce({
-      ok: true as const,
-      value: assumptionRow,
-    });
-    vi.mocked(services.review.disposeAssumption).mockResolvedValueOnce({
-      ok: true as const,
-      value: {
-        ...assumptionRow,
-        disposition: "confirmed" as const,
-        disposed_at: "2026-07-18T01:00:00.000Z",
+    let currentAssumption: SpecAssumptionRow = assumptionRow;
+    vi.mocked(services.review.proposeAssumption).mockImplementationOnce(
+      async () => {
+        currentAssumption = assumptionRow;
+        return { ok: true as const, value: currentAssumption };
       },
-    });
-    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+    );
+    vi.mocked(services.review.disposeAssumption).mockImplementationOnce(
+      async () => {
+        currentAssumption = {
+          ...assumptionRow,
+          record_version: 2,
+          disposition: "confirmed" as const,
+          disposed_at: "2026-07-18T01:00:00.000Z",
+          updated_at: "2026-07-18T01:00:00.000Z",
+        };
+        return { ok: true as const, value: currentAssumption };
+      },
+    );
+    const handlers = createSpecWriteRouteHandlers(
+      createDeps(services, {
+        findAssumptionsBySpecId: () => [currentAssumption],
+      }),
+    );
 
     const proposed = await handlers.specActionPOST(
       postRequest(
@@ -660,7 +830,11 @@ describe("spec write route handlers", () => {
     expect(proposedBody).not.toHaveProperty("proposed_by_json");
 
     const disposed = await handlers.specActionPOST(
-      postRequest({ assumptionId: "assumption-2", disposition: "confirmed" }),
+      postRequest({
+        assumptionId: "assumption-2",
+        recordVersion: 1,
+        disposition: "confirmed",
+      }),
       routeContext("dispose-assumption"),
     );
     expect(disposed.status).toBe(200);
@@ -676,23 +850,30 @@ describe("spec write route handlers", () => {
 
   it("returns the handle allocated to a newly opened question", async () => {
     const services = createServices();
+    const openedQuestion = {
+      id: "question-1",
+      spec_id: spec.id,
+      number: 3,
+      element_id: null,
+      text: "Which backend owns retries?",
+      provenance_json: JSON.stringify({ kind: "human" }),
+      record_version: 1,
+      status: "open" as const,
+      answer: null,
+      answered_at: null,
+      withdrawn_at: null,
+      created_at: "2026-07-18T00:00:00.000Z",
+      updated_at: "2026-07-18T00:00:00.000Z",
+    };
     vi.mocked(services.review.openQuestion).mockResolvedValueOnce({
       ok: true as const,
-      value: {
-        id: "question-1",
-        spec_id: spec.id,
-        number: 3,
-        element_id: null,
-        text: "Which backend owns retries?",
-        provenance_json: JSON.stringify({ kind: "human" }),
-        status: "open" as const,
-        answer: null,
-        answered_at: null,
-        created_at: "2026-07-18T00:00:00.000Z",
-        updated_at: "2026-07-18T00:00:00.000Z",
-      },
+      value: openedQuestion,
     });
-    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+    const handlers = createSpecWriteRouteHandlers(
+      createDeps(services, {
+        findQuestionsBySpecId: () => [openedQuestion],
+      }),
+    );
 
     const response = await handlers.specActionPOST(
       postRequest({ elementId: null, text: "Which backend owns retries?" }),

@@ -25,9 +25,13 @@ import type { Db } from "@/lib/state-store/schemas";
 
 import {
   createAuthoringService,
+  type ApprovalRequestPort,
   type AuthoringService,
 } from "./authoring-service";
+import { assumptionCitationSnapshot } from "./attention-records";
 import { createSpecEventsPublisher } from "./events";
+import type { ApprovalRequestReceipt, ReviewResult } from "./review-service";
+import type { SpecGate } from "./schemas";
 import {
   PROPOSAL_NOTES_MAX_CHARACTERS,
   oversizedProposalNotesRefusal,
@@ -44,6 +48,34 @@ let events: SpecEventsRepo;
 let service: AuthoringService;
 let idSequence: number;
 let timeSequence: number;
+let approvalRequestCalls: Parameters<
+  ApprovalRequestPort["requestApproval"]
+>[0][];
+let approvalRequestResponder: ApprovalRequestPort["requestApproval"];
+
+/** The shape the review service answers a durably filed gate ask with. */
+function filedReceipt(
+  gate: SpecGate,
+  revisionId: string,
+  fields: Partial<ApprovalRequestReceipt> = {},
+): ReviewResult<ApprovalRequestReceipt> {
+  return {
+    ok: true,
+    value: {
+      revisionId,
+      gate,
+      subject: gate,
+      scope: "gate",
+      attentionId: `attention-${gate}`,
+      alreadyRequested: false,
+      elementId: null,
+      outstandingSubjects: [],
+      signOffOutstanding: true,
+      deliveryOutcome: "delivered",
+      ...fields,
+    },
+  };
+}
 
 beforeEach(() => {
   db = _createTestDb({ inMemory: true });
@@ -55,10 +87,19 @@ beforeEach(() => {
   events = eventRows;
   idSequence = 0;
   timeSequence = 0;
+  approvalRequestCalls = [];
+  approvalRequestResponder = (input) =>
+    Promise.resolve(filedReceipt(input.gate, input.revisionId));
   service = createAuthoringService({
     specs,
     review,
     links: createSpecLinksRepo(db),
+    approvalRequests: {
+      requestApproval(input) {
+        approvalRequestCalls.push(input);
+        return approvalRequestResponder(input);
+      },
+    },
     events: createSpecEventsPublisher({
       appendInTransaction: eventRows.appendInTransaction,
       publish: () => ({ delivered: true }),
@@ -294,17 +335,36 @@ describe("AuthoringService propose transaction", () => {
   it("carries sign-off conditions that no subject approval can clear", async () => {
     const created = await createSpec("contract-bearing");
     await addCleanContent(created.spec.id, created.draft.id);
-    review.saveAssumption({
+    const rejectedAssumptionRow = {
       id: "assumption-1",
       spec_id: created.spec.id,
       number: 1,
       element_id: "requirement-1",
       text: "The baseline never moves.",
       proposed_by_json: JSON.stringify(ACTOR),
+      record_version: 1,
       disposition: "rejected",
       disposed_at: "2026-07-18T13:00:00.900Z",
+      withdrawn_at: null,
+      supersedes_assumption_id: null,
+      supersession_operation_id: null,
+      supersession_request_hash: null,
       created_at: "2026-07-18T13:00:00.900Z",
       updated_at: "2026-07-18T13:00:00.900Z",
+    } as const;
+    review.insertAssumption(rejectedAssumptionRow);
+    await specs.mutateDraftCitation({
+      operation: "cite",
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      assumptionId: rejectedAssumptionRow.id,
+      elementId: "requirement-1",
+      expectedCitationVersion: created.draft.citationVersion,
+      snapshot: assumptionCitationSnapshot(
+        rejectedAssumptionRow,
+        "2026-07-18T13:00:00.900Z",
+      ),
+      updatedAt: "2026-07-18T13:00:00.900Z",
     });
 
     const result = await service.proposeRevision({
@@ -321,16 +381,18 @@ describe("AuthoringService propose transaction", () => {
 
   it("returns exactly the panel findings and leaves a lint-refused revision Draft", async () => {
     const created = await createSpec("contract-bearing", "Incomplete.");
-    review.saveQuestion({
+    review.insertQuestion({
       id: "question-1",
       spec_id: created.spec.id,
       number: 1,
       element_id: null,
       text: "Which advisory remains open?",
       provenance_json: JSON.stringify(ACTOR),
+      record_version: 1,
       status: "open",
       answer: null,
       answered_at: null,
+      withdrawn_at: null,
       created_at: "2026-07-18T13:10:00.000Z",
       updated_at: "2026-07-18T13:10:00.000Z",
     });
@@ -877,5 +939,237 @@ describe("AuthoringService propose one-live-proposal guard", () => {
     expect(await specs.findRevision(abandoned.id)).toMatchObject({
       state: "withdrawn",
     });
+  });
+});
+
+/**
+ * R10.13: the ask a proposal owes a human is filed by the server that froze
+ * the revision, not by whichever client happened to call propose. The
+ * coordinator runs after the commit, so no filing outcome can roll the
+ * proposal back — the receipt reports what it did instead.
+ */
+describe("propose approval-request coordinator", () => {
+  it("files one gate-scoped ask per gate the proposal leaves pending", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    // The plan-stage draft authors a new requirement, so requirements is
+    // consulted alongside plan and each pending gate owes its own ask.
+    expect(approvalRequestCalls).toEqual([
+      {
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        gate: "requirements",
+        actor: ACTOR,
+      },
+      {
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        gate: "plan",
+        actor: ACTOR,
+      },
+    ]);
+    expect(result.approvalRequests).toEqual([
+      {
+        gate: "requirements",
+        outcome: "filed",
+        attentionId: "attention-requirements",
+      },
+      { gate: "plan", outcome: "filed", attentionId: "attention-plan" },
+    ]);
+  });
+
+  /**
+   * Coordinator-level mapping only: what the receipt says when the request
+   * verb answers that the identity it was handed is already open. Which
+   * lifecycle actually produces that answer is proven against the real service
+   * in propose-approval-requests.lifecycle.test.ts.
+   */
+  it("maps an already-requested receipt to already-filed carrying the port's attention id", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    approvalRequestResponder = (input) =>
+      Promise.resolve(
+        filedReceipt(input.gate, input.revisionId, {
+          alreadyRequested: true,
+          attentionId: "attention-stable",
+        }),
+      );
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.approvalRequests).toEqual([
+      {
+        gate: "requirements",
+        outcome: "already-filed",
+        attentionId: "attention-stable",
+      },
+      {
+        gate: "plan",
+        outcome: "already-filed",
+        attentionId: "attention-stable",
+      },
+    ]);
+  });
+
+  /**
+   * R11.5: the combined dial makes the one sign-off the approval of every
+   * item, so a per-gate ask would open three Needs You rows for a single
+   * human act that none of them names.
+   */
+  it("files nothing when the policy collapses the approvals into one sign-off", async () => {
+    const created = await createSpec("fast-path");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(approvalRequestCalls).toEqual([]);
+    expect(result.approvalRequests).toEqual([
+      { gate: "requirements", outcome: "not-needed", attentionId: null },
+      { gate: "plan", outcome: "not-needed", attentionId: null },
+    ]);
+  });
+
+  it("files nothing when the propose absorbed its own sign-off", async () => {
+    const created = await createSpec("exploratory");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.absorbedSignOff).toBe(true);
+    expect(approvalRequestCalls).toEqual([]);
+    expect(result.approvalRequests).toEqual([
+      { gate: "requirements", outcome: "not-needed", attentionId: null },
+      { gate: "plan", outcome: "not-needed", attentionId: null },
+    ]);
+  });
+
+  it("reports not-needed when the gate refuses the ask as already satisfied", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    approvalRequestResponder = () =>
+      Promise.resolve({
+        ok: false,
+        refusal: {
+          code: "already_satisfied",
+          unmetConditions: ["The gate is already admitted for this revision."],
+          instruction: "Read the spec status; this gate is no longer blocking.",
+        },
+      });
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.approvalRequests).toEqual([
+      { gate: "requirements", outcome: "not-needed", attentionId: null },
+      { gate: "plan", outcome: "not-needed", attentionId: null },
+    ]);
+  });
+
+  it("reports delivery-uncertain when the durable ask committed but its notice did not", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    approvalRequestResponder = (input) =>
+      Promise.resolve(
+        filedReceipt(input.gate, input.revisionId, {
+          deliveryOutcome: "delivery-uncertain",
+        }),
+      );
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.approvalRequests).toEqual([
+      {
+        gate: "requirements",
+        outcome: "delivery-uncertain",
+        attentionId: "attention-requirements",
+      },
+      {
+        gate: "plan",
+        outcome: "delivery-uncertain",
+        attentionId: "attention-plan",
+      },
+    ]);
+  });
+
+  it("keeps the proposal successful and reports not-filed when the filing itself fails", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    approvalRequestResponder = () =>
+      Promise.reject(new Error("attention store unavailable"));
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.revision.state).toBe("proposed");
+    expect(result.approvalRequests).toEqual([
+      { gate: "requirements", outcome: "not-filed", attentionId: null },
+      { gate: "plan", outcome: "not-filed", attentionId: null },
+    ]);
+    // The frozen revision is durable whatever the coordinator managed.
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "proposed",
+    });
+  });
+
+  it("reports not-filed when the request is refused for any other reason", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    approvalRequestResponder = () =>
+      Promise.resolve({
+        ok: false,
+        refusal: {
+          code: "stale_revision",
+          unmetConditions: ["Another revision is current."],
+          instruction: "Request approval for the current revision.",
+        },
+      });
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.approvalRequests).toEqual([
+      { gate: "requirements", outcome: "not-filed", attentionId: null },
+      { gate: "plan", outcome: "not-filed", attentionId: null },
+    ]);
   });
 });

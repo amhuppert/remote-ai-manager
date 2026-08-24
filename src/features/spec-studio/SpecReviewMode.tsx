@@ -55,6 +55,7 @@ import {
   authoringApprovalsCollapseIntoSignOff,
   resolveDial,
 } from "@/lib/specs/policy";
+import { assembleSpecCommentThreads } from "@/lib/specs/comment-threads";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import {
@@ -73,20 +74,37 @@ import {
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
-import type { LiveProposalView } from "@/lib/specs/view-schemas";
+import {
+  approvalLedgerSchema,
+  type LiveProposalView,
+} from "@/lib/specs/view-schemas";
 import { cn } from "@/lib/ui/cn";
 
 import { strandedProposals, type ProposalSelection } from "./live-proposals";
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
+import SpecCommentThreadList from "./SpecCommentThreadList";
+import {
+  partitionSpecCommentThreads,
+  type PlacedSpecCommentThread,
+  type SpecCommentPlacementPartition,
+} from "./spec-comment-placement";
 import { useProposalSelection } from "./use-proposal-selection";
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-review");
+const commentsLogger = createClientLogger("spec-studio-comments");
+
+function safeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 const requestChangesResponseSchema = z
   .object({
     withdrawn: specRevisionSchema,
     draft: specRevisionSchema,
+    // The reopened draft's approval account. Studio re-reads its projections
+    // after the act, so it parses the field rather than rendering it here.
+    approvalLedger: approvalLedgerSchema,
   })
   .strict();
 
@@ -112,8 +130,11 @@ const dismissSupersededResponseSchema = z
  * What a review card renders: a semantic change, or an element the revision
  * carries unchanged while the server still owes its approval (#58).
  */
-type ReviewCardChange = Omit<SemanticChange, "change"> & {
-  change: SemanticChange["change"] | "unchanged";
+type ReviewCardChange = {
+  elementId: string;
+  kind: SpecRevisionElement["element"]["kind"];
+  change: "added" | "modified" | "removed" | "unchanged";
+  summary: string;
 };
 
 const changeTone: Record<ReviewCardChange["change"], StatusChipTone> = {
@@ -130,20 +151,6 @@ const criterionRailClass: Record<RequirementCriterionReview["change"], string> =
     removed: "border-red-dim",
     unchanged: "border-border-default",
   };
-
-const anchorTone: Record<SpecThreadAnchorState["status"], StatusChipTone> = {
-  anchored: "green",
-  reanchored: "cyan",
-  stale: "amber",
-  orphaned: "amber",
-};
-
-const anchorLabel: Record<SpecThreadAnchorState["status"], string> = {
-  anchored: "Anchored",
-  reanchored: "Re-anchored",
-  stale: "Stale",
-  orphaned: "Orphaned",
-};
 
 interface ReviewElementView {
   entry: SpecRevisionElement;
@@ -163,7 +170,7 @@ type BulkApprovalSubject =
 interface ReviewChangeGroup {
   key: "sections" | "requirements" | "decisions" | "tasks";
   label: string;
-  changes: SemanticChange[];
+  changes: ReviewCardChange[];
 }
 
 interface ReviewReadiness {
@@ -179,9 +186,9 @@ interface ReviewReadiness {
   approvalsReady: boolean;
   combined: boolean;
   blockingThreadCount: number;
-  rejectedAssumptionCount: number;
-  openQuestionCount: number;
-  undisposedAssumptionCount: number;
+  signOffFindingCount: number;
+  activeQuestionCount: number;
+  activeAssumptionCount: number;
   /**
    * Everything except the subject approvals — the conditions the combined act
    * cannot supply for the reviewer, and so the only ones that disable it.
@@ -194,7 +201,7 @@ interface RequirementCriterionReview {
   elementId: string;
   base: ReviewElementView | null;
   current: ReviewElementView | null;
-  change: SemanticChange["change"] | "unchanged";
+  change: ReviewCardChange["change"];
 }
 
 const reviewGroupOrder: ReviewChangeGroup["key"][] = [
@@ -215,18 +222,20 @@ const reviewQuestionStatus: Record<
   SpecDetailView["questions"][number]["status"],
   { label: string; tone: StatusChipTone }
 > = {
-  open: { label: "Open — blocks sign-off", tone: "amber" },
+  open: { label: "Open — active attention", tone: "amber" },
   answered: { label: "Answered", tone: "green" },
+  withdrawn: { label: "Withdrawn", tone: "neutral" },
 };
 
 const reviewAssumptionStatus: Record<
   SpecDetailView["assumptions"][number]["disposition"],
   { label: string; tone: StatusChipTone }
 > = {
-  proposed: { label: "Proposed — blocks sign-off", tone: "amber" },
+  proposed: { label: "Proposed — active attention", tone: "amber" },
   confirmed: { label: "Confirmed", tone: "green" },
   rejected: { label: "Rejected", tone: "red" },
   deferred: { label: "Deferred", tone: "neutral" },
+  withdrawn: { label: "Withdrawn", tone: "neutral" },
 };
 
 export default function SpecReviewMode({
@@ -256,8 +265,42 @@ export default function SpecReviewMode({
     return diffRevisions(
       baseSnapshot === null ? [] : toDiffRows(baseSnapshot),
       toDiffRows(currentSnapshot),
+      revisionCitationDiffContext(baseSnapshot, currentSnapshot),
     );
   }, [baseSnapshot, currentSnapshot]);
+  const commentThreads = useMemo(
+    () => assembleSpecCommentThreads(detail.comments),
+    [detail.comments],
+  );
+  const reviewAnchorStates = useMemo(() => {
+    const states = new Map<string, SpecThreadAnchorState>();
+    if (currentSnapshot === null) return states;
+    for (const thread of commentThreads) {
+      const anchor = parseAnchor(thread.root.anchor);
+      states.set(
+        thread.threadId,
+        anchor === null
+          ? { status: "stale" }
+          : reanchorSpecThread(
+              anchor,
+              bodyForElement(currentSnapshot, thread.root.elementId),
+            ),
+      );
+    }
+    return states;
+  }, [commentThreads, currentSnapshot]);
+  const reviewCommentPlacement = useMemo(
+    () =>
+      currentSnapshot === null
+        ? null
+        : partitionSpecCommentThreads({
+            surface: "review",
+            viewedSnapshot: currentSnapshot,
+            threads: commentThreads,
+            anchorStates: reviewAnchorStates,
+          }),
+    [commentThreads, currentSnapshot, reviewAnchorStates],
+  );
 
   useEffect(() => {
     if (highlightedChangeId === null || diff === null) return;
@@ -314,7 +357,8 @@ export default function SpecReviewMode({
   if (
     selection.selected === null ||
     currentSnapshot === null ||
-    diff === null
+    diff === null ||
+    reviewCommentPlacement === null
   ) {
     return (
       <EmptyState>
@@ -343,6 +387,7 @@ export default function SpecReviewMode({
           supersededBy={selection.selected.supersededBy}
           detail={detail}
           projectName={projectName}
+          commentPlacement={reviewCommentPlacement}
           onComplete={onComplete}
         />
       </div>
@@ -431,8 +476,30 @@ export default function SpecReviewMode({
     outstandingElementIds,
   );
   const awaitingCardIds = new Set(awaitingCards.map((card) => card.elementId));
+  const commentedElementIds = new Set(
+    reviewCommentPlacement.coLocated.map(({ thread }) => thread.root.elementId),
+  );
+  for (const entry of currentSnapshot.elements) {
+    if (
+      entry.version.payload.kind === "criterion" &&
+      commentedElementIds.has(entry.element.id) &&
+      entry.element.parentElementId !== null
+    ) {
+      commentedElementIds.add(entry.element.parentElementId);
+    }
+  }
+  const commentedCards = commentedUnchangedCards(
+    unchangedViews,
+    commentedElementIds,
+    awaitingCardIds,
+  );
+  const commentedCardIds = new Set(
+    commentedCards.map((card) => card.elementId),
+  );
   const quietUnchangedViews = unchangedViews.filter(
-    (view) => !awaitingCardIds.has(view.entry.element.id),
+    (view) =>
+      !awaitingCardIds.has(view.entry.element.id) &&
+      !commentedCardIds.has(view.entry.element.id),
   );
 
   return (
@@ -560,13 +627,19 @@ export default function SpecReviewMode({
         )}
 
         <ProposalNotes notes={selection.selected.notes} />
+        <RevisionPremises
+          snapshot={currentSnapshot}
+          baseSnapshot={baseSnapshot}
+        />
 
         <TabsContent value="semantic">
           <section
             aria-label="Semantic changes"
             className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
           >
-            {diff.changeList.length === 0 && awaitingCards.length === 0 ? (
+            {diff.changeList.length === 0 &&
+            awaitingCards.length === 0 &&
+            commentedCards.length === 0 ? (
               <EmptyState>
                 <EmptyStateTitle>No semantic changes</EmptyStateTitle>
                 <EmptyStateDesc>
@@ -640,6 +713,7 @@ export default function SpecReviewMode({
                                 projectName={projectName}
                                 baseSnapshot={baseSnapshot}
                                 currentSnapshot={currentSnapshot}
+                                placements={reviewCommentPlacement.coLocated}
                                 combinedApproval={readiness.combined}
                                 onFeedback={setFeedback}
                                 onError={setError}
@@ -690,6 +764,54 @@ export default function SpecReviewMode({
                           projectName={projectName}
                           baseSnapshot={baseSnapshot}
                           currentSnapshot={currentSnapshot}
+                          placements={reviewCommentPlacement.coLocated}
+                          combinedApproval={readiness.combined}
+                          onFeedback={setFeedback}
+                          onError={setError}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {commentedCards.length > 0 && (
+                  <section
+                    aria-labelledby="review-group-commented-unchanged"
+                    className="mt-[14px]"
+                  >
+                    <div className="mb-sm flex items-center gap-sm">
+                      <h2
+                        id="review-group-commented-unchanged"
+                        className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+                      >
+                        Commented unchanged
+                      </h2>
+                      <span className="font-mono text-[0.7rem] text-text-tertiary">
+                        {commentedCards.length} current{" "}
+                        {pluralize(commentedCards.length, "thread host")}
+                      </span>
+                      <span className="h-px min-w-0 grow bg-border-dim" />
+                    </div>
+                    <p className="mt-0 mb-sm font-mono text-[0.7rem] text-text-tertiary">
+                      The revision carries these subjects unchanged, but their
+                      current review threads still need a visible host.
+                    </p>
+                    <div className="grid gap-sm">
+                      {commentedCards.map((change) => (
+                        <ReviewChangeCard
+                          key={change.elementId}
+                          change={change}
+                          criteria={requirementCriteriaForReview(
+                            change,
+                            diff,
+                            currentSnapshot,
+                            baseSnapshot,
+                          )}
+                          detail={detail}
+                          projectName={projectName}
+                          baseSnapshot={baseSnapshot}
+                          currentSnapshot={currentSnapshot}
+                          placements={reviewCommentPlacement.coLocated}
                           combinedApproval={readiness.combined}
                           onFeedback={setFeedback}
                           onError={setError}
@@ -730,6 +852,31 @@ export default function SpecReviewMode({
 
       <ReviewQuestionsPanel detail={detail} detailPath={detailPath} />
 
+      {reviewCommentPlacement.fallback.length > 0 ? (
+        <section
+          aria-labelledby="review-fallback-threads-heading"
+          className="mt-lg scroll-mt-[180px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:scroll-mt-[260px] max-768:px-md max-768:py-md"
+        >
+          <h2
+            id="review-fallback-threads-heading"
+            className="mt-0 mb-md font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+          >
+            Historical &amp; orphaned review threads
+          </h2>
+          <SpecCommentThreadList
+            projectName={projectName}
+            slug={detail.spec.slug}
+            specId={detail.spec.id}
+            viewedRevisionId={currentSnapshot.revision.id}
+            viewedRevisionState={currentSnapshot.revision.state}
+            specAbandoned={false}
+            humanTransport
+            placements={reviewCommentPlacement.fallback}
+            label="Historical and orphaned review threads"
+          />
+        </section>
+      ) : null}
+
       <footer
         data-testid="review-readiness"
         className="sticky bottom-0 z-[150] flex items-center gap-lg border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-surface px-sm py-md shadow-[0_-12px_32px_var(--color-bg-void)] max-768:flex-col max-768:items-stretch"
@@ -765,27 +912,25 @@ export default function SpecReviewMode({
                 : `${readiness.blockingThreadCount} blocking ${pluralize(readiness.blockingThreadCount, "thread")}`}
             </StatusChip>
             <StatusChip
-              tone={readiness.rejectedAssumptionCount === 0 ? "green" : "amber"}
+              tone={readiness.signOffFindingCount === 0 ? "green" : "amber"}
             >
-              {readiness.rejectedAssumptionCount === 0
-                ? "Assumptions clear"
-                : `${readiness.rejectedAssumptionCount} rejected ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`}
+              {readiness.signOffFindingCount === 0
+                ? "Sign-off lint clear"
+                : `${readiness.signOffFindingCount} sign-off ${pluralize(readiness.signOffFindingCount, "finding")}`}
             </StatusChip>
             <StatusChip
-              tone={readiness.openQuestionCount === 0 ? "green" : "amber"}
+              tone={readiness.activeQuestionCount === 0 ? "green" : "cyan"}
             >
-              {readiness.openQuestionCount === 0
-                ? "Questions answered"
-                : `${readiness.openQuestionCount} open ${pluralize(readiness.openQuestionCount, "question")}`}
+              {readiness.activeQuestionCount === 0
+                ? "No open questions"
+                : `${readiness.activeQuestionCount} open ${pluralize(readiness.activeQuestionCount, "question")} · attention`}
             </StatusChip>
             <StatusChip
-              tone={
-                readiness.undisposedAssumptionCount === 0 ? "green" : "amber"
-              }
+              tone={readiness.activeAssumptionCount === 0 ? "green" : "cyan"}
             >
-              {readiness.undisposedAssumptionCount === 0
-                ? "Assumptions disposed"
-                : `${readiness.undisposedAssumptionCount} undisposed ${pluralize(readiness.undisposedAssumptionCount, "assumption")}`}
+              {readiness.activeAssumptionCount === 0
+                ? "No proposed assumptions"
+                : `${readiness.activeAssumptionCount} proposed ${pluralize(readiness.activeAssumptionCount, "assumption")} · attention`}
             </StatusChip>
           </div>
           {readiness.total > 0 && (
@@ -868,11 +1013,7 @@ export default function SpecReviewMode({
               </span>
               <span className="flex items-center gap-sm">
                 <CheckIcon size={12} className="text-green" />
-                No rejected attached assumption remains cited
-              </span>
-              <span className="flex items-center gap-sm">
-                <CheckIcon size={12} className="text-green" />
-                All questions answered and all assumptions disposed
+                No server lint finding blocks sign-off
               </span>
             </div>
             <CheckboxField
@@ -932,6 +1073,90 @@ function ProposalNotes({
   );
 }
 
+function RevisionPremises({
+  snapshot,
+  baseSnapshot,
+}: {
+  snapshot: SpecRevisionSnapshot;
+  baseSnapshot: SpecRevisionSnapshot | null;
+}): React.JSX.Element {
+  const citations = snapshot.assumptionCitations.toSorted(
+    (left, right) =>
+      left.snapshot.number - right.snapshot.number ||
+      left.elementId.localeCompare(right.elementId),
+  );
+  const contractChanged =
+    baseSnapshot !== null &&
+    baseSnapshot.revision.citationContractVersion !==
+      snapshot.revision.citationContractVersion;
+
+  return (
+    <section
+      aria-label="Revision premises"
+      className="mt-[14px] overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
+    >
+      <div className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
+        <h2 className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase">
+          Revision premises
+        </h2>
+        <StatusChip tone={contractChanged ? "amber" : "neutral"}>
+          {contractChanged
+            ? `Citation contract ${baseSnapshot.revision.citationContractVersion} → ${snapshot.revision.citationContractVersion}`
+            : `Citation contract ${snapshot.revision.citationContractVersion}`}
+        </StatusChip>
+        <span className="font-mono text-[0.68rem] text-text-tertiary">
+          {citations.length} pinned {pluralize(citations.length, "citation")}
+        </span>
+      </div>
+      {citations.length === 0 ? (
+        <p className="m-0 px-md py-sm font-mono text-[0.7rem] text-text-tertiary">
+          This revision cites no assumptions.
+        </p>
+      ) : (
+        <div className="grid gap-sm p-md">
+          {citations.map((citation) => {
+            const element = viewForElement(snapshot, citation.elementId);
+            return (
+              <article
+                key={`${citation.elementId}:${citation.assumptionId}`}
+                className="rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm"
+              >
+                <div className="flex flex-wrap items-center gap-sm">
+                  <span className="font-mono text-[0.72rem] font-bold text-cyan">
+                    A{citation.snapshot.number}
+                  </span>
+                  <StatusChip
+                    tone={
+                      citation.snapshot.disposition === "confirmed"
+                        ? "green"
+                        : citation.snapshot.disposition === "rejected"
+                          ? "red"
+                          : citation.snapshot.disposition === "proposed"
+                            ? "amber"
+                            : "neutral"
+                    }
+                  >
+                    {capitalize(citation.snapshot.disposition)}
+                  </StatusChip>
+                  <span className="font-mono text-[0.68rem] text-text-tertiary">
+                    Cited by {element?.handle ?? citation.elementId}
+                  </span>
+                  <span className="font-mono text-[0.68rem] text-text-tertiary">
+                    Record v{citation.snapshot.recordVersion}
+                  </span>
+                </div>
+                <div className="mt-xs min-w-0 text-[0.84rem] leading-relaxed text-text-primary">
+                  <CompactMarkdown content={citation.snapshot.text} />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /**
  * The picker for which live proposal the surface is showing. It appears only
  * when the lineage carries more than one: a single proposal needs no choice,
@@ -982,12 +1207,14 @@ function SupersededProposalReview({
   supersededBy,
   detail,
   projectName,
+  commentPlacement,
   onComplete,
 }: {
   entry: LiveProposalView;
   supersededBy: SpecRevision;
   detail: SpecDetailView;
   projectName: string;
+  commentPlacement: SpecCommentPlacementPartition;
   onComplete?(message: string): void;
 }): React.JSX.Element {
   const [reason, setReason] = useState("");
@@ -999,6 +1226,7 @@ function SupersededProposalReview({
       diffRevisions(
         entry.baseSnapshot === null ? [] : toDiffRows(entry.baseSnapshot),
         toDiffRows(entry.snapshot),
+        revisionCitationDiffContext(entry.baseSnapshot, entry.snapshot),
       ),
     [entry],
   );
@@ -1012,6 +1240,90 @@ function SupersededProposalReview({
     dismissSupersededResponseSchema,
     { specId: detail.spec.id, eventTypes: ["spec-revision-changed"] },
   );
+  const changeCards = requirementCardChanges(
+    reviewCardChanges(diff.changeList, entry.snapshot, entry.baseSnapshot),
+    entry.snapshot,
+    entry.baseSnapshot,
+  );
+  const commentedElementIds = new Set(
+    commentPlacement.coLocated.map(({ thread }) => thread.root.elementId),
+  );
+  for (const element of entry.snapshot.elements) {
+    if (
+      element.version.payload.kind === "criterion" &&
+      commentedElementIds.has(element.element.id) &&
+      element.element.parentElementId !== null
+    ) {
+      commentedElementIds.add(element.element.parentElementId);
+    }
+  }
+  const commentedCards = commentedUnchangedCards(
+    unchangedElementViews(diff, entry.snapshot),
+    commentedElementIds,
+    new Set(diff.changeList.map((change) => change.elementId)),
+  );
+
+  function placementsForChange(
+    change: ReviewCardChange,
+  ): readonly PlacedSpecCommentThread[] {
+    const hostedElementIds = new Set([change.elementId]);
+    if (change.kind === "requirement") {
+      for (const element of entry.snapshot.elements) {
+        if (
+          element.version.payload.kind === "criterion" &&
+          element.element.parentElementId === change.elementId
+        ) {
+          hostedElementIds.add(element.element.id);
+        }
+      }
+    }
+    return commentPlacement.coLocated.filter(({ thread }) =>
+      hostedElementIds.has(thread.root.elementId),
+    );
+  }
+
+  function renderChangeCard(change: ReviewCardChange): React.JSX.Element {
+    const base = viewForElement(entry.baseSnapshot, change.elementId);
+    const current = viewForElement(entry.snapshot, change.elementId);
+    const placements = placementsForChange(change);
+    return (
+      <article
+        key={change.elementId}
+        data-testid={`superseded-change-${change.elementId}`}
+        className="rounded-md border border-solid border-border-dim bg-bg-surface"
+      >
+        <div className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
+          <span className="font-mono text-[0.72rem] font-bold text-cyan-dim">
+            {(current ?? base)?.handle ?? change.elementId}
+          </span>
+          <StatusChip tone={changeTone[change.change]}>
+            {reviewChangeControlLabel(change)}
+          </StatusChip>
+        </div>
+        <RevisionComparison
+          base={base}
+          current={current}
+          baseRevisionNumber={entry.baseSnapshot?.revision.number ?? null}
+          currentRevisionNumber={revision.number}
+        />
+        {placements.length > 0 ? (
+          <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm">
+            <SpecCommentThreadList
+              projectName={projectName}
+              slug={detail.spec.slug}
+              specId={detail.spec.id}
+              viewedRevisionId={revision.id}
+              viewedRevisionState={revision.state}
+              specAbandoned={false}
+              humanTransport
+              placements={placements}
+              label={`${(current ?? base)?.handle ?? change.elementId} review threads`}
+            />
+          </div>
+        ) : null}
+      </article>
+    );
+  }
 
   function handleDismiss(): void {
     const trimmed = reason.trim();
@@ -1110,7 +1422,7 @@ function SupersededProposalReview({
         aria-label="Superseded proposal changes"
         className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
       >
-        {diff.changeList.length === 0 ? (
+        {changeCards.length === 0 && commentedCards.length === 0 ? (
           <EmptyState>
             <EmptyStateTitle>No semantic changes</EmptyStateTitle>
             <EmptyStateDesc>
@@ -1118,38 +1430,58 @@ function SupersededProposalReview({
             </EmptyStateDesc>
           </EmptyState>
         ) : (
-          <div className="grid gap-sm">
-            {diff.changeList.map((change) => {
-              const base = viewForElement(entry.baseSnapshot, change.elementId);
-              const current = viewForElement(entry.snapshot, change.elementId);
-              return (
-                <article
-                  key={change.elementId}
-                  data-testid={`superseded-change-${change.elementId}`}
-                  className="rounded-md border border-solid border-border-dim bg-bg-surface"
-                >
-                  <div className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
-                    <span className="font-mono text-[0.72rem] font-bold text-cyan-dim">
-                      {(current ?? base)?.handle ?? change.elementId}
-                    </span>
-                    <StatusChip tone={changeTone[change.change]}>
-                      {reviewChangeControlLabel(change)}
-                    </StatusChip>
-                  </div>
-                  <RevisionComparison
-                    base={base}
-                    current={current}
-                    baseRevisionNumber={
-                      entry.baseSnapshot?.revision.number ?? null
-                    }
-                    currentRevisionNumber={revision.number}
-                  />
-                </article>
-              );
-            })}
-          </div>
+          <>
+            {changeCards.length > 0 ? (
+              <div className="grid gap-sm">
+                {changeCards.map(renderChangeCard)}
+              </div>
+            ) : null}
+            {commentedCards.length > 0 ? (
+              <section
+                aria-labelledby="superseded-commented-unchanged-heading"
+                className="mt-[14px]"
+              >
+                <div className="mb-sm flex items-center gap-sm">
+                  <h2
+                    id="superseded-commented-unchanged-heading"
+                    className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+                  >
+                    Commented unchanged
+                  </h2>
+                  <span className="h-px min-w-0 grow bg-border-dim" />
+                </div>
+                <div className="grid gap-sm">
+                  {commentedCards.map(renderChangeCard)}
+                </div>
+              </section>
+            ) : null}
+          </>
         )}
       </section>
+      {commentPlacement.fallback.length > 0 ? (
+        <section
+          aria-labelledby="superseded-review-fallback-threads-heading"
+          className="mt-lg rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
+        >
+          <h2
+            id="superseded-review-fallback-threads-heading"
+            className="mt-0 mb-md font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+          >
+            Historical &amp; orphaned review threads
+          </h2>
+          <SpecCommentThreadList
+            projectName={projectName}
+            slug={detail.spec.slug}
+            specId={detail.spec.id}
+            viewedRevisionId={revision.id}
+            viewedRevisionState={revision.state}
+            specAbandoned={false}
+            humanTransport
+            placements={commentPlacement.fallback}
+            label="Historical and orphaned review threads"
+          />
+        </section>
+      ) : null}
       <div className="h-xl" />
     </section>
   );
@@ -1222,8 +1554,12 @@ function groupReviewChanges(
   currentSnapshot: SpecRevisionSnapshot,
   baseSnapshot: SpecRevisionSnapshot | null,
 ): ReviewChangeGroup[] {
-  const groups = new Map<ReviewChangeGroup["key"], SemanticChange[]>();
-  for (const change of changes) {
+  const groups = new Map<ReviewChangeGroup["key"], ReviewCardChange[]>();
+  for (const change of reviewCardChanges(
+    changes,
+    currentSnapshot,
+    baseSnapshot,
+  )) {
     const key = reviewGroupKey(change.kind);
     const group = groups.get(key) ?? [];
     group.push(change);
@@ -1254,11 +1590,53 @@ function groupReviewChanges(
   });
 }
 
-function requirementCardChanges(
+function reviewCardChanges(
   changes: SemanticChange[],
   currentSnapshot: SpecRevisionSnapshot,
   baseSnapshot: SpecRevisionSnapshot | null,
-): SemanticChange[] {
+): ReviewCardChange[] {
+  const cards: ReviewCardChange[] = [];
+  const representedElementIds = new Set<string>();
+
+  for (const change of changes) {
+    if (
+      change.kind === "assumption_citation" ||
+      change.kind === "citation_contract"
+    ) {
+      continue;
+    }
+    cards.push(change);
+    representedElementIds.add(change.elementId);
+  }
+
+  for (const change of changes) {
+    if (
+      change.kind !== "assumption_citation" ||
+      representedElementIds.has(change.elementId)
+    ) {
+      continue;
+    }
+    const element =
+      viewForElement(currentSnapshot, change.elementId) ??
+      viewForElement(baseSnapshot, change.elementId);
+    if (element === null) continue;
+    cards.push({
+      elementId: change.elementId,
+      kind: element.entry.element.kind,
+      change: "modified",
+      summary: change.summary,
+    });
+    representedElementIds.add(change.elementId);
+  }
+
+  return cards;
+}
+
+function requirementCardChanges(
+  changes: ReviewCardChange[],
+  currentSnapshot: SpecRevisionSnapshot,
+  baseSnapshot: SpecRevisionSnapshot | null,
+): ReviewCardChange[] {
   const requirementIds = new Set(
     changes
       .filter((change) => change.kind === "requirement")
@@ -1301,9 +1679,9 @@ function requirementCriteriaForReview(
   }
 
   const changesById = new Map(
-    diff.changeList.map((criterionChange) => [
-      criterionChange.elementId,
-      criterionChange.change,
+    diff.classifications.map((classification) => [
+      classification.elementId,
+      classification.classification,
     ]),
   );
   return orderedIds.map((elementId) => ({
@@ -1319,10 +1697,10 @@ function requirementCriteriaForReview(
 // each criterion to its parent requirement's document position; elements only
 // present in the base revision sort after all current ones.
 function orderCriteriaUnderRequirements(
-  changes: SemanticChange[],
+  changes: ReviewCardChange[],
   currentSnapshot: SpecRevisionSnapshot,
   baseSnapshot: SpecRevisionSnapshot | null,
-): SemanticChange[] {
+): ReviewCardChange[] {
   const documentOrder = new Map<
     string,
     { position: number; parentElementId: string | null }
@@ -1341,7 +1719,7 @@ function orderCriteriaUnderRequirements(
     });
   });
 
-  const sortKey = (change: SemanticChange): [number, number] => {
+  const sortKey = (change: ReviewCardChange): [number, number] => {
     const info = documentOrder.get(change.elementId);
     if (info === undefined) return [Number.MAX_SAFE_INTEGER, 0];
     const parent =
@@ -1362,7 +1740,7 @@ function orderCriteriaUnderRequirements(
 }
 
 function reviewGroupKey(
-  kind: SemanticChange["kind"],
+  kind: ReviewCardChange["kind"],
 ): ReviewChangeGroup["key"] {
   switch (kind) {
     case "section":
@@ -1417,6 +1795,41 @@ function awaitingApprovalCards(
         summary: `Unchanged ${payload.kind}: ${
           payload.kind === "requirement" ? payload.statement : payload.title
         }`,
+      },
+    ];
+  });
+}
+
+function commentedUnchangedCards(
+  views: ReviewElementView[],
+  commentedElementIds: ReadonlySet<string>,
+  excludedElementIds: ReadonlySet<string>,
+): ReviewCardChange[] {
+  return views.flatMap((view) => {
+    const elementId = view.entry.element.id;
+    if (
+      !commentedElementIds.has(elementId) ||
+      excludedElementIds.has(elementId)
+    ) {
+      return [];
+    }
+    const payload = view.entry.version.payload;
+    const label =
+      payload.kind === "section"
+        ? payload.title
+        : payload.kind === "requirement"
+          ? payload.statement
+          : payload.kind === "decision"
+            ? payload.title
+            : payload.kind === "task"
+              ? payload.title
+              : payload.text;
+    return [
+      {
+        elementId,
+        kind: payload.kind,
+        change: "unchanged" as const,
+        summary: `Unchanged ${payload.kind}: ${label}`,
       },
     ];
   });
@@ -1488,11 +1901,16 @@ function ReviewQuestionsPanel({
   detail: SpecDetailView;
   detailPath: string;
 }): React.JSX.Element {
+  const questions = detail.questions.filter(
+    ({ presentation }) => presentation.state === "current",
+  );
+  const assumptions = detail.assumptions.filter(
+    ({ presentation }) => presentation.state === "current",
+  );
   const unresolvedCount =
-    detail.questions.filter((question) => question.status === "open").length +
-    detail.assumptions.filter(
-      (assumption) => assumption.disposition === "proposed",
-    ).length;
+    questions.filter((question) => question.status === "open").length +
+    assumptions.filter((assumption) => assumption.disposition === "proposed")
+      .length;
 
   return (
     <section
@@ -1503,10 +1921,10 @@ function ReviewQuestionsPanel({
         <h2 className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase">
           Questions &amp; assumptions in this revision
         </h2>
-        <StatusChip tone={unresolvedCount === 0 ? "green" : "amber"}>
+        <StatusChip tone={unresolvedCount === 0 ? "green" : "cyan"}>
           {unresolvedCount === 0
             ? "All resolved"
-            : `${unresolvedCount} unresolved · blocks sign-off`}
+            : `${unresolvedCount} active attention`}
         </StatusChip>
         <Link
           href={`${detailPath}?view=questions`}
@@ -1516,13 +1934,13 @@ function ReviewQuestionsPanel({
         </Link>
       </div>
 
-      {detail.questions.length === 0 && detail.assumptions.length === 0 ? (
+      {questions.length === 0 && assumptions.length === 0 ? (
         <p className="m-0 px-md py-lg font-mono text-[0.72rem] text-text-tertiary">
           No questions or assumptions recorded for this spec.
         </p>
       ) : (
         <div>
-          {detail.questions.map((question) => {
+          {questions.map((question) => {
             const status = reviewQuestionStatus[question.status];
             return (
               <div
@@ -1539,7 +1957,7 @@ function ReviewQuestionsPanel({
               </div>
             );
           })}
-          {detail.assumptions.map((assumption) => {
+          {assumptions.map((assumption) => {
             const status = reviewAssumptionStatus[assumption.disposition];
             return (
               <div
@@ -1579,9 +1997,7 @@ export function reviewAttentionCount(detail: SpecDetailView): number {
       ? 0
       : readiness.total - readiness.approved - readiness.importCarried) +
     readiness.blockingThreadCount +
-    readiness.rejectedAssumptionCount +
-    readiness.openQuestionCount +
-    readiness.undisposedAssumptionCount
+    readiness.signOffFindingCount
   );
 }
 
@@ -1595,9 +2011,9 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
       approvalsReady: false,
       combined: false,
       blockingThreadCount: 0,
-      rejectedAssumptionCount: 0,
-      openQuestionCount: 0,
-      undisposedAssumptionCount: 0,
+      signOffFindingCount: 0,
+      activeQuestionCount: 0,
+      activeAssumptionCount: 0,
       conditionsReady: false,
       ready: false,
     };
@@ -1660,37 +2076,27 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     carried.has(subjectKey(subject)),
   ).length;
   const approved = settled.length - importCarried;
-  const blockingThreadCount = groupThreads(detail).filter((thread) =>
-    thread.comments.some(
-      (comment) =>
-        comment.revisionId === snapshot.revision.id &&
-        comment.blocking &&
-        comment.resolution === "open",
-    ),
+  const blockingThreadCount = assembleSpecCommentThreads(
+    detail.comments,
+  ).filter(
+    (thread) =>
+      thread.root.revisionId === snapshot.revision.id &&
+      thread.blocking &&
+      thread.open,
   ).length;
-  const currentElementIds = new Set(
-    snapshot.elements.map((entry) => entry.element.id),
-  );
-  const rejectedAssumptionCount = detail.assumptions.filter(
-    (assumption) =>
-      assumption.disposition === "rejected" &&
-      assumption.elementId !== null &&
-      currentElementIds.has(assumption.elementId) &&
-      (snapshot.revision.proposedAt === null ||
-        assumption.createdAt <= snapshot.revision.proposedAt),
+  const signOffFindingCount =
+    detail.status.draftHealth?.counts.find(
+      ({ severity }) => severity === "blocks_signoff",
+    )?.count ?? 0;
+  const activeQuestionCount = detail.questions.filter(
+    (question) => question.presentation.attentionActive,
   ).length;
-  const openQuestionCount = detail.questions.filter(
-    (question) => question.status === "open",
-  ).length;
-  const undisposedAssumptionCount = detail.assumptions.filter(
-    (assumption) => assumption.disposition === "proposed",
+  const activeAssumptionCount = detail.assumptions.filter(
+    (assumption) => assumption.presentation.attentionActive,
   ).length;
   const approvalsReady = approved + importCarried === subjects.length;
   const conditionsReady =
-    blockingThreadCount === 0 &&
-    rejectedAssumptionCount === 0 &&
-    openQuestionCount === 0 &&
-    undisposedAssumptionCount === 0;
+    blockingThreadCount === 0 && signOffFindingCount === 0;
 
   return {
     approved,
@@ -1699,9 +2105,9 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     approvalsReady,
     combined,
     blockingThreadCount,
-    rejectedAssumptionCount,
-    openQuestionCount,
-    undisposedAssumptionCount,
+    signOffFindingCount,
+    activeQuestionCount,
+    activeAssumptionCount,
     conditionsReady,
     ready: approvalsReady && conditionsReady,
   };
@@ -1719,20 +2125,10 @@ function readinessBlockerSummary(readiness: ReviewReadiness): string {
       : [
           `${readiness.blockingThreadCount} blocking ${pluralize(readiness.blockingThreadCount, "thread")}`,
         ]),
-    ...(readiness.rejectedAssumptionCount === 0
+    ...(readiness.signOffFindingCount === 0
       ? []
       : [
-          `${readiness.rejectedAssumptionCount} rejected cited ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`,
-        ]),
-    ...(readiness.openQuestionCount === 0
-      ? []
-      : [
-          `${readiness.openQuestionCount} open ${pluralize(readiness.openQuestionCount, "question")}`,
-        ]),
-    ...(readiness.undisposedAssumptionCount === 0
-      ? []
-      : [
-          `${readiness.undisposedAssumptionCount} undisposed ${pluralize(readiness.undisposedAssumptionCount, "assumption")}`,
+          `${readiness.signOffFindingCount} server lint ${pluralize(readiness.signOffFindingCount, "finding")}`,
         ]),
   ];
   return `Sign-off blocked — ${blockers.join(" · ")}`;
@@ -1897,6 +2293,7 @@ function ReviewChangeCard({
   projectName,
   baseSnapshot,
   currentSnapshot,
+  placements,
   combinedApproval,
   onFeedback,
   onError,
@@ -1907,6 +2304,7 @@ function ReviewChangeCard({
   projectName: string;
   baseSnapshot: SpecRevisionSnapshot | null;
   currentSnapshot: SpecRevisionSnapshot;
+  placements: readonly PlacedSpecCommentThread[];
   combinedApproval: boolean;
   onFeedback(feedback: string | null): void;
   onError(error: string | null): void;
@@ -1936,8 +2334,8 @@ function ReviewChangeCard({
     approval?.validity === "valid" &&
     (approvalTarget === null ||
       !outstandingSubjects(detail).has(subjectKey(approvalTarget)));
-  const threads = groupThreads(detail).filter(
-    (thread) => thread.comments[0]?.elementId === change.elementId,
+  const threadPlacements = placements.filter(
+    ({ thread }) => thread.root.elementId === change.elementId,
   );
 
   const comment = useSpecActionMutation<
@@ -1980,6 +2378,7 @@ function ReviewChangeCard({
 
   function recordComment(): void {
     if (
+      current === null ||
       display === null ||
       display === undefined ||
       commentBody.trim().length === 0
@@ -1998,39 +2397,40 @@ function ReviewChangeCard({
       docRevision:
         currentSnapshot.revision.contentHash ?? currentSnapshot.revision.id,
     };
+    const threadId = createClientId();
     onError(null);
     onFeedback(`Recording comment on ${handle}…`);
     comment.mutate(
       {
         revisionId: currentSnapshot.revision.id,
         elementId: display.entry.element.id,
-        threadId: createClientId(),
+        threadId,
         parentCommentId: null,
         anchor,
         body: commentBody.trim(),
         blocking: false,
       },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
           setCommentBody("");
           setCommenting(false);
           onFeedback(`Comment recorded on ${handle}`);
-          logger.info("spec_studio.review_action.completed", {
-            action: "comment",
+          commentsLogger.info("spec_studio.comment.root.completed", {
             specId: detail.spec.id,
             revisionId: currentSnapshot.revision.id,
             elementId: display.entry.element.id,
+            threadId: result.thread_id,
           });
         },
         onError: (mutationError) => {
           onFeedback(null);
           onError(mutationError.message);
-          logger.warn("spec_studio.review_action.failed", {
-            action: "comment",
+          commentsLogger.warn("spec_studio.comment.root.failed", {
             specId: detail.spec.id,
             revisionId: currentSnapshot.revision.id,
             elementId: display.entry.element.id,
-            error: mutationError.message,
+            threadId,
+            error: safeError(mutationError),
           });
         },
       },
@@ -2156,16 +2556,17 @@ function ReviewChangeCard({
               <StatusChip tone="neutral">Approval closed</StatusChip>
             )}
             {approvalApplies && <StatusChip tone="green">Approved</StatusChip>}
-            <Button
-              size="sm"
-              touch
-              onClick={() => {
-                setCommenting((open) => !open);
-                setExpanded(true);
-              }}
-            >
-              Comment
-            </Button>
+            {change.change !== "removed" ? (
+              <Button
+                size="touch"
+                onClick={() => {
+                  setCommenting((open) => !open);
+                  setExpanded(true);
+                }}
+              >
+                Comment
+              </Button>
+            ) : null}
             {combinedApproval ? (
               <StatusChip
                 tone="neutral"
@@ -2175,8 +2576,7 @@ function ReviewChangeCard({
               </StatusChip>
             ) : approvalApplies ? (
               <Button
-                size="sm"
-                touch
+                size="touch"
                 loading={unapprove.isPending}
                 onClick={unapproveItem}
                 title="Remove the recorded approval for this element"
@@ -2232,9 +2632,9 @@ function ReviewChangeCard({
                     const criterionDisplay =
                       criterion.current ?? criterion.base;
                     if (criterionDisplay === null) return null;
-                    const criterionThreads = groupThreads(detail).filter(
-                      (thread) =>
-                        thread.comments[0]?.elementId === criterion.elementId,
+                    const criterionPlacements = placements.filter(
+                      ({ thread }) =>
+                        thread.root.elementId === criterion.elementId,
                     );
                     return (
                       <div
@@ -2280,12 +2680,23 @@ function ReviewChangeCard({
                             {capitalize(criterion.change)}
                           </StatusChip>
                         </div>
-                        {criterionThreads.length > 0 && (
-                          <ReviewThreads
-                            threads={criterionThreads}
-                            currentSnapshot={currentSnapshot}
-                          />
-                        )}
+                        {criterionPlacements.length > 0 ? (
+                          <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm">
+                            <SpecCommentThreadList
+                              projectName={projectName}
+                              slug={detail.spec.slug}
+                              specId={detail.spec.id}
+                              viewedRevisionId={currentSnapshot.revision.id}
+                              viewedRevisionState={
+                                currentSnapshot.revision.state
+                              }
+                              specAbandoned={false}
+                              humanTransport
+                              placements={criterionPlacements}
+                              label={`${criterionDisplay.handle} review threads`}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -2295,11 +2706,23 @@ function ReviewChangeCard({
           </div>
         </CollapsibleContent>
 
-        {threads.length > 0 && (
-          <ReviewThreads threads={threads} currentSnapshot={currentSnapshot} />
-        )}
+        {threadPlacements.length > 0 ? (
+          <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm">
+            <SpecCommentThreadList
+              projectName={projectName}
+              slug={detail.spec.slug}
+              specId={detail.spec.id}
+              viewedRevisionId={currentSnapshot.revision.id}
+              viewedRevisionState={currentSnapshot.revision.state}
+              specAbandoned={false}
+              humanTransport
+              placements={threadPlacements}
+              label={`${handle} review threads`}
+            />
+          </div>
+        ) : null}
 
-        {commenting && (
+        {commenting && change.change !== "removed" && (
           <div className="border-x-0 border-t border-b-0 border-solid border-border-dim bg-bg-base px-md py-sm">
             <label
               htmlFor={`comment-${change.elementId}`}
@@ -2319,8 +2742,7 @@ function ReviewChangeCard({
             />
             <div className="mt-sm flex justify-end">
               <Button
-                size="sm"
-                touch
+                size="touch"
                 variant="primary"
                 disabled={commentBody.trim().length === 0}
                 loading={comment.isPending}
@@ -2415,72 +2837,6 @@ function reviewChangeControlLabel(change: ReviewCardChange): string {
   return change.summary;
 }
 
-function ReviewThreads({
-  threads,
-  currentSnapshot,
-}: {
-  threads: ReturnType<typeof groupThreads>;
-  currentSnapshot: SpecRevisionSnapshot;
-}): React.JSX.Element {
-  return (
-    <div
-      role="group"
-      aria-label="Review threads"
-      className="grid gap-sm border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-md py-sm"
-    >
-      {threads.map((thread) => {
-        const original = thread.comments[0];
-        if (original === undefined) return null;
-        const anchor = parseAnchor(original.anchor);
-        const currentBody = bodyForElement(currentSnapshot, original.elementId);
-        const state =
-          anchor === null
-            ? { status: "stale" as const }
-            : reanchorSpecThread(anchor, currentBody);
-
-        return (
-          <article
-            key={thread.threadId}
-            data-testid={`review-thread-${thread.threadId}`}
-            className="rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-xs">
-              {original.blocking && (
-                <StatusChip
-                  tone={original.resolution === "open" ? "red" : "green"}
-                >
-                  Blocking · {original.resolution}
-                </StatusChip>
-              )}
-              <StatusChip tone={anchorTone[state.status]}>
-                {anchorLabel[state.status]}
-              </StatusChip>
-              <span className="font-mono text-[0.7rem] text-text-tertiary">
-                Original revision {original.revisionNumber ?? "unknown"}
-              </span>
-            </div>
-            {anchor !== null && (
-              <blockquote className="mt-sm mb-0 border-x-0 border-t-0 border-b-0 border-l-2 border-solid border-cyan-dim pl-sm text-[0.7rem] leading-relaxed text-text-tertiary">
-                “{anchor.quote}”
-              </blockquote>
-            )}
-            <div className="mt-sm grid gap-xs">
-              {thread.comments.map((comment) => (
-                <p
-                  key={comment.id}
-                  className="m-0 font-mono text-[0.74rem] leading-relaxed text-text-secondary"
-                >
-                  {comment.body}
-                </p>
-              ))}
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
 function toDiffRows(snapshot: SpecRevisionSnapshot): RevisionElement[] {
   return snapshot.elements.map((entry) => ({
     elementId: entry.element.id,
@@ -2488,6 +2844,30 @@ function toDiffRows(snapshot: SpecRevisionSnapshot): RevisionElement[] {
     payloadHash: entry.version.payloadHash,
     payload: entry.version.payload,
   }));
+}
+
+function revisionCitationDiffContext(
+  baseSnapshot: SpecRevisionSnapshot | null,
+  currentSnapshot: SpecRevisionSnapshot,
+) {
+  return {
+    baseCitationContractVersion:
+      baseSnapshot?.revision.citationContractVersion ??
+      currentSnapshot.revision.citationContractVersion,
+    draftCitationContractVersion:
+      currentSnapshot.revision.citationContractVersion,
+    baseCitations:
+      baseSnapshot?.assumptionCitations.map((citation) => ({
+        elementId: citation.elementId,
+        assumptionId: citation.assumptionId,
+        snapshot: citation.snapshot,
+      })) ?? [],
+    draftCitations: currentSnapshot.assumptionCitations.map((citation) => ({
+      elementId: citation.elementId,
+      assumptionId: citation.assumptionId,
+      snapshot: citation.snapshot,
+    })),
+  };
 }
 
 function viewForElement(
@@ -2694,24 +3074,6 @@ function criterionDeepLink(
 
 function reviewChangeTargetId(elementId: string): string {
   return `review-change-${elementId}`;
-}
-
-function groupThreads(detail: SpecDetailView): Array<{
-  threadId: string;
-  comments: SpecDetailView["comments"];
-}> {
-  const grouped = new Map<string, SpecDetailView["comments"]>();
-  for (const comment of detail.comments) {
-    const comments = grouped.get(comment.threadId) ?? [];
-    comments.push(comment);
-    grouped.set(comment.threadId, comments);
-  }
-  return [...grouped.entries()].map(([threadId, comments]) => ({
-    threadId,
-    comments: comments.toSorted((left, right) =>
-      left.createdAt.localeCompare(right.createdAt),
-    ),
-  }));
 }
 
 function parseAnchor(anchor: unknown): CommentAnchor | null {

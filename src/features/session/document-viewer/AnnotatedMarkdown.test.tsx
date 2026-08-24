@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
   act,
   cleanup,
@@ -10,11 +10,19 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type {
   CommentStatus,
   DocumentComment,
   DocumentRef,
 } from "@/lib/document-comments/schemas";
+import type {
+  CommentComposerCapability,
+  MarkdownAnnotationSource,
+  MarkdownAnnotationTarget,
+  ResolvedMarkdownAnnotation,
+} from "@/components/document-viewer/annotation-contract";
+import { useLiveMarkdownAnchorResolution } from "./use-live-markdown-anchor-resolution";
 import { findCommentBlock, rangeFromBlockOffsets } from "./anchor-dom";
 import AnnotatedMarkdown, {
   _resetAnnotatorBoundaryForTesting,
@@ -144,6 +152,12 @@ const COMMENTS: ResolvedComment[] = [
     anchored: false,
   }),
 ];
+const SOURCES: MarkdownAnnotationSource[] = COMMENTS.map((comment) => ({
+  id: comment.id,
+  anchor: comment.anchor,
+  tone: comment.status === "pending" ? "active" : "settled",
+  accessibleLabel: `Comment ${comment.id}`,
+}));
 
 /**
  * jsdom cannot mount the browser-only recogito annotator (it paints via the CSS
@@ -155,38 +169,72 @@ const COMMENTS: ResolvedComment[] = [
  */
 const annotatorProps: {
   comments?: ResolvedComment[];
+  annotations?: readonly ResolvedMarkdownAnnotation[];
   syncSignal?: string | null;
 } = {};
 
 function PassthroughAnnotator({
   children,
   comments,
+  annotations,
+  onActivateAnnotation,
   syncSignal,
 }: {
   children: ReactNode;
   comments?: ResolvedComment[];
+  annotations?: readonly ResolvedMarkdownAnnotation[];
   onOpenComment?: (commentId: string) => void;
+  onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
   syncSignal?: string | null;
 }): React.JSX.Element {
   useEffect(() => {
     annotatorProps.comments = comments;
+    annotatorProps.annotations = annotations;
     annotatorProps.syncSignal = syncSignal;
-  }, [comments, syncSignal]);
+  }, [annotations, comments, syncSignal]);
   return (
     <div className="r6o-annotatable" data-fake-annotator="true">
       {children}
+      {annotations?.[0] ? (
+        <button
+          type="button"
+          onClick={() =>
+            onActivateAnnotation?.({
+              kind: "annotation",
+              id: annotations[0]!.id,
+            })
+          }
+        >
+          Activate first highlight
+        </button>
+      ) : null}
     </div>
   );
 }
 
 /** jsdom's Range has no `getBoundingClientRect`; the selection hook reads it. */
-function withRect(range: Range): Range {
+function withRect(range: Range, overrides: Partial<DOMRect> = {}): Range {
   range.getBoundingClientRect = () =>
-    ({ bottom: 0, left: 0, top: 0, right: 0, width: 0, height: 0 }) as DOMRect;
+    ({
+      bottom: 0,
+      left: 0,
+      top: 0,
+      right: 0,
+      width: 0,
+      height: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+      ...overrides,
+    }) as DOMRect;
   return range;
 }
 
-function stubSelectionOverPassage(container: HTMLElement, quote: string): void {
+function stubSelectionOverPassage(
+  container: HTMLElement,
+  quote: string,
+  rect: Partial<DOMRect> = {},
+): HTMLElement {
   const block = findCommentBlock(container, {
     line: 5,
     sectionId: "overview",
@@ -195,6 +243,7 @@ function stubSelectionOverPassage(container: HTMLElement, quote: string): void {
   const start = text.indexOf(quote);
   const range = withRect(
     rangeFromBlockOffsets(block, start, start + quote.length)!,
+    rect,
   );
   vi.spyOn(window, "getSelection").mockReturnValue({
     isCollapsed: false,
@@ -202,25 +251,52 @@ function stubSelectionOverPassage(container: HTMLElement, quote: string): void {
     getRangeAt: () => range,
     removeAllRanges: vi.fn(),
   } as unknown as Selection);
+  return block;
+}
+
+function ResolvedAnnotationHarness({
+  sources,
+  ...props
+}: Omit<React.ComponentProps<typeof AnnotatedMarkdown>, "annotations"> & {
+  sources: readonly MarkdownAnnotationSource[];
+}): React.JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const annotations = useLiveMarkdownAnchorResolution(
+    sources,
+    props.content,
+    contentRef,
+  );
+  return (
+    <div ref={contentRef}>
+      <AnnotatedMarkdown {...props} annotations={annotations} />
+    </div>
+  );
 }
 
 function renderAnnotated(
-  overrides: Partial<React.ComponentProps<typeof AnnotatedMarkdown>> = {},
+  overrides: Partial<
+    Omit<React.ComponentProps<typeof AnnotatedMarkdown>, "annotations">
+  > & { sources?: readonly MarkdownAnnotationSource[] } = {},
 ) {
-  const onOpenComment = vi.fn();
-  const onCreateComment = vi.fn();
+  const onActivateAnnotation = vi.fn();
+  const submit = vi.fn<CommentComposerCapability["submit"]>();
+  submit.mockResolvedValue(undefined);
+  const composer: CommentComposerCapability = {
+    kind: "persist-or-send",
+    submit,
+  };
   const utils = render(
-    <AnnotatedMarkdown
+    <ResolvedAnnotationHarness
       docRef={DOC_REF}
       content={DOC}
       isLoading={false}
-      comments={[]}
-      onOpenComment={onOpenComment}
-      onCreateComment={onCreateComment}
+      sources={[]}
+      onActivateAnnotation={onActivateAnnotation}
+      composer={composer}
       {...overrides}
     />,
   );
-  return { ...utils, onOpenComment, onCreateComment };
+  return { ...utils, onActivateAnnotation, submit };
 }
 
 async function findSourceRoot(container: HTMLElement): Promise<HTMLElement> {
@@ -236,6 +312,7 @@ async function findSourceRoot(container: HTMLElement): Promise<HTMLElement> {
 beforeEach(() => {
   _setAnnotatorBoundaryForTesting(PassthroughAnnotator);
   annotatorProps.comments = undefined;
+  annotatorProps.annotations = undefined;
   annotatorProps.syncSignal = undefined;
 });
 
@@ -243,9 +320,122 @@ afterEach(() => {
   cleanup();
   _resetAnnotatorBoundaryForTesting();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("AnnotatedMarkdown composition", () => {
+  it("renders neutral annotation tones, grouping, nouns, and activation targets", async () => {
+    const onActivateAnnotation = vi.fn();
+    const view = render(
+      <AnnotatedMarkdown
+        docRef={DOC_REF}
+        content={DOC}
+        isLoading={false}
+        annotations={[]}
+        annotationNoun={{ singular: "review thread", plural: "review threads" }}
+        onActivateAnnotation={onActivateAnnotation}
+      />,
+    );
+    await findSourceRoot(view.container);
+    const overviewBlock = findCommentBlock(view.container, {
+      line: 5,
+      sectionId: "overview",
+    })!;
+    const detailsBlock = findCommentBlock(view.container, {
+      line: 9,
+      sectionId: "details",
+    })!;
+    const annotation = (
+      id: string,
+      block: HTMLElement | null,
+      tone: "active" | "settled",
+      quote: string,
+    ): ResolvedMarkdownAnnotation => {
+      const text = block?.textContent ?? "";
+      const charStart = text.indexOf(quote);
+      return {
+        id,
+        tone,
+        accessibleLabel: `Review thread ${id}`,
+        anchor: {
+          sectionId: block === overviewBlock ? "overview" : "details",
+          headingLabel: block === overviewBlock ? "Overview" : "Details",
+          line: block === overviewBlock ? 5 : 9,
+          charStart,
+          charEnd: charStart + quote.length,
+          quote,
+          prefix: "",
+          suffix: "",
+          docRevision: "revision-1",
+        },
+        anchorState:
+          block === null
+            ? { status: "stale" }
+            : {
+                status: "anchored",
+                charStart,
+                charEnd: charStart + quote.length,
+              },
+        block,
+      };
+    };
+    const annotations = [
+      annotation(
+        "overview-active",
+        overviewBlock,
+        "active",
+        "agent-produced markdown",
+      ),
+      annotation(
+        "overview-settled",
+        overviewBlock,
+        "settled",
+        "selection commenting",
+      ),
+      annotation(
+        "details-settled",
+        detailsBlock,
+        "settled",
+        "precise source reference",
+      ),
+      annotation("stale", null, "active", "missing quote"),
+    ];
+
+    view.rerender(
+      <AnnotatedMarkdown
+        docRef={DOC_REF}
+        content={DOC}
+        isLoading={false}
+        annotations={annotations}
+        annotationNoun={{ singular: "review thread", plural: "review threads" }}
+        onActivateAnnotation={onActivateAnnotation}
+      />,
+    );
+
+    const groupPin = await screen.findByRole("button", {
+      name: "2 review threads on this passage",
+    });
+    const settledPin = screen.getByRole("button", {
+      name: "1 review thread on this passage",
+    });
+    expect(groupPin.className).toContain("text-cyan");
+    expect(settledPin.className).toContain("text-green");
+    expect(annotatorProps.annotations).toEqual(annotations);
+
+    fireEvent.click(groupPin);
+    expect(onActivateAnnotation).toHaveBeenCalledWith({
+      kind: "block-group",
+      ids: ["overview-active", "overview-settled"],
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Activate first highlight" }),
+    );
+    expect(onActivateAnnotation).toHaveBeenCalledWith({
+      kind: "annotation",
+      id: "overview-active",
+    });
+  });
+
   it("nests the source-mapped document inside the annotator, inside the viewport", async () => {
     const { container } = renderAnnotated();
     const sourceRoot = await findSourceRoot(container);
@@ -267,8 +457,8 @@ describe("AnnotatedMarkdown composition", () => {
   });
 
   it("renders one host-owned gutter marker per anchored block, excluding stale comments", async () => {
-    const { container, onOpenComment } = renderAnnotated({
-      comments: COMMENTS,
+    const { container, onActivateAnnotation } = renderAnnotated({
+      sources: SOURCES,
     });
     await findSourceRoot(container);
 
@@ -295,13 +485,19 @@ describe("AnnotatedMarkdown composition", () => {
     expect(soloPin).toBeDefined();
 
     fireEvent.click(groupPin);
-    expect(onOpenComment).toHaveBeenCalledWith("overview-1");
+    expect(onActivateAnnotation).toHaveBeenCalledWith({
+      kind: "block-group",
+      ids: ["overview-1", "overview-2"],
+    });
     fireEvent.click(soloPin);
-    expect(onOpenComment).toHaveBeenCalledWith("details-sent");
+    expect(onActivateAnnotation).toHaveBeenCalledWith({
+      kind: "block-group",
+      ids: ["details-sent"],
+    });
   });
 
   it("re-synchronizes the gutter and annotator once the deferred document mounts", async () => {
-    const { container } = renderAnnotated({ comments: COMMENTS });
+    const { container } = renderAnnotated({ sources: SOURCES });
     await findSourceRoot(container);
 
     // The document root mounts a tick after first render (its renderer is
@@ -316,7 +512,12 @@ describe("AnnotatedMarkdown composition", () => {
       ).toHaveLength(2);
     });
     expect(annotatorProps.syncSignal).toMatch(/#[1-9]\d*$/);
-    expect(annotatorProps.comments).toEqual(COMMENTS);
+    expect(annotatorProps.annotations?.map(({ id }) => id)).toEqual([
+      "overview-1",
+      "overview-2",
+      "details-sent",
+      "details-stale",
+    ]);
   });
 
   it("offers the comment affordance after a pointer-completed selection", async () => {
@@ -328,11 +529,105 @@ describe("AnnotatedMarkdown composition", () => {
       fireEvent.pointerUp(document);
     });
 
+    expect(screen.getByRole("button", { name: "Comment" })).toHaveClass(
+      "min-h-[44px]",
+      "min-w-[44px]",
+      "text-text-primary",
+    );
+  });
+
+  it("keeps the unopened selection affordance inside the zoomed visual viewport", async () => {
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(195);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(422);
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown", {
+      bottom: 410,
+      left: 190,
+    });
+
+    fireEvent.pointerUp(document);
+
+    const trigger = screen.getByRole("button", {
+      name: "Comment",
+    }).parentElement!;
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      bottom: 44,
+      height: 44,
+      left: 0,
+      right: 110,
+      top: 0,
+      width: 110,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      expect(trigger).toHaveStyle({ left: "77px", top: "370px" });
+    });
+  });
+
+  it("repositions the selection affordance when the visual viewport pans", async () => {
+    const visualViewport = Object.assign(new EventTarget(), {
+      height: 422,
+      offsetLeft: 12,
+      offsetTop: 20,
+      width: 195,
+    });
+    vi.stubGlobal("visualViewport", visualViewport);
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown", {
+      bottom: 410,
+      left: 190,
+    });
+    fireEvent.pointerUp(document);
+
+    const trigger = screen.getByRole("button", {
+      name: "Comment",
+    }).parentElement!;
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      bottom: 44,
+      height: 44,
+      left: 0,
+      right: 110,
+      top: 0,
+      width: 110,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    visualViewport.offsetLeft = 30;
+    visualViewport.offsetTop = 40;
+    act(() => {
+      visualViewport.dispatchEvent(new Event("scroll"));
+    });
+
+    await waitFor(() => {
+      expect(trigger).toHaveStyle({ left: "107px", top: "410px" });
+    });
+  });
+
+  it("dismisses an unopened selection affordance when its source scrolls", async () => {
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
     expect(screen.getByRole("button", { name: "Comment" })).toBeInTheDocument();
+
+    fireEvent.scroll(window);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Comment" }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("keeps selection commenting unavailable when no create handler is provided", async () => {
-    const { container } = renderAnnotated({ onCreateComment: undefined });
+    const { container } = renderAnnotated({ composer: undefined });
     await findSourceRoot(container);
     stubSelectionOverPassage(container, "agent-produced markdown");
 
@@ -354,6 +649,136 @@ describe("AnnotatedMarkdown composition", () => {
     });
 
     expect(screen.getByRole("button", { name: "Comment" })).toBeInTheDocument();
+  });
+
+  it("gives the open selection composer dialog an accessible name", async () => {
+    const user = userEvent.setup();
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
+
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "Add comment" }),
+    ).toBeInTheDocument();
+  });
+
+  it("dismisses an idle selection composer through a real outside interaction", async () => {
+    const user = userEvent.setup();
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+
+    await user.click(document.body);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Comment" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the selection composer mounted through pending outside and Escape dismissal", async () => {
+    const user = userEvent.setup();
+    const submit = vi.fn(
+      () =>
+        new Promise<void>(() => {
+          // The pending promise deliberately stays unsettled for this assertion.
+        }),
+    );
+    const { container } = renderAnnotated({
+      composer: { kind: "persist-only", submit },
+    });
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+    await user.type(screen.getByRole("textbox"), "retain while pending");
+    await user.click(screen.getByRole("button", { name: "Add comment" }));
+
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByRole("textbox")).toHaveValue("retain while pending");
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(screen.getByRole("textbox")).toHaveValue("retain while pending");
+  });
+
+  it("retains a rejected selection draft and clears it only after success", async () => {
+    const user = userEvent.setup();
+    const rejected = renderAnnotated({
+      composer: {
+        kind: "persist-only",
+        submit: vi.fn().mockRejectedValue(new Error("Proposal changed")),
+      },
+    });
+    await findSourceRoot(rejected.container);
+    stubSelectionOverPassage(rejected.container, "agent-produced markdown");
+    fireEvent.pointerUp(document);
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+    await user.type(screen.getByRole("textbox"), "keep rejected draft");
+    await user.click(screen.getByRole("button", { name: "Add comment" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Proposal changed",
+    );
+    expect(screen.getByRole("textbox")).toHaveValue("keep rejected draft");
+
+    rejected.unmount();
+    const successful = renderAnnotated({
+      composer: {
+        kind: "persist-only",
+        submit: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+    await findSourceRoot(successful.container);
+    const sourceBlock = stubSelectionOverPassage(
+      successful.container,
+      "selection commenting",
+    );
+    fireEvent.keyUp(document, { key: "ArrowRight", shiftKey: true });
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+    await user.type(screen.getByRole("textbox"), "successful draft");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox")).not.toBeInTheDocument(),
+    );
+    expect(document.activeElement).toBe(sourceBlock);
+  });
+
+  it("closes and restores the selected passage after delayed persistence succeeds", async () => {
+    const user = userEvent.setup();
+    let settle: (() => void) | undefined;
+    const successful = renderAnnotated({
+      composer: {
+        kind: "persist-only",
+        submit: () =>
+          new Promise<void>((resolve) => {
+            settle = resolve;
+          }),
+      },
+    });
+    await findSourceRoot(successful.container);
+    const sourceBlock = stubSelectionOverPassage(
+      successful.container,
+      "selection commenting",
+    );
+    fireEvent.pointerUp(document);
+    await user.click(screen.getByRole("button", { name: "Comment" }));
+    await user.type(screen.getByRole("textbox"), "successful delayed draft");
+    await user.click(screen.getByRole("button", { name: "Add comment" }));
+    expect(screen.getByRole("button", { name: "Adding…" })).toBeDisabled();
+
+    await act(async () => settle?.());
+
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox")).not.toBeInTheDocument(),
+    );
+    expect(document.activeElement).toBe(sourceBlock);
   });
 
   it("shows the viewport loading state and renders no document or gutter", () => {

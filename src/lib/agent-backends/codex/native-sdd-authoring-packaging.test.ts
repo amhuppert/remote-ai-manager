@@ -29,11 +29,13 @@ const EXPECTED_SECTIONS = [
   "Finalized proposal, sign-off, and one-off start",
   "Ordinary live edit, capture, and replacement",
   "Removal and reintroduction symmetry",
+  "Correcting obsolete questions and assumptions",
   "Withdraw-proposal vs dismiss-superseded",
   "Element-id/handle/version semantics",
   "Importing a spec authored outside CC",
   "Consistency sweep and `propose --notes` protocol",
   "Finding classes and bounded terminal rounds",
+  "Designed friction versus a defect",
   "Notify only from success receipts",
 ] as const;
 const STEERING_SEARCH_TERMS = [
@@ -146,6 +148,92 @@ describe("native-sdd-authoring managed skill", () => {
     );
     expect(loadedSkill).not.toMatch(
       /compiler|materializer|context pack|proofPlan|workflow live amend/i,
+    );
+  });
+
+  /**
+   * The reflection attached to command-center#87 is a record of what the skill
+   * did not say: the author read a withdrawn revision without knowing reads
+   * were current-only, guessed a handle for a section that has none, never
+   * found the attention verbs, filed an approval request the propose had
+   * already filed, re-litigated approvals a reopen had carried, and reported
+   * designed friction as a defect. Each claim below is the sentence that
+   * closes one of those, checked on the INJECTED copy because a non-CC agent
+   * reads nothing else.
+   */
+  it("teaches the read contract, propose auto-filing, and the friction taxonomy", async () => {
+    temporaryDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "cc-native-sdd-skill-contract-"),
+    );
+    const configDirectory = path.join(temporaryDirectory, "config");
+    const nonCcProject = path.join(temporaryDirectory, "customer-project");
+    await mkdir(nonCcProject, { recursive: true });
+    await initializeGitRepository(nonCcProject);
+
+    const published = await publishManagedSkillBundle({
+      sourceDir: SOURCE_PLUGIN_ROOT,
+      configDir: configDirectory,
+    });
+    expect(published.published).toBe(true);
+    if (!published.published) return;
+    await ensureCodexManagedSkillsBridge({
+      checkoutPath: nonCcProject,
+      bundle: published.bundle,
+    });
+    const skill = await readFile(
+      path.join(
+        nonCcProject,
+        ".agents",
+        "skills",
+        "command-center",
+        SKILL_NAME,
+        "SKILL.md",
+      ),
+      "utf8",
+    );
+
+    const reading = sectionBody(
+      skill,
+      "Reading specs without flooding context",
+    );
+    expect(reading).toContain("historical_only");
+    expect(reading).toContain("--revision");
+    expect(reading).toContain("cctl spec section get <slug> --id <element-id>");
+
+    expect(skill).toContain("cctl spec attention edit");
+    expect(skill).toContain("cctl spec attention withdraw");
+    expect(skill).toContain("cctl spec attention supersede");
+    expect(skill).toContain("cctl spec attention cite");
+    expect(skill).toContain("cctl spec attention uncite");
+
+    const propose = sectionBody(
+      skill,
+      "Consistency sweep and `propose --notes` protocol",
+    );
+    expect(propose).toMatch(/files? the gate-scoped approval request/i);
+    expect(propose).toMatch(/cctl spec request-approval[\s\S]{0,120}recovery/i);
+    // The prose-lint escape: a literal handle token has to be maskable, or an
+    // author who cannot write `R3.2` in prose writes a wrong reference instead.
+    expect(propose).toMatch(/backtick|fenced/i);
+
+    expect(skill).toContain(
+      "approvals on unchanged subjects carry into the reopened draft",
+    );
+    const identity = sectionBody(skill, "Element-id/handle/version semantics");
+    expect(identity).toMatch(/one batch can create an element and cite it/i);
+    expect(identity).toContain("parent_immutable");
+
+    const friction = sectionBody(skill, "Designed friction versus a defect");
+    expect(friction).toMatch(/human judgment or an audit property/);
+    expect(friction).toMatch(/read path|message|missing verb/);
+
+    // Guidance the reflection proves is harmful: an agent told to hold design
+    // work in a question stops authoring, and an assumption disposition is not
+    // an act the agent surface performs at all.
+    expect(skill).not.toMatch(/park[^.]{0,60}question/i);
+    expect(skill).not.toMatch(/reject[^.]{0,30}assumption/i);
+    expect(skill).not.toMatch(
+      /section handle|handle for a section|<slug>\/<section/i,
     );
   });
 

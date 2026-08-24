@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import type {
-  CommentStatus,
-  DocumentComment,
-} from "@/lib/document-comments/schemas";
+  CommentComposerCapability,
+  MarkdownAnnotationSource,
+  PersistCommentInput,
+} from "@/components/document-viewer/annotation-contract";
 import AnnotatedMarkdown, {
-  type CreateCommentInput,
+  type AnnotatedMarkdownProps,
 } from "./AnnotatedMarkdown";
-import type { ResolvedComment } from "./types";
+import { useLiveMarkdownAnchorResolution } from "./use-live-markdown-anchor-resolution";
 
 /**
  * Programmatically select `quote` within the rendered document and complete the
@@ -65,6 +66,7 @@ async function selectPassage(
 const meta = {
   title: "Session/DocumentViewer/AnnotatedMarkdown",
   component: AnnotatedMarkdown,
+  parameters: { a11y: { test: "error" } },
   decorators: [
     (Story) => (
       <div
@@ -111,24 +113,19 @@ const DOC_B = [
   "", // 6
 ].join("\n");
 
-function makeComment(args: {
+function makeAnnotation(args: {
   id: string;
   line: number;
   sectionId: string;
   headingLabel: string;
   blockText: string;
   quote: string;
-  status: CommentStatus;
-  reanchored: boolean;
-  note: string;
-}): ResolvedComment {
+  tone: MarkdownAnnotationSource["tone"];
+}): MarkdownAnnotationSource {
   const charStart = args.blockText.indexOf(args.quote);
   const charEnd = charStart + args.quote.length;
-  const comment: DocumentComment = {
+  return {
     id: args.id,
-    projectPath: "/project",
-    sessionName: "session",
-    docPath: "doc.md",
     anchor: {
       sectionId: args.sectionId,
       headingLabel: args.headingLabel,
@@ -140,23 +137,13 @@ function makeComment(args: {
       suffix: "",
       docRevision: "rev",
     },
-    note: args.note,
-    status: args.status,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    sentAt: args.status === "sent" ? "2026-01-02T00:00:00.000Z" : null,
-  };
-  return {
-    ...comment,
-    reanchor: args.reanchored
-      ? { status: "anchored", charStart, charEnd }
-      : { status: "stale" },
-    stale: !args.reanchored,
+    tone: args.tone,
+    accessibleLabel: `Comment ${args.id}`,
   };
 }
 
-const DOC_A_COMMENTS: ResolvedComment[] = [
-  makeComment({
+const DOC_A_ANNOTATIONS: MarkdownAnnotationSource[] = [
+  makeAnnotation({
     id: "a-pending",
     line: 5,
     sectionId: "overview",
@@ -164,47 +151,89 @@ const DOC_A_COMMENTS: ResolvedComment[] = [
     blockText:
       "The viewer renders agent-produced markdown with selection commenting.",
     quote: "agent-produced markdown",
-    status: "pending",
-    reanchored: true,
-    note: "Clarify what counts as agent-produced.",
+    tone: "active",
   }),
-  makeComment({
+  makeAnnotation({
+    id: "a-overview-settled",
+    line: 5,
+    sectionId: "overview",
+    headingLabel: "Overview",
+    blockText:
+      "The viewer renders agent-produced markdown with selection commenting.",
+    quote: "selection commenting",
+    tone: "settled",
+  }),
+  makeAnnotation({
     id: "a-sent",
     line: 9,
     sectionId: "details",
     headingLabel: "Details",
     blockText: "Comments persist durably and carry a precise source reference.",
     quote: "precise source reference",
-    status: "sent",
-    reanchored: true,
-    note: "Already shipped — good.",
+    tone: "settled",
   }),
-  makeComment({
+  makeAnnotation({
     id: "a-stale",
     line: 9,
     sectionId: "details",
     headingLabel: "Details",
     blockText: "Comments persist durably and carry a precise source reference.",
     quote: "this text no longer exists in the document",
-    status: "pending",
-    reanchored: false,
-    note: "Stale — no highlight, no marker.",
+    tone: "active",
   }),
 ];
 
-const DOC_B_COMMENTS: ResolvedComment[] = [
-  makeComment({
+const DOC_B_ANNOTATIONS: MarkdownAnnotationSource[] = [
+  makeAnnotation({
     id: "b-pending",
     line: 5,
     sectionId: "notes",
     headingLabel: "Notes",
     blockText: "A different document with its own single comment passage here.",
     quote: "single comment passage",
-    status: "pending",
-    reanchored: true,
-    note: "Belongs only to document B.",
+    tone: "active",
   }),
 ];
+
+function LiveAnnotatedMarkdown({
+  sources,
+  ...props
+}: Omit<AnnotatedMarkdownProps, "annotations"> & {
+  sources: readonly MarkdownAnnotationSource[];
+}): React.JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const annotations = useLiveMarkdownAnchorResolution(
+    sources,
+    props.content,
+    contentRef,
+  );
+  return (
+    <div ref={contentRef} className="flex min-h-0 flex-1 flex-col">
+      <AnnotatedMarkdown {...props} annotations={annotations} />
+    </div>
+  );
+}
+
+function SelectionCapabilityDemo({
+  composer,
+}: {
+  composer: CommentComposerCapability;
+}): React.JSX.Element {
+  return (
+    <AnnotatedMarkdown
+      docRef={{
+        projectName: "project",
+        sessionName: "session",
+        docPath: "doc-a.md",
+        title: "Design Review",
+      }}
+      content={DOC_A}
+      isLoading={false}
+      annotations={[]}
+      composer={composer}
+    />
+  );
+}
 
 // ── Stories ───────────────────────────────────────────────────────────────
 
@@ -218,8 +247,15 @@ export const PendingAndSent: Story = {
     },
     content: DOC_A,
     isLoading: false,
-    comments: DOC_A_COMMENTS,
+    annotations: [],
+    annotationNoun: {
+      singular: "review thread",
+      plural: "review threads",
+    },
   },
+  render: (args) => (
+    <LiveAnnotatedMarkdown {...args} sources={DOC_A_ANNOTATIONS} />
+  ),
   // Gutter geometry: the anchored comments each paint one marker, and every
   // marker sits fully left of the document text — the reserved inset keeps the
   // 50px gutter clear of the canonical body so pins never overlap the prose.
@@ -260,6 +296,11 @@ export const PendingAndSent: Story = {
   },
 };
 
+export const MixedOpenResolvedGroupedPin: Story = {
+  ...PendingAndSent,
+  name: "Mixed open/resolved grouped review-thread pin",
+};
+
 /**
  * A document taller than its bounded host: the body must scroll WITHIN the
  * viewer (the `MarkdownViewport` is the scroll ancestor; the `.r6o-annotatable`
@@ -289,7 +330,7 @@ export const LongDocument: Story = {
     },
     content: LONG_DOC,
     isLoading: false,
-    comments: [],
+    annotations: [],
   },
 };
 
@@ -303,7 +344,7 @@ export const Loading: Story = {
     },
     content: null,
     isLoading: true,
-    comments: [],
+    annotations: [],
   },
 };
 
@@ -321,10 +362,12 @@ export const SelectionCreateFlow: Story = {
     },
     content: DOC_A,
     isLoading: false,
-    comments: [],
+    annotations: [],
   },
   render: () => {
-    const [created, setCreated] = useState<CreateCommentInput | null>(null);
+    const [created, setCreated] = useState<
+      (PersistCommentInput & { delivery: "queue" | "send" }) | null
+    >(null);
     return (
       <>
         <pre
@@ -349,8 +392,11 @@ export const SelectionCreateFlow: Story = {
           }}
           content={DOC_A}
           isLoading={false}
-          comments={[]}
-          onCreateComment={setCreated}
+          annotations={[]}
+          composer={{
+            kind: "persist-or-send",
+            submit: async (input) => setCreated(input),
+          }}
         />
       </>
     );
@@ -369,10 +415,10 @@ export const SelectionCreateFlow: Story = {
       { timeout: PLAY_TIMEOUT },
     );
 
-    // Dismiss the affordance (outside pointerdown), then drive the pointer path.
-    document.body.dispatchEvent(
-      new PointerEvent("pointerdown", { bubbles: true }),
-    );
+    // Open and dismiss the keyboard-created composer through Radix's outside
+    // interaction path, then drive the pointer-created path.
+    await userEvent.click(body.getByRole("button", { name: "Comment" }));
+    await userEvent.click(document.body);
     await waitFor(() =>
       expect(body.queryByRole("button", { name: "Comment" })).toBeNull(),
     );
@@ -395,8 +441,95 @@ export const SelectionCreateFlow: Story = {
 
     await waitFor(() =>
       expect(within(canvasElement).getByTestId("created")).toHaveTextContent(
-        '"send":false',
+        '"delivery":"queue"',
       ),
+    );
+  },
+};
+
+export const PersistOnlySelection: Story = {
+  args: {
+    docRef: {
+      projectName: "project",
+      sessionName: "session",
+      docPath: "doc-a.md",
+      title: "Design Review",
+    },
+    content: DOC_A,
+    isLoading: false,
+    annotations: [],
+  },
+  render: () => (
+    <SelectionCapabilityDemo
+      composer={{ kind: "persist-only", submit: async () => {} }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const body = within(document.body);
+    await selectPassage(canvasElement, "agent-produced markdown", "pointerup");
+    await userEvent.click(
+      await body.findByRole(
+        "button",
+        { name: "Comment" },
+        { timeout: PLAY_TIMEOUT },
+      ),
+    );
+    await expect(body.queryByRole("button", { name: "Add & send" })).toBeNull();
+  },
+};
+
+export const PendingSelection: Story = {
+  args: PersistOnlySelection.args,
+  render: () => (
+    <SelectionCapabilityDemo
+      composer={{
+        kind: "persist-only",
+        submit: () => new Promise<void>(() => {}),
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const body = within(document.body);
+    await selectPassage(canvasElement, "agent-produced markdown", "pointerup");
+    await userEvent.click(
+      await body.findByRole(
+        "button",
+        { name: "Comment" },
+        { timeout: PLAY_TIMEOUT },
+      ),
+    );
+    await userEvent.type(body.getByRole("textbox"), "Pending persistence");
+    await userEvent.click(body.getByRole("button", { name: "Add comment" }));
+    await expect(body.getByRole("button", { name: "Adding…" })).toBeDisabled();
+  },
+};
+
+export const RejectedSelection: Story = {
+  args: PersistOnlySelection.args,
+  render: () => (
+    <SelectionCapabilityDemo
+      composer={{
+        kind: "persist-only",
+        submit: async () => {
+          throw new Error("Revision is no longer proposed");
+        },
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const body = within(document.body);
+    await selectPassage(canvasElement, "agent-produced markdown", "pointerup");
+    await userEvent.click(
+      await body.findByRole(
+        "button",
+        { name: "Comment" },
+        { timeout: PLAY_TIMEOUT },
+      ),
+    );
+    await userEvent.type(body.getByRole("textbox"), "Retain rejected draft");
+    await userEvent.click(body.getByRole("button", { name: "Add comment" }));
+    await expect(await body.findByRole("alert")).toHaveTextContent(
+      "Revision is no longer proposed",
     );
   },
 };
@@ -415,7 +548,7 @@ export const SwitchingDocuments: Story = {
     },
     content: DOC_A,
     isLoading: false,
-    comments: DOC_A_COMMENTS,
+    annotations: [],
   },
   render: () => {
     const [doc, setDoc] = useState<"a" | "b">("a");
@@ -439,7 +572,7 @@ export const SwitchingDocuments: Story = {
         >
           Showing document {isA ? "A" : "B"} — switch
         </button>
-        <AnnotatedMarkdown
+        <LiveAnnotatedMarkdown
           docRef={{
             projectName: "project",
             sessionName: "session",
@@ -448,7 +581,7 @@ export const SwitchingDocuments: Story = {
           }}
           content={isA ? DOC_A : DOC_B}
           isLoading={false}
-          comments={isA ? DOC_A_COMMENTS : DOC_B_COMMENTS}
+          sources={isA ? DOC_A_ANNOTATIONS : DOC_B_ANNOTATIONS}
         />
       </>
     );

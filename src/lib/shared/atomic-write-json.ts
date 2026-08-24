@@ -23,7 +23,16 @@
 
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -220,4 +229,84 @@ export function atomicWriteJson(
   value: unknown,
 ): Promise<void> {
   return atomicWriteFile(filePath, JSON.stringify(value, null, 2));
+}
+
+export function atomicWriteJsonSync(filePath: string, value: unknown): void {
+  const dirsToSync = ensureParentDirSync(filePath);
+  const tmpPath = `${filePath}.tmp.${process.pid}.${randomUUID()}`;
+  let fd: number | undefined;
+  try {
+    fd = openSync(tmpPath, "wx");
+    const contents = Buffer.from(JSON.stringify(value, null, 2), "utf8");
+    let offset = 0;
+    while (offset < contents.byteLength) {
+      const bytesWritten = writeSync(
+        fd,
+        contents,
+        offset,
+        contents.byteLength - offset,
+      );
+      if (bytesWritten <= 0) {
+        throw new Error(
+          `Atomic write made invalid progress: wrote ${bytesWritten} of ${contents.byteLength - offset} remaining bytes`,
+        );
+      }
+      offset += bytesWritten;
+    }
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Nothing actionable if closing a failed write's descriptor fails.
+      }
+    }
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // The temp file may not exist or may already have been renamed.
+    }
+    throw err;
+  }
+
+  for (const dir of dirsToSync) syncDirSync(dir);
+}
+
+function ensureParentDirSync(filePath: string): readonly string[] {
+  const dir = path.dirname(filePath);
+  if (existsSync(dir)) return [dir];
+
+  const dirsToSync = [dir];
+  let ancestor = path.dirname(dir);
+  while (!existsSync(ancestor)) {
+    dirsToSync.push(ancestor);
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  if (dirsToSync.at(-1) !== ancestor) dirsToSync.push(ancestor);
+  mkdirSync(dir, { recursive: true });
+  return dirsToSync;
+}
+
+function syncDirSync(dir: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(dir, "r");
+    fsyncSync(fd);
+  } catch (err) {
+    if (!isUnsupportedDirectorySyncError(err)) throw err;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Nothing actionable if closing the directory descriptor fails.
+      }
+    }
+  }
 }

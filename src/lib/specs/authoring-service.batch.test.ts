@@ -451,10 +451,89 @@ describe("AuthoringService.upsertDraftElements", () => {
         index: 1,
         elementId: "task-1",
         code: "stage_blocked",
+        rationale:
+          "delivery plans bind a settled design; authoring one earlier would shape the design around its own execution",
       }),
     ]);
     const snapshot = await specs.getRevisionSnapshot(created.draft.id);
     expect(snapshot?.elements).toHaveLength(1);
+  });
+
+  it("preserves the rationale when a removal is blocked by the current stage", async () => {
+    const created = await createDraft();
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-25T13:00:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-25T13:01:00.000Z",
+    });
+    const design = await specs.createDraftFromBase({
+      id: "revision-design-rationale",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "design",
+      createdAt: "2026-07-25T13:02:00.000Z",
+    });
+    const designed = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: design.id,
+      elements: [
+        {
+          elementId: "decision-1",
+          kind: "decision",
+          parentElementId: null,
+          payload: {
+            kind: "decision",
+            title: "Preserve stage separation",
+            chosenApproach: "Settle requirements before choosing a design.",
+            reason: "The contract should not be shaped around its solution.",
+            rejectedAlternatives: [],
+            tracedRequirementElementIds: [],
+          },
+          baseElementVersion: null,
+        },
+      ],
+      actor: ACTOR,
+    });
+    expect(designed.ok).toBe(true);
+    await specs.proposeRevision({
+      revisionId: design.id,
+      proposedAt: "2026-07-25T13:03:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: design.id,
+      approvedAt: "2026-07-25T13:04:00.000Z",
+    });
+    const amendment = await specs.createDraftFromBase({
+      id: "revision-removal-rationale",
+      specId: created.spec.id,
+      baseRevisionId: design.id,
+      authoringStage: "requirements",
+      createdAt: "2026-07-25T13:05:00.000Z",
+    });
+
+    const result = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: amendment.id,
+      elements: [],
+      removals: [{ elementId: "decision-1", baseElementVersion: 1 }],
+      actor: ACTOR,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("removal should have been refused");
+    expect(result.refusals).toEqual([
+      expect.objectContaining({
+        input: "removal",
+        index: 0,
+        elementId: "decision-1",
+        code: "stage_blocked",
+        rationale:
+          "requirements settle before design so solution choices cannot shape the contract around themselves",
+      }),
+    ]);
   });
 
   /**

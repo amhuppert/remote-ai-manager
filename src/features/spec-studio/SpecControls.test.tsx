@@ -778,6 +778,10 @@ function snapshotForTest(
       ...entry,
       version: { ...entry.version, revisionId: id },
     })),
+    assumptionCitations: source.assumptionCitations.map((citation) => ({
+      ...citation,
+      revisionId: id,
+    })),
   };
 }
 
@@ -836,6 +840,8 @@ describe("IntegrityBanner", () => {
               revisionId: "revision-1",
               expectedContentHash: "expected-hash",
               actualContentHash: "actual-hash",
+              expectedCitationHash: "1".repeat(64),
+              actualCitationHash: "2".repeat(64),
               mismatchedElementIds: ["requirement-1"],
             },
           ],

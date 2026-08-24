@@ -7,6 +7,9 @@ import { formatBareElementHandle } from "@/lib/specs/handles";
 import {
   actorProvenanceSchema,
   externalDeliverySchema,
+  specAssumptionCitationRowSchema,
+  specAssumptionCitationSchema,
+  specAssumptionCitationSnapshotSchema,
   specAliasRowSchema,
   specAliasSchema,
   specAuthoringStageSchema,
@@ -29,6 +32,8 @@ import {
   specSchema,
   type Spec,
   type SpecAlias,
+  type SpecAssumptionCitation,
+  type SpecAssumptionCitationSnapshot,
   type SpecAuthoringStage,
   type SpecCounter,
   type SpecCounterScopeKey,
@@ -293,8 +298,121 @@ export interface RevisionVerification {
   readonly ok: boolean;
   readonly expectedContentHash: string | null;
   readonly actualContentHash: string;
+  readonly expectedCitationHash: string;
+  readonly actualCitationHash: string;
   readonly mismatchedElementIds: string[];
 }
+
+const citationReplacementSchema = z
+  .object({
+    assumptionId: z.string().min(1),
+    elementIds: z.array(z.string().min(1)),
+    snapshot: specAssumptionCitationSnapshotSchema,
+  })
+  .strict()
+  .superRefine((replacement, ctx) => {
+    if (
+      new Set(replacement.elementIds).size !== replacement.elementIds.length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["elementIds"],
+        message: "citation element ids must be unique",
+      });
+    }
+    if (replacement.snapshot.assumptionId !== replacement.assumptionId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["snapshot", "assumptionId"],
+        message: "citation snapshot must identify its assumption",
+      });
+    }
+  });
+
+const replaceAssumptionDraftCitationsInputSchema = z
+  .object({
+    revisionId: z.string().min(1),
+    specId: z.string().min(1),
+    expectedCitationVersion: z.number().int().positive(),
+    replacements: z.array(citationReplacementSchema),
+    updatedAt: z.string().min(1),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    const assumptionIds = input.replacements.map(
+      (replacement) => replacement.assumptionId,
+    );
+    if (new Set(assumptionIds).size !== assumptionIds.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["replacements"],
+        message: "each assumption may be replaced only once",
+      });
+    }
+  });
+export type ReplaceAssumptionDraftCitationsInput = z.infer<
+  typeof replaceAssumptionDraftCitationsInputSchema
+>;
+
+const mutateDraftCitationInputSchema = z.discriminatedUnion("operation", [
+  z
+    .object({
+      operation: z.literal("cite"),
+      revisionId: z.string().min(1),
+      specId: z.string().min(1),
+      assumptionId: z.string().min(1),
+      elementId: z.string().min(1),
+      expectedCitationVersion: z.number().int().positive(),
+      snapshot: specAssumptionCitationSnapshotSchema,
+      updatedAt: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("uncite"),
+      revisionId: z.string().min(1),
+      specId: z.string().min(1),
+      assumptionId: z.string().min(1),
+      elementId: z.string().min(1),
+      expectedCitationVersion: z.number().int().positive(),
+      updatedAt: z.string().min(1),
+    })
+    .strict(),
+]);
+export type MutateDraftCitationInput = z.infer<
+  typeof mutateDraftCitationInputSchema
+>;
+
+export interface SpecCitationReference {
+  readonly elementId: string;
+  readonly assumptionId: string;
+}
+
+export type CitationRelationFailure =
+  | "revision_spec_mismatch"
+  | "assumption_spec_mismatch"
+  | "element_not_in_revision";
+
+export type CitationCasOutcome =
+  | {
+      readonly kind: "success";
+      readonly changed: boolean;
+      readonly revision: SpecRevision;
+      readonly citations: SpecAssumptionCitation[];
+      readonly added: SpecCitationReference[];
+      readonly removed: SpecCitationReference[];
+      readonly refreshed: SpecCitationReference[];
+    }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "stale_version"; readonly currentVersion: number }
+  | {
+      readonly kind: "illegal_lifecycle";
+      readonly state: SpecRevision["state"];
+    }
+  | {
+      readonly kind: "invalid_relation";
+      readonly reason: CitationRelationFailure;
+    };
 
 export class SpecElementIdTakenError extends Error {
   readonly code = "element_id_taken" as const;
@@ -498,6 +616,13 @@ export interface SpecsRepo {
   ): Promise<SpecRevisionSupersession | null>;
   listSupersessions(specId: string): Promise<SpecRevisionSupersession[]>;
   getRevisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
+  readRevisionCitations(revisionId: string): Promise<SpecAssumptionCitation[]>;
+  replaceAssumptionDraftCitations(
+    input: ReplaceAssumptionDraftCitationsInput,
+  ): Promise<CitationCasOutcome>;
+  mutateDraftCitation(
+    input: MutateDraftCitationInput,
+  ): Promise<CitationCasOutcome>;
   verifyRevision(revisionId: string): Promise<RevisionVerification>;
   findElementVersion(
     revisionId: string,
@@ -524,6 +649,11 @@ export interface SpecsRepoTransaction {
   findDraft(specId: string): SpecRevision | null;
   findLatestApproved(specId: string): SpecRevision | null;
   getRevisionSnapshot(revisionId: string): SpecRevisionSnapshot | null;
+  readRevisionCitations(revisionId: string): SpecAssumptionCitation[];
+  replaceAssumptionDraftCitations(
+    input: ReplaceAssumptionDraftCitationsInput,
+  ): CitationCasOutcome;
+  mutateDraftCitation(input: MutateDraftCitationInput): CitationCasOutcome;
   findElementVersion(
     revisionId: string,
     elementId: string,
@@ -559,6 +689,7 @@ export type SpecsRepoRead = Pick<
   | "findDraft"
   | "findLatestApproved"
   | "getRevisionSnapshot"
+  | "readRevisionCitations"
   | "findElementVersion"
   | "findSupersession"
   | "listSupersessions"
@@ -662,6 +793,27 @@ export function computeSpecRevisionContentHash(
     authoringStage,
     canonicalElements(elements),
   );
+}
+
+export function computeSpecRevisionCitationHash(
+  citationContractVersion: 1 | 2,
+  citations: readonly Pick<
+    SpecAssumptionCitation,
+    "elementId" | "assumptionId" | "snapshot"
+  >[],
+): string {
+  return createHash("sha256")
+    .update(
+      stableStringify({
+        citationContractVersion,
+        citations: citations.map(({ elementId, assumptionId, snapshot }) => ({
+          elementId,
+          assumptionId,
+          snapshot,
+        })),
+      }),
+    )
+    .digest("hex");
 }
 
 function counterScopeFor(
@@ -938,6 +1090,80 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
      WHERE v.revision_id = ?
      ORDER BY v.position ASC, e.id ASC`,
   );
+  const snapshotAssumptionCitationsStmt = db.prepare(
+    `SELECT * FROM spec_revision_assumption_citations
+     WHERE revision_id = ?
+     ORDER BY element_id ASC, assumption_id ASC`,
+  );
+  const findAssumptionOwnerStmt = db.prepare(
+    "SELECT spec_id FROM spec_assumptions WHERE id = ? LIMIT 1",
+  );
+  const findRevisionElementOwnerStmt = db.prepare(
+    `SELECT elements.spec_id
+     FROM spec_element_versions AS versions
+     JOIN spec_elements AS elements ON elements.id = versions.element_id
+     WHERE versions.revision_id = ? AND versions.element_id = ?
+     LIMIT 1`,
+  );
+  const insertAssumptionCitationStmt = db.prepare(
+    `INSERT INTO spec_revision_assumption_citations (
+       revision_id, spec_id, element_id, assumption_id,
+       assumption_snapshot_json, created_at, updated_at
+     ) VALUES (
+       @revision_id, @spec_id, @element_id, @assumption_id,
+       @assumption_snapshot_json, @created_at, @updated_at
+     )`,
+  );
+  const updateAssumptionCitationSnapshotStmt = db.prepare(
+    `UPDATE spec_revision_assumption_citations
+     SET assumption_snapshot_json = @assumption_snapshot_json,
+         updated_at = @updated_at
+     WHERE revision_id = @revision_id
+       AND element_id = @element_id
+       AND assumption_id = @assumption_id`,
+  );
+  const deleteAssumptionCitationStmt = db.prepare(
+    `DELETE FROM spec_revision_assumption_citations
+     WHERE revision_id = ? AND element_id = ? AND assumption_id = ?`,
+  );
+  const updateDraftCitationIntegrityStmt = db.prepare(
+    `UPDATE spec_revisions
+     SET citation_version = citation_version + 1,
+         citation_hash = @citation_hash
+     WHERE id = @revision_id
+       AND spec_id = @spec_id
+       AND state = 'draft'
+       AND citation_version = @expected_citation_version`,
+  );
+  const initializeDraftCitationIntegrityStmt = db.prepare(
+    `UPDATE spec_revisions
+     SET citation_contract_version = 2,
+         citation_version = 1,
+         citation_hash = @citation_hash
+     WHERE id = @revision_id AND state = 'draft'`,
+  );
+  const copyRevisionCitationsStmt = db.prepare(
+    `INSERT INTO spec_revision_assumption_citations (
+       revision_id, spec_id, element_id, assumption_id,
+       assumption_snapshot_json, created_at, updated_at
+     )
+     SELECT @revision_id, source.spec_id, source.element_id,
+            source.assumption_id, source.assumption_snapshot_json,
+            @created_at, @created_at
+     FROM spec_revision_assumption_citations AS source
+     WHERE source.revision_id = @base_revision_id
+       AND EXISTS (
+         SELECT 1 FROM spec_element_versions AS target
+         WHERE target.revision_id = @revision_id
+           AND target.element_id = source.element_id
+       )
+     ORDER BY source.element_id, source.assumption_id`,
+  );
+  const countElementCitationsStmt = db.prepare(
+    `SELECT COUNT(*) AS count
+     FROM spec_revision_assumption_citations
+     WHERE revision_id = ? AND element_id = ?`,
+  );
 
   function rowToSpec(raw: unknown): Spec {
     const row = parseRow(specRowSchema, raw, "spec", "<unknown>");
@@ -1039,6 +1265,9 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         authoringStage: row.authoring_stage,
         basedOnRevisionId: row.based_on_revision_id,
         contentHash: row.content_hash,
+        citationContractVersion: row.citation_contract_version,
+        citationVersion: row.citation_version,
+        citationHash: row.citation_hash,
         proposedAt: row.proposed_at,
         approvedAt: row.approved_at,
         externalDelivery:
@@ -1055,6 +1284,35 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
       },
       "spec_revision",
       row.id,
+    );
+  }
+
+  function rowToAssumptionCitation(raw: unknown): SpecAssumptionCitation {
+    const row = parseRow(
+      specAssumptionCitationRowSchema,
+      raw,
+      "spec_assumption_citation",
+      "<unknown>",
+    );
+    return parseRow(
+      specAssumptionCitationSchema,
+      {
+        revisionId: row.revision_id,
+        specId: row.spec_id,
+        elementId: row.element_id,
+        assumptionId: row.assumption_id,
+        snapshot: parseJson(
+          specAssumptionCitationSnapshotSchema,
+          row.assumption_snapshot_json,
+          "spec_assumption_citation",
+          `${row.revision_id}:${row.element_id}:${row.assumption_id}`,
+          "assumption_snapshot_json",
+        ),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+      "spec_assumption_citation",
+      `${row.revision_id}:${row.element_id}:${row.assumption_id}`,
     );
   }
 
@@ -1268,13 +1526,338 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     const elements = (snapshotRowsStmt.all(revisionId) as unknown[]).map(
       snapshotRowToDomain,
     );
+    const assumptionCitations = readRevisionCitations(revisionId);
     return parseRow(
       specRevisionSnapshotSchema,
-      { revision, elements },
+      { revision, elements, assumptionCitations },
       "spec_revision_snapshot",
       revisionId,
     );
   }
+
+  function readRevisionCitations(revisionId: string): SpecAssumptionCitation[] {
+    return (snapshotAssumptionCitationsStmt.all(revisionId) as unknown[])
+      .map(rowToAssumptionCitation)
+      .sort(compareCitationIdentity);
+  }
+
+  function assertElementAndCitationIntegrity(
+    snapshot: SpecRevisionSnapshot,
+  ): void {
+    const hasMismatchedElement = snapshot.elements.some(
+      ({ version }) =>
+        computeSpecElementPayloadHash(version.payload) !== version.payloadHash,
+    );
+    if (hasMismatchedElement) {
+      throw new PersistenceError({
+        kind: "constraint",
+        constraint: "spec_element_versions.payload_hash",
+        entity: "spec_revision",
+        identifier: snapshot.revision.id,
+      });
+    }
+
+    const actualCitationHash = computeSpecRevisionCitationHash(
+      snapshot.revision.citationContractVersion,
+      snapshot.assumptionCitations,
+    );
+    if (actualCitationHash !== snapshot.revision.citationHash) {
+      throw new PersistenceError({
+        kind: "constraint",
+        constraint: "spec_revisions.citation_hash",
+        entity: "spec_revision",
+        identifier: snapshot.revision.id,
+      });
+    }
+  }
+
+  function assertFrozenSnapshotIntegrity(snapshot: SpecRevisionSnapshot): void {
+    assertElementAndCitationIntegrity(snapshot);
+    const actualContentHash = computeSpecRevisionContentHash(
+      snapshot.revision.authoringStage,
+      snapshot.elements,
+    );
+    if (actualContentHash !== snapshot.revision.contentHash) {
+      throw new PersistenceError({
+        kind: "constraint",
+        constraint: "spec_revisions.content_hash",
+        entity: "spec_revision",
+        identifier: snapshot.revision.id,
+      });
+    }
+  }
+
+  function citationReference(
+    citation: Pick<SpecAssumptionCitation, "elementId" | "assumptionId">,
+  ): SpecCitationReference {
+    return {
+      elementId: citation.elementId,
+      assumptionId: citation.assumptionId,
+    };
+  }
+
+  function compareCitationIdentity(
+    left: SpecCitationReference,
+    right: SpecCitationReference,
+  ): number {
+    const leftKey = `${left.elementId}\u0000${left.assumptionId}`;
+    const rightKey = `${right.elementId}\u0000${right.assumptionId}`;
+    return compareCodeUnits(leftKey, rightKey);
+  }
+
+  function compareCodeUnits(left: string, right: string): number {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+  }
+
+  function replaceAssumptionCitationSets(
+    input: ReplaceAssumptionDraftCitationsInput,
+  ): CitationCasOutcome {
+    const revision = readRevision(input.revisionId);
+    if (revision === null) return { kind: "not_found" };
+    if (revision.specId !== input.specId) {
+      return {
+        kind: "invalid_relation",
+        reason: "revision_spec_mismatch",
+      };
+    }
+    if (revision.state !== "draft") {
+      return { kind: "illegal_lifecycle", state: revision.state };
+    }
+    if (revision.citationVersion !== input.expectedCitationVersion) {
+      return {
+        kind: "stale_version",
+        currentVersion: revision.citationVersion,
+      };
+    }
+
+    for (const replacement of input.replacements) {
+      const owner = findAssumptionOwnerStmt.get(replacement.assumptionId) as
+        | { spec_id: string }
+        | undefined;
+      if (owner?.spec_id !== input.specId) {
+        return {
+          kind: "invalid_relation",
+          reason: "assumption_spec_mismatch",
+        };
+      }
+      for (const elementId of replacement.elementIds) {
+        const elementOwner = findRevisionElementOwnerStmt.get(
+          input.revisionId,
+          elementId,
+        ) as { spec_id: string } | undefined;
+        if (elementOwner?.spec_id !== input.specId) {
+          return {
+            kind: "invalid_relation",
+            reason: "element_not_in_revision",
+          };
+        }
+      }
+    }
+
+    const current = readRevisionCitations(input.revisionId);
+    const targetAssumptionIds = new Set(
+      input.replacements.map((replacement) => replacement.assumptionId),
+    );
+    const currentByKey = new Map(
+      current
+        .filter((citation) => targetAssumptionIds.has(citation.assumptionId))
+        .map((citation) => [
+          `${citation.elementId}\u0000${citation.assumptionId}`,
+          citation,
+        ]),
+    );
+    const desiredByKey = new Map<
+      string,
+      {
+        readonly elementId: string;
+        readonly assumptionId: string;
+        readonly snapshot: SpecAssumptionCitationSnapshot;
+      }
+    >();
+    for (const replacement of input.replacements) {
+      for (const elementId of [...replacement.elementIds].sort()) {
+        desiredByKey.set(`${elementId}\u0000${replacement.assumptionId}`, {
+          elementId,
+          assumptionId: replacement.assumptionId,
+          snapshot: replacement.snapshot,
+        });
+      }
+    }
+
+    const removed = [...currentByKey.entries()]
+      .filter(([key]) => !desiredByKey.has(key))
+      .map(([, citation]) => citation);
+    const added = [...desiredByKey.entries()]
+      .filter(([key]) => !currentByKey.has(key))
+      .map(([, citation]) => citation);
+    const refreshed = [...desiredByKey.entries()]
+      .filter(([key, desired]) => {
+        const existing = currentByKey.get(key);
+        return (
+          existing !== undefined &&
+          stableStringify(existing.snapshot) !==
+            stableStringify(desired.snapshot)
+        );
+      })
+      .map(([, citation]) => citation);
+    const changed =
+      removed.length > 0 || added.length > 0 || refreshed.length > 0;
+    if (!changed) {
+      return {
+        kind: "success",
+        changed: false,
+        revision,
+        citations: current,
+        added: [],
+        removed: [],
+        refreshed: [],
+      };
+    }
+
+    const untouched = current.filter(
+      (citation) => !targetAssumptionIds.has(citation.assumptionId),
+    );
+    const resultingHash = computeSpecRevisionCitationHash(
+      revision.citationContractVersion,
+      [...untouched, ...desiredByKey.values()].sort(compareCitationIdentity),
+    );
+    const integrityUpdate = updateDraftCitationIntegrityStmt.run({
+      revision_id: input.revisionId,
+      spec_id: input.specId,
+      expected_citation_version: input.expectedCitationVersion,
+      citation_hash: resultingHash,
+    });
+    if (integrityUpdate.changes !== 1) {
+      throw new PersistenceError({
+        kind: "constraint",
+        constraint: "spec_revisions.citation_version",
+        entity: "spec_revision",
+        identifier: input.revisionId,
+      });
+    }
+
+    for (const citation of removed) {
+      deleteAssumptionCitationStmt.run(
+        input.revisionId,
+        citation.elementId,
+        citation.assumptionId,
+      );
+    }
+    for (const citation of refreshed) {
+      updateAssumptionCitationSnapshotStmt.run({
+        revision_id: input.revisionId,
+        element_id: citation.elementId,
+        assumption_id: citation.assumptionId,
+        assumption_snapshot_json: stableStringify(citation.snapshot),
+        updated_at: input.updatedAt,
+      });
+    }
+    for (const citation of added) {
+      insertAssumptionCitationStmt.run({
+        revision_id: input.revisionId,
+        spec_id: input.specId,
+        element_id: citation.elementId,
+        assumption_id: citation.assumptionId,
+        assumption_snapshot_json: stableStringify(citation.snapshot),
+        created_at: input.updatedAt,
+        updated_at: input.updatedAt,
+      });
+    }
+
+    return {
+      kind: "success",
+      changed: true,
+      revision: requireRevision(input.revisionId),
+      citations: readRevisionCitations(input.revisionId),
+      added: added.map(citationReference),
+      removed: removed.map(citationReference),
+      refreshed: refreshed.map(citationReference),
+    };
+  }
+
+  const replaceAssumptionDraftCitationsTx = db.transaction(
+    replaceAssumptionCitationSets,
+  );
+
+  const mutateDraftCitationTx = db.transaction(
+    (input: MutateDraftCitationInput): CitationCasOutcome => {
+      const revision = readRevision(input.revisionId);
+      if (revision === null) return { kind: "not_found" };
+      if (revision.specId !== input.specId) {
+        return {
+          kind: "invalid_relation",
+          reason: "revision_spec_mismatch",
+        };
+      }
+      if (revision.state !== "draft") {
+        return { kind: "illegal_lifecycle", state: revision.state };
+      }
+      if (revision.citationVersion !== input.expectedCitationVersion) {
+        return {
+          kind: "stale_version",
+          currentVersion: revision.citationVersion,
+        };
+      }
+      const assumptionCitations = readRevisionCitations(
+        input.revisionId,
+      ).filter((citation) => citation.assumptionId === input.assumptionId);
+      const existing = assumptionCitations.find(
+        (citation) => citation.elementId === input.elementId,
+      );
+      if (
+        (input.operation === "cite" && existing !== undefined) ||
+        (input.operation === "uncite" && existing === undefined)
+      ) {
+        return {
+          kind: "success",
+          changed: false,
+          revision,
+          citations: readRevisionCitations(input.revisionId),
+          added: [],
+          removed: [],
+          refreshed: [],
+        };
+      }
+
+      const elementIds = assumptionCitations
+        .filter(
+          (citation) =>
+            input.operation !== "uncite" ||
+            citation.elementId !== input.elementId,
+        )
+        .map((citation) => citation.elementId);
+      if (input.operation === "cite") elementIds.push(input.elementId);
+      const snapshot =
+        input.operation === "cite"
+          ? input.snapshot
+          : assumptionCitations[0]?.snapshot;
+      if (snapshot === undefined) {
+        return {
+          kind: "success",
+          changed: false,
+          revision,
+          citations: readRevisionCitations(input.revisionId),
+          added: [],
+          removed: [],
+          refreshed: [],
+        };
+      }
+      return replaceAssumptionCitationSets({
+        revisionId: input.revisionId,
+        specId: input.specId,
+        expectedCitationVersion: input.expectedCitationVersion,
+        replacements: [
+          {
+            assumptionId: input.assumptionId,
+            elementIds,
+            snapshot,
+          },
+        ],
+        updatedAt: input.updatedAt,
+      });
+    },
+  );
 
   function validateElementParent(
     specId: string,
@@ -1488,6 +2071,16 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         created_at: input.createdAt,
         copy_tasks: input.authoringStage === "plan" ? 1 : 0,
       });
+      copyRevisionCitationsStmt.run({
+        revision_id: input.id,
+        base_revision_id: input.baseRevisionId,
+        created_at: input.createdAt,
+      });
+      const copiedCitations = readRevisionCitations(input.id);
+      initializeDraftCitationIntegrityStmt.run({
+        revision_id: input.id,
+        citation_hash: computeSpecRevisionCitationHash(2, copiedCitations),
+      });
       return requireRevision(input.id);
     },
   );
@@ -1544,19 +2137,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
       requireDraft(input.revisionId);
       const snapshot = readSnapshot(input.revisionId);
       if (snapshot === null) return notFound("spec_revision", input.revisionId);
-      const mismatched = snapshot.elements.filter(
-        ({ version }) =>
-          computeSpecElementPayloadHash(version.payload) !==
-          version.payloadHash,
-      );
-      if (mismatched.length > 0) {
-        throw new PersistenceError({
-          kind: "constraint",
-          constraint: "spec_element_versions.payload_hash",
-          entity: "spec_revision",
-          identifier: input.revisionId,
-        });
-      }
+      assertElementAndCitationIntegrity(snapshot);
       const contentHash = computeSpecRevisionContentHash(
         snapshot.revision.authoringStage,
         snapshot.elements,
@@ -1590,6 +2171,9 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           },
         ]);
       }
+      const snapshot = readSnapshot(input.revisionId);
+      if (snapshot === null) return notFound("spec_revision", input.revisionId);
+      assertFrozenSnapshotIntegrity(snapshot);
       const result = approveRevisionStmt.run({
         id: input.revisionId,
         approved_at: input.approvedAt,
@@ -1950,7 +2534,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
 
   const removeDraftElementTx = db.transaction(
     (input: z.output<typeof removeDraftElementInputSchema>): void => {
-      requireDraft(input.revisionId);
+      const revision = requireDraft(input.revisionId);
       const current = readElementVersion(input.revisionId, input.elementId);
       if (current === null) {
         return notFound(
@@ -1958,6 +2542,12 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           `${input.revisionId}/${input.elementId}`,
         );
       }
+      const removedCitationCount = parseRow(
+        z.object({ count: z.number().int().nonnegative() }),
+        countElementCitationsStmt.get(input.revisionId, input.elementId),
+        "spec_assumption_citation",
+        `${input.revisionId}/${input.elementId}`,
+      ).count;
       const result = removeDraftElementCasStmt.run(
         input.revisionId,
         input.elementId,
@@ -1970,6 +2560,25 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           input.expectedElementVersion,
           current,
         );
+      }
+      if (removedCitationCount === 0) return;
+      const citations = readRevisionCitations(input.revisionId);
+      const integrityUpdate = updateDraftCitationIntegrityStmt.run({
+        revision_id: input.revisionId,
+        spec_id: revision.specId,
+        expected_citation_version: revision.citationVersion,
+        citation_hash: computeSpecRevisionCitationHash(
+          revision.citationContractVersion,
+          citations,
+        ),
+      });
+      if (integrityUpdate.changes !== 1) {
+        throw new PersistenceError({
+          kind: "constraint",
+          constraint: "spec_revisions.citation_version",
+          entity: "spec_revision",
+          identifier: input.revisionId,
+        });
       }
     },
   );
@@ -2039,6 +2648,15 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     findDraft: readDraft,
     findLatestApproved: readLatestApproved,
     getRevisionSnapshot: readSnapshot,
+    readRevisionCitations,
+    replaceAssumptionDraftCitations(input) {
+      return replaceAssumptionDraftCitationsTx(
+        replaceAssumptionDraftCitationsInputSchema.parse(input),
+      );
+    },
+    mutateDraftCitation(input) {
+      return mutateDraftCitationTx(mutateDraftCitationInputSchema.parse(input));
+    },
     findElementVersion: readElementVersion,
     createDraftFromBase(input) {
       return createDraftFromBaseTx(createDraftFromBaseInputSchema.parse(input));
@@ -2428,6 +3046,54 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
       );
     },
 
+    async readRevisionCitations(revisionId) {
+      return timed(
+        logger,
+        "state-store.specs.read_revision_citations",
+        { revisionId },
+        async () => readRevisionCitations(revisionId),
+      );
+    },
+
+    async replaceAssumptionDraftCitations(input) {
+      const validated = replaceAssumptionDraftCitationsInputSchema.parse(input);
+      return timed(
+        logger,
+        "state-store.specs.replace_assumption_draft_citations",
+        {
+          revisionId: validated.revisionId,
+          specId: validated.specId,
+          expectedCitationVersion: validated.expectedCitationVersion,
+          replacementCount: validated.replacements.length,
+        },
+        () =>
+          writeQueue.withWriteQueue(
+            "specs.replaceAssumptionDraftCitations",
+            async () => replaceAssumptionDraftCitationsTx.immediate(validated),
+          ),
+      );
+    },
+
+    async mutateDraftCitation(input) {
+      const validated = mutateDraftCitationInputSchema.parse(input);
+      return timed(
+        logger,
+        "state-store.specs.mutate_draft_citation",
+        {
+          revisionId: validated.revisionId,
+          specId: validated.specId,
+          assumptionId: validated.assumptionId,
+          elementId: validated.elementId,
+          operation: validated.operation,
+          expectedCitationVersion: validated.expectedCitationVersion,
+        },
+        () =>
+          writeQueue.withWriteQueue("specs.mutateDraftCitation", async () =>
+            mutateDraftCitationTx.immediate(validated),
+          ),
+      );
+    },
+
     async verifyRevision(revisionId) {
       return timed(
         logger,
@@ -2447,13 +3113,20 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
             snapshot.revision.authoringStage,
             snapshot.elements,
           );
+          const actualCitationHash = computeSpecRevisionCitationHash(
+            snapshot.revision.citationContractVersion,
+            snapshot.assumptionCitations,
+          );
           return {
             ok:
               snapshot.revision.contentHash !== null &&
               snapshot.revision.contentHash === actualContentHash &&
+              snapshot.revision.citationHash === actualCitationHash &&
               mismatchedElementIds.length === 0,
             expectedContentHash: snapshot.revision.contentHash,
             actualContentHash,
+            expectedCitationHash: snapshot.revision.citationHash,
+            actualCitationHash,
             mismatchedElementIds,
           };
         },

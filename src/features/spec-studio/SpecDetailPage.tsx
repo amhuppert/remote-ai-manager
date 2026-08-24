@@ -1,13 +1,15 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import Topbar from "@/components/Topbar";
 import AnnotatedMarkdown, {
-  type CreateCommentInput,
-  type ResolvedComment,
+  type CommentComposerCapability,
+  type MarkdownAnnotationSource,
+  type PersistCommentInput,
+  useLiveMarkdownAnchorResolution,
 } from "@/components/document-viewer/AnnotatedMarkdown";
 import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CopyTicketReferenceButton from "@/components/references/CopyTicketReferenceButton";
@@ -16,9 +18,8 @@ import {
   EmptyStateDesc,
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
+import type { StatusChipTone } from "@/components/ui/StatusChip";
 import { WithTooltip } from "@/components/ui/WithTooltip";
-import { tryReanchorExact } from "@/lib/document-comments/anchor";
 import { commentAnchorSchema } from "@/lib/document-comments/schemas";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import {
@@ -29,10 +30,11 @@ import {
   type SpecReferenceType,
 } from "@/lib/prompt-editor/spec-reference-contract";
 import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
+import { useSpecActionMutation } from "@/lib/specs/mutations";
+import { assembleSpecCommentThreads } from "@/lib/specs/comment-threads";
 import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import { parseElementHandle, toDeepLinkElementId } from "@/lib/specs/handles";
 import type { LintFinding } from "@/lib/specs/lint";
-import { useSpecActionMutation } from "@/lib/specs/mutations";
 import {
   useSpecDetailQuery,
   useSpecLintQuery,
@@ -43,31 +45,34 @@ import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import { formatTicketIdentifier } from "@/lib/tickets/references";
 import type {
   SpecApprovalRow,
-  SpecAssumptionDisposition,
   SpecAuthoringStage,
   SpecCommentRow,
   SpecRevisionElement,
 } from "@/lib/specs/schemas";
 import { specCommentRowSchema } from "@/lib/specs/schemas";
-import type { SpecCommentView } from "@/lib/specs/view-schemas";
-import {
-  specAssumptionViewSchema,
-  type SpecAssumptionView,
-} from "@/lib/specs/queries";
 import type { RequirementStatus, TaskWorkStatus } from "@/lib/specs/phase";
 import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import { cn } from "@/lib/ui/cn";
 
 import { strandedProposals } from "./live-proposals";
 import { revisionAdmittedByImport } from "./presentation";
+import SpecCommentThreadList, {
+  type SpecCommentThreadListHandle,
+} from "./SpecCommentThreadList";
 import SpecDetailViews, {
   initialDetailViewForDeepLink,
   type DetailView,
 } from "./SpecDetailViews";
 import SpecPhaseFacets from "./SpecPhaseFacets";
 import SpecPhaseStepper from "./SpecPhaseStepper";
+import {
+  partitionSpecCommentThreads,
+  type PlacedSpecCommentThread,
+} from "./spec-comment-placement";
+import { logSpecCommentReanchor } from "./spec-comment-observability";
 
 const logger = createClientLogger("spec-studio-detail");
+const commentsLogger = createClientLogger("spec-studio-comments");
 
 export interface RailItem {
   elementId: string;
@@ -198,6 +203,7 @@ function SpecDetailPageInner(): React.JSX.Element {
             )}
             highlightedChangeId={searchParams.get("change")}
             addressedRevisionId={searchParams.get("revision")}
+            targetHandle={deepLinkId}
             onViewChange={selectView}
           />
         )}
@@ -265,6 +271,7 @@ export function SpecDetailContent({
   view,
   highlightedChangeId = null,
   addressedRevisionId = null,
+  targetHandle = null,
   onViewChange,
 }: {
   detail: SpecDetailView;
@@ -274,6 +281,7 @@ export function SpecDetailContent({
   highlightedChangeId?: string | null;
   /** The proposal a History or lifecycle link addressed (`?revision=`). */
   addressedRevisionId?: string | null;
+  targetHandle?: string | null;
   onViewChange(view: DetailView): void;
 }): React.JSX.Element {
   const [completionMessage, setCompletionMessage] = useState<string | null>(
@@ -286,6 +294,28 @@ export function SpecDetailContent({
     snapshot?.elements.filter(
       (entry) => entry.version.payload.kind === "section",
     ) ?? [];
+  const commentThreads = useMemo(
+    () => assembleSpecCommentThreads(detail.comments),
+    [detail.comments],
+  );
+  const overviewReviewHostAvailable =
+    snapshot !== null &&
+    !readOnly &&
+    detail.liveProposals.some(
+      (proposal) => proposal.snapshot.revision.id === snapshot.revision.id,
+    );
+  const overviewCommentPlacement = useMemo(
+    () =>
+      snapshot === null
+        ? null
+        : partitionSpecCommentThreads({
+            surface: "overview",
+            reviewHostAvailable: overviewReviewHostAvailable,
+            viewedSnapshot: snapshot,
+            threads: commentThreads,
+          }),
+    [commentThreads, overviewReviewHostAvailable, snapshot],
+  );
   const railGroups = snapshot === null ? [] : buildRailGroups(detail);
   const planReviewQuery = useSpecPlanReviewQuery(projectName, detail.spec.slug);
   const statePresentation = detailStatePresentation(
@@ -355,6 +385,7 @@ export function SpecDetailContent({
           onViewChange={onViewChange}
           highlightedChangeId={highlightedChangeId}
           addressedRevisionId={addressedRevisionId}
+          targetHandle={targetHandle}
           onReviewComplete={(message) => {
             setCompletionMessage(message);
             onViewChange("overview");
@@ -483,17 +514,45 @@ export function SpecDetailContent({
                     <SpecProseSection
                       key={section.element.id}
                       section={section}
-                      comments={detail.comments.filter(
-                        (comment) => comment.elementId === section.element.id,
-                      )}
+                      placements={
+                        overviewCommentPlacement?.coLocated.filter(
+                          ({ thread }) =>
+                            thread.root.elementId === section.element.id,
+                        ) ?? []
+                      }
                       projectName={projectName}
                       slug={detail.spec.slug}
                       specId={detail.spec.id}
                       revisionId={snapshot.revision.id}
-                      readOnly={readOnly}
+                      revisionState={snapshot.revision.state}
+                      specAbandoned={readOnly}
                     />
                   ))
                 )}
+                {overviewCommentPlacement !== null &&
+                  overviewCommentPlacement.fallback.length > 0 && (
+                    <section
+                      aria-labelledby="overview-fallback-threads-heading"
+                      className="border-x-0 border-t-0 border-b border-solid border-border-dim py-lg"
+                    >
+                      <NarrativeSectionHeading id="overview-fallback-threads-heading">
+                        Review threads without inline placement
+                      </NarrativeSectionHeading>
+                      <div className="mt-md">
+                        <SpecCommentThreadList
+                          projectName={projectName}
+                          slug={detail.spec.slug}
+                          specId={detail.spec.id}
+                          viewedRevisionId={snapshot.revision.id}
+                          viewedRevisionState={snapshot.revision.state}
+                          specAbandoned={readOnly}
+                          humanTransport
+                          placements={overviewCommentPlacement.fallback}
+                          label="Review threads without inline placement"
+                        />
+                      </div>
+                    </section>
+                  )}
                 <SpecInlineLint
                   findings={lintQuery.data?.findings ?? []}
                   isPending={lintQuery.isPending || lintQuery.isFetching}
@@ -508,11 +567,9 @@ export function SpecDetailContent({
               </section>
               <SpecStructureRail
                 groups={railGroups}
-                specId={detail.spec.id}
                 projectName={projectName}
                 slug={detail.spec.slug}
                 revision={revision}
-                readOnly={readOnly}
               />
             </div>
           )}
@@ -655,12 +712,17 @@ export function SpecRevisionBanner({
 
 function NarrativeSectionHeading({
   children,
+  id,
 }: {
   children: string;
+  id?: string;
 }): React.JSX.Element {
   return (
     <div className="flex items-center gap-sm">
-      <h2 className="m-0 shrink-0 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+      <h2
+        id={id}
+        className="m-0 shrink-0 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
+      >
         {children}
       </h2>
       <span aria-hidden="true" className="h-px flex-1 bg-border-dim" />
@@ -1222,29 +1284,33 @@ function gatePresetLabel(
 
 function SpecProseSection({
   section,
-  comments,
+  placements,
   projectName,
   slug,
   specId,
   revisionId,
-  readOnly,
+  revisionState,
+  specAbandoned,
 }: {
   section: SpecRevisionElement;
-  comments: SpecCommentView[];
+  placements: readonly PlacedSpecCommentThread[];
   projectName: string;
   slug: string;
   specId: string;
   revisionId: string;
-  readOnly: boolean;
+  revisionState: "draft" | "proposed" | "approved" | "withdrawn";
+  specAbandoned: boolean;
 }): React.JSX.Element | null {
-  const [commentFeedback, setCommentFeedback] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const threadListRef = useRef<SpecCommentThreadListHandle>(null);
+  const reanchorLogSignatureRef = useRef<string | null>(null);
   const comment = useSpecActionMutation<
     {
       revisionId: string;
       elementId: string;
       threadId: string;
       parentCommentId: null;
-      anchor: CreateCommentInput["anchor"];
+      anchor: PersistCommentInput["anchor"];
       body: string;
       blocking: boolean;
     },
@@ -1253,46 +1319,101 @@ function SpecProseSection({
     specId,
     eventTypes: ["spec-attention-changed"],
   });
-  if (section.version.payload.kind !== "section") return null;
-  const payload = section.version.payload;
-  const resolvedComments = comments
-    .map((comment) => resolveComment(comment, payload.body, projectName, slug))
-    .filter((comment): comment is ResolvedComment => comment !== null);
+  const annotationSources = useMemo<MarkdownAnnotationSource[]>(
+    () =>
+      placements.flatMap(({ thread }) => {
+        if (thread.root.revisionId !== revisionId) return [];
+        const parsedAnchor = commentAnchorSchema.safeParse(thread.root.anchor);
+        if (!parsedAnchor.success) return [];
+        return [
+          {
+            id: thread.threadId,
+            anchor: parsedAnchor.data,
+            tone: thread.open ? ("active" as const) : ("settled" as const),
+            accessibleLabel: `Review thread ${thread.threadId}`,
+          },
+        ];
+      }),
+    [placements, revisionId],
+  );
+  const payload =
+    section.version.payload.kind === "section" ? section.version.payload : null;
+  const resolvedAnnotations = useLiveMarkdownAnchorResolution(
+    annotationSources,
+    payload?.body ?? null,
+    contentRef,
+  );
+  const resolvedPlacements = useMemo(() => {
+    const annotationsById = new Map(
+      resolvedAnnotations.map((annotation) => [annotation.id, annotation]),
+    );
+    return placements.map((placement) => ({
+      ...placement,
+      anchorState:
+        annotationsById.get(placement.thread.threadId)?.anchorState ??
+        placement.anchorState,
+    }));
+  }, [placements, resolvedAnnotations]);
 
-  function createComment(input: CreateCommentInput): void {
-    setCommentFeedback("Recording comment…");
-    comment.mutate(
-      {
+  useEffect(() => {
+    if (annotationSources.length === 0) {
+      reanchorLogSignatureRef.current = null;
+      return;
+    }
+    const signature = `${specId}:${revisionId}:${resolvedAnnotations
+      .map((annotation) => `${annotation.id}:${annotation.anchorState.status}`)
+      .join("|")}`;
+    if (reanchorLogSignatureRef.current === signature) return;
+    reanchorLogSignatureRef.current = signature;
+    logSpecCommentReanchor(commentsLogger, {
+      specId,
+      revisionId,
+      anchorStates: resolvedAnnotations.map(
+        (annotation) => annotation.anchorState,
+      ),
+    });
+  }, [annotationSources.length, resolvedAnnotations, revisionId, specId]);
+
+  async function createComment(
+    input: Parameters<
+      Extract<CommentComposerCapability, { kind: "persist-only" }>["submit"]
+    >[0],
+  ): Promise<void> {
+    const threadId = createClientId();
+    try {
+      await comment.mutateAsync({
         revisionId,
         elementId: section.element.id,
-        threadId: createClientId(),
+        threadId,
         parentCommentId: null,
         anchor: input.anchor,
         body: input.note,
         blocking: false,
-      },
-      {
-        onSuccess: () => {
-          setCommentFeedback("Comment recorded");
-          logger.info("spec_studio.prose_comment.completed", {
-            specId,
-            revisionId,
-            elementId: section.element.id,
-            immediateSendRequested: input.send,
-          });
-        },
-        onError: (error) => {
-          setCommentFeedback(error.message);
-          logger.warn("spec_studio.prose_comment.failed", {
-            specId,
-            revisionId,
-            elementId: section.element.id,
-            error: error.message,
-          });
-        },
-      },
-    );
+      });
+      commentsLogger.info("spec_studio.comment.root.completed", {
+        specId,
+        revisionId,
+        elementId: section.element.id,
+        threadId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      commentsLogger.warn("spec_studio.comment.root.failed", {
+        specId,
+        revisionId,
+        elementId: section.element.id,
+        threadId,
+        error: message,
+      });
+      throw error;
+    }
   }
+
+  if (payload === null) return null;
+  const composer: CommentComposerCapability | undefined =
+    revisionState === "proposed" && !specAbandoned
+      ? { kind: "persist-only", submit: createComment }
+      : undefined;
 
   return (
     <section
@@ -1301,6 +1422,7 @@ function SpecProseSection({
     >
       <NarrativeSectionHeading>{payload.title}</NarrativeSectionHeading>
       <div
+        ref={contentRef}
         data-testid={`spec-prose-body-${payload.role}`}
         className="mt-sm min-w-0 overflow-hidden [&_[data-markdown-intent=document]]:px-0 [&_[data-markdown-intent=document]]:py-0 [&_[data-markdown-intent=document]]:text-[0.875rem] [&_[data-markdown-intent=document]]:leading-[1.65] [&_[data-markdown-viewport]>div]:pl-0"
       >
@@ -1313,68 +1435,48 @@ function SpecProseSection({
           }}
           content={payload.body}
           isLoading={false}
-          comments={resolvedComments}
-          onCreateComment={readOnly ? undefined : createComment}
+          annotations={resolvedAnnotations}
+          annotationNoun={{
+            singular: "review thread",
+            plural: "review threads",
+          }}
+          onActivateAnnotation={(target) =>
+            threadListRef.current?.focus(target)
+          }
+          composer={composer}
         />
       </div>
-      {(commentFeedback !== null || resolvedComments.length > 0) && (
-        <div
-          role="group"
-          aria-label={`${payload.title} comments`}
-          className="mt-md grid content-start gap-sm"
-        >
-          {commentFeedback !== null && (
-            <span
-              aria-live="polite"
-              className={
-                comment.isError
-                  ? "rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.7rem] text-red"
-                  : "rounded-md border border-solid border-border-dim px-md py-sm font-mono text-[0.7rem] text-cyan"
-              }
-            >
-              {commentFeedback}
-            </span>
-          )}
-          {resolvedComments.map((comment) => (
-            <article
-              key={comment.id}
-              className="rounded-md border border-solid border-border-default bg-bg-raised px-md py-sm"
-            >
-              <div className="mb-xs flex items-center justify-between gap-sm">
-                <span className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
-                  Inline comment
-                </span>
-                <StatusChip tone={comment.stale ? "amber" : "cyan"}>
-                  {comment.stale ? "Stale anchor" : "Anchored"}
-                </StatusChip>
-              </div>
-              <p className="m-0 font-mono text-[0.76rem] leading-relaxed text-text-secondary">
-                {comment.note}
-              </p>
-            </article>
-          ))}
+      {resolvedPlacements.length > 0 ? (
+        <div className="mt-md">
+          <SpecCommentThreadList
+            ref={threadListRef}
+            projectName={projectName}
+            slug={slug}
+            specId={specId}
+            viewedRevisionId={revisionId}
+            viewedRevisionState={revisionState}
+            specAbandoned={specAbandoned}
+            humanTransport
+            placements={resolvedPlacements}
+            label={`${payload.title} review threads`}
+          />
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
 
 function SpecStructureRail({
   groups,
-  specId,
   projectName,
   slug,
   revision,
-  readOnly,
 }: {
   groups: RailGroup[];
-  specId: string;
   projectName: string;
   slug: string;
   revision: number;
-  readOnly: boolean;
 }): React.JSX.Element {
-  const [dispositionError, setDispositionError] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -1383,45 +1485,6 @@ function SpecStructureRail({
   );
   const allExpanded =
     itemIds.length > 0 && itemIds.every((itemId) => expandedItems.has(itemId));
-  const disposeAssumption = useSpecActionMutation<
-    {
-      assumptionId: string;
-      disposition: Exclude<SpecAssumptionDisposition, "proposed">;
-    },
-    SpecAssumptionView
-  >(projectName, slug, "dispose-assumption", specAssumptionViewSchema, {
-    specId,
-    eventTypes: ["spec-attention-changed"],
-  });
-
-  function setAssumptionDisposition(
-    item: RailItem,
-    disposition: Exclude<SpecAssumptionDisposition, "proposed">,
-  ): void {
-    disposeAssumption.mutate(
-      { assumptionId: item.elementId, disposition },
-      {
-        onSuccess: () => {
-          setDispositionError(null);
-          logger.info("spec_studio.assumption_disposition.completed", {
-            specId,
-            assumptionId: item.elementId,
-            disposition,
-          });
-        },
-        onError: (error) => {
-          setDispositionError(error.message);
-          logger.warn("spec_studio.assumption_disposition.failed", {
-            specId,
-            assumptionId: item.elementId,
-            disposition,
-            error: error.message,
-          });
-        },
-      },
-    );
-  }
-
   function toggleItem(itemId: string): void {
     setExpandedItems((current) => {
       const next = new Set(current);
@@ -1487,14 +1550,6 @@ function SpecStructureRail({
             </p>
           ) : (
             <div>
-              {group.id === "questions" && dispositionError !== null && (
-                <p
-                  role="alert"
-                  className="m-0 border-x-0 border-t-0 border-b border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.68rem] text-red"
-                >
-                  {dispositionError}
-                </p>
-              )}
               {group.items.map((item) => {
                 const expanded = expandedItems.has(item.elementId);
                 return (
@@ -1614,15 +1669,6 @@ function SpecStructureRail({
                         ))}
                       </div>
                     )}
-                    {!readOnly && item.kind === "assumption" && (
-                      <AssumptionDispositionControls
-                        item={item}
-                        pending={disposeAssumption.isPending}
-                        onSelect={(disposition) =>
-                          setAssumptionDisposition(item, disposition)
-                        }
-                      />
-                    )}
                   </div>
                 );
               })}
@@ -1631,70 +1677,6 @@ function SpecStructureRail({
         </section>
       ))}
     </aside>
-  );
-}
-
-type AssumptionDispositionChoice = Exclude<
-  SpecAssumptionDisposition,
-  "proposed"
->;
-
-const assumptionDispositionButtonClass: Record<
-  AssumptionDispositionChoice,
-  string
-> = {
-  confirmed:
-    "border-green-dim text-green hover:border-green hover:bg-green-glow",
-  rejected: "border-red-dim text-red hover:border-red hover:bg-red-glow",
-  deferred:
-    "border-border-default text-text-tertiary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary",
-};
-
-function AssumptionDispositionControls({
-  item,
-  pending,
-  onSelect,
-}: {
-  item: RailItem;
-  pending: boolean;
-  onSelect(disposition: AssumptionDispositionChoice): void;
-}): React.JSX.Element {
-  const choices: Array<{
-    disposition: AssumptionDispositionChoice;
-    action: string;
-    label: string;
-  }> = [
-    { disposition: "confirmed", action: "Confirm", label: "confirm" },
-    { disposition: "rejected", action: "Reject", label: "reject" },
-    { disposition: "deferred", action: "Defer", label: "defer" },
-  ];
-
-  return (
-    <div
-      role="group"
-      aria-label={`Dispose ${item.handle}`}
-      className="flex basis-full items-center gap-xs pl-[38px]"
-    >
-      <span className="mr-xs font-mono text-[0.6rem] text-text-tertiary">
-        dispose:
-      </span>
-      {choices.map((choice) => (
-        <button
-          key={choice.disposition}
-          type="button"
-          aria-label={`${choice.action} ${item.handle}`}
-          aria-pressed={item.status.toLowerCase() === choice.disposition}
-          disabled={pending}
-          onClick={() => onSelect(choice.disposition)}
-          className={cn(
-            "h-[20px] cursor-pointer rounded-sm border border-solid bg-transparent px-sm font-mono text-[0.6rem] transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 disabled:cursor-wait disabled:opacity-50",
-            assumptionDispositionButtonClass[choice.disposition],
-          )}
-        >
-          {choice.label}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -1759,40 +1741,56 @@ function RailApprovalIcon({
 
 export function buildRailGroups(detail: SpecDetailView): RailGroup[] {
   const structuralItems = buildRailItems(detail);
-  const questions: RailItem[] = detail.questions.map((question) => ({
-    elementId: question.id,
-    handle: question.handle,
-    kind: "question",
-    name: question.text,
-    status: question.status === "open" ? "Open" : "Answered",
-    statusTone: question.status === "open" ? "amber" : "green",
-    approval: question.status === "open" ? "Needs decision" : "Resolved",
-    approvalTone: question.status === "open" ? "amber" : "green",
-    nested: false,
-    details:
-      question.answer === null
-        ? []
-        : [{ label: "Answer", text: question.answer }],
-  }));
-  const assumptions: RailItem[] = detail.assumptions.map((assumption) => ({
-    elementId: assumption.id,
-    handle: assumption.handle,
-    kind: "assumption",
-    name: assumption.text,
-    status: assumptionDispositionLabel(assumption.disposition),
-    statusTone:
-      assumption.disposition === "confirmed"
-        ? "green"
-        : assumption.disposition === "rejected"
-          ? "red"
-          : "amber",
-    approval:
-      assumption.disposition === "proposed"
-        ? "Needs decision"
-        : "Disposition recorded",
-    approvalTone: assumption.disposition === "proposed" ? "amber" : "neutral",
-    nested: false,
-  }));
+  const questions: RailItem[] = detail.questions
+    .filter(({ presentation }) => presentation.state === "current")
+    .map((question) => ({
+      elementId: question.id,
+      handle: question.handle,
+      kind: "question",
+      name: question.text,
+      status:
+        question.status === "open"
+          ? "Open"
+          : question.status === "answered"
+            ? "Answered"
+            : "Withdrawn",
+      statusTone:
+        question.status === "open"
+          ? "amber"
+          : question.status === "answered"
+            ? "green"
+            : "neutral",
+      approval: question.status === "open" ? "Needs decision" : "Resolved",
+      approvalTone: question.status === "open" ? "amber" : "green",
+      nested: false,
+      details:
+        question.answer === null
+          ? []
+          : [{ label: "Answer", text: question.answer }],
+    }));
+  const assumptions: RailItem[] = detail.assumptions
+    .filter(({ presentation }) => presentation.state === "current")
+    .map((assumption) => ({
+      elementId: assumption.id,
+      handle: assumption.handle,
+      kind: "assumption",
+      name: assumption.text,
+      status: assumptionDispositionLabel(assumption.disposition),
+      statusTone:
+        assumption.disposition === "confirmed"
+          ? "green"
+          : assumption.disposition === "rejected"
+            ? "red"
+            : assumption.disposition === "proposed"
+              ? "amber"
+              : "neutral",
+      approval:
+        assumption.disposition === "proposed"
+          ? "Needs decision"
+          : "Disposition recorded",
+      approvalTone: assumption.disposition === "proposed" ? "amber" : "neutral",
+      nested: false,
+    }));
 
   return [
     {
@@ -2061,31 +2059,6 @@ function taskStatusPresentation(
   }
 }
 
-function resolveComment(
-  row: SpecCommentView,
-  content: string,
-  projectName: string,
-  slug: string,
-): ResolvedComment | null {
-  const parsedAnchor = commentAnchorSchema.safeParse(row.anchor);
-  if (!parsedAnchor.success) return null;
-  const reanchor = tryReanchorExact(content, parsedAnchor.data);
-  return {
-    id: row.id,
-    projectPath: projectName,
-    sessionName: `spec-${slug}`,
-    docPath: `specs/${slug}/elements/${row.elementId}`,
-    anchor: parsedAnchor.data,
-    note: row.body,
-    status: "sent",
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    sentAt: row.createdAt,
-    reanchor,
-    stale: reanchor.status === "stale",
-  };
-}
-
 export function resolveDeepLinkId(
   rawHandle: string | null,
   slug: string | undefined,
@@ -2129,6 +2102,8 @@ function assumptionDispositionLabel(
       return "Rejected";
     case "deferred":
       return "Deferred";
+    case "withdrawn":
+      return "Withdrawn";
   }
 }
 

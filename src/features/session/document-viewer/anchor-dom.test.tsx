@@ -7,12 +7,12 @@ import {
   blockAnnotatableText,
   deriveAnchorFromSelection,
   findCommentBlock,
-  groupAnchoredComments,
+  findCommentBlockCandidates,
+  groupResolvedAnnotations,
   rangeFromBlockOffsets,
-  selectAnchoredComments,
+  selectRenderableAnnotations,
   selectionOffsetsInBlock,
 } from "./anchor-dom";
-import type { ResolvedComment } from "./types";
 
 //  1: # Title
 //  2:
@@ -54,14 +54,6 @@ function baseComment(over: Partial<DocumentComment>): DocumentComment {
   };
 }
 
-function resolved(
-  over: Partial<DocumentComment>,
-  reanchor: ResolvedComment["reanchor"],
-): ResolvedComment {
-  const c = baseComment(over);
-  return { ...c, reanchor, stale: reanchor.status === "stale" };
-}
-
 /**
  * Render the canonical source-mapped document adapter and wait for it to stamp
  * blocks (its renderer is deferred), so the anchor helpers run against the exact
@@ -93,6 +85,40 @@ describe("findCommentBlock", () => {
     });
     expect(block).toBeNull();
   });
+
+  it("prefers the deepest stamped block when a list and its item share source metadata", () => {
+    const container = document.createElement("div");
+    container.innerHTML = `
+      <ul data-cc-line="7" data-cc-section="section-two">
+        <li data-cc-line="7" data-cc-section="section-two">alpha beta</li>
+      </ul>
+    `;
+
+    const candidates = findCommentBlockCandidates(container, {
+      line: 7,
+      sectionId: "section-two",
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.tagName).toBe("LI");
+    expect(
+      findCommentBlock(container, { line: 7, sectionId: "section-two" }),
+    ).toBe(candidates[0]);
+  });
+
+  it("returns every ambiguous deepest candidate and refuses to choose one", () => {
+    const container = document.createElement("div");
+    container.innerHTML = `
+      <ul data-cc-line="7" data-cc-section="section-two">
+        <li data-cc-line="7" data-cc-section="section-two">same quote</li>
+        <li data-cc-line="7" data-cc-section="section-two">same quote</li>
+      </ul>
+    `;
+
+    const anchor = { line: 7, sectionId: "section-two" };
+    expect(findCommentBlockCandidates(container, anchor)).toHaveLength(2);
+    expect(findCommentBlock(container, anchor)).toBeNull();
+  });
 });
 
 describe("rangeFromBlockOffsets", () => {
@@ -115,61 +141,54 @@ describe("rangeFromBlockOffsets", () => {
   });
 });
 
-describe("selectAnchoredComments", () => {
-  it("keeps only comments that re-anchored, dropping stale ones", () => {
-    const anchored = resolved(
-      { id: "a" },
-      {
-        status: "anchored",
-        charStart: 0,
-        charEnd: 4,
-      },
-    );
-    const stale = resolved({ id: "b" }, { status: "stale" });
-    const result = selectAnchoredComments([anchored, stale]);
-    expect(result.map((c) => c.id)).toEqual(["a"]);
-  });
-});
-
-describe("groupAnchoredComments", () => {
-  const anchoredAt = (
+describe("neutral annotation grouping", () => {
+  const blockA = document.createElement("p");
+  const blockB = document.createElement("p");
+  const annotation = (
     id: string,
-    line: number,
-    status: "pending" | "sent",
-  ): ResolvedComment =>
-    resolved(
-      { id, status, anchor: { ...baseComment({}).anchor, line } },
-      { status: "anchored", charStart: 0, charEnd: 4 },
-    );
-
-  it("collapses co-located comments into one marker and counts them", () => {
-    const groups = groupAnchoredComments([
-      anchoredAt("a", 5, "sent"),
-      anchoredAt("b", 5, "pending"),
-      anchoredAt("c", 9, "sent"),
-    ]);
-    expect(groups).toHaveLength(2);
-    const [block5, block9] = groups;
-    expect(block5?.count).toBe(2);
-    // a block with any pending comment reads as pending
-    expect(block5?.status).toBe("pending");
-    expect(block5?.representativeId).toBe("a");
-    expect(block9?.count).toBe(1);
-    expect(block9?.status).toBe("sent");
+    block: HTMLElement | null,
+    tone: "active" | "settled",
+  ) => ({
+    id,
+    anchor: baseComment({}).anchor,
+    tone,
+    accessibleLabel: `Annotation ${id}`,
+    anchorState:
+      block === null
+        ? ({ status: "stale" } as const)
+        : ({ status: "anchored", charStart: 0, charEnd: 4 } as const),
+    block,
   });
 
-  it("excludes stale comments from gutter markers", () => {
-    const groups = groupAnchoredComments([
-      anchoredAt("a", 5, "pending"),
-      resolved(
-        { id: "z", anchor: { ...baseComment({}).anchor, line: 5 } },
-        {
-          status: "stale",
-        },
-      ),
+  it("keeps only annotations with a healthy runtime block", () => {
+    const result = selectRenderableAnnotations([
+      annotation("a", blockA, "active"),
+      annotation("b", null, "active"),
     ]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.count).toBe(1);
+    expect(result.map(({ id }) => id)).toEqual(["a"]);
+  });
+
+  it("groups by runtime block identity and keeps mixed groups active", () => {
+    const groups = groupResolvedAnnotations([
+      annotation("a", blockA, "settled"),
+      annotation("b", blockA, "active"),
+      annotation("c", blockB, "settled"),
+      annotation("stale", null, "active"),
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      block: blockA,
+      ids: ["a", "b"],
+      tone: "active",
+      count: 2,
+    });
+    expect(groups[1]).toMatchObject({
+      block: blockB,
+      ids: ["c"],
+      tone: "settled",
+      count: 1,
+    });
   });
 });
 

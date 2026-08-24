@@ -21,7 +21,7 @@ const ALLOWED = new Set<string>(Object.keys(GUIDANCE_PREFIXES));
  * because "guidance" is not a property of the WORD before the colon —
  * `artifact:`, `session:`, and `history:` are data labels inside a command's
  * body, and a sweep that failed on every unfamiliar label would fail on all of
- * them. What can be enumerated is the vocabulary that COMPETES with the five:
+ * them. What can be enumerated is the vocabulary that COMPETES with the six:
  * words that promise the reader an action, a caveat, or a severity, which is
  * exactly how the retired `note:` advisory read as a fourth tier.
  */
@@ -97,7 +97,7 @@ function competingPrefixUses(sources: readonly CliSourceFile[]): PrefixUse[] {
  * its life as a `note:` that `--json` callers never saw.
  */
 describe("guidance prefix vocabulary", () => {
-  it("never competes with the five prefixes", async () => {
+  it("never competes with the enumerated prefixes", async () => {
     const uses = competingPrefixUses(await readCliSources(CLI_ROOT));
 
     const undeclared = [
@@ -141,13 +141,14 @@ describe("guidance prefix vocabulary", () => {
 
   it("renders the tier lines from the vocabulary", () => {
     // The seam's own labels come from the table, so `guidanceLine("note", …)`
-    // is a type error rather than a sixth tier nobody reviewed.
+    // is a type error rather than a seventh tier nobody reviewed.
     expect(Object.keys(GUIDANCE_PREFIXES)).toEqual([
       "instruction",
       "reminder",
       "hint",
       "next",
       "context",
+      "why",
     ]);
     for (const [key, prefix] of Object.entries(GUIDANCE_PREFIXES)) {
       expect(prefix).toBe(key);

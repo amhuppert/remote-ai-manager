@@ -1,5 +1,5 @@
 import { dialRequiresHumanApproval, resolveDial } from "./policy";
-import { toDiffRows } from "./review-state";
+import { toCitationDiffContext, toDiffRows } from "./review-state";
 import type {
   SpecAuthoringStage,
   SpecGatePolicy,
@@ -122,6 +122,7 @@ export function draftAuthoringSequence(input: {
         ? []
         : toDiffRows(input.governanceBaseSnapshot),
       toDiffRows(input.snapshot),
+      toCitationDiffContext(input.governanceBaseSnapshot, input.snapshot),
     ),
   });
 }

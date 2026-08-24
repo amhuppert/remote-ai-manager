@@ -8,15 +8,22 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { createPortal } from "react-dom";
 import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
 import MarkdownViewport from "@/components/markdown/MarkdownViewport";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/Popover";
+import { Button } from "@/components/ui/Button";
+import type { DocumentRef } from "@/lib/document-comments/schemas";
 import type {
-  CommentAnchor,
-  CommentStatus,
-  DocumentRef,
-} from "@/lib/document-comments/schemas";
-import { findCommentBlock, groupAnchoredComments } from "./anchor-dom";
+  CommentComposerCapability,
+  MarkdownAnnotationTarget,
+  MarkdownAnnotationTone,
+  ResolvedMarkdownAnnotation,
+} from "@/components/document-viewer/annotation-contract";
+import { groupResolvedAnnotations } from "./anchor-dom";
 import CommentGutterPin from "./CommentGutterPin";
 import CommentPopover from "./CommentPopover";
 import RecogitoAnnotatorBoundary from "./recogito/RecogitoAnnotatorBoundary";
@@ -24,38 +31,74 @@ import {
   useTextSelectionComment,
   type SelectionDraft,
 } from "./use-text-selection-comment";
-import type { ResolvedComment } from "./types";
-
-/** What the create flow yields when a selection comment is confirmed. */
-export interface CreateCommentInput {
-  anchor: CommentAnchor;
-  note: string;
-  /** true = immediate-send (Add & send); false = queue as pending (Add). */
-  send: boolean;
-}
 
 export interface AnnotatedMarkdownProps {
   docRef: DocumentRef;
   content: string | null;
   isLoading: boolean;
-  /** Comments resolved against the current content (anchored or stale). */
-  comments: ResolvedComment[];
-  /** Invoked with a comment id when its highlight or gutter marker is clicked. */
-  onOpenComment?: (commentId: string) => void;
-  /**
-   * Invoked when a selection comment is confirmed (queue or immediate-send),
-   * carrying the derived single-block anchor, the note, and the send choice.
-   */
-  onCreateComment?: (input: CreateCommentInput) => void;
+  annotations: readonly ResolvedMarkdownAnnotation[];
+  annotationNoun?: { singular: string; plural: string };
+  onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
+  composer?: CommentComposerCapability;
 }
 
 interface GutterPin {
   key: string;
   top: number;
-  status: CommentStatus;
+  tone: MarkdownAnnotationTone;
   count: number;
-  representativeId: string;
+  ids: readonly string[];
   title: string;
+}
+
+interface SelectionTriggerPosition {
+  draft: SelectionDraft;
+  top: number;
+  left: number;
+}
+
+const SELECTION_TRIGGER_EDGE_GAP = 8;
+const SELECTION_TRIGGER_SELECTION_GAP = 6;
+const SELECTION_TRIGGER_FALLBACK_WIDTH = 112;
+const SELECTION_TRIGGER_FALLBACK_HEIGHT = 44;
+
+function selectionTriggerPosition(
+  draft: SelectionDraft,
+  trigger: HTMLElement | null,
+): SelectionTriggerPosition {
+  const triggerRect = trigger?.getBoundingClientRect();
+  const triggerWidth =
+    triggerRect && triggerRect.width > 0
+      ? triggerRect.width
+      : SELECTION_TRIGGER_FALLBACK_WIDTH;
+  const triggerHeight =
+    triggerRect && triggerRect.height > 0
+      ? triggerRect.height
+      : SELECTION_TRIGGER_FALLBACK_HEIGHT;
+  const visualViewport = window.visualViewport;
+  const viewportLeft = visualViewport?.offsetLeft ?? 0;
+  const viewportTop = visualViewport?.offsetTop ?? 0;
+  const viewportWidth = visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = visualViewport?.height ?? window.innerHeight;
+  const minimumLeft = viewportLeft + SELECTION_TRIGGER_EDGE_GAP;
+  const minimumTop = viewportTop + SELECTION_TRIGGER_EDGE_GAP;
+  const maximumLeft = Math.max(
+    minimumLeft,
+    viewportLeft + viewportWidth - triggerWidth - SELECTION_TRIGGER_EDGE_GAP,
+  );
+  const maximumTop = Math.max(
+    minimumTop,
+    viewportTop + viewportHeight - triggerHeight - SELECTION_TRIGGER_EDGE_GAP,
+  );
+
+  return {
+    draft,
+    left: Math.min(Math.max(draft.rect.left, minimumLeft), maximumLeft),
+    top: Math.min(
+      Math.max(draft.rect.bottom + SELECTION_TRIGGER_SELECTION_GAP, minimumTop),
+      maximumTop,
+    ),
+  };
 }
 
 /**
@@ -65,19 +108,21 @@ interface GutterPin {
  * their passage on scroll. Re-measures on comment/content change and on resize.
  */
 function CommentGutter({
-  comments,
+  annotations,
+  annotationNoun,
   content,
   contentRef,
   renderTick,
-  onOpenComment,
+  onActivateAnnotation,
 }: {
-  comments: ResolvedComment[];
+  annotations: readonly ResolvedMarkdownAnnotation[];
+  annotationNoun: { singular: string; plural: string };
   content: string | null;
   contentRef: RefObject<HTMLDivElement | null>;
   /** Bumps when the deferred document root mounts, so measurement re-runs against
    *  the stamped DOM rather than the not-yet-rendered fallback. */
   renderTick: number;
-  onOpenComment?: (commentId: string) => void;
+  onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
 }): React.JSX.Element | null {
   const [pins, setPins] = useState<GutterPin[]>([]);
 
@@ -93,12 +138,8 @@ function CommentGutter({
       }
       const scrollRect = scrollEl.getBoundingClientRect();
       const next: GutterPin[] = [];
-      for (const group of groupAnchoredComments(comments)) {
-        const block = findCommentBlock(contentEl, {
-          line: group.line,
-          sectionId: group.sectionId,
-        });
-        if (!block) continue;
+      for (const group of groupResolvedAnnotations(annotations)) {
+        const block = group.block;
         const top =
           block.getBoundingClientRect().top -
           scrollRect.top +
@@ -106,13 +147,13 @@ function CommentGutter({
         next.push({
           key: group.key,
           top,
-          status: group.status,
+          tone: group.tone,
           count: group.count,
-          representativeId: group.representativeId,
+          ids: group.ids,
           title:
             group.count > 1
-              ? `${group.count} comments on this passage`
-              : "1 comment on this passage",
+              ? `${group.count} ${annotationNoun.plural} on this passage`
+              : `1 ${annotationNoun.singular} on this passage`,
         });
       }
       setPins(next);
@@ -124,7 +165,7 @@ function CommentGutter({
     const observer = new ResizeObserver(measure);
     observer.observe(contentEl);
     return () => observer.disconnect();
-  }, [comments, content, contentRef, renderTick]);
+  }, [annotations, annotationNoun, content, contentRef, renderTick]);
 
   if (pins.length === 0) return null;
 
@@ -134,10 +175,12 @@ function CommentGutter({
         <CommentGutterPin
           key={pin.key}
           top={pin.top}
-          status={pin.status}
+          tone={pin.tone}
           count={pin.count}
           title={pin.title}
-          onClick={() => onOpenComment?.(pin.representativeId)}
+          onClick={() =>
+            onActivateAnnotation?.({ kind: "block-group", ids: pin.ids })
+          }
         />
       ))}
     </div>
@@ -145,109 +188,147 @@ function CommentGutter({
 }
 
 /**
- * The affordance→editor toggle for one selection draft. Kept as its own keyed
- * component so a new selection (new key) resets it back to the affordance
- * without a state-resetting effect.
- */
-function SelectionEditor({
-  draft,
-  clear,
-  onCreateComment,
-}: {
-  draft: SelectionDraft;
-  clear: () => void;
-  onCreateComment?: (input: CreateCommentInput) => void;
-}): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-
-  const create = (note: string, send: boolean): void => {
-    onCreateComment?.({ anchor: draft.anchor, note, send });
-    clear();
-  };
-
-  if (open) {
-    return (
-      <CommentPopover
-        quote={draft.anchor.quote}
-        onQueue={(note) => create(note, false)}
-        onSend={(note) => create(note, true)}
-        onCancel={clear}
-      />
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => setOpen(true)}
-      className="inline-flex cursor-pointer items-center gap-[5px] rounded-md border border-solid border-border-default bg-bg-elevated px-[10px] py-[5px] font-mono text-[0.72rem] font-medium text-cyan shadow-menu transition-colors duration-150 ease-[ease] hover:border-cyan hover:bg-bg-raised"
-    >
-      <span aria-hidden="true" className="text-[0.85rem] leading-none">
-        +
-      </span>
-      Comment
-    </button>
-  );
-}
-
-/**
- * Renders the comment affordance / editor for the current single-block selection
- * draft. Fixed-positioned at the selection (so it escapes the scroll container's
- * clipping) and dismissed on outside-click, on scroll, or after a comment is
- * created. The inner editor is keyed by the draft so a new selection resets it
- * to the affordance.
+ * Anchors Radix Popover to the current selection and keeps dismissal coordinated
+ * with asynchronous persistence so a pending write cannot discard its draft.
  */
 function SelectionCommentLayer({
   draft,
   clear,
-  onCreateComment,
+  composer,
 }: {
   draft: SelectionDraft | null;
   clear: () => void;
-  onCreateComment?: (input: CreateCommentInput) => void;
+  composer: CommentComposerCapability;
 }): React.JSX.Element | null {
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const restoreSourceFocusRef = useRef(false);
+  const [triggerPosition, setTriggerPosition] =
+    useState<SelectionTriggerPosition | null>(null);
+
+  const placeTrigger = useCallback((): void => {
+    if (!draft) return;
+    const next = selectionTriggerPosition(draft, triggerRef.current);
+    setTriggerPosition((current) =>
+      current?.draft === next.draft &&
+      current.top === next.top &&
+      current.left === next.left
+        ? current
+        : next,
+    );
+  }, [draft]);
+
+  useLayoutEffect(() => {
+    if (!draft) return;
+    const visualViewport = window.visualViewport;
+    placeTrigger();
+    window.addEventListener("resize", placeTrigger);
+    visualViewport?.addEventListener("resize", placeTrigger);
+    visualViewport?.addEventListener("scroll", placeTrigger);
+    return () => {
+      window.removeEventListener("resize", placeTrigger);
+      visualViewport?.removeEventListener("resize", placeTrigger);
+      visualViewport?.removeEventListener("scroll", placeTrigger);
+    };
+  }, [draft, placeTrigger]);
 
   useEffect(() => {
     if (!draft) return;
-    const onPointerDown = (event: PointerEvent): void => {
-      if (!wrapRef.current?.contains(event.target as Node)) clear();
-    };
-    // Dismiss when the document behind the affordance scrolls (its anchor rect
-    // goes stale), but NOT when the user scrolls WITHIN the popover itself (e.g.
-    // the quote preview's own overflow) — that must leave the editor open.
     const onScroll = (event: Event): void => {
-      if (wrapRef.current?.contains(event.target as Node)) return;
-      clear();
+      const eventTarget = event.target;
+      const isEditorScroll =
+        eventTarget instanceof Node &&
+        contentRef.current?.contains(eventTarget) === true;
+      if (pending || isEditorScroll) return;
+      if (!open) {
+        clear();
+        return;
+      }
+      restoreSourceFocusRef.current = false;
+      setOpen(false);
     };
-    document.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [draft, clear]);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [clear, draft, open, pending]);
 
-  if (!draft || typeof document === "undefined") return null;
+  if (!draft) return null;
 
-  const key = `${draft.anchor.line}:${draft.anchor.charStart}:${draft.anchor.charEnd}`;
-  // Portal to <body>: the affordance is `position: fixed` against the viewport
-  // (placed at the selection's viewport rect), but the viewer's ancestor
-  // `.conversation-docked-stage` carries a transform (its entrance animation),
-  // which would otherwise make it the containing block and offset the affordance.
-  return createPortal(
-    <div
-      ref={wrapRef}
-      className="fixed z-popover"
-      style={{ top: draft.rect.bottom + 6, left: draft.rect.left }}
+  function closeAndRestoreSource(): void {
+    if (pending) return;
+    restoreSourceFocusRef.current = true;
+    setOpen(false);
+  }
+
+  function closeAfterSuccess(): void {
+    restoreSourceFocusRef.current = true;
+    setOpen(false);
+  }
+
+  const placedTrigger =
+    triggerPosition?.draft === draft ? triggerPosition : null;
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && pending) return;
+        setOpen(nextOpen);
+      }}
     >
-      <SelectionEditor
-        key={key}
-        draft={draft}
-        clear={clear}
-        onCreateComment={onCreateComment}
-      />
-    </div>,
-    document.body,
+      <span
+        ref={triggerRef}
+        className="fixed z-popover"
+        style={
+          placedTrigger
+            ? { top: placedTrigger.top, left: placedTrigger.left }
+            : { visibility: "hidden" }
+        }
+      >
+        <PopoverTrigger asChild>
+          <Button type="button" variant="default" size="touch">
+            <span aria-hidden="true" className="text-[0.85rem] leading-none">
+              +
+            </span>
+            Comment
+          </Button>
+        </PopoverTrigger>
+      </span>
+      <PopoverContent
+        ref={contentRef}
+        aria-label="Add comment"
+        unstyled
+        contentClassName="z-popover outline-none"
+        onEscapeKeyDown={(event) => {
+          if (pending) event.preventDefault();
+          else restoreSourceFocusRef.current = true;
+        }}
+        onInteractOutside={(event) => {
+          if (pending) event.preventDefault();
+          else restoreSourceFocusRef.current = false;
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (restoreSourceFocusRef.current) {
+            const sourceBlock = draft.block;
+            if (!sourceBlock.hasAttribute("tabindex")) {
+              sourceBlock.setAttribute("tabindex", "-1");
+            }
+            sourceBlock.focus();
+          }
+          clear();
+        }}
+      >
+        <CommentPopover
+          anchor={draft.anchor}
+          composer={composer}
+          onCancel={closeAndRestoreSource}
+          onSuccess={closeAfterSuccess}
+          onPendingChange={setPending}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -263,6 +344,10 @@ function SelectionCommentLayer({
  * viewports — inside the 50px gutter — and overlap the pins.
  */
 const GUTTER_INSET = "pl-[26px] max-640:pl-[38px]";
+const DEFAULT_ANNOTATION_NOUN = {
+  singular: "comment",
+  plural: "comments",
+};
 
 /**
  * The browser-only recogito annotator boundary, swappable for tests. The
@@ -298,9 +383,10 @@ export default function AnnotatedMarkdown({
   docRef,
   content,
   isLoading,
-  comments,
-  onOpenComment,
-  onCreateComment,
+  annotations,
+  annotationNoun = DEFAULT_ANNOTATION_NOUN,
+  onActivateAnnotation,
+  composer,
 }: AnnotatedMarkdownProps): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null);
   const [renderTick, setRenderTick] = useState(0);
@@ -332,19 +418,20 @@ export default function AnnotatedMarkdown({
         isLoading={isLoading}
         overlay={
           <CommentGutter
-            comments={comments}
+            annotations={annotations}
+            annotationNoun={annotationNoun}
             content={content}
             contentRef={contentRef}
             renderTick={renderTick}
-            onOpenComment={onOpenComment}
+            onActivateAnnotation={onActivateAnnotation}
           />
         }
       >
         {content === null ? null : (
           <div className={GUTTER_INSET}>
             <AnnotatorBoundary
-              comments={comments}
-              onOpenComment={onOpenComment}
+              annotations={annotations}
+              onActivateAnnotation={onActivateAnnotation}
               syncSignal={`${content}#${renderTick}`}
             >
               <SourceMappedDocumentMarkdown
@@ -355,11 +442,11 @@ export default function AnnotatedMarkdown({
           </div>
         )}
       </MarkdownViewport>
-      {onCreateComment ? (
+      {composer ? (
         <SelectionCommentLayer
           draft={draft}
           clear={clear}
-          onCreateComment={onCreateComment}
+          composer={composer}
         />
       ) : null}
     </div>

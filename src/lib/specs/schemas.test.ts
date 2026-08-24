@@ -18,8 +18,22 @@ import {
   specAuthoringStageSchema,
   specEventTypeSchema,
   specGatePolicySchema,
+  specAssumptionCitationRowSchema,
+  specAssumptionCitationSchema,
+  specAssumptionCitationSnapshotSchema,
+  specAssumptionRowSchema,
+  specQuestionRowSchema,
   specRevisionRowSchema,
   specRevisionSchema,
+  specRevisionSnapshotSchema,
+  specAssumptionCitationsMutatedEventPayloadSchema,
+  specAttentionEditPayloadSchema,
+  specAttentionMutationReceiptSchema,
+  specAttentionRecordPresentationSchema,
+  specRecordAuditSnapshotSchema,
+  specReviewRecordMutatedEventPayloadSchema,
+  specReviewRecordOperationSchema,
+  specSupersedeAssumptionPayloadSchema,
   validationStrategySchema,
 } from "./schemas";
 
@@ -171,6 +185,9 @@ describe("spec authoring stage schema", () => {
         authoring_stage: "design",
         based_on_revision_id: null,
         content_hash: null,
+        citation_contract_version: 2,
+        citation_version: 1,
+        citation_hash: "a".repeat(64),
         proposed_at: null,
         approved_at: null,
         external_delivery_json: null,
@@ -186,6 +203,9 @@ describe("spec authoring stage schema", () => {
         authoringStage: "design",
         basedOnRevisionId: null,
         contentHash: null,
+        citationContractVersion: 2,
+        citationVersion: 1,
+        citationHash: "a".repeat(64),
         proposedAt: null,
         approvedAt: null,
         externalDelivery: null,
@@ -290,6 +310,32 @@ describe("shared spec contracts", () => {
     }
   });
 
+  it("carries an optional server-authored rationale beside the refusal", () => {
+    const withRationale = {
+      code: "stage_blocked" as const,
+      unmetConditions: [
+        "A design cannot be authored during the requirements stage.",
+      ],
+      rationale:
+        "requirements settle before design so solution choices cannot shape the contract around themselves",
+      instruction:
+        "Advance the requirements stage before authoring design content.",
+    };
+    expect(refusalSchema.parse(withRationale)).toEqual(withRationale);
+
+    const withoutRationale = {
+      code: "stage_blocked" as const,
+      unmetConditions: [
+        "A design cannot be authored during the requirements stage.",
+      ],
+      instruction:
+        "Advance the requirements stage before authoring design content.",
+    };
+    const parsed = refusalSchema.parse(withoutRationale);
+    expect(parsed).toEqual(withoutRationale);
+    expect("rationale" in parsed).toBe(false);
+  });
+
   it("carries a refusal code for a write that would leave a reference dangling", () => {
     expect(refusalCodeSchema.safeParse("dangling_reference").success).toBe(
       true,
@@ -300,6 +346,10 @@ describe("shared spec contracts", () => {
     expect(refusalCodeSchema.safeParse("historical_element_id").success).toBe(
       true,
     );
+  });
+
+  it("carries a refusal code for an update that would move an element to another parent", () => {
+    expect(refusalCodeSchema.safeParse("parent_immutable").success).toBe(true);
   });
 
   it.each([
@@ -315,6 +365,730 @@ describe("shared spec contracts", () => {
     "spec-review-revision-signed-off",
   ])("registers durable event type %s", (eventType) => {
     expect(specEventTypeSchema.safeParse(eventType).success).toBe(true);
+  });
+});
+
+describe("attention record lifecycle schemas", () => {
+  const question = {
+    id: "question-1",
+    spec_id: "spec-1",
+    number: 1,
+    element_id: null,
+    text: "Which rollout owns the cutover?",
+    provenance_json: JSON.stringify({
+      kind: "agent",
+      conversationId: "conversation-1",
+    }),
+    record_version: 1,
+    status: "open",
+    answer: null,
+    answered_at: null,
+    withdrawn_at: null,
+    created_at: "2026-08-23T10:00:00.000Z",
+    updated_at: "2026-08-23T10:00:00.000Z",
+  } as const;
+
+  const assumption = {
+    id: "assumption-1",
+    spec_id: "spec-1",
+    number: 1,
+    element_id: "requirement-1",
+    text: "The cutover can quiesce all writers.",
+    proposed_by_json: JSON.stringify({
+      kind: "agent",
+      conversationId: "conversation-1",
+    }),
+    record_version: 1,
+    disposition: "proposed",
+    disposed_at: null,
+    withdrawn_at: null,
+    supersedes_assumption_id: null,
+    supersession_operation_id: null,
+    supersession_request_hash: null,
+    created_at: "2026-08-23T10:00:00.000Z",
+    updated_at: "2026-08-23T10:00:00.000Z",
+  } as const;
+
+  it.each([
+    question,
+    {
+      ...question,
+      status: "answered",
+      answer: "The release coordinator owns it.",
+      answered_at: "2026-08-23T10:05:00.000Z",
+    },
+    {
+      ...question,
+      status: "withdrawn",
+      withdrawn_at: "2026-08-23T10:04:00.000Z",
+    },
+  ])("accepts a legal question lifecycle %#", (row) => {
+    expect(specQuestionRowSchema.parse(row)).toEqual(row);
+  });
+
+  it.each([
+    { ...question, record_version: 0 },
+    { ...question, answer: "An answer on an open question." },
+    { ...question, answered_at: "2026-08-23T10:05:00.000Z" },
+    { ...question, withdrawn_at: "2026-08-23T10:04:00.000Z" },
+    { ...question, status: "answered", answer: "", answered_at: null },
+    {
+      ...question,
+      status: "answered",
+      answer: "Answered and withdrawn cannot coexist.",
+      answered_at: "2026-08-23T10:05:00.000Z",
+      withdrawn_at: "2026-08-23T10:06:00.000Z",
+    },
+    { ...question, status: "withdrawn", withdrawn_at: null },
+  ])("rejects a contradictory question lifecycle %#", (row) => {
+    expect(specQuestionRowSchema.safeParse(row).success).toBe(false);
+  });
+
+  it.each([
+    assumption,
+    {
+      ...assumption,
+      disposition: "confirmed",
+      disposed_at: "2026-08-23T10:05:00.000Z",
+    },
+    {
+      ...assumption,
+      disposition: "rejected",
+      disposed_at: "2026-08-23T10:05:00.000Z",
+    },
+    {
+      ...assumption,
+      disposition: "deferred",
+      disposed_at: "2026-08-23T10:05:00.000Z",
+    },
+    {
+      ...assumption,
+      disposition: "withdrawn",
+      withdrawn_at: "2026-08-23T10:04:00.000Z",
+    },
+    {
+      ...assumption,
+      id: "assumption-2",
+      number: 2,
+      supersedes_assumption_id: "assumption-1",
+      supersession_operation_id: "operation-1",
+      supersession_request_hash: "a".repeat(64),
+    },
+  ])("accepts a legal assumption lifecycle %#", (row) => {
+    expect(specAssumptionRowSchema.parse(row)).toEqual(row);
+  });
+
+  it.each([
+    { ...assumption, record_version: 0 },
+    { ...assumption, disposed_at: "2026-08-23T10:05:00.000Z" },
+    { ...assumption, withdrawn_at: "2026-08-23T10:04:00.000Z" },
+    { ...assumption, disposition: "confirmed", disposed_at: null },
+    {
+      ...assumption,
+      disposition: "confirmed",
+      disposed_at: "2026-08-23T10:05:00.000Z",
+      withdrawn_at: "2026-08-23T10:06:00.000Z",
+    },
+    { ...assumption, disposition: "withdrawn", withdrawn_at: null },
+    {
+      ...assumption,
+      supersedes_assumption_id: "assumption-1",
+      supersession_operation_id: null,
+      supersession_request_hash: "a".repeat(64),
+    },
+    {
+      ...assumption,
+      supersession_operation_id: "operation-1",
+      supersession_request_hash: "a".repeat(64),
+    },
+    {
+      ...assumption,
+      supersedes_assumption_id: "assumption-1",
+      supersession_operation_id: "operation-1",
+      supersession_request_hash: null,
+    },
+    {
+      ...assumption,
+      supersedes_assumption_id: "assumption-1",
+      supersession_operation_id: "operation-1",
+      supersession_request_hash: "not-a-sha256-hash",
+    },
+  ])("rejects a contradictory assumption lifecycle %#", (row) => {
+    expect(specAssumptionRowSchema.safeParse(row).success).toBe(false);
+  });
+
+  it("registers the attention mutation refusal vocabulary", () => {
+    for (const code of [
+      "authoring_agent_required",
+      "stale_attention_record",
+      "stale_citation_set",
+      "attention_state_conflict",
+      "idempotency_conflict",
+    ]) {
+      expect(refusalCodeSchema.safeParse(code).success).toBe(true);
+    }
+  });
+});
+
+describe("revision citation integrity metadata", () => {
+  const revisionRow = {
+    id: "revision-1",
+    spec_id: "spec-1",
+    number: 1,
+    state: "draft",
+    authoring_stage: "requirements",
+    based_on_revision_id: null,
+    content_hash: null,
+    citation_contract_version: 2,
+    citation_version: 1,
+    citation_hash: "a".repeat(64),
+    proposed_at: null,
+    approved_at: null,
+    external_delivery_json: null,
+    created_at: "2026-08-23T10:00:00.000Z",
+  } as const;
+
+  const revision = {
+    id: "revision-1",
+    specId: "spec-1",
+    number: 1,
+    state: "draft",
+    authoringStage: "requirements",
+    basedOnRevisionId: null,
+    contentHash: null,
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "a".repeat(64),
+    proposedAt: null,
+    approvedAt: null,
+    externalDelivery: null,
+    createdAt: "2026-08-23T10:00:00.000Z",
+  } as const;
+
+  it("retains citation contract, compare-and-swap, and hash fields on revision rows and views", () => {
+    expect(specRevisionRowSchema.parse(revisionRow)).toEqual(revisionRow);
+    expect(specRevisionSchema.parse(revision)).toEqual(revision);
+  });
+
+  it.each([
+    { ...revisionRow, citation_contract_version: 0 },
+    { ...revisionRow, citation_contract_version: 3 },
+    { ...revisionRow, citation_version: 0 },
+    { ...revisionRow, citation_hash: "not-a-sha256-hash" },
+  ])("rejects invalid revision citation metadata %#", (row) => {
+    expect(specRevisionRowSchema.safeParse(row).success).toBe(false);
+  });
+
+  it("requires an explicit sorted citation collection on revision snapshots", () => {
+    const snapshot = {
+      revision,
+      elements: [],
+      assumptionCitations: [],
+    };
+
+    expect(specRevisionSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(
+      specRevisionSnapshotSchema.safeParse({ revision, elements: [] }).success,
+    ).toBe(false);
+  });
+});
+
+describe("revision-owned assumption citation schemas", () => {
+  const snapshot = {
+    schemaVersion: 1,
+    captureKind: "native",
+    capturedAt: "2026-08-23T10:01:00.000Z",
+    assumptionId: "assumption-1",
+    number: 1,
+    recordVersion: 2,
+    text: "The cutover can quiesce all writers.",
+    elementId: "requirement-1",
+    proposedBy: { kind: "agent", conversationId: "conversation-1" },
+    disposition: "confirmed",
+    disposedAt: "2026-08-23T10:00:30.000Z",
+    withdrawnAt: null,
+    supersedesAssumptionId: null,
+    createdAt: "2026-08-23T10:00:00.000Z",
+    updatedAt: "2026-08-23T10:00:30.000Z",
+  } as const;
+
+  const citation = {
+    revisionId: "revision-1",
+    specId: "spec-1",
+    elementId: "requirement-1",
+    assumptionId: "assumption-1",
+    snapshot,
+    createdAt: "2026-08-23T10:01:00.000Z",
+    updatedAt: "2026-08-23T10:01:00.000Z",
+  } as const;
+
+  it("strictly parses native and legacy citation snapshots", () => {
+    expect(specAssumptionCitationSnapshotSchema.parse(snapshot)).toEqual(
+      snapshot,
+    );
+    expect(
+      specAssumptionCitationSnapshotSchema.parse({
+        ...snapshot,
+        captureKind: "legacy_backfill",
+      }),
+    ).toEqual({ ...snapshot, captureKind: "legacy_backfill" });
+  });
+
+  it.each([
+    { ...snapshot, schemaVersion: 2 },
+    { ...snapshot, captureKind: "inferred" },
+    { ...snapshot, recordVersion: 0 },
+    { ...snapshot, disposition: "proposed", disposedAt: snapshot.disposedAt },
+    { ...snapshot, disposition: "confirmed", disposedAt: null },
+    {
+      ...snapshot,
+      disposition: "withdrawn",
+      disposedAt: null,
+      withdrawnAt: null,
+    },
+    { ...snapshot, unknown: true },
+  ])("rejects an ambiguous or non-strict citation snapshot %#", (value) => {
+    expect(specAssumptionCitationSnapshotSchema.safeParse(value).success).toBe(
+      false,
+    );
+  });
+
+  it("parses database and domain citation rows without losing ownership fields", () => {
+    const row = {
+      revision_id: citation.revisionId,
+      spec_id: citation.specId,
+      element_id: citation.elementId,
+      assumption_id: citation.assumptionId,
+      assumption_snapshot_json: JSON.stringify(snapshot),
+      created_at: citation.createdAt,
+      updated_at: citation.updatedAt,
+    };
+
+    expect(specAssumptionCitationRowSchema.parse(row)).toEqual(row);
+    expect(specAssumptionCitationSchema.parse(citation)).toEqual(citation);
+  });
+
+  it("rejects citation rows with missing identity or unknown domain fields", () => {
+    const { assumptionId: _omitted, ...withoutAssumption } = citation;
+    expect(
+      specAssumptionCitationSchema.safeParse(withoutAssumption).success,
+    ).toBe(false);
+    expect(
+      specAssumptionCitationSchema.safeParse({ ...citation, inferred: true })
+        .success,
+    ).toBe(false);
+  });
+
+  it("requires revision citations in canonical element-and-assumption order", () => {
+    const revision = {
+      id: "revision-1",
+      specId: "spec-1",
+      number: 1,
+      state: "draft",
+      authoringStage: "requirements",
+      basedOnRevisionId: null,
+      contentHash: null,
+      citationContractVersion: 2,
+      citationVersion: 1,
+      citationHash: "a".repeat(64),
+      proposedAt: null,
+      approvedAt: null,
+      externalDelivery: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+    } as const;
+    const later = {
+      ...citation,
+      elementId: "requirement-2",
+      assumptionId: "assumption-2",
+      snapshot: {
+        ...snapshot,
+        assumptionId: "assumption-2",
+        number: 2,
+      },
+    };
+
+    expect(
+      specRevisionSnapshotSchema.safeParse({
+        revision,
+        elements: [],
+        assumptionCitations: [citation, later],
+      }).success,
+    ).toBe(true);
+    expect(
+      specRevisionSnapshotSchema.safeParse({
+        revision,
+        elements: [],
+        assumptionCitations: [later, citation],
+      }).success,
+    ).toBe(false);
+    expect(
+      specRevisionSnapshotSchema.safeParse({
+        revision,
+        elements: [],
+        assumptionCitations: [citation, citation],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("attention audit event schemas", () => {
+  const questionBefore = {
+    kind: "question",
+    recordId: "question-1",
+    number: 1,
+    recordVersion: 1,
+    text: "Which rollout owns the cutover?",
+    elementId: null,
+    provenance: { kind: "agent", conversationId: "conversation-1" },
+    status: "open",
+    answer: null,
+    answeredAt: null,
+    withdrawnAt: null,
+    createdAt: "2026-08-23T10:00:00.000Z",
+    updatedAt: "2026-08-23T10:00:00.000Z",
+  } as const;
+  const questionAfter = {
+    ...questionBefore,
+    recordVersion: 2,
+    text: "Which release coordinator owns the cutover?",
+    updatedAt: "2026-08-23T10:01:00.000Z",
+  } as const;
+  const assumptionSnapshot = {
+    schemaVersion: 1,
+    captureKind: "native",
+    capturedAt: "2026-08-23T10:01:00.000Z",
+    assumptionId: "assumption-1",
+    number: 1,
+    recordVersion: 1,
+    text: "All writers can quiesce.",
+    elementId: "requirement-1",
+    proposedBy: { kind: "agent", conversationId: "conversation-1" },
+    disposition: "proposed",
+    disposedAt: null,
+    withdrawnAt: null,
+    supersedesAssumptionId: null,
+    createdAt: "2026-08-23T10:00:00.000Z",
+    updatedAt: "2026-08-23T10:00:00.000Z",
+  } as const;
+
+  it("registers the two strict audit event families and operation vocabulary", () => {
+    expect(
+      specEventTypeSchema.safeParse("spec-review-record-mutated").success,
+    ).toBe(true);
+    expect(
+      specEventTypeSchema.safeParse("spec-assumption-citations-mutated")
+        .success,
+    ).toBe(true);
+    for (const operation of [
+      "opened",
+      "proposed",
+      "imported",
+      "edited",
+      "answered",
+      "disposed",
+      "withdrawn",
+      "superseded",
+    ]) {
+      expect(specReviewRecordOperationSchema.safeParse(operation).success).toBe(
+        true,
+      );
+    }
+  });
+
+  it("parses strict question and assumption audit snapshots", () => {
+    const assumption = {
+      kind: "assumption",
+      recordId: "assumption-1",
+      number: 1,
+      recordVersion: 1,
+      text: assumptionSnapshot.text,
+      elementId: assumptionSnapshot.elementId,
+      proposedBy: assumptionSnapshot.proposedBy,
+      disposition: "proposed",
+      disposedAt: null,
+      withdrawnAt: null,
+      supersedesAssumptionId: null,
+      supersededByAssumptionId: null,
+      createdAt: assumptionSnapshot.createdAt,
+      updatedAt: assumptionSnapshot.updatedAt,
+    } as const;
+
+    expect(specRecordAuditSnapshotSchema.parse(questionBefore)).toEqual(
+      questionBefore,
+    );
+    expect(specRecordAuditSnapshotSchema.parse(assumption)).toEqual(assumption);
+    expect(
+      specRecordAuditSnapshotSchema.safeParse({
+        ...questionBefore,
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a versioned record mutation event whose operation matches its snapshots", () => {
+    const event = {
+      schemaVersion: 1,
+      recordKind: "question",
+      recordId: "question-1",
+      recordNumber: 1,
+      attentionId: "question-1",
+      operation: "edited",
+      active: true,
+      before: questionBefore,
+      after: questionAfter,
+    } as const;
+
+    expect(specReviewRecordMutatedEventPayloadSchema.parse(event)).toEqual(
+      event,
+    );
+  });
+
+  it.each([
+    {
+      schemaVersion: 1,
+      recordKind: "question",
+      recordId: "question-1",
+      recordNumber: 1,
+      attentionId: "question-1",
+      operation: "edited",
+      active: true,
+      before: null,
+      after: questionAfter,
+    },
+    {
+      schemaVersion: 1,
+      recordKind: "question",
+      recordId: "question-1",
+      recordNumber: 1,
+      attentionId: "question-1",
+      operation: "withdrawn",
+      active: false,
+      before: questionBefore,
+      after: {
+        ...questionAfter,
+        status: "withdrawn",
+        withdrawnAt: "2026-08-23T10:01:00.000Z",
+      },
+    },
+    {
+      schemaVersion: 1,
+      recordKind: "assumption",
+      recordId: "assumption-1",
+      recordNumber: 1,
+      attentionId: "assumption-1",
+      operation: "proposed",
+      active: true,
+      before: null,
+      after: questionAfter,
+    },
+    {
+      schemaVersion: 1,
+      recordKind: "question",
+      recordId: "question-1",
+      recordNumber: 1,
+      attentionId: "question-1",
+      operation: "edited",
+      active: false,
+      before: questionBefore,
+      after: questionAfter,
+    },
+  ])("rejects an inconsistent record mutation event %#", (event) => {
+    expect(
+      specReviewRecordMutatedEventPayloadSchema.safeParse(event).success,
+    ).toBe(false);
+  });
+
+  it("parses a citation mutation event with ordered snapshot deltas", () => {
+    const event = {
+      schemaVersion: 1,
+      revisionId: "revision-1",
+      beforeCitationVersion: 1,
+      afterCitationVersion: 2,
+      beforeCitationHash: "a".repeat(64),
+      afterCitationHash: "b".repeat(64),
+      added: [
+        {
+          elementId: "requirement-1",
+          assumptionId: "assumption-1",
+          snapshot: assumptionSnapshot,
+        },
+      ],
+      removed: [],
+      refreshed: [],
+    } as const;
+
+    expect(
+      specAssumptionCitationsMutatedEventPayloadSchema.parse(event),
+    ).toEqual(event);
+    expect(
+      specAssumptionCitationsMutatedEventPayloadSchema.safeParse({
+        ...event,
+        afterCitationVersion: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      specAssumptionCitationsMutatedEventPayloadSchema.safeParse({
+        ...event,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("attention mutation and presentation contracts", () => {
+  it.each([
+    { kind: "question", text: "Which release coordinator owns this?" },
+    {
+      kind: "question",
+      attachment: { kind: "element", handle: "R2" },
+    },
+    { kind: "assumption", text: "Every writer can quiesce." },
+    {
+      kind: "assumption",
+      attachment: { kind: "element", handle: "R2" },
+      citationIntent: {
+        kind: "replace",
+        revisionId: "revision-2",
+        elementHandles: ["R2"],
+      },
+    },
+    {
+      kind: "assumption",
+      attachment: { kind: "spec" },
+      citationIntent: { kind: "preserve" },
+    },
+  ])("parses a strict edit document %#", (payload) => {
+    expect(specAttentionEditPayloadSchema.parse(payload)).toEqual(payload);
+  });
+
+  it.each([
+    { kind: "question" },
+    { kind: "assumption" },
+    {
+      kind: "assumption",
+      attachment: { kind: "element", handle: "R2" },
+    },
+    {
+      kind: "assumption",
+      text: "Every writer can quiesce.",
+      unexpected: true,
+    },
+    {
+      kind: "assumption",
+      attachment: { kind: "element", handle: "R2" },
+      citationIntent: {
+        kind: "replace",
+        revisionId: "revision-2",
+        elementHandles: [],
+      },
+    },
+  ])(
+    "rejects an empty, ambiguous, or non-strict edit document %#",
+    (payload) => {
+      expect(specAttentionEditPayloadSchema.safeParse(payload).success).toBe(
+        false,
+      );
+    },
+  );
+
+  it("parses a strict supersession document with explicit citation replacement", () => {
+    const payload = {
+      operationId: "operation-1",
+      reason: "The human decision changed the premise.",
+      text: "Only the release coordinator writes during cutover.",
+      attachment: { kind: "element", handle: "R2" },
+      citations: { kind: "replace", elementHandles: ["R2", "R3"] },
+    } as const;
+
+    expect(specSupersedeAssumptionPayloadSchema.parse(payload)).toEqual(
+      payload,
+    );
+    expect(
+      specSupersedeAssumptionPayloadSchema.parse({
+        ...payload,
+        citations: { kind: "clear" },
+      }),
+    ).toEqual({ ...payload, citations: { kind: "clear" } });
+    expect(
+      specSupersedeAssumptionPayloadSchema.safeParse({
+        ...payload,
+        citations: { kind: "replace", elementHandles: ["R2", "R2"] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses a bounded supersession receipt without authored bodies", () => {
+    const receipt = {
+      operation: "superseded",
+      recordKind: "assumption",
+      recordId: "assumption-1",
+      recordHandle: "A1",
+      previousRecordVersion: 2,
+      newRecordVersion: 3,
+      lifecycle: "rejected",
+      draftRevisionId: "revision-2",
+      previousCitationVersion: 4,
+      newCitationVersion: 5,
+      citationChanges: {
+        added: ["R2"],
+        removed: ["R1"],
+        refreshed: [],
+      },
+      successor: { id: "assumption-2", handle: "A2" },
+      idempotentReplay: false,
+    } as const;
+
+    expect(specAttentionMutationReceiptSchema.parse(receipt)).toEqual(receipt);
+    expect(
+      specAttentionMutationReceiptSchema.safeParse({
+        ...receipt,
+        text: "The receipt must not echo authored content.",
+      }).success,
+    ).toBe(false);
+    expect(
+      specAttentionMutationReceiptSchema.safeParse({
+        ...receipt,
+        newRecordVersion: 2,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses server-derived current and history presentation capabilities", () => {
+    const current = {
+      state: "current",
+      attentionActive: true,
+      lastMutation: {
+        operation: "edited",
+        actor: { kind: "agent", conversationId: "conversation-2" },
+        occurredAt: "2026-08-23T10:05:00.000Z",
+      },
+      humanCapability: { kind: "answer", allowed: true },
+    } as const;
+    const history = {
+      state: "history",
+      attentionActive: false,
+      lastMutation: null,
+      humanCapability: {
+        kind: "dispose",
+        allowed: false,
+        code: "terminal",
+        blockingRevisionId: null,
+        instruction: "Read the successor record.",
+      },
+    } as const;
+
+    expect(specAttentionRecordPresentationSchema.parse(current)).toEqual(
+      current,
+    );
+    expect(specAttentionRecordPresentationSchema.parse(history)).toEqual(
+      history,
+    );
+    expect(
+      specAttentionRecordPresentationSchema.safeParse({
+        ...history,
+        attentionActive: true,
+      }).success,
+    ).toBe(false);
   });
 });
 

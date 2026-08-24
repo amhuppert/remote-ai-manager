@@ -1,3 +1,4 @@
+import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import { ancestorIds } from "./revision-lineage";
 import type { SpecRevision } from "./schemas";
 import type { TransitionRefusal } from "./transitions";
@@ -16,6 +17,7 @@ export function dismissSupersededHumanActRefusal(
     unmetConditions: [
       "Ending a reviewed proposal as superseded is a human act.",
     ],
+    rationale: HUMAN_ACT_REQUIRED_RATIONALE,
     instruction: `Ask the operator to open ${DISMISS_SUPERSEDED_SURFACE} on revision ${revisionId}. An agent cannot dispose of work a human was reviewing.`,
   };
 }

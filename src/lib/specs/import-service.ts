@@ -11,6 +11,10 @@ import type {
 } from "@/lib/state-store/specs-repo";
 
 import { draftHealth, type DraftHealth } from "./draft-health";
+import {
+  assumptionAuditSnapshot,
+  questionAuditSnapshot,
+} from "./attention-records";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
@@ -22,6 +26,7 @@ import {
   actorProvenanceSchema,
   importBundleSchema,
   resolveImportedValidationStrategy,
+  specReviewRecordMutatedEventPayloadSchema,
   type ActorProvenance,
   type ImportBundle,
   type Refusal,
@@ -408,13 +413,35 @@ export function createImportService(deps: ImportServiceDeps): ImportService {
         // in the external source, and attributing it to a human here would
         // claim an act on this surface that nobody performed.
         provenance_json: stableStringify(actor),
+        record_version: 1,
         status: answered ? "answered" : "open",
         answer: question.answer ?? null,
         answered_at: answered ? occurredAt : null,
+        withdrawn_at: null,
         created_at: occurredAt,
         updated_at: occurredAt,
       };
-      deps.review.saveQuestion(row);
+      const inserted = deps.review.insertQuestion(row);
+      if (inserted.kind !== "success") {
+        throw new Error(`import question identity conflict: ${row.id}`);
+      }
+      deps.events.appendDurableInTransaction({
+        specId,
+        occurredAt,
+        actor,
+        durableEventType: "spec-review-record-mutated",
+        durablePayload: specReviewRecordMutatedEventPayloadSchema.parse({
+          schemaVersion: 1,
+          recordKind: "question",
+          recordId: row.id,
+          recordNumber: row.number,
+          attentionId: row.id,
+          operation: "imported",
+          active: row.status === "open",
+          before: null,
+          after: questionAuditSnapshot(row),
+        }),
+      });
     }
   }
 
@@ -437,12 +464,40 @@ export function createImportService(deps: ImportServiceDeps): ImportService {
         element_id: null,
         text: assumption.text,
         proposed_by_json: stableStringify(actor),
+        record_version: 1,
         disposition,
-        disposed_at: disposition === "proposed" ? null : occurredAt,
+        disposed_at:
+          disposition === "proposed" || disposition === "withdrawn"
+            ? null
+            : occurredAt,
+        withdrawn_at: disposition === "withdrawn" ? occurredAt : null,
+        supersedes_assumption_id: null,
+        supersession_operation_id: null,
+        supersession_request_hash: null,
         created_at: occurredAt,
         updated_at: occurredAt,
       };
-      deps.review.saveAssumption(row);
+      const inserted = deps.review.insertAssumption(row);
+      if (inserted.kind !== "success") {
+        throw new Error(`import assumption identity conflict: ${row.id}`);
+      }
+      deps.events.appendDurableInTransaction({
+        specId,
+        occurredAt,
+        actor,
+        durableEventType: "spec-review-record-mutated",
+        durablePayload: specReviewRecordMutatedEventPayloadSchema.parse({
+          schemaVersion: 1,
+          recordKind: "assumption",
+          recordId: row.id,
+          recordNumber: row.number,
+          attentionId: row.id,
+          operation: "imported",
+          active: row.disposition === "proposed",
+          before: null,
+          after: assumptionAuditSnapshot(row, null),
+        }),
+      });
     }
   }
 

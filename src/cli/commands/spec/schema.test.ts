@@ -416,13 +416,7 @@ describe("cctl spec schema", () => {
       ]);
       // The draft document requires the version, and its example states one.
       expect(draft?.jsonSchema).toMatchObject({
-        required: [
-          "elementId",
-          "kind",
-          "parentElementId",
-          "payload",
-          "baseElementVersion",
-        ],
+        required: ["elementId", "kind", "payload", "baseElementVersion"],
       });
       const parsedDraft = draftElementDocumentSchema.safeParse(draft?.example);
       expect(
@@ -512,13 +506,7 @@ describe("cctl spec schema", () => {
       type: "array",
       items: {
         type: "object",
-        required: [
-          "elementId",
-          "kind",
-          "parentElementId",
-          "payload",
-          "baseElementVersion",
-        ],
+        required: ["elementId", "kind", "payload", "baseElementVersion"],
       },
     });
     // The worked example must be authorable as-is: the server's own batch item
@@ -538,6 +526,72 @@ describe("cctl spec schema", () => {
     expect(batch?.usedBy[0]).toBe(
       "cctl spec draft <slug> --file <elements.json>",
     );
+  });
+
+  /**
+   * The generated shape presents parentElementId as an ordinary writable field,
+   * and now as an optional one — neither of which says that a create must
+   * choose and an update can never change it. An author who learns that from
+   * the refusal has already written the document.
+   */
+  it("states that an element's parent is fixed at creation", async () => {
+    const documents = await readDocuments();
+
+    for (const id of [
+      ...specElementKindSchema.options,
+      "element-batch",
+      "create-element",
+    ]) {
+      const notes = (
+        documents.find((document) => document.id === id)?.notes ?? []
+      ).join(" ");
+      expect(notes, `${id}: no parent-immutability statement`).toContain(
+        "parentElementId cannot change after creation",
+      );
+      expect(notes, `${id}: does not say a create must state it`).toContain(
+        "A create must state it",
+      );
+      expect(notes, `${id}: does not say an update may omit it`).toContain(
+        "an update may leave it out",
+      );
+      expect(notes, `${id}: does not name the refusal`).toContain(
+        "parent_immutable",
+      );
+      expect(notes, `${id}: does not name the replacement path`).toContain(
+        "cctl spec remove",
+      );
+    }
+  });
+
+  /**
+   * Optionality is per verb, not global: the create document is only ever a
+   * create, so leaving the parent out there has no ordinary meaning to fall
+   * back on and the published shape still demands it.
+   */
+  it("keeps parentElementId required in the create document alone", async () => {
+    const documents = await readDocuments();
+
+    expect(
+      documents.find(({ id }) => id === "create-element")?.jsonSchema,
+    ).toMatchObject({
+      anyOf: expect.arrayContaining([
+        expect.objectContaining({
+          required: expect.arrayContaining(["parentElementId"]),
+        }),
+      ]),
+    });
+    expect(
+      createSpecInitialElementSchema.safeParse({
+        elementId: "req-audit",
+        kind: "requirement",
+        payload: {
+          kind: "requirement",
+          statement: "A first element states what contains it.",
+          priority: "must",
+          risk: "high",
+        },
+      }).success,
+    ).toBe(false);
   });
 
   /**
@@ -572,13 +626,7 @@ describe("cctl spec schema", () => {
           required: ["kind", "text", "validationStrategy"],
         },
       },
-      required: [
-        "elementId",
-        "kind",
-        "parentElementId",
-        "payload",
-        "baseElementVersion",
-      ],
+      required: ["elementId", "kind", "payload", "baseElementVersion"],
       additionalProperties: false,
     });
   });

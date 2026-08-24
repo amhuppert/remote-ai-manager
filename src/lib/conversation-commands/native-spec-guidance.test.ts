@@ -60,6 +60,42 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     ],
   },
   {
+    id: "reads answer from the current revision, and sections are read by element id",
+    // The reflection's author read a withdrawn revision's content believing it
+    // was current, because the read path silently fell back and nothing said
+    // so. The same author guessed a handle for a section. Both are read-contract
+    // facts no single verb's help can teach as a rule.
+    required: [
+      /`historical_only`/,
+      /`--revision/,
+      /`cctl spec section get <slug> --id <element-id>`/,
+      /current revision/,
+    ],
+    forbidden: [/falls back|most recent revision that/i],
+  },
+  {
+    id: "a successful propose files its own approval request and request-approval is the recovery",
+    required: [
+      /files the gate-scoped approval request/i,
+      /`cctl spec request-approval`/,
+      /recovery/i,
+    ],
+    // The retired two-step. An agent that reads propose-then-request-approval
+    // as routine files a duplicate ask against a request the server just made.
+    forbidden: [/then (run|use) `cctl spec request-approval`/i],
+  },
+  {
+    id: "an obsolete question or assumption is corrected through the attention verbs",
+    required: [
+      /`cctl spec attention edit`/,
+      /`cctl spec attention withdraw`/,
+      /`cctl spec attention supersede`/,
+    ],
+    // Two instructions the reflection shows are harmful: holding design work in
+    // a question stalls authoring, and disposition is not an agent act at all.
+    forbidden: [/park[^.]{0,60}question/i, /reject[^.]{0,30}assumption/i],
+  },
+  {
     id: "a draft element can be removed, and removal's inverse is reintroduction",
     // Removal existed server-side for the whole pilot and no agent reached it,
     // because nothing an agent reads said it was possible. This is the fact

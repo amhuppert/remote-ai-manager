@@ -15,6 +15,10 @@ import Database from "better-sqlite3";
 
 import { _createTestDb, _createTestDbAtPath } from "../state-db";
 import { runMigrations } from "../migrator";
+import {
+  computeSpecRevisionCitationHash,
+  computeSpecRevisionContentHashFromCanonical,
+} from "../specs-repo";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import {
   inspectNativeSddV2Cutover,
@@ -66,6 +70,11 @@ const SNAPSHOT_ID = "snapshot-legacy";
 const CANDIDATE_ID = "candidate-legacy";
 const TIMESTAMP = "2026-08-15T12:00:00.000Z";
 const SAMPLE_LIMIT = 20;
+const EMPTY_PLAN_CONTENT_HASH = computeSpecRevisionContentHashFromCanonical(
+  "plan",
+  [],
+);
+const EMPTY_LEGACY_CITATION_HASH = computeSpecRevisionCitationHash(1, []);
 
 const EMPTY_COUNTS: NativeSddV2CutoverCounts = {
   activeGraphExecutions: 0,
@@ -377,9 +386,18 @@ function seedRelationalArtifacts(db: Db, status: FixtureGraphStatus): void {
   db.prepare(
     `INSERT INTO spec_revisions (
        id, spec_id, number, state, authoring_stage, content_hash,
-       approved_at, created_at
-     ) VALUES (?, ?, 1, 'approved', 'plan', ?, ?, ?)`,
-  ).run(REVISION_ID, SPEC_ID, `sha256:${"1".repeat(64)}`, TIMESTAMP, TIMESTAMP);
+       citation_contract_version, citation_hash, proposed_at, approved_at,
+       created_at
+     ) VALUES (?, ?, 1, 'approved', 'plan', ?, 1, ?, ?, ?, ?)`,
+  ).run(
+    REVISION_ID,
+    SPEC_ID,
+    EMPTY_PLAN_CONTENT_HASH,
+    EMPTY_LEGACY_CITATION_HASH,
+    TIMESTAMP,
+    TIMESTAMP,
+    TIMESTAMP,
+  );
   const insertElement = db.prepare(
     `INSERT INTO spec_elements (
        id, spec_id, kind, number, parent_element_id, created_at
@@ -1179,9 +1197,18 @@ function seedModernTypedExecution(db: Db): void {
   db.prepare(
     `INSERT INTO spec_revisions (
        id, spec_id, number, state, authoring_stage, content_hash,
-       approved_at, created_at
-     ) VALUES (?, ?, 1, 'approved', 'plan', ?, ?, ?)`,
-  ).run(revisionId, specId, `sha256:${"5".repeat(64)}`, TIMESTAMP, TIMESTAMP);
+       citation_contract_version, citation_hash, proposed_at, approved_at,
+       created_at
+     ) VALUES (?, ?, 1, 'approved', 'plan', ?, 1, ?, ?, ?, ?)`,
+  ).run(
+    revisionId,
+    specId,
+    EMPTY_PLAN_CONTENT_HASH,
+    EMPTY_LEGACY_CITATION_HASH,
+    TIMESTAMP,
+    TIMESTAMP,
+    TIMESTAMP,
+  );
   db.prepare(
     `INSERT INTO spec_executions (
        id, spec_id, revision_id, scope_json, state, execution_start_dial,

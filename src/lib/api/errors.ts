@@ -42,4 +42,10 @@ export interface ApiError {
   output?: string;
   /** Optional structured details consumers can use for richer UI handling */
   details?: Record<string, unknown>;
+  /**
+   * Optional server-authored next step. `cctl` renders it as its load-bearing
+   * `instruction:` line, so a read miss with an exact recovery command can
+   * hand the caller that command instead of only naming what is absent.
+   */
+  instruction?: string;
 }

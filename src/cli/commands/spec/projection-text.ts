@@ -4,6 +4,11 @@
  * projection through this module, so the two surfaces cannot word the same fact
  * differently and neither reaches a verdict of its own.
  */
+import {
+  approvalLedgerSentence,
+  REOPEN_CARRY_NOTE,
+  type ApprovalLedger,
+} from "@/lib/specs/approval-ledger";
 import type {
   AuthoringPendingBlockView,
   SpecGatePriorAdmission,
@@ -118,6 +123,26 @@ export function signOffLines(signOff: RevisionSignOff): string[] {
 }
 
 /**
+ * Both sides of what the consulted gates ask for, then the mechanism those
+ * counts assert. The counts are the server's and the sentence is its one
+ * renderer, so status and every receipt say them identically; the rule line
+ * rides along because a pending count read alone is heard as "these approvals
+ * were lost" rather than "these were never given".
+ */
+export function approvalLedgerLines(ledger: ApprovalLedger): string[] {
+  return [approvalLedgerSentence(ledger), `carry rule: ${ledger.carryRule}`];
+}
+
+/**
+ * The same account on a receipt that reopens a draft. Reopening is the exact
+ * moment the carry is misread as a loss, so what carries is stated outright
+ * rather than left to be inferred from two counts.
+ */
+export function reopenedApprovalLedgerLines(ledger: ApprovalLedger): string[] {
+  return [...approvalLedgerLines(ledger), REOPEN_CARRY_NOTE];
+}
+
+/**
  * The block a transition receipt renders under its `acts next` line. Blocking
  * comment threads and sign-off lint findings block a revision as surely as an
  * outstanding subject does, so every unmet condition travels rather than one
@@ -129,14 +154,21 @@ export function pendingBlockLines(block: AuthoringPendingBlockView): string[] {
       ? []
       : [
           "blocking gates:",
-          ...block.gates.map(
-            (gate) =>
-              `  ${gateLine(gate)}${
-                gate.subjects.length === 0
-                  ? ""
-                  : ` — subjects: ${gate.subjects.join(", ")}`
-              }`,
-          ),
+          ...block.gates.flatMap((gate) => [
+            `  ${gateLine(gate)}${
+              gate.subjects.length === 0
+                ? ""
+                : ` — subjects: ${gate.subjects.join(", ")}`
+            }`,
+            // A subject the import settled is absent from `subjects` and no
+            // human approved it, so dropping it here is what lets a reader
+            // count the gate's outstanding work as its whole content.
+            ...(gate.importCarriedSubjects.length === 0
+              ? []
+              : [
+                  `    import-carried subjects (no human approved them): ${gate.importCarriedSubjects.join(", ")}`,
+                ]),
+          ]),
         ]),
     ...(block.unmetConditions.length === 0
       ? []

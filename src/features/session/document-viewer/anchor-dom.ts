@@ -1,7 +1,4 @@
-import type {
-  CommentAnchor,
-  CommentStatus,
-} from "@/lib/document-comments/schemas";
+import type { CommentAnchor } from "@/lib/document-comments/schemas";
 import { deriveSelectionAnchor } from "@/lib/document-comments/anchor";
 import {
   CC_LINE_ATTR,
@@ -9,7 +6,7 @@ import {
   resolveBlockMeta,
   resolveSelectionBlock,
 } from "@/components/markdown/markdown-source-map";
-import type { ResolvedComment } from "./types";
+import type { ResolvedMarkdownAnnotation } from "@/components/document-viewer/annotation-contract";
 
 /**
  * Pure DOM helpers that bridge a stored single-block comment anchor to the live
@@ -26,20 +23,30 @@ import type { ResolvedComment } from "./types";
 
 const NOT_ANNOTATABLE_SELECTOR = ".not-annotatable";
 
+export function findCommentBlockCandidates(
+  container: ParentNode,
+  anchor: Pick<CommentAnchor, "line" | "sectionId">,
+): HTMLElement[] {
+  const matching = [
+    ...container.querySelectorAll<HTMLElement>(
+      `[${CC_LINE_ATTR}="${anchor.line}"][${CC_SECTION_ATTR}="${CSS.escape(anchor.sectionId)}"]`,
+    ),
+  ];
+  return matching.filter(
+    (candidate) =>
+      !matching.some(
+        (other) => other !== candidate && candidate.contains(other),
+      ),
+  );
+}
+
 /** Locate the stamped block a comment anchor points at (by source line + section). */
 export function findCommentBlock(
   container: ParentNode,
   anchor: Pick<CommentAnchor, "line" | "sectionId">,
 ): HTMLElement | null {
-  const byLine = container.querySelectorAll<HTMLElement>(
-    `[${CC_LINE_ATTR}="${anchor.line}"]`,
-  );
-  if (byLine.length === 0) return null;
-  if (byLine.length === 1) return byLine[0] ?? null;
-  for (const el of byLine) {
-    if (el.getAttribute(CC_SECTION_ATTR) === anchor.sectionId) return el;
-  }
-  return byLine[0] ?? null;
+  const candidates = findCommentBlockCandidates(container, anchor);
+  return candidates.length === 1 ? (candidates[0] ?? null) : null;
 }
 
 function isAnnotatable(node: Node): boolean {
@@ -208,59 +215,53 @@ export function deriveAnchorFromSelection(
   });
 }
 
-/** Comments whose stored quote still re-anchors exactly (eligible to highlight). */
-export function selectAnchoredComments(
-  comments: ResolvedComment[],
-): ResolvedComment[] {
-  return comments.filter((c) => c.reanchor.status === "anchored");
+/** Annotations whose stored quote resolves against a concrete rendered block. */
+export function selectRenderableAnnotations(
+  annotations: readonly ResolvedMarkdownAnnotation[],
+): ResolvedMarkdownAnnotation[] {
+  return annotations.filter(
+    (annotation) =>
+      annotation.block !== null && annotation.anchorState.status !== "stale",
+  );
 }
 
-/** One left-gutter marker per anchored block, collapsing co-located comments. */
+/** One left-gutter marker per runtime block, collapsing co-located annotations. */
 export interface GutterGroup {
-  /** Stable per-block key (`line:sectionId`). */
+  /** Stable within one annotation projection. */
   key: string;
-  line: number;
-  sectionId: string;
-  /** Comment opened when the marker is clicked. */
-  representativeId: string;
-  /** Pending if any co-located comment is pending, else sent. */
-  status: CommentStatus;
-  /** Number of comments anchored to this block. */
+  block: HTMLElement;
+  ids: readonly string[];
+  /** Active if any co-located annotation is active, otherwise settled. */
+  tone: ResolvedMarkdownAnnotation["tone"];
   count: number;
 }
 
 /**
- * Group anchored comments into one marker per block (keyed by source line +
- * section), preserving first-seen order. A block with any pending comment reads
- * as pending so the user sees there is still unsent feedback there.
+ * Group annotations by the exact runtime block used to resolve their offsets.
+ * Object identity prevents two ambiguous blocks with the same source stamps
+ * from being collapsed into an arbitrary passage.
  */
-export function groupAnchoredComments(
-  comments: ResolvedComment[],
+export function groupResolvedAnnotations(
+  annotations: readonly ResolvedMarkdownAnnotation[],
 ): GutterGroup[] {
-  const order: string[] = [];
-  const byBlock = new Map<string, ResolvedComment[]>();
-  for (const comment of selectAnchoredComments(comments)) {
-    const key = `${comment.anchor.line}:${comment.anchor.sectionId}`;
-    const existing = byBlock.get(key);
+  const byBlock = new Map<HTMLElement, ResolvedMarkdownAnnotation[]>();
+  for (const annotation of selectRenderableAnnotations(annotations)) {
+    const block = annotation.block;
+    if (block === null) continue;
+    const existing = byBlock.get(block);
     if (existing) {
-      existing.push(comment);
+      existing.push(annotation);
     } else {
-      byBlock.set(key, [comment]);
-      order.push(key);
+      byBlock.set(block, [annotation]);
     }
   }
-  return order.map((key) => {
-    const group = byBlock.get(key) ?? [];
-    const first = group[0]!;
-    const status: CommentStatus = group.some((c) => c.status === "pending")
-      ? "pending"
-      : "sent";
+  return [...byBlock.entries()].map(([block, group]) => {
+    const ids = group.map(({ id }) => id);
     return {
-      key,
-      line: first.anchor.line,
-      sectionId: first.anchor.sectionId,
-      representativeId: first.id,
-      status,
+      key: ids.join(":"),
+      block,
+      ids,
+      tone: group.some(({ tone }) => tone === "active") ? "active" : "settled",
       count: group.length,
     };
   });

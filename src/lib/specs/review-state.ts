@@ -9,17 +9,22 @@ import {
   formatBareElementHandle,
   type BareElementHandle,
 } from "./handles";
-import type { Spec, SpecRevisionSnapshot } from "./schemas";
+import type { Spec, SpecAssumptionRow, SpecRevisionSnapshot } from "./schemas";
 import type {
   RevisionSnapshot as LintRevisionSnapshot,
   SpecRecords,
 } from "./lint";
 import {
   createApprovalApplicability,
+  type ApprovalCitationState,
   type ApprovalApplicability,
 } from "./approval-applicability";
 import { importBaselineRevisionId } from "./import-baseline";
-import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
+import type {
+  RevisionCitation as DiffRevisionCitation,
+  RevisionCitationDiffContext,
+  RevisionElement as DiffRevisionElement,
+} from "./revision-diff";
 import { ancestorIds, nearestApprovedAncestor } from "./revision-lineage";
 import type { SignOffReviewSnapshot } from "./transitions";
 
@@ -81,30 +86,21 @@ function elementHandle(
 export function toLintSnapshot(
   spec: Spec,
   snapshot: SpecRevisionSnapshot,
-  review?: SpecReviewRepo,
 ): LintRevisionSnapshot {
   const assumptionsByElement = new Map<
     string,
     Array<{ id: string; handle: string }>
   >();
-  for (const assumption of review?.findAssumptionsBySpecId(spec.id) ?? []) {
-    if (assumption.element_id === null) continue;
-    if (
-      snapshot.revision.state !== "draft" &&
-      snapshot.revision.proposedAt !== null &&
-      assumption.created_at > snapshot.revision.proposedAt
-    ) {
-      continue;
-    }
-    const existing = assumptionsByElement.get(assumption.element_id) ?? [];
+  for (const citation of snapshot.assumptionCitations) {
+    const existing = assumptionsByElement.get(citation.elementId) ?? [];
     existing.push({
-      id: assumption.id,
+      id: citation.assumptionId,
       handle: formatBareElementHandle({
         kind: "assumption",
-        number: assumption.number,
+        number: citation.snapshot.number,
       }),
     });
-    assumptionsByElement.set(assumption.element_id, existing);
+    assumptionsByElement.set(citation.elementId, existing);
   }
 
   return {
@@ -133,6 +129,52 @@ export function toLintSnapshot(
   };
 }
 
+/**
+ * Citations first, then the spec's own assumption rows. The citation snapshot
+ * wins where both describe the same assumption: 9.6 and 9.8 judge a cited
+ * assumption by the disposition the citation froze, not by whatever the mutable
+ * row says now.
+ *
+ * The rows still have to be here, because an assumption may carry no element
+ * attachment at all and therefore no citation. It exists, it is addressable as
+ * `A<n>`, and lint's existence checks — prose references among them — would
+ * otherwise call a perfectly real assumption unknown.
+ */
+export function toLintAssumptionRecords(
+  snapshot: SpecRevisionSnapshot,
+  specAssumptions: readonly SpecAssumptionRow[],
+): NonNullable<SpecRecords["assumptions"]> {
+  const assumptions = new Map<
+    string,
+    NonNullable<SpecRecords["assumptions"]>[number]
+  >();
+  for (const citation of snapshot.assumptionCitations) {
+    if (assumptions.has(citation.assumptionId)) continue;
+    assumptions.set(citation.assumptionId, {
+      assumptionId: citation.assumptionId,
+      handle: formatBareElementHandle({
+        kind: "assumption",
+        number: citation.snapshot.number,
+      }),
+      disposition: citation.snapshot.disposition,
+    });
+  }
+  for (const assumption of specAssumptions) {
+    if (assumptions.has(assumption.id)) continue;
+    assumptions.set(assumption.id, {
+      assumptionId: assumption.id,
+      handle: formatBareElementHandle({
+        kind: "assumption",
+        number: assumption.number,
+      }),
+      disposition: assumption.disposition,
+    });
+  }
+  return [...assumptions.values()].sort((left, right) =>
+    left.handle.localeCompare(right.handle, undefined, { numeric: true }),
+  );
+}
+
 export function toDiffRows(
   snapshot: SpecRevisionSnapshot,
 ): DiffRevisionElement[] {
@@ -142,6 +184,32 @@ export function toDiffRows(
     payloadHash: version.payloadHash,
     payload: version.payload,
   }));
+}
+
+export function toDiffCitations(
+  snapshot: SpecRevisionSnapshot,
+): DiffRevisionCitation[] {
+  return snapshot.assumptionCitations.map(
+    ({ elementId, assumptionId, snapshot: assumptionSnapshot }) => ({
+      elementId,
+      assumptionId,
+      snapshot: assumptionSnapshot,
+    }),
+  );
+}
+
+export function toCitationDiffContext(
+  base: SpecRevisionSnapshot | null,
+  draft: SpecRevisionSnapshot,
+): RevisionCitationDiffContext {
+  return {
+    baseCitationContractVersion:
+      base?.revision.citationContractVersion ??
+      draft.revision.citationContractVersion,
+    draftCitationContractVersion: draft.revision.citationContractVersion,
+    baseCitations: base === null ? [] : toDiffCitations(base),
+    draftCitations: toDiffCitations(draft),
+  };
 }
 
 /**
@@ -182,6 +250,7 @@ export interface LoadedProposalState {
    * status projection must read the same baseline.
    */
   importBaselineRows: DiffRevisionElement[] | null;
+  importBaselineCitationState: ApprovalCitationState | null;
 }
 
 export type ProposalStateRepo = Pick<
@@ -221,11 +290,17 @@ export function loadProposalState(
       : loadSnapshot(importBaselineRevision);
   const importBaselineRows =
     importBaselineSnapshot === null ? null : toDiffRows(importBaselineSnapshot);
-  const draft = toLintSnapshot(spec, snapshot, review);
+  const importBaselineCitationState =
+    importBaselineSnapshot === null
+      ? null
+      : {
+          citationContractVersion:
+            importBaselineSnapshot.revision.citationContractVersion,
+          citations: toDiffCitations(importBaselineSnapshot),
+        };
+  const draft = toLintSnapshot(spec, snapshot);
   const baseDraft =
-    baseSnapshot === null
-      ? undefined
-      : toLintSnapshot(spec, baseSnapshot, review);
+    baseSnapshot === null ? undefined : toLintSnapshot(spec, baseSnapshot);
   const approvals = review.findApprovalsBySpecId(spec.id);
   const approvedElements = approvals.flatMap((approval) => {
     if (approval.element_id === null) return [];
@@ -252,11 +327,10 @@ export function loadProposalState(
       },
     ]),
   );
-  const assumptions = review.findAssumptionsBySpecId(spec.id).map((row) => ({
-    assumptionId: row.id,
-    handle: formatBareElementHandle({ kind: "assumption", number: row.number }),
-    disposition: row.disposition,
-  }));
+  const assumptions = toLintAssumptionRecords(
+    snapshot,
+    review.findAssumptionsBySpecId(spec.id),
+  );
   const materializedTasks = links
     .findBySpecId(spec.id)
     .filter(
@@ -313,8 +387,22 @@ export function loadProposalState(
     governanceBaseRevisionId: governanceBase?.id ?? null,
     governanceBaseRevisionRows:
       governanceBaseSnapshot === null ? [] : toDiffRows(governanceBaseSnapshot),
+    governanceBaseCitationState:
+      governanceBaseSnapshot === null
+        ? {
+            citationContractVersion: snapshot.revision.citationContractVersion,
+            citations: [],
+          }
+        : {
+            citationContractVersion:
+              governanceBaseSnapshot.revision.citationContractVersion,
+            citations: toDiffCitations(governanceBaseSnapshot),
+          },
     revisionRows: toDiffRows(snapshot),
+    citationContractVersion: snapshot.revision.citationContractVersion,
+    citations: toDiffCitations(snapshot),
     importBaselineRows,
+    importBaselineCitationState,
     blockingThreads: review
       .findCommentsByRevision(snapshot.revision.id)
       .filter((comment) => comment.blocking === 1)
@@ -342,13 +430,24 @@ export function loadProposalState(
     reviewBaseSnapshot: baseSnapshot,
     governanceBaseSnapshot,
     importBaselineRows,
+    importBaselineCitationState,
     approvalApplies: createApprovalApplicability({
       revisionId: snapshot.revision.id,
+      basedOnRevisionId: snapshot.revision.basedOnRevisionId,
       ancestorRevisionIds: ancestorIds(revisions, snapshot.revision.id),
       revisionRows: reviewSnapshot.revisionRows,
-      rowsForRevision: (revisionId) => {
+      citationContractVersion: snapshot.revision.citationContractVersion,
+      citations: toDiffCitations(snapshot),
+      stateForRevision: (revisionId) => {
         const approved = loadSnapshot(revisionId);
-        return approved === null ? null : toDiffRows(approved);
+        return approved === null
+          ? null
+          : {
+              rows: toDiffRows(approved),
+              citationContractVersion:
+                approved.revision.citationContractVersion,
+              citations: toDiffCitations(approved),
+            };
       },
     }),
   };

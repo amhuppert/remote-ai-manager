@@ -1,20 +1,22 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useState, type RefObject } from "react";
+import { useEffect, useMemo, type RefObject } from "react";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import type {
   DocumentComment,
   DocumentRef,
 } from "@/lib/document-comments/schemas";
-import { tryReanchorExact } from "@/lib/document-comments/anchor";
 import { useDocumentCommentsQuery } from "@/lib/document-comments/queries";
-import {
-  blockAnnotatableText,
-  findCommentBlock,
-  groupAnchoredComments,
-  type GutterGroup,
-} from "./anchor-dom";
+import { groupResolvedAnnotations, type GutterGroup } from "./anchor-dom";
 import type { ResolvedComment } from "./types";
+import {
+  resolveLiveMarkdownAnchors,
+  useLiveMarkdownAnchorResolution,
+} from "./use-live-markdown-anchor-resolution";
+import type {
+  MarkdownAnnotationSource,
+  ResolvedMarkdownAnnotation,
+} from "@/components/document-viewer/annotation-contract";
 
 const logger = createClientLogger("document-comments-hook");
 
@@ -37,14 +39,38 @@ export function resolveComments(
   comments: readonly DocumentComment[],
   contentEl: HTMLElement | null,
 ): ResolvedComment[] {
-  return comments.map((comment) => {
-    const block = contentEl
-      ? findCommentBlock(contentEl, comment.anchor)
-      : null;
-    const blockText = block ? blockAnnotatableText(block) : null;
-    const reanchor = tryReanchorExact(blockText, comment.anchor);
-    return { ...comment, reanchor, stale: reanchor.status === "stale" };
-  });
+  return resolveLiveMarkdownAnchors(
+    comments.map(documentCommentSource),
+    contentEl,
+  ).map(resolvedDocumentComment);
+}
+
+interface DocumentCommentAnnotationSource
+  extends DocumentComment, MarkdownAnnotationSource {}
+
+function documentCommentSource(
+  comment: DocumentComment,
+): DocumentCommentAnnotationSource {
+  return {
+    ...comment,
+    tone: comment.status === "pending" ? "active" : "settled",
+    accessibleLabel: `Comment ${comment.id}`,
+  };
+}
+
+function resolvedDocumentComment(
+  annotation: DocumentCommentAnnotationSource &
+    Pick<ResolvedMarkdownAnnotation, "anchorState" | "block">,
+): ResolvedComment {
+  const reanchor =
+    annotation.anchorState.status === "stale"
+      ? ({ status: "stale" } as const)
+      : {
+          status: "anchored" as const,
+          charStart: annotation.anchorState.charStart,
+          charEnd: annotation.anchorState.charEnd,
+        };
+  return { ...annotation, reanchor, stale: reanchor.status === "stale" };
 }
 
 export interface UseDocumentCommentsParams {
@@ -63,6 +89,7 @@ export interface UseDocumentCommentsParams {
 export interface DocumentCommentsState {
   /** All comments for the active document, resolved (anchored or stale). */
   comments: ResolvedComment[];
+  annotations: readonly ResolvedMarkdownAnnotation[];
   /** Total comment count for the active document — drives the header badge (1.4). */
   commentCount: number;
   /** Pending (unsent) comments, for the tray (anchored or stale). */
@@ -96,38 +123,36 @@ export function useDocumentComments({
 
   const rawComments = query.data ?? EMPTY_COMMENTS;
 
-  const [comments, setComments] = useState<ResolvedComment[]>([]);
+  const sources = useMemo(
+    () => rawComments.map(documentCommentSource),
+    [rawComments],
+  );
+  const annotations = useLiveMarkdownAnchorResolution(
+    sources,
+    content,
+    contentRef,
+  );
+  const comments = useMemo(
+    () => annotations.map(resolvedDocumentComment),
+    [annotations],
+  );
 
-  useLayoutEffect(() => {
-    const reanchor = (): void => {
-      const resolved = resolveComments(rawComments, contentRef.current);
-      setComments(resolved);
-      if (resolved.length > 0) {
-        const staleCount = resolved.filter((c) => c.stale).length;
-        logger.debug("document-comments.reanchor", {
-          docPath: docRef?.docPath,
-          total: resolved.length,
-          anchored: resolved.length - staleCount,
-          stale: staleCount,
-        });
-      }
-    };
-
-    reanchor();
-
-    // The canonical document renderer stamps blocks asynchronously (its renderer
-    // is loaded behind a deferred boundary and shows a fallback first), so the
-    // initial pass can run before any stamped block exists. Re-anchor whenever the
-    // rendered subtree changes so comments resolve against the stamped DOM as soon
-    // as it appears — and again on later in-place content swaps. Re-anchoring never
-    // mutates this subtree (the gutter/highlights live outside it), so this does
-    // not feed back into the observer.
-    const contentEl = contentRef.current;
-    if (!contentEl) return;
-    const observer = new MutationObserver(reanchor);
-    observer.observe(contentEl, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [rawComments, content, contentRef, docRef?.docPath]);
+  useEffect(() => {
+    if (annotations.length === 0) return;
+    const stale = annotations.filter(
+      ({ anchorState }) => anchorState.status === "stale",
+    ).length;
+    const reanchored = annotations.filter(
+      ({ anchorState }) => anchorState.status === "reanchored",
+    ).length;
+    logger.debug("document-comments.reanchor", {
+      docPath: docRef?.docPath,
+      total: annotations.length,
+      anchored: annotations.length - stale - reanchored,
+      reanchored,
+      stale,
+    });
+  }, [annotations, docRef?.docPath]);
 
   const pendingComments = useMemo(
     () => comments.filter((c) => c.status === "pending"),
@@ -135,12 +160,13 @@ export function useDocumentComments({
   );
 
   const anchoredGroups = useMemo(
-    () => groupAnchoredComments(comments),
-    [comments],
+    () => groupResolvedAnnotations(annotations),
+    [annotations],
   );
 
   return {
     comments,
+    annotations,
     commentCount: rawComments.length,
     pendingComments,
     anchoredGroups,

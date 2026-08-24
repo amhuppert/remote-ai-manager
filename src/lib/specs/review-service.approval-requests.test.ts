@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const logging = vi.hoisted(() => ({ warn: vi.fn() }));
+
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
     info: vi.fn(),
     debug: vi.fn(),
-    warn: vi.fn(),
+    warn: logging.warn,
     error: vi.fn(),
   }),
 }));
@@ -23,6 +25,7 @@ import { createSpecEventsPublisher } from "./events";
 import {
   createReviewService,
   type ReviewService,
+  type ReviewServiceDeps,
   type SpecApprovalRequestNotice,
 } from "./review-service";
 
@@ -46,6 +49,7 @@ describe("ReviewService.requestApproval validation", () => {
   let reviewRepo: ReturnType<typeof createSpecReviewRepo>;
   let published: SSEEvent[];
   let requested: SpecApprovalRequestNotice[];
+  let serviceDeps: ReviewServiceDeps;
 
   beforeEach(() => {
     db = _createTestDb({ inMemory: true });
@@ -53,10 +57,11 @@ describe("ReviewService.requestApproval validation", () => {
     seed(db);
     published = [];
     requested = [];
+    logging.warn.mockClear();
     let idSequence = 0;
     reviewRepo = createSpecReviewRepo(db);
     eventsRepo = createSpecEventsRepo(db);
-    service = createReviewService({
+    serviceDeps = {
       specs: createSpecsRepo(db, createWriteQueue()),
       review: reviewRepo,
       delivery: createSpecDeliveryRepo(db),
@@ -78,8 +83,24 @@ describe("ReviewService.requestApproval validation", () => {
       },
       newId: (prefix) => `${prefix}-${++idSequence}`,
       now: () => NOW,
-    });
+    };
+    service = createReviewService(serviceDeps);
   });
+
+  /** The fields of one warn the service emitted under `event`. */
+  function warnFields(event: string): Record<string, unknown> {
+    const calls = logging.warn.mock.calls.filter(
+      ([name]: unknown[]) => name === event,
+    );
+    if (calls.length !== 1) {
+      throw new Error(`expected one ${event} warn, saw ${calls.length}`);
+    }
+    const fields: unknown = calls[0]?.[1];
+    if (typeof fields !== "object" || fields === null) {
+      throw new Error(`${event} carried no structured fields`);
+    }
+    return fields as Record<string, unknown>;
+  }
 
   function attentionEvents() {
     return eventsRepo
@@ -133,11 +154,124 @@ describe("ReviewService.requestApproval validation", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      value: { gate: "requirements", subject: "R1" },
+      value: {
+        gate: "requirements",
+        subject: "R1",
+        deliveryOutcome: "delivered",
+      },
     });
     expect(attentionEvents()).toHaveLength(1);
     expect(requested).toHaveLength(1);
   });
+
+  /**
+   * The notifier runs after the request has durably committed, so a throw
+   * there cannot un-ask the question — propagating it would turn a successful
+   * act into a 5xx and teach agents to retry an ask that already landed.
+   */
+  it("keeps a committed request successful when the notifier throws, reporting delivery as uncertain", async () => {
+    proposeDraft();
+    const crashing = createReviewService({
+      ...serviceDeps,
+      notifier: {
+        approvalRequested() {
+          throw new Error("notification pipeline down");
+        },
+        approvalGranted() {},
+        approvalRequestsClosed() {},
+      },
+    });
+
+    const result = await crashing.requestApproval({
+      specId: SPEC_ID,
+      revisionId: DRAFT_REVISION_ID,
+      gate: "requirements",
+      subject: "R1",
+      actor: AGENT,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      // The durable ask exists; only the human-facing row may be missing, and
+      // the receipt says which of the two the caller is looking at.
+      value: {
+        attentionId: "attention-1",
+        deliveryOutcome: "delivery-uncertain",
+      },
+    });
+    expect(attentionEvents()).toHaveLength(1);
+    const fields = warnFields("specs.review.approval_request_notify_failed");
+    expect(fields).toMatchObject({
+      specId: SPEC_ID,
+      attentionId: "attention-1",
+      gate: "requirements",
+    });
+    // Ids only: a notice carries the spec name and the human-facing message.
+    expect(fields).not.toHaveProperty("subject");
+    expect(fields).not.toHaveProperty("specName");
+  });
+
+  /**
+   * Retiring a pre-scope ask is bookkeeping the requester did not ask for.
+   * Its notice failing must not cost the requester the act it did ask for.
+   */
+  it("keeps the request successful when the retirement notice fails to deliver", async () => {
+    proposeDraft();
+    seedPreBoundaryRequest("R1");
+    const crashing = createReviewService({
+      ...serviceDeps,
+      notifier: {
+        approvalRequested(notice) {
+          requested.push(notice);
+        },
+        approvalGranted() {},
+        approvalRequestsClosed() {
+          throw new Error("notification pipeline down");
+        },
+      },
+    });
+
+    const result = await crashing.requestApproval({
+      specId: SPEC_ID,
+      revisionId: DRAFT_REVISION_ID,
+      gate: "requirements",
+      subject: "R1",
+      actor: AGENT,
+    });
+
+    // The closing notice runs first, so an unguarded throw would also cost
+    // the request its own notice: both must survive.
+    expect(result).toMatchObject({
+      ok: true,
+      value: { alreadyRequested: false, deliveryOutcome: "delivered" },
+    });
+    expect(requested).toHaveLength(1);
+    expect(
+      warnFields("specs.review.approval_requests_closed_notify_failed"),
+    ).toMatchObject({
+      specId: SPEC_ID,
+      attentionIds: ["attention-pre-boundary-R1"],
+    });
+  });
+
+  /** One approval request as it was recorded before requests carried a scope. */
+  function seedPreBoundaryRequest(subject: string): void {
+    eventsRepo.append({
+      spec_id: SPEC_ID,
+      occurred_at: NOW,
+      event_type: "spec-attention-changed",
+      actor_json: JSON.stringify(AGENT),
+      payload_json: JSON.stringify({
+        kind: "approval-requested",
+        attentionId: `attention-pre-boundary-${subject}`,
+        revisionId: DRAFT_REVISION_ID,
+        gate: "requirements",
+        subject,
+        executionId: null,
+        active: true,
+      }),
+    });
+  }
 
   it("returns the existing request instead of a second Needs You entry", async () => {
     proposeDraft();

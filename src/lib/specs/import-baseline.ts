@@ -1,6 +1,7 @@
 import {
   sameSubjectFingerprint,
   subjectFingerprint,
+  type ApprovalCitationState,
   type ApprovalSubject,
 } from "./approval-applicability";
 import type { RevisionElement } from "./revision-diff";
@@ -50,18 +51,32 @@ export function elementApprovalBasis(input: {
   approvalHeld: boolean;
   subject: ApprovalSubject;
   revisionRows: readonly RevisionElement[];
+  revisionCitationState: ApprovalCitationState;
   /** Null for every spec no import created, which keeps this inert natively. */
   importBaselineRows: readonly RevisionElement[] | null;
+  importBaselineCitationState: ApprovalCitationState | null;
 }): ElementApprovalBasis | null {
   if (input.approvalHeld) return "human_approval";
   // The plan gate is never import-admitted, and its subject is the task set as
   // a whole: an empty baseline would match an empty task list by accident.
-  if (input.importBaselineRows === null || input.subject.elementId === null) {
+  if (
+    input.importBaselineRows === null ||
+    input.importBaselineCitationState === null ||
+    input.subject.elementId === null
+  ) {
     return null;
   }
   return sameSubjectFingerprint(
-    subjectFingerprint(input.revisionRows, input.subject),
-    subjectFingerprint(input.importBaselineRows, input.subject),
+    subjectFingerprint(
+      input.revisionRows,
+      input.subject,
+      input.revisionCitationState,
+    ),
+    subjectFingerprint(
+      input.importBaselineRows,
+      input.subject,
+      input.importBaselineCitationState,
+    ),
   )
     ? "import_carry_forward"
     : null;

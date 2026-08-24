@@ -13,6 +13,7 @@ import {
   runSpecPlanPreview,
   runSpecPlanStatus,
   runSpecSearch,
+  runSpecSectionGet,
   runSpecShow,
   runSpecStatus,
   runSpecVerify,
@@ -21,6 +22,11 @@ import { runSpecSchema } from "./schema";
 import {
   runSpecAbandon,
   runSpecAdvance,
+  runSpecAttentionCite,
+  runSpecAttentionEdit,
+  runSpecAttentionSupersede,
+  runSpecAttentionUncite,
+  runSpecAttentionWithdraw,
   runSpecAmend,
   runSpecAnswer,
   runSpecAssume,
@@ -64,6 +70,16 @@ export async function runSpec(
       comments: (next) => runSpecComments(next, flags, values, env, host),
       lint: (next) => runSpecLint(next, flags, values, env, host),
       get: (next) => runSpecGet(next, flags, values, env, host),
+      section: (next) =>
+        dispatchGroup({
+          group: ["spec", "section"],
+          rest: next,
+          json: flags.json,
+          handlers: {
+            get: (sectionRest) =>
+              runSpecSectionGet(sectionRest, flags, values, env, host),
+          },
+        }),
       search: (next) => runSpecSearch(next, flags, values, env, host),
       diff: (next) => runSpecDiff(next, flags, values, env, host),
       schema: (next) => Promise.resolve(runSpecSchema(next, flags, values)),
@@ -85,6 +101,30 @@ export async function runSpec(
       answer: (next) => runSpecAnswer(next, flags, values, env, host),
       reply: (next) => runSpecReply(next, flags, values, env, host),
       assume: (next) => runSpecAssume(next, flags, values, env, host),
+      attention: (next) =>
+        dispatchGroup({
+          group: ["spec", "attention"],
+          rest: next,
+          json: flags.json,
+          handlers: {
+            edit: (attentionRest) =>
+              runSpecAttentionEdit(attentionRest, flags, values, env, host),
+            withdraw: (attentionRest) =>
+              runSpecAttentionWithdraw(attentionRest, flags, values, env, host),
+            supersede: (attentionRest) =>
+              runSpecAttentionSupersede(
+                attentionRest,
+                flags,
+                values,
+                env,
+                host,
+              ),
+            cite: (attentionRest) =>
+              runSpecAttentionCite(attentionRest, flags, values, env, host),
+            uncite: (attentionRest) =>
+              runSpecAttentionUncite(attentionRest, flags, values, env, host),
+          },
+        }),
       plan: (next) =>
         dispatchGroup({
           group: ["spec", "plan"],

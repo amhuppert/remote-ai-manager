@@ -233,6 +233,61 @@ describe("a real import enforces propose's blocking-lint bar (R6.2)", () => {
   });
 });
 
+/**
+ * A bundle claims to be a precise contract, so its prose owes the same
+ * reference integrity its id arrays owe: a statement citing a handle the bundle
+ * never defines is a dangling reference the import must refuse, not a wording
+ * choice it can approve.
+ */
+describe("import refuses a bundle whose prose references a handle it never defines", () => {
+  it("blocks on the prose finding and leaves no spec behind", async () => {
+    const result = await importSpec(
+      bundle({
+        requirements: [
+          {
+            statement: "The importer must satisfy R9 before it writes.",
+            priority: "must",
+            risk: "high",
+            criteria: [
+              {
+                text: "Given a bundle, the import is refused.",
+                validationStrategy: { kinds: ["test_run"] },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the import to be refused by lint");
+    expect(result.refusal.code).toBe("lint_blocked");
+    // The prose finding is the one that blocks; the advisory rides along, so
+    // pinning both proves the refusal turned on the reference, not the stage.
+    expect(result.refusal.findings).toEqual([
+      {
+        ruleId: "9.6.dangling-handle",
+        severity: "blocks_propose",
+        elementHandle: "R1",
+        message: "R1 prose references unknown handle R9 in statement.",
+      },
+      {
+        ruleId: "9.13.design-stage-without-design-content",
+        severity: "advisory",
+        elementHandle: SLUG,
+        message:
+          "Design-stage revision carries no decision or design narrative elements.",
+      },
+    ]);
+    expect(result.refusal.unmetConditions).toEqual([
+      "R1 prose references unknown handle R9 in statement.",
+    ]);
+    expect(await harness.fixture.specs.resolve(IMPORTED_PROJECT, SLUG)).toBe(
+      null,
+    );
+  });
+});
+
 describe("a dry run applies the identical lint (R6.1, R6.2)", () => {
   it("previews the findings the real import then refuses with", async () => {
     const preview = await importSpec(bundle({ dryRun: true }));

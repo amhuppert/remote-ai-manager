@@ -29,6 +29,7 @@ function notice(
     subject: "fb-r1",
     threadId: "thread-1",
     proposer: { kind: "agent", conversationId: "conversation-1" },
+    approvalLedger: null,
     occurredAt: "2026-08-12T10:00:01.000Z",
     ...overrides,
   };
@@ -122,6 +123,65 @@ describe("createSpecReviewFeedbackNotifier", () => {
     expect(text).toContain("Changes requested on spec review-feedback");
     expect(text).toContain("cctl spec comments review-feedback --open");
     expect(text).toContain("propose again");
+  });
+
+  /**
+   * The proposer repairs a draft it believes lost every approval unless the
+   * notice prices the reopen — the same counts and the same words `spec
+   * status` and the receipts use.
+   */
+  it("prices the reopen in the words of the ledger the receipts print", async () => {
+    const notifier = buildNotifier(SESSION_CONVERSATION);
+
+    await notifier.reviewFeedback(
+      notice({
+        kind: "changes_requested",
+        subject: null,
+        threadId: null,
+        approvalLedger: {
+          subjects: [
+            {
+              gate: "requirements",
+              subject: "R1",
+              elementId: "fb-r1",
+              classification: "carried",
+            },
+            {
+              gate: "design",
+              subject: "D1",
+              elementId: "fb-d1",
+              classification: "pending",
+            },
+          ],
+          satisfied: 1,
+          carried: 1,
+          currentRevision: 0,
+          importSettled: 0,
+          combinedAct: 0,
+          pending: 1,
+          governedBy: "per_subject",
+          carryRule: "unchanged subject content under the same applicable gate",
+        },
+      }),
+    );
+
+    const text = transcriptNotices[0]!.text;
+    expect(text).toContain(
+      "approval subjects: 1 satisfied (1 carried) · 1 pending",
+    );
+    expect(text).toContain(
+      "approvals on unchanged subjects carry into the reopened draft; only edited subjects need re-approval",
+    );
+    // The agent reads exactly what the human sees.
+    expect(agentNotices[0]!.text).toBe(text);
+  });
+
+  it("says nothing about a ledger on the acts that reopen nothing", async () => {
+    const notifier = buildNotifier(SESSION_CONVERSATION);
+
+    await notifier.reviewFeedback(notice({ kind: "commented" }));
+
+    expect(transcriptNotices[0]!.text).not.toContain("approval subjects:");
   });
 
   it("reports a sign-off without a next read", async () => {

@@ -92,14 +92,6 @@ export async function createProductionSpecRouteServices(
     },
     getProjectDisplayName,
   });
-  const authoring = createAuthoringService({
-    specs,
-    review: reviewRepo,
-    links: linksRepo,
-    events,
-    waivers: deliveryRepo,
-    policyNotifier: notifier,
-  });
   const reviewFeedbackNotifier = createProductionSpecReviewFeedbackNotifier();
   const review = createReviewService({
     specs,
@@ -116,6 +108,20 @@ export async function createProductionSpecRouteServices(
       reviewFeedback: reviewFeedbackNotifier.reviewFeedback,
     },
     policyNotifier: notifier,
+  });
+  // Built after the review service so a successful propose can file the
+  // gate-scoped asks it leaves pending through the same request verb a human
+  // or an agent would call (R10.13) — one durable identity, one Needs You row.
+  const authoring = createAuthoringService({
+    specs,
+    review: reviewRepo,
+    links: linksRepo,
+    events,
+    waivers: deliveryRepo,
+    policyNotifier: notifier,
+    approvalRequests: {
+      requestApproval: (input) => review.requestApproval(input),
+    },
   });
 
   const getWorkflowExecutionStatus = (workflowExecutionId: string) => {
@@ -443,6 +449,7 @@ export async function createProductionSpecRouteServices(
             specs,
             review: reviewRepo,
             delivery: deliveryRepo,
+            events: eventsRepo,
             // The same observe seam the abandon coordinator acts through, so
             // the orphans verify reports are the ones cleanup would clear.
             observeLinkedWorkflow: (target) =>

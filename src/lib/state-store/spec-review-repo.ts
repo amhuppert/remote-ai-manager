@@ -40,10 +40,35 @@ export interface SpecReviewRepo {
     executionId: string;
     gate: SpecGateAdmissionRow["gate"];
   }): boolean;
-  saveQuestion(question: SpecQuestionRow): void;
+  insertQuestion(
+    question: SpecQuestionRow,
+  ): AttentionInsertOutcome<SpecQuestionRow>;
+  updateOpenQuestion(
+    input: UpdateOpenQuestionInput,
+  ): AttentionCasOutcome<SpecQuestionRow>;
+  answerOpenQuestion(
+    input: AnswerOpenQuestionInput,
+  ): AttentionCasOutcome<SpecQuestionRow>;
+  withdrawOpenQuestion(
+    input: WithdrawOpenQuestionInput,
+  ): AttentionCasOutcome<SpecQuestionRow>;
   findQuestionById(id: string): SpecQuestionRow | null;
   findQuestionsBySpecId(specId: string): SpecQuestionRow[];
-  saveAssumption(assumption: SpecAssumptionRow): void;
+  insertAssumption(
+    assumption: SpecAssumptionRow,
+  ): AttentionInsertOutcome<SpecAssumptionRow>;
+  updateProposedAssumption(
+    input: UpdateProposedAssumptionInput,
+  ): AttentionCasOutcome<SpecAssumptionRow>;
+  disposeProposedAssumption(
+    input: DisposeProposedAssumptionInput,
+  ): AttentionCasOutcome<SpecAssumptionRow>;
+  withdrawProposedAssumption(
+    input: WithdrawProposedAssumptionInput,
+  ): AttentionCasOutcome<SpecAssumptionRow>;
+  insertAssumptionSuccessor(
+    input: InsertAssumptionSuccessorInput,
+  ): IdempotentSupersessionOutcome;
   findAssumptionById(id: string): SpecAssumptionRow | null;
   findAssumptionsBySpecId(specId: string): SpecAssumptionRow[];
   saveComment(comment: SpecCommentRow): void;
@@ -51,6 +76,95 @@ export interface SpecReviewRepo {
   findCommentsByRevision(revisionId: string): SpecCommentRow[];
   findCommentsByThread(threadId: string): SpecCommentRow[];
 }
+
+export type AttentionInsertOutcome<Row> =
+  | { readonly kind: "success"; readonly row: Row }
+  | { readonly kind: "uniqueness_conflict" };
+
+export type AttentionCasOutcome<Row> =
+  | { readonly kind: "success"; readonly row: Row }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "stale_version"; readonly currentVersion: number }
+  | { readonly kind: "illegal_lifecycle"; readonly currentVersion: number };
+
+export interface UpdateOpenQuestionInput {
+  readonly id: string;
+  readonly expectedRecordVersion: number;
+  readonly text: string;
+  readonly elementId: string | null;
+  readonly updatedAt: string;
+}
+
+export interface AnswerOpenQuestionInput {
+  readonly id: string;
+  readonly expectedRecordVersion: number;
+  readonly answer: string;
+  readonly answeredAt: string;
+  readonly updatedAt: string;
+}
+
+export interface WithdrawOpenQuestionInput {
+  readonly id: string;
+  readonly expectedRecordVersion: number;
+  readonly withdrawnAt: string;
+  readonly updatedAt: string;
+}
+
+export interface UpdateProposedAssumptionInput {
+  readonly id: string;
+  readonly expectedRecordVersion: number;
+  readonly text: string;
+  readonly elementId: string | null;
+  readonly updatedAt: string;
+}
+
+export interface DisposeProposedAssumptionInput {
+  readonly id: string;
+  readonly expectedRecordVersion: number;
+  readonly disposition: "confirmed" | "rejected" | "deferred";
+  readonly disposedAt: string;
+  readonly updatedAt: string;
+}
+
+export interface WithdrawProposedAssumptionInput {
+  readonly id: string;
+  readonly expectedRecordVersion: number;
+  readonly withdrawnAt: string;
+  readonly updatedAt: string;
+}
+
+export interface InsertAssumptionSuccessorInput {
+  readonly predecessorId: string;
+  readonly specId: string;
+  readonly expectedRecordVersion: number;
+  readonly operationId: string;
+  readonly requestHash: string;
+  readonly successor: {
+    readonly id: string;
+    readonly elementId: string | null;
+    readonly text: string;
+    readonly proposedByJson: string;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+  };
+}
+
+export type IdempotentSupersessionOutcome =
+  | {
+      readonly kind: "success";
+      readonly predecessor: SpecAssumptionRow;
+      readonly successor: SpecAssumptionRow;
+      readonly idempotentReplay: boolean;
+    }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "stale_version"; readonly currentVersion: number }
+  | {
+      readonly kind: "illegal_lifecycle";
+      readonly currentVersion: number;
+      readonly successorId: string | null;
+    }
+  | { readonly kind: "uniqueness_conflict" }
+  | { readonly kind: "idempotency_conflict"; readonly successorId: string };
 
 export function createSpecReviewRepo(db: Db): SpecReviewRepo {
   const saveApprovalStmt = db.prepare(
@@ -131,25 +245,47 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
       LIMIT 1`,
   );
 
-  const saveQuestionStmt = db.prepare(
+  const insertQuestionStmt = db.prepare(
     `INSERT INTO spec_questions (
-       id, spec_id, number, element_id, text, provenance_json, status, answer,
-       answered_at, created_at, updated_at
+       id, spec_id, number, element_id, text, provenance_json, record_version,
+       status, answer, answered_at, withdrawn_at, created_at, updated_at
      ) VALUES (
-       @id, @spec_id, @number, @element_id, @text, @provenance_json, @status,
-       @answer, @answered_at, @created_at, @updated_at
+       @id, @spec_id, @number, @element_id, @text, @provenance_json,
+       @record_version, @status, @answer, @answered_at, @withdrawn_at,
+       @created_at, @updated_at
      )
-     ON CONFLICT(id) DO UPDATE SET
-       spec_id = excluded.spec_id,
-       number = excluded.number,
-       element_id = excluded.element_id,
-       text = excluded.text,
-       provenance_json = excluded.provenance_json,
-       status = excluded.status,
-       answer = excluded.answer,
-       answered_at = excluded.answered_at,
-       created_at = excluded.created_at,
-       updated_at = excluded.updated_at`,
+     ON CONFLICT DO NOTHING`,
+  );
+  const updateOpenQuestionStmt = db.prepare(
+    `UPDATE spec_questions
+     SET text = @text,
+         element_id = @element_id,
+         record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND record_version = @expected_record_version
+       AND status = 'open'`,
+  );
+  const answerOpenQuestionStmt = db.prepare(
+    `UPDATE spec_questions
+     SET status = 'answered',
+         answer = @answer,
+         answered_at = @answered_at,
+         record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND record_version = @expected_record_version
+       AND status = 'open'`,
+  );
+  const withdrawOpenQuestionStmt = db.prepare(
+    `UPDATE spec_questions
+     SET status = 'withdrawn',
+         withdrawn_at = @withdrawn_at,
+         record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND record_version = @expected_record_version
+       AND status = 'open'`,
   );
   const findQuestionStmt = db.prepare(
     "SELECT * FROM spec_questions WHERE id = ? LIMIT 1",
@@ -160,24 +296,80 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
      ORDER BY number ASC`,
   );
 
-  const saveAssumptionStmt = db.prepare(
+  const insertAssumptionStmt = db.prepare(
     `INSERT INTO spec_assumptions (
-       id, spec_id, number, element_id, text, proposed_by_json, disposition,
-       disposed_at, created_at, updated_at
+       id, spec_id, number, element_id, text, proposed_by_json, record_version,
+       disposition, disposed_at, withdrawn_at, supersedes_assumption_id,
+       supersession_operation_id, supersession_request_hash, created_at,
+       updated_at
      ) VALUES (
        @id, @spec_id, @number, @element_id, @text, @proposed_by_json,
-       @disposition, @disposed_at, @created_at, @updated_at
+       @record_version, @disposition, @disposed_at, @withdrawn_at,
+       @supersedes_assumption_id, @supersession_operation_id,
+       @supersession_request_hash, @created_at, @updated_at
      )
-     ON CONFLICT(id) DO UPDATE SET
-       spec_id = excluded.spec_id,
-       number = excluded.number,
-       element_id = excluded.element_id,
-       text = excluded.text,
-       proposed_by_json = excluded.proposed_by_json,
-       disposition = excluded.disposition,
-       disposed_at = excluded.disposed_at,
-       created_at = excluded.created_at,
-       updated_at = excluded.updated_at`,
+     ON CONFLICT DO NOTHING`,
+  );
+  const updateProposedAssumptionStmt = db.prepare(
+    `UPDATE spec_assumptions
+     SET text = @text,
+         element_id = @element_id,
+         record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND record_version = @expected_record_version
+       AND disposition = 'proposed'`,
+  );
+  const disposeProposedAssumptionStmt = db.prepare(
+    `UPDATE spec_assumptions
+     SET disposition = @disposition,
+         disposed_at = @disposed_at,
+         record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND record_version = @expected_record_version
+       AND disposition = 'proposed'`,
+  );
+  const withdrawProposedAssumptionStmt = db.prepare(
+    `UPDATE spec_assumptions
+     SET disposition = 'withdrawn',
+         withdrawn_at = @withdrawn_at,
+         record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND record_version = @expected_record_version
+       AND disposition = 'proposed'`,
+  );
+  const findSuccessorByPredecessorStmt = db.prepare(
+    `SELECT * FROM spec_assumptions
+     WHERE spec_id = ? AND supersedes_assumption_id = ?
+     LIMIT 1`,
+  );
+  const findSuccessorByOperationStmt = db.prepare(
+    `SELECT * FROM spec_assumptions
+     WHERE spec_id = ? AND supersession_operation_id = ?
+     LIMIT 1`,
+  );
+  const incrementSupersededPredecessorStmt = db.prepare(
+    `UPDATE spec_assumptions
+     SET record_version = record_version + 1,
+         updated_at = @updated_at
+     WHERE id = @id
+       AND spec_id = @spec_id
+       AND record_version = @expected_record_version
+       AND disposition IN ('confirmed', 'rejected', 'deferred')
+       AND NOT EXISTS (
+         SELECT 1 FROM spec_assumptions AS successor
+         WHERE successor.spec_id = @spec_id
+           AND successor.supersedes_assumption_id = @id
+       )`,
+  );
+  const allocateAssumptionNumberStmt = db.prepare(
+    `INSERT INTO spec_counters (spec_id, scope_key, last_number)
+     VALUES (?, 'A', 1)
+     ON CONFLICT(spec_id, scope_key)
+     DO UPDATE SET last_number = last_number + 1
+     RETURNING last_number`,
   );
   const findAssumptionStmt = db.prepare(
     "SELECT * FROM spec_assumptions WHERE id = ? LIMIT 1",
@@ -225,6 +417,54 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
      WHERE thread_id = ?
      ORDER BY created_at ASC, id ASC`,
   );
+
+  function readQuestionById(id: string): SpecQuestionRow | null {
+    return readOne(specQuestionRowSchema, "spec_question", id, () =>
+      findQuestionStmt.get(id),
+    );
+  }
+
+  function readAssumptionById(id: string): SpecAssumptionRow | null {
+    return readOne(specAssumptionRowSchema, "spec_assumption", id, () =>
+      findAssumptionStmt.get(id),
+    );
+  }
+
+  function questionCasFailure(
+    id: string,
+    expectedRecordVersion: number,
+  ): Exclude<AttentionCasOutcome<SpecQuestionRow>, { kind: "success" }> {
+    const current = readQuestionById(id);
+    if (current === null) return { kind: "not_found" };
+    if (current.record_version !== expectedRecordVersion) {
+      return {
+        kind: "stale_version",
+        currentVersion: current.record_version,
+      };
+    }
+    return {
+      kind: "illegal_lifecycle",
+      currentVersion: current.record_version,
+    };
+  }
+
+  function assumptionCasFailure(
+    id: string,
+    expectedRecordVersion: number,
+  ): Exclude<AttentionCasOutcome<SpecAssumptionRow>, { kind: "success" }> {
+    const current = readAssumptionById(id);
+    if (current === null) return { kind: "not_found" };
+    if (current.record_version !== expectedRecordVersion) {
+      return {
+        kind: "stale_version",
+        currentVersion: current.record_version,
+      };
+    }
+    return {
+      kind: "illegal_lifecycle",
+      currentVersion: current.record_version,
+    };
+  }
 
   return {
     saveApproval(approval) {
@@ -325,23 +565,72 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
           }) !== undefined,
       );
     },
-    saveQuestion(question) {
-      timed("save", "spec_question", question.id, () => {
-        saveQuestionStmt.run(
-          parseRow(
-            specQuestionRowSchema,
-            "spec_question",
-            question.id,
-            question,
-          ),
+    insertQuestion(question) {
+      return timed("insert", "spec_question", question.id, () => {
+        const parsed = parseRow(
+          specQuestionRowSchema,
+          "spec_question",
+          question.id,
+          question,
         );
+        const result = insertQuestionStmt.run(parsed);
+        if (result.changes === 0) return { kind: "uniqueness_conflict" };
+        return { kind: "success", row: parsed };
+      });
+    },
+    updateOpenQuestion(input) {
+      return timed("update_open", "spec_question", input.id, () => {
+        const result = updateOpenQuestionStmt.run({
+          id: input.id,
+          expected_record_version: input.expectedRecordVersion,
+          text: input.text,
+          element_id: input.elementId,
+          updated_at: input.updatedAt,
+        });
+        if (result.changes === 0) {
+          return questionCasFailure(input.id, input.expectedRecordVersion);
+        }
+        const row = readQuestionById(input.id);
+        if (row === null) return { kind: "not_found" };
+        return { kind: "success", row };
+      });
+    },
+    answerOpenQuestion(input) {
+      return timed("answer_open", "spec_question", input.id, () => {
+        const result = answerOpenQuestionStmt.run({
+          id: input.id,
+          expected_record_version: input.expectedRecordVersion,
+          answer: input.answer,
+          answered_at: input.answeredAt,
+          updated_at: input.updatedAt,
+        });
+        if (result.changes === 0) {
+          return questionCasFailure(input.id, input.expectedRecordVersion);
+        }
+        const row = readQuestionById(input.id);
+        if (row === null) return { kind: "not_found" };
+        return { kind: "success", row };
+      });
+    },
+    withdrawOpenQuestion(input) {
+      return timed("withdraw_open", "spec_question", input.id, () => {
+        const result = withdrawOpenQuestionStmt.run({
+          id: input.id,
+          expected_record_version: input.expectedRecordVersion,
+          withdrawn_at: input.withdrawnAt,
+          updated_at: input.updatedAt,
+        });
+        if (result.changes === 0) {
+          return questionCasFailure(input.id, input.expectedRecordVersion);
+        }
+        const row = readQuestionById(input.id);
+        if (row === null) return { kind: "not_found" };
+        return { kind: "success", row };
       });
     },
     findQuestionById(id) {
       return timed("find_by_id", "spec_question", id, () =>
-        readOne(specQuestionRowSchema, "spec_question", id, () =>
-          findQuestionStmt.get(id),
-        ),
+        readQuestionById(id),
       );
     },
     findQuestionsBySpecId(specId) {
@@ -351,23 +640,223 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
         ),
       );
     },
-    saveAssumption(assumption) {
-      timed("save", "spec_assumption", assumption.id, () => {
-        saveAssumptionStmt.run(
-          parseRow(
-            specAssumptionRowSchema,
-            "spec_assumption",
-            assumption.id,
-            assumption,
-          ),
+    insertAssumption(assumption) {
+      return timed("insert", "spec_assumption", assumption.id, () => {
+        const parsed = parseRow(
+          specAssumptionRowSchema,
+          "spec_assumption",
+          assumption.id,
+          assumption,
         );
+        const result = insertAssumptionStmt.run(parsed);
+        if (result.changes === 0) return { kind: "uniqueness_conflict" };
+        return { kind: "success", row: parsed };
       });
+    },
+    updateProposedAssumption(input) {
+      return timed("update_proposed", "spec_assumption", input.id, () => {
+        const result = updateProposedAssumptionStmt.run({
+          id: input.id,
+          expected_record_version: input.expectedRecordVersion,
+          text: input.text,
+          element_id: input.elementId,
+          updated_at: input.updatedAt,
+        });
+        if (result.changes === 0) {
+          return assumptionCasFailure(input.id, input.expectedRecordVersion);
+        }
+        const row = readAssumptionById(input.id);
+        if (row === null) return { kind: "not_found" };
+        return { kind: "success", row };
+      });
+    },
+    disposeProposedAssumption(input) {
+      return timed("dispose_proposed", "spec_assumption", input.id, () => {
+        const result = disposeProposedAssumptionStmt.run({
+          id: input.id,
+          expected_record_version: input.expectedRecordVersion,
+          disposition: input.disposition,
+          disposed_at: input.disposedAt,
+          updated_at: input.updatedAt,
+        });
+        if (result.changes === 0) {
+          return assumptionCasFailure(input.id, input.expectedRecordVersion);
+        }
+        const row = readAssumptionById(input.id);
+        if (row === null) return { kind: "not_found" };
+        return { kind: "success", row };
+      });
+    },
+    withdrawProposedAssumption(input) {
+      return timed("withdraw_proposed", "spec_assumption", input.id, () => {
+        const result = withdrawProposedAssumptionStmt.run({
+          id: input.id,
+          expected_record_version: input.expectedRecordVersion,
+          withdrawn_at: input.withdrawnAt,
+          updated_at: input.updatedAt,
+        });
+        if (result.changes === 0) {
+          return assumptionCasFailure(input.id, input.expectedRecordVersion);
+        }
+        const row = readAssumptionById(input.id);
+        if (row === null) return { kind: "not_found" };
+        return { kind: "success", row };
+      });
+    },
+    insertAssumptionSuccessor(input) {
+      return timed(
+        "insert_successor",
+        "spec_assumption",
+        input.predecessorId,
+        () =>
+          db
+            .transaction((): IdempotentSupersessionOutcome => {
+              const replayRaw = findSuccessorByOperationStmt.get(
+                input.specId,
+                input.operationId,
+              );
+              if (replayRaw !== undefined) {
+                const successor = parseRow(
+                  specAssumptionRowSchema,
+                  "spec_assumption",
+                  input.operationId,
+                  replayRaw,
+                );
+                if (successor.supersession_request_hash !== input.requestHash) {
+                  return {
+                    kind: "idempotency_conflict",
+                    successorId: successor.id,
+                  };
+                }
+                const predecessor = readAssumptionById(input.predecessorId);
+                if (
+                  predecessor === null ||
+                  successor.supersedes_assumption_id !== predecessor.id
+                ) {
+                  return {
+                    kind: "idempotency_conflict",
+                    successorId: successor.id,
+                  };
+                }
+                return {
+                  kind: "success",
+                  predecessor,
+                  successor,
+                  idempotentReplay: true,
+                };
+              }
+
+              const predecessor = readAssumptionById(input.predecessorId);
+              if (
+                predecessor === null ||
+                predecessor.spec_id !== input.specId
+              ) {
+                return { kind: "not_found" };
+              }
+              if (predecessor.record_version !== input.expectedRecordVersion) {
+                return {
+                  kind: "stale_version",
+                  currentVersion: predecessor.record_version,
+                };
+              }
+              const existingSuccessorRaw = findSuccessorByPredecessorStmt.get(
+                input.specId,
+                input.predecessorId,
+              );
+              if (
+                !["confirmed", "rejected", "deferred"].includes(
+                  predecessor.disposition,
+                ) ||
+                existingSuccessorRaw !== undefined
+              ) {
+                const existingSuccessor =
+                  existingSuccessorRaw === undefined
+                    ? null
+                    : parseRow(
+                        specAssumptionRowSchema,
+                        "spec_assumption",
+                        input.predecessorId,
+                        existingSuccessorRaw,
+                      );
+                return {
+                  kind: "illegal_lifecycle",
+                  currentVersion: predecessor.record_version,
+                  successorId: existingSuccessor?.id ?? null,
+                };
+              }
+              if (readAssumptionById(input.successor.id) !== null) {
+                return { kind: "uniqueness_conflict" };
+              }
+
+              const predecessorUpdate = incrementSupersededPredecessorStmt.run({
+                id: input.predecessorId,
+                spec_id: input.specId,
+                expected_record_version: input.expectedRecordVersion,
+                updated_at: input.successor.updatedAt,
+              });
+              if (predecessorUpdate.changes === 0) {
+                const failure = assumptionCasFailure(
+                  input.predecessorId,
+                  input.expectedRecordVersion,
+                );
+                if (failure.kind !== "illegal_lifecycle") return failure;
+                const successorRaw = findSuccessorByPredecessorStmt.get(
+                  input.specId,
+                  input.predecessorId,
+                );
+                return {
+                  ...failure,
+                  successorId:
+                    successorRaw === undefined
+                      ? null
+                      : parseRow(
+                          specAssumptionRowSchema,
+                          "spec_assumption",
+                          input.predecessorId,
+                          successorRaw,
+                        ).id,
+                };
+              }
+
+              const allocated = allocateAssumptionNumberStmt.get(
+                input.specId,
+              ) as { last_number: number };
+              const successor = specAssumptionRowSchema.parse({
+                id: input.successor.id,
+                spec_id: input.specId,
+                number: allocated.last_number,
+                element_id: input.successor.elementId,
+                text: input.successor.text,
+                proposed_by_json: input.successor.proposedByJson,
+                record_version: 1,
+                disposition: "proposed",
+                disposed_at: null,
+                withdrawn_at: null,
+                supersedes_assumption_id: input.predecessorId,
+                supersession_operation_id: input.operationId,
+                supersession_request_hash: input.requestHash,
+                created_at: input.successor.createdAt,
+                updated_at: input.successor.updatedAt,
+              });
+              const insert = insertAssumptionStmt.run(successor);
+              if (insert.changes === 0) return { kind: "uniqueness_conflict" };
+              const updatedPredecessor = readAssumptionById(
+                input.predecessorId,
+              );
+              if (updatedPredecessor === null) return { kind: "not_found" };
+              return {
+                kind: "success",
+                predecessor: updatedPredecessor,
+                successor,
+                idempotentReplay: false,
+              };
+            })
+            .immediate(),
+      );
     },
     findAssumptionById(id) {
       return timed("find_by_id", "spec_assumption", id, () =>
-        readOne(specAssumptionRowSchema, "spec_assumption", id, () =>
-          findAssumptionStmt.get(id),
-        ),
+        readAssumptionById(id),
       );
     },
     findAssumptionsBySpecId(specId) {

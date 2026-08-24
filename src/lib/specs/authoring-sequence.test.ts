@@ -22,6 +22,9 @@ function revision(
     authoringStage: "plan",
     basedOnRevisionId: null,
     contentHash: null,
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "0".repeat(64),
     proposedAt: null,
     approvedAt: null,
     externalDelivery: null,
@@ -207,6 +210,7 @@ describe("draftAuthoringSequence", () => {
     const draftSnapshot: SpecRevisionSnapshot = {
       revision: draft,
       elements: [requirementElement(draft.id, changed)],
+      assumptionCitations: [],
     };
 
     const governanceScoped = draftAuthoringSequence({
@@ -215,6 +219,7 @@ describe("draftAuthoringSequence", () => {
       governanceBaseSnapshot: {
         revision: approved,
         elements: [requirementElement(approved.id, "Gates are stated.")],
+        assumptionCitations: [],
       },
     });
     expect(governanceScoped?.nextTransition.governanceConsultedGates).toEqual([
@@ -230,6 +235,7 @@ describe("draftAuthoringSequence", () => {
       governanceBaseSnapshot: {
         revision: withdrawn,
         elements: [requirementElement(withdrawn.id, changed)],
+        assumptionCitations: [],
       },
     });
     expect(parentScoped?.nextTransition.governanceConsultedGates).toEqual([
@@ -248,6 +254,7 @@ describe("draftAuthoringSequence", () => {
             state: "proposed",
           }),
           elements: [],
+          assumptionCitations: [],
         },
         governanceBaseSnapshot: null,
       }),

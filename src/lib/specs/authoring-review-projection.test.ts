@@ -4,7 +4,7 @@ import { createApprovalApplicability } from "./approval-applicability";
 import { authoringReviewProjection } from "./authoring-review-projection";
 import { importBaselineRevisionId } from "./import-baseline";
 import type { LintFinding } from "./lint";
-import { toDiffRows } from "./review-state";
+import { toDiffCitations, toDiffRows } from "./review-state";
 import { ancestorIds } from "./revision-lineage";
 import type {
   SpecApprovalRow,
@@ -27,6 +27,9 @@ function revision(
     authoringStage: "design",
     basedOnRevisionId: null,
     contentHash: null,
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "a".repeat(64),
     proposedAt: AT,
     approvedAt: null,
     externalDelivery: null,
@@ -204,12 +207,14 @@ function withdrawnAttemptChain(requirementStatement: string): Chain {
     snapshots: [
       {
         revision: approved,
+        assumptionCitations: [],
         elements: [
           requirement(approved.id, "requirement-1", 1, "Gates are durable.", 0),
         ],
       },
       {
         revision: withdrawn,
+        assumptionCitations: [],
         elements: [
           requirement(
             withdrawn.id,
@@ -222,6 +227,7 @@ function withdrawnAttemptChain(requirementStatement: string): Chain {
       },
       {
         revision: current,
+        assumptionCitations: [],
         elements: [
           requirement(current.id, "requirement-1", 1, requirementStatement, 0),
           decision(current.id, "decision-1", 1, "The server owns gates.", 1),
@@ -268,6 +274,7 @@ function importedAmendmentChain(amendment: {
     snapshots: [
       {
         revision: imported,
+        assumptionCitations: [],
         elements: elementsFor(
           imported.id,
           IMPORTED_STATEMENT,
@@ -276,6 +283,7 @@ function importedAmendmentChain(amendment: {
       },
       {
         revision: amended,
+        assumptionCitations: [],
         elements: elementsFor(
           amended.id,
           amendment.statement ?? IMPORTED_STATEMENT,
@@ -285,6 +293,70 @@ function importedAmendmentChain(amendment: {
     ],
   };
 }
+
+/**
+ * A native amendment: revision 1 is approved with two requirements and a
+ * decision a human approved individually, and revision 2 edits exactly one
+ * requirement. The requirements gate is consulted because R1 changed, and R2
+ * sits unchanged under that same consulted gate — the shape the carry rule
+ * describes.
+ */
+function nativeAmendmentChain(editedStatement: string): Chain {
+  const approved = revision({
+    id: "revision-1",
+    number: 1,
+    state: "approved",
+    approvedAt: AT,
+  });
+  const amended = revision({
+    id: "revision-2",
+    number: 2,
+    basedOnRevisionId: approved.id,
+  });
+  const elementsFor = (revisionId: string, statement: string) => [
+    requirement(revisionId, "requirement-1", 1, statement, 0),
+    requirement(revisionId, "requirement-2", 2, "Approvals are durable.", 1),
+    decision(revisionId, "decision-1", 1, "The server owns gates.", 2),
+  ];
+  const APPROVED_STATEMENT = "Gates are durable.";
+  return {
+    revisions: [approved, amended],
+    snapshots: [
+      {
+        revision: approved,
+        assumptionCitations: [],
+        elements: elementsFor(approved.id, APPROVED_STATEMENT),
+      },
+      {
+        revision: amended,
+        assumptionCitations: [],
+        elements: elementsFor(amended.id, editedStatement),
+      },
+    ],
+  };
+}
+
+/** The three subject approvals a human granted on the approved revision 1. */
+const ancestorApprovals = (): SpecApprovalRow[] => [
+  approval({
+    id: "approval-1",
+    revision_id: "revision-1",
+    subject_kind: "requirement",
+    element_id: "requirement-1",
+  }),
+  approval({
+    id: "approval-2",
+    revision_id: "revision-1",
+    subject_kind: "requirement",
+    element_id: "requirement-2",
+  }),
+  approval({
+    id: "approval-3",
+    revision_id: "revision-1",
+    subject_kind: "decision",
+    element_id: "decision-1",
+  }),
+];
 
 const importAdmissions = (): SpecGateAdmissionRow[] =>
   (["requirements", "design"] as const).map((gate, index) =>
@@ -325,6 +397,7 @@ function project(
     blockingThreads?: Array<{ handle: string; resolved: boolean }>;
     signOffFindings?: LintFinding[];
     openComments?: Array<{
+      threadId: string;
       elementId: string;
       handle: string | null;
       blocking: boolean;
@@ -337,10 +410,14 @@ function project(
     chain.snapshots.find(
       ({ revision: candidate }) => candidate.state === "approved",
     ) ?? null;
-  const rowsById = new Map(
+  const stateById = new Map(
     chain.snapshots.map((candidate) => [
       candidate.revision.id,
-      toDiffRows(candidate),
+      {
+        rows: toDiffRows(candidate),
+        citationContractVersion: candidate.revision.citationContractVersion,
+        citations: toDiffCitations(candidate),
+      },
     ]),
   );
   const approvals = options.approvals ?? [];
@@ -362,15 +439,26 @@ function project(
       importBaselineSnapshot === null
         ? null
         : toDiffRows(importBaselineSnapshot),
+    importBaselineCitationState:
+      importBaselineSnapshot === null
+        ? null
+        : {
+            citationContractVersion:
+              importBaselineSnapshot.revision.citationContractVersion,
+            citations: toDiffCitations(importBaselineSnapshot),
+          },
     currentExecution: null,
     revisionNumberById: new Map(
       chain.revisions.map((candidate) => [candidate.id, candidate.number]),
     ),
     applies: createApprovalApplicability({
       revisionId: snapshot.revision.id,
+      basedOnRevisionId: snapshot.revision.basedOnRevisionId,
       ancestorRevisionIds: ancestorIds(chain.revisions, snapshot.revision.id),
       revisionRows: toDiffRows(snapshot),
-      rowsForRevision: (revisionId) => rowsById.get(revisionId) ?? null,
+      citationContractVersion: snapshot.revision.citationContractVersion,
+      citations: toDiffCitations(snapshot),
+      stateForRevision: (revisionId) => stateById.get(revisionId) ?? null,
     }),
     blockingThreads: options.blockingThreads ?? [],
     signOffFindings: options.signOffFindings ?? [],
@@ -792,9 +880,24 @@ describe("authoringReviewProjection", () => {
         {
           specSlug: "native-sdd",
           openComments: [
-            { elementId: "requirement-1", handle: "R1", blocking: true },
-            { elementId: "requirement-1", handle: "R1", blocking: false },
-            { elementId: "element-gone", handle: null, blocking: false },
+            {
+              threadId: "thread-1",
+              elementId: "requirement-1",
+              handle: "R1",
+              blocking: true,
+            },
+            {
+              threadId: "thread-1",
+              elementId: "requirement-1",
+              handle: "R1",
+              blocking: false,
+            },
+            {
+              threadId: "thread-2",
+              elementId: "element-gone",
+              handle: null,
+              blocking: false,
+            },
           ],
         },
       );
@@ -802,12 +905,14 @@ describe("authoringReviewProjection", () => {
       expect(projection.openComments).toEqual({
         count: 3,
         blockingCount: 1,
+        openThreadCount: 2,
+        openBlockingThreadCount: 1,
         subjects: ["R1", "element-gone"],
       });
       expect(projection.nextAction.kind).toBe("approve_subject");
       expect(projection.nextAction.actsNext).toBe("human");
       expect(projection.nextAction.instruction).toContain(
-        "Open comments on R1, element-gone await a response",
+        "Open review threads on R1, element-gone await a response",
       );
       expect(projection.nextAction.instruction).toContain(
         "cctl spec comments native-sdd --open",
@@ -815,7 +920,7 @@ describe("authoringReviewProjection", () => {
       expect(projection.nextAction.instruction).toContain("Request Changes");
       expect(projection.pendingBlock?.instruction).toContain("Request Changes");
       expect(projection.pendingBlock?.display).toContain(
-        "3 open comments await a response",
+        "2 open threads await a response",
       );
     });
 
@@ -839,7 +944,12 @@ describe("authoringReviewProjection", () => {
         {
           specSlug: "native-sdd",
           openComments: [
-            { elementId: "requirement-1", handle: "R1", blocking: false },
+            {
+              threadId: "thread-1",
+              elementId: "requirement-1",
+              handle: "R1",
+              blocking: false,
+            },
           ],
         },
       );
@@ -847,12 +957,14 @@ describe("authoringReviewProjection", () => {
       expect(projection.openComments).toEqual({
         count: 1,
         blockingCount: 0,
+        openThreadCount: 1,
+        openBlockingThreadCount: 0,
         subjects: ["R1"],
       });
       expect(projection.nextAction.kind).toBe("propose");
       expect(projection.nextAction.actsNext).toBe("agent");
       expect(projection.nextAction.instruction).toContain(
-        "Open comments on R1 await a response",
+        "Open review threads on R1 await a response",
       );
       expect(projection.nextAction.instruction).toContain(
         "then propose it again",
@@ -879,7 +991,12 @@ describe("authoringReviewProjection", () => {
           ],
           specSlug: "native-sdd",
           openComments: [
-            { elementId: "decision-1", handle: "D1", blocking: false },
+            {
+              threadId: "thread-1",
+              elementId: "decision-1",
+              handle: "D1",
+              blocking: false,
+            },
           ],
         },
       );
@@ -887,7 +1004,7 @@ describe("authoringReviewProjection", () => {
       expect(projection.revisionSignOff?.state).toBe("ready");
       expect(projection.nextAction.kind).toBe("sign_off_revision");
       expect(projection.nextAction.instruction).toContain(
-        "Open comments on D1 await a response",
+        "Open review threads on D1 await a response",
       );
       expect(projection.nextAction.instruction).toContain(
         "cctl spec comments native-sdd --open",
@@ -1099,5 +1216,267 @@ describe("authoringReviewProjection", () => {
     });
     expect(projection.pendingBlock).toBeNull();
     expect(projection.nextAction.kind).toBe("none");
+  });
+
+  /**
+   * The two-sided account. A pending-only projection reads as "7 lost" where
+   * the truth is "7 banked", which is what mispriced the reopen: the ledger
+   * says what is already settled, and by which act, beside what a human owes.
+   */
+  describe("the approval ledger", () => {
+    it("classifies an unchanged subject as carried and the edited one as pending", () => {
+      const projection = project(
+        nativeAmendmentChain("Gates are durable and legible."),
+        { approvals: ancestorApprovals() },
+      );
+
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ subject, classification }) => [subject, classification],
+        ),
+      ).toEqual([
+        ["R1", "pending"],
+        ["R2", "carried"],
+        ["D1", "carried"],
+      ]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 2,
+        carried: 2,
+        currentRevision: 0,
+        importSettled: 0,
+        combinedAct: 0,
+        pending: 1,
+        governedBy: "per_subject",
+      });
+      // The mechanism the counts assert, carried on the wire so the surface
+      // that prints it and the agent that reads JSON get the same sentence.
+      expect(projection.approvalLedger.carryRule).toBe(
+        "unchanged subject content under the same applicable gate",
+      );
+      // The existing halves keep their exact meanings.
+      expect(projection.pendingApprovals.map(({ subject }) => subject)).toEqual(
+        ["R1"],
+      );
+      expect(projection.importCarriedApprovals).toEqual([]);
+    });
+
+    it("classifies an approval granted on the projected revision as current-revision", () => {
+      const projection = project(
+        nativeAmendmentChain("Gates are durable and legible."),
+        {
+          approvals: [
+            ...ancestorApprovals(),
+            approval({
+              id: "approval-4",
+              revision_id: "revision-2",
+              subject_kind: "requirement",
+              element_id: "requirement-1",
+            }),
+          ],
+        },
+      );
+
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ subject, classification }) => [subject, classification],
+        ),
+      ).toEqual([
+        ["R1", "current_revision"],
+        ["R2", "carried"],
+        ["D1", "carried"],
+      ]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 3,
+        carried: 2,
+        currentRevision: 1,
+        pending: 0,
+      });
+    });
+
+    /**
+     * An import admission settles a subject without anyone reading it, so it
+     * is counted apart from the two approval classes and never labelled one.
+     */
+    it("classifies an import-settled subject apart from every approval class", () => {
+      const projection = project(
+        importedAmendmentChain({ statement: "Imported specs are amendable." }),
+        { admissions: importAdmissions() },
+      );
+
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ subject, classification }) => [subject, classification],
+        ),
+      ).toEqual([
+        ["R1", "pending"],
+        ["R2", "import_settled"],
+        ["D1", "import_settled"],
+      ]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 2,
+        carried: 0,
+        currentRevision: 0,
+        importSettled: 2,
+        pending: 1,
+      });
+    });
+
+    /**
+     * R11.5: the collapsed dial asks for no per-subject approval, so its
+     * subjects are neither approved nor individually askable. Reporting an
+     * empty ledger would read as "nothing is governed here"; the honest answer
+     * names the act that governs them and says it is outstanding.
+     */
+    it("reports a collapsed gate's subjects as governed by the outstanding combined sign-off", () => {
+      const projection = project(
+        nativeAmendmentChain("Gates are durable and legible."),
+        { policy: { preset: "fast-path" } },
+      );
+
+      expect(projection.approvalLedger.governedBy).toBe("combined_sign_off");
+      expect(projection.approvalLedger.subjects).toHaveLength(3);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 0,
+        combinedAct: 0,
+        pending: 3,
+      });
+      expect(projection.revisionSignOff?.state).not.toBe("signed_off");
+      // The collapsed policy owes nothing per subject, which is exactly why
+      // the ledger must not be read off the pending list.
+      expect(projection.pendingApprovals).toEqual([]);
+    });
+
+    it("reports a collapsed gate's subjects as combined-act once the sign-off is recorded", () => {
+      const chain = nativeAmendmentChain("Gates are durable and legible.");
+      const projection = project(withCurrentState(chain, "approved"), {
+        policy: { preset: "fast-path" },
+        approvals: [
+          approval({
+            id: "approval-revision",
+            revision_id: "revision-2",
+            subject_kind: "revision",
+          }),
+        ],
+      });
+
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ classification }) => classification,
+        ),
+      ).toEqual(["combined_act", "combined_act", "combined_act"]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 3,
+        combinedAct: 3,
+        carried: 0,
+        pending: 0,
+        governedBy: "combined_sign_off",
+      });
+    });
+
+    /**
+     * The production fast path does not sign off with a lone revision row: the
+     * same transaction persists an approval row for every subject (R11.5). Read
+     * naively those rows say "a human approved each of these on this revision",
+     * which is the one thing that never happened — nobody was asked per
+     * subject. The recorded combined act is what settled them, so it is the act
+     * the ledger must name.
+     */
+    it("reports combined-act for the per-subject rows the fast-path sign-off persists", () => {
+      const chain = nativeAmendmentChain("Gates are durable and legible.");
+      const projection = project(withCurrentState(chain, "approved"), {
+        policy: { preset: "fast-path" },
+        approvals: [
+          ...ancestorApprovals(),
+          approval({
+            id: "approval-revision",
+            revision_id: "revision-2",
+            subject_kind: "revision",
+          }),
+          approval({
+            id: "approval-combined-1",
+            revision_id: "revision-2",
+            subject_kind: "requirement",
+            element_id: "requirement-1",
+          }),
+          approval({
+            id: "approval-combined-2",
+            revision_id: "revision-2",
+            subject_kind: "requirement",
+            element_id: "requirement-2",
+          }),
+          approval({
+            id: "approval-combined-3",
+            revision_id: "revision-2",
+            subject_kind: "decision",
+            element_id: "decision-1",
+          }),
+        ],
+      });
+
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ classification }) => classification,
+        ),
+      ).toEqual(["combined_act", "combined_act", "combined_act"]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 3,
+        combinedAct: 3,
+        currentRevision: 0,
+        carried: 0,
+        pending: 0,
+        governedBy: "combined_sign_off",
+      });
+    });
+
+    /**
+     * The carry side of the collapsed dial: before the combined act exists,
+     * a subject an ancestor sign-off already approved is banked, not owed.
+     * Flattening every subject to pending here is what misprices a fast-path
+     * reopen — the point of the ledger is that only the edited subject is new.
+     */
+    it("keeps an ancestor-approved subject carried while the combined sign-off is outstanding", () => {
+      const projection = project(
+        nativeAmendmentChain("Gates are durable and legible."),
+        { policy: { preset: "fast-path" }, approvals: ancestorApprovals() },
+      );
+
+      expect(
+        projection.approvalLedger.subjects.map(
+          ({ subject, classification }) => [subject, classification],
+        ),
+      ).toEqual([
+        ["R1", "pending"],
+        ["R2", "carried"],
+        ["D1", "carried"],
+      ]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 2,
+        carried: 2,
+        combinedAct: 0,
+        pending: 1,
+        governedBy: "combined_sign_off",
+      });
+      expect(projection.revisionSignOff?.state).not.toBe("signed_off");
+    });
+
+    /**
+     * A notify dial admits the gate by policy rather than by a human, so its
+     * subjects have no per-subject standing to report. The gate lines already
+     * say who admitted it; manufacturing subject counts here would describe
+     * approvals that do not exist.
+     */
+    it("keeps a notify-dial gate's subjects out of the per-subject ledger", () => {
+      const projection = project(
+        nativeAmendmentChain("Gates are durable and legible."),
+        { policy: { preset: "exploratory" } },
+      );
+
+      expect(projection.approvalLedger.subjects).toEqual([]);
+      expect(projection.approvalLedger).toMatchObject({
+        satisfied: 0,
+        pending: 0,
+        governedBy: "per_subject",
+      });
+    });
   });
 });

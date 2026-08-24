@@ -8,7 +8,7 @@ export type ButtonVariant =
   | "danger"
   | "success"
   | "ghost";
-export type ButtonSize = "sm" | "md";
+export type ButtonSize = "sm" | "md" | "touch";
 
 export type ButtonProps = Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
@@ -67,6 +67,7 @@ const variantClass: Record<ButtonVariant, string> = {
 const sizeClass: Record<ButtonSize, string> = {
   md: "px-[18px] py-[10px] text-[0.78rem]",
   sm: "px-[12px] py-[6px] text-[0.72rem]",
+  touch: "min-h-[44px] min-w-[44px] px-[12px] py-[6px] text-[0.72rem]",
 };
 
 export function Button({

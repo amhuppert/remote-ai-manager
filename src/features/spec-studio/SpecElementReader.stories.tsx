@@ -47,6 +47,10 @@ export const DraftRemovable: Story = {
           approvedAt: null,
         },
         elements: snapshot.elements,
+        assumptionCitations: snapshot.assumptionCitations.map((citation) => ({
+          ...citation,
+          revisionId: "revision-2",
+        })),
       };
       return detail;
     })(),

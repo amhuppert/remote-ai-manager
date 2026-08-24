@@ -107,65 +107,92 @@ describe("buildSpecHistory", () => {
     ]);
   });
 
-  it("records the available spec, question, and assumption lifecycle moments", () => {
+  it("builds attention history only from typed durable mutation events", () => {
     const detail = specControlsDetailFixture();
     const events = buildSpecHistory({
       ...detail,
-      spec: {
-        ...detail.spec,
-        abandonedAt: "2026-07-18T12:08:00.000Z",
-        abandonedReason: "Superseded by the platform contract.",
-      },
-      questions: [
+      questions: [],
+      assumptions: [],
+      attentionAuditEvents: [
         {
-          id: "question-1",
-          number: 1,
-          handle: "Q1",
-          elementId: null,
-          text: "Which retention window applies?",
-          status: "answered",
-          answer: "Thirty days.",
-          answeredAt: "2026-07-18T12:06:00.000Z",
-          provenance: null,
-          createdAt: "2026-07-18T12:01:00.000Z",
-          updatedAt: "2026-07-18T12:06:00.000Z",
-        },
-      ],
-      assumptions: [
-        {
-          id: "assumption-1",
-          number: 1,
-          handle: "A1",
-          elementId: null,
-          text: "Retention defaults to 30 days.",
-          disposition: "confirmed",
-          disposedAt: "2026-07-18T12:07:00.000Z",
-          proposedBy: { kind: "agent", conversationId: "conversation-1" },
-          createdAt: "2026-07-18T12:02:00.000Z",
-          updatedAt: "2026-07-18T12:07:00.000Z",
+          kind: "record",
+          eventId: 41,
+          occurredAt: "2026-07-18T12:09:00.000Z",
+          actor: {
+            kind: "agent",
+            conversationId: "conversation-later",
+            backend: "codex",
+          },
+          payload: {
+            schemaVersion: 1,
+            recordKind: "question",
+            recordId: "question-1",
+            recordNumber: 1,
+            attentionId: "question-1",
+            operation: "answered",
+            active: false,
+            before: {
+              kind: "question",
+              recordId: "question-1",
+              number: 1,
+              recordVersion: 1,
+              text: "Which retention window applies?",
+              elementId: null,
+              provenance: {
+                kind: "agent",
+                conversationId: "conversation-origin",
+              },
+              status: "open",
+              answer: null,
+              answeredAt: null,
+              withdrawnAt: null,
+              createdAt: "2026-07-18T12:01:00.000Z",
+              updatedAt: "2026-07-18T12:01:00.000Z",
+            },
+            after: {
+              kind: "question",
+              recordId: "question-1",
+              number: 1,
+              recordVersion: 2,
+              text: "Which retention window applies?",
+              elementId: null,
+              provenance: {
+                kind: "agent",
+                conversationId: "conversation-origin",
+              },
+              status: "answered",
+              answer: "Thirty days.",
+              answeredAt: "2026-07-18T12:09:00.000Z",
+              withdrawnAt: null,
+              createdAt: "2026-07-18T12:01:00.000Z",
+              updatedAt: "2026-07-18T12:09:00.000Z",
+            },
+          },
         },
       ],
     });
 
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "Spec abandoned",
-          tone: "red",
+    expect(events.filter((event) => event.kind === "attention")).toEqual([
+      expect.objectContaining({
+        id: "attention:41",
+        label: "Q1 answered",
+        occurredAt: "2026-07-18T12:09:00.000Z",
+        href: "/specs/command-center/native-sdd?view=questions&el=Q1",
+        audit: expect.objectContaining({
+          operation: "answered",
+          changes: expect.arrayContaining([
+            { field: "Status", before: "open", after: "answered" },
+            { field: "Answer", before: "—", after: "Thirty days." },
+          ]),
         }),
-        expect.objectContaining({
-          label: "Q1 answered",
-          emphasis: "human",
-        }),
-        expect.objectContaining({
-          label: "A1 confirmed",
-          emphasis: "human",
-        }),
-      ]),
+      }),
+    ]);
+    expect(events.some((event) => event.id === "question-1:created")).toBe(
+      false,
     );
   });
 
-  it("offers the prototype history-kind filters and isolates policy admissions", async () => {
+  it("offers APG radio history-kind filters and isolates policy admissions", async () => {
     const user = userEvent.setup();
     const detail = specControlsDetailFixture("running");
     render(
@@ -189,12 +216,20 @@ describe("buildSpecHistory", () => {
       "All",
       "Human approvals",
       "Policy admissions",
+      "Attention records",
       "Gate changes",
       "Executions",
     ]);
     expect(
       within(filters).getByRole("radio", { name: "Gate changes" }),
     ).toBeEnabled();
+
+    const all = within(filters).getByRole("radio", { name: "All" });
+    await user.click(all);
+    await user.keyboard("{ArrowRight}");
+    expect(
+      within(filters).getByRole("radio", { name: "Human approvals" }),
+    ).toHaveFocus();
 
     expect(screen.getByText("human act")).toBeVisible();
     expect(screen.getByText("policy admission")).toBeVisible();
@@ -342,9 +377,9 @@ describe("buildSpecHistory", () => {
 
     await user.click(screen.getByRole("radio", { name: "Human approvals" }));
 
-    // The Q/A records themselves stay listed — a reader still needs to see what
-    // the spec carries — but not one of them is marked as an act a human took.
-    expect(container.querySelectorAll("article")).not.toHaveLength(0);
+    expect(
+      screen.getByText("No recorded activity matches this filter."),
+    ).toBeVisible();
     expect(
       container.querySelectorAll('article[data-emphasis="human"]'),
     ).toHaveLength(0);
@@ -371,12 +406,104 @@ describe("buildSpecHistory", () => {
     expect(screen.queryByText("Spec imported")).not.toBeInTheDocument();
   });
 
+  it("renders durable attention actor, operation, before/after fields, and subject link", async () => {
+    const user = userEvent.setup();
+    render(
+      <SpecHistoryPanel
+        detail={importedDeliveredSpecDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Attention records" }));
+
+    const row = screen.getByText("Q1 answered at import").closest("article");
+    if (row === null) throw new Error("Question audit row is missing");
+    expect(within(row).getByText("Imported by")).toBeVisible();
+    expect(within(row).getByText("Agent")).toBeVisible();
+    expect(
+      within(row).getByRole("link", { name: /conversation-1/ }),
+    ).toHaveAttribute("href", "/conversations?c=conversation-1");
+    expect(
+      within(row).getByRole("link", { name: "Open subject →" }),
+    ).toHaveAttribute(
+      "href",
+      "/specs/command-center/native-sdd?view=questions&el=Q1",
+    );
+    const changes = within(row).getByLabelText(
+      "Q1 answered at import field changes",
+    );
+    expect(within(changes).getByText("Status")).toBeVisible();
+    expect(within(changes).getByText("answered")).toBeVisible();
+    expect(within(changes).getByText("Answer")).toBeVisible();
+    expect(
+      within(changes).getByText("Thirty days, per the source spec."),
+    ).toBeVisible();
+  });
+
   it("keeps a natively settled revision, answer, and disposition human acts", () => {
-    // The same shape as the imported fixture with the import removed, so the
-    // assertion above cannot pass by the feed simply having no human rows.
     const detail = importedDeliveredSpecDetailFixture();
     detail.importRecord = null;
     detail.gateAdmissions = [];
+    const questionEvent = detail.attentionAuditEvents.find(
+      (event) =>
+        event.kind === "record" && event.payload.recordKind === "question",
+    );
+    const assumptionEvent = detail.attentionAuditEvents.find(
+      (event) =>
+        event.kind === "record" && event.payload.recordKind === "assumption",
+    );
+    if (
+      questionEvent?.kind !== "record" ||
+      questionEvent.payload.after.kind !== "question" ||
+      assumptionEvent?.kind !== "record" ||
+      assumptionEvent.payload.after.kind !== "assumption"
+    ) {
+      throw new Error("Imported attention audit fixtures are missing");
+    }
+    const questionAfter = {
+      ...questionEvent.payload.after,
+      recordVersion: 2,
+    };
+    const assumptionAfter = {
+      ...assumptionEvent.payload.after,
+      recordVersion: 2,
+    };
+    detail.attentionAuditEvents = [
+      {
+        ...questionEvent,
+        actor: { kind: "human" },
+        payload: {
+          ...questionEvent.payload,
+          operation: "answered",
+          before: {
+            ...questionAfter,
+            recordVersion: 1,
+            status: "open",
+            answer: null,
+            answeredAt: null,
+            updatedAt: questionAfter.createdAt,
+          },
+          after: questionAfter,
+        },
+      },
+      {
+        ...assumptionEvent,
+        actor: { kind: "human" },
+        payload: {
+          ...assumptionEvent.payload,
+          operation: "disposed",
+          before: {
+            ...assumptionAfter,
+            recordVersion: 1,
+            disposition: "proposed",
+            disposedAt: null,
+            updatedAt: assumptionAfter.createdAt,
+          },
+          after: assumptionAfter,
+        },
+      },
+    ];
 
     render(<SpecHistoryPanel detail={detail} projectName="command-center" />);
 

@@ -18,6 +18,10 @@ import {
 import { findConversationById } from "@/lib/conversations/cross-project-list";
 import { appendNotice } from "@/lib/prompt/transcript";
 import { getErrorMessage } from "@/lib/shared/errors";
+import {
+  approvalLedgerSentence,
+  REOPEN_CARRY_NOTE,
+} from "@/lib/specs/approval-ledger";
 import type { SpecReviewFeedbackNotice } from "@/lib/specs/review-service";
 import { mutateConversation } from "@/lib/state-store";
 import { appendPendingAgentNotice as appendPendingAgentConversationNotice } from "@/lib/workflows/conversation/pre-turn/notices-drain";
@@ -63,6 +67,18 @@ export interface SpecReviewFeedbackNotifier {
 }
 
 /**
+ * What the reopen cost, in the words `spec status` and the receipts use — the
+ * counts come from the ledger's one renderer so no surface can price the same
+ * reopen differently. Empty when the act carried no ledger, which is every
+ * kind that reopens nothing.
+ */
+function carrySentence(notice: SpecReviewFeedbackNotice): string {
+  const ledger = notice.approvalLedger;
+  if (ledger === null) return "";
+  return ` ${approvalLedgerSentence(ledger)} — ${REOPEN_CARRY_NOTE}.`;
+}
+
+/**
  * What the proposer reads. Each line names the spec, what happened, and — when
  * there is something to act on — the exact next read.
  */
@@ -72,7 +88,9 @@ function feedbackText(notice: SpecReviewFeedbackNotice): string {
     case "commented":
       return `Review feedback on spec ${notice.specSlug}: a human commented on ${notice.subject ?? "the proposal"}. Read it with ${readComments}.`;
     case "changes_requested":
-      return `Changes requested on spec ${notice.specSlug}: the draft is reopened. Read the comments with ${readComments}, repair the draft, then propose again.`;
+      // The agent that must repair the draft is the one that reads a reopen as
+      // having lost every approval, so the carry is stated to it directly.
+      return `Changes requested on spec ${notice.specSlug}: the draft is reopened. Read the comments with ${readComments}, repair the draft, then propose again.${carrySentence(notice)}`;
     case "signed_off":
       return `Spec ${notice.specSlug}: the proposed revision was signed off.`;
   }

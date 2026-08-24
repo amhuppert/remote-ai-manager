@@ -100,7 +100,7 @@ import { createSpecEventsPublisher } from "./events";
 import { createImportService } from "./import-service";
 import {
   loadSpecExportState,
-  renderCanonicalBundle,
+  renderVerifiedCanonicalBundle,
   verifyExportState,
 } from "./export";
 import {
@@ -539,16 +539,6 @@ export function createSpecSpineWorld(
       reviewNotifications.policyAdmitted.push(notice);
     },
   };
-  const authoring = createAuthoringService({
-    specs,
-    review,
-    links,
-    events,
-    waivers: delivery,
-    policyNotifier,
-    newId,
-    now,
-  });
   const reviewService = createReviewService({
     specs,
     review,
@@ -568,6 +558,22 @@ export function createSpecSpineWorld(
       },
     },
     policyNotifier,
+    newId,
+    now,
+  });
+  // The service factory's order: authoring files the gate asks a propose
+  // leaves pending through the review service's own request verb, so a spine
+  // propose leaves the same durable asks a production propose does.
+  const authoring = createAuthoringService({
+    specs,
+    review,
+    links,
+    events,
+    waivers: delivery,
+    policyNotifier,
+    approvalRequests: {
+      requestApproval: (input) => reviewService.requestApproval(input),
+    },
     newId,
     now,
   });
@@ -774,6 +780,7 @@ export function createSpecSpineWorld(
     specs,
     review,
     delivery,
+    events: eventsRepo,
     observeLinkedWorkflow: (target: SpecWorkflowCleanupTarget) =>
       observeWorkflowPlacement(target.workflowExecutionId),
   };
@@ -903,7 +910,7 @@ export function createSpecSpineWorld(
     findWaiversByRevision: (revisionId) =>
       delivery.findWaiversByRevision(revisionId),
     async exportSpec(specId) {
-      return renderCanonicalBundle(
+      return renderVerifiedCanonicalBundle(
         await loadSpecExportState(exportDeps, specId),
       );
     },
@@ -934,6 +941,11 @@ export function createSpecSpineWorld(
     resolveProjectPath,
     resolveSpec: (projectPath, slug) => specs.resolve(projectPath, slug),
     getServices: async () => services,
+    listRevisions: (specId) => specs.listRevisions(specId),
+    getRevisionSnapshot: (revisionId) => specs.getRevisionSnapshot(revisionId),
+    findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
+    findAssumptionsBySpecId: (specId) => review.findAssumptionsBySpecId(specId),
+    findEventsBySpecId: (specId) => eventsRepo.findBySpecId(specId),
   });
 
   function registerMergeComposition(): void {

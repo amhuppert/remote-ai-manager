@@ -20,6 +20,7 @@ import { createSpecExecutionBindingPorts } from "./execution-binding-service";
 import { createAuthoredContextOutcomeService } from "@/lib/workflow-graph/authored-context-outcome";
 import { createSpecEventsPublisher } from "./events";
 import { createImportService, type ImportService } from "./import-service";
+import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import { createReviewService, type ReviewService } from "./review-service";
 import type { Spec, SpecRevision } from "./schemas";
 
@@ -256,6 +257,7 @@ describe("an imported spec keeps every human gate", () => {
         unmetConditions: [
           "The configured sign-off gates require a human actor.",
         ],
+        rationale: HUMAN_ACT_REQUIRED_RATIONALE,
         instruction: "Ask a human to sign off the revision in Spec Studio.",
       },
     });

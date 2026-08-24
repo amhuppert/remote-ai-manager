@@ -29,6 +29,14 @@ describe("Spinner", () => {
 });
 
 describe("Button", () => {
+  it("provides an always-on 44px touch-target size", () => {
+    const { getByRole } = render(<Button size="touch">Reply</Button>);
+    const button = getByRole("button", { name: "Reply" });
+
+    expect(button).toHaveClass("min-h-[44px]", "min-w-[44px]");
+    expect(button.className).not.toContain("max-768:min-h-[44px]");
+  });
+
   it("exposes its loading state without replacing the label", () => {
     const { getByRole, container } = render(<Button loading>Save</Button>);
     const button = getByRole("button", { name: "Save" });

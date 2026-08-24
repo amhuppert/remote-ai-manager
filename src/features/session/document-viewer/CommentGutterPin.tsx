@@ -1,13 +1,13 @@
 "use client";
 
 import { cn } from "@/lib/ui/cn";
-import type { CommentStatus } from "@/lib/document-comments/schemas";
+import type { MarkdownAnnotationTone } from "@/components/document-viewer/annotation-contract";
 
 interface CommentGutterPinProps {
   /** Top offset (px) within the scroll content, aligned to the block. */
   top: number;
-  /** Drives the marker color: pending (cyan) vs sent (green). */
-  status: CommentStatus;
+  /** Drives the marker color: active (cyan) vs settled (green). */
+  tone: MarkdownAnnotationTone;
   /** Number of comments anchored to this block. */
   count: number;
   onClick: () => void;
@@ -39,7 +39,7 @@ function BubbleGlyph(): React.JSX.Element {
  */
 export default function CommentGutterPin({
   top,
-  status,
+  tone,
   count,
   onClick,
   title,
@@ -52,8 +52,8 @@ export default function CommentGutterPin({
       aria-label={title}
       style={{ top }}
       className={cn(
-        "pointer-events-auto absolute left-[14px] inline-flex h-[20px] -translate-y-[2px] cursor-pointer items-center gap-[2px] rounded-md border border-solid px-[5px] font-mono text-[0.62rem] leading-none font-bold tabular-nums transition-transform duration-150 ease-[ease] hover:scale-110",
-        status === "sent"
+        "pointer-events-auto absolute left-[14px] inline-flex min-h-[24px] min-w-[24px] -translate-y-[2px] cursor-pointer items-center justify-center gap-[2px] rounded-md border border-solid px-[5px] font-mono text-[0.62rem] leading-none font-bold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan max-768:min-h-[44px] max-768:min-w-[44px]",
+        tone === "settled"
           ? "border-green-dim bg-green-glow text-green"
           : "border-cyan bg-cyan-glow text-cyan",
       )}

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -19,9 +20,12 @@ import {
   useDeleteDocumentCommentMutation,
 } from "@/lib/document-comments/mutations";
 import type { DocumentContentErrorKind } from "@/lib/documents/queries";
-import AnnotatedMarkdown, {
-  type CreateCommentInput,
-} from "./AnnotatedMarkdown";
+import type {
+  CommentComposerCapability,
+  MarkdownAnnotationTarget,
+  PersistCommentInput,
+} from "@/components/document-viewer/annotation-contract";
+import AnnotatedMarkdown from "./AnnotatedMarkdown";
 import CommentCard, { type CommentCardSave } from "./CommentCard";
 import PendingCommentsTray from "./PendingCommentsTray";
 import { ConversationTargetPicker } from "./ConversationTargetPicker";
@@ -37,6 +41,20 @@ import {
   useSetFeedbackTarget,
   useTogglePendingTray,
 } from "@/stores/session-detail.store";
+
+type AnnotationSurface = typeof AnnotatedMarkdown;
+
+let annotationSurface: AnnotationSurface = AnnotatedMarkdown;
+
+export function _setAnnotationSurfaceForTesting(
+  surface: AnnotationSurface,
+): void {
+  annotationSurface = surface;
+}
+
+export function _resetAnnotationSurfaceForTesting(): void {
+  annotationSurface = AnnotatedMarkdown;
+}
 
 export interface DocumentSurfaceProps {
   docRef: DocumentRef;
@@ -213,8 +231,9 @@ export default function DocumentSurface({
   isLoading,
   contentError = null,
 }: DocumentSurfaceProps): React.JSX.Element {
+  const AnnotationSurface = annotationSurface;
   const contentRef = useRef<HTMLDivElement>(null);
-  const { comments, pendingComments } = useDocumentComments({
+  const { annotations, comments, pendingComments } = useDocumentComments({
     docRef,
     content,
     contentRef,
@@ -279,11 +298,29 @@ export default function DocumentSurface({
   // Create from a selection: persist the pending comment, then immediately send
   // it when the user chose "Add & send" (5.3, 5.4).
   const handleCreateComment = useCallback(
-    async ({ anchor, note, send }: CreateCommentInput): Promise<void> => {
+    async ({
+      anchor,
+      note,
+      delivery,
+    }: PersistCommentInput & {
+      delivery: "queue" | "send";
+    }): Promise<void> => {
       const created = await createComment.mutateAsync({ anchor, note });
-      if (send) await sendFeedback([created]);
+      if (delivery === "send") await sendFeedback([created]);
     },
     [createComment, sendFeedback],
+  );
+  const composer = useMemo<CommentComposerCapability>(
+    () => ({ kind: "persist-or-send", submit: handleCreateComment }),
+    [handleCreateComment],
+  );
+
+  const handleActivateAnnotation = useCallback(
+    (target: MarkdownAnnotationTarget): void => {
+      const id = target.kind === "annotation" ? target.id : target.ids[0];
+      if (id !== undefined) handleOpenComment(id);
+    },
+    [handleOpenComment],
   );
 
   const handleSave = useCallback(
@@ -348,13 +385,13 @@ export default function DocumentSurface({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={contentRef} className="flex min-h-0 flex-1 flex-col">
-        <AnnotatedMarkdown
+        <AnnotationSurface
           docRef={docRef}
           content={content}
           isLoading={isLoading}
-          comments={comments}
-          onOpenComment={handleOpenComment}
-          onCreateComment={(input) => void handleCreateComment(input)}
+          annotations={annotations}
+          onActivateAnnotation={handleActivateAnnotation}
+          composer={composer}
         />
       </div>
 
@@ -371,7 +408,7 @@ export default function DocumentSurface({
       ) : null}
 
       {pendingComments.length > 0 ? (
-        <div className="flex shrink-0 flex-col border-x-0 border-b-0 border-t border-solid border-cyan-dim bg-[linear-gradient(180deg,var(--bg-raised),var(--bg-base))]">
+        <div className="flex shrink-0 flex-col border-x-0 border-t border-b-0 border-solid border-cyan-dim bg-[linear-gradient(180deg,var(--bg-raised),var(--bg-base))]">
           <div className="flex items-center gap-sm px-[14px] py-[6px]">
             <span className="shrink-0 font-mono text-[0.66rem] tracking-[0.04em] text-text-tertiary uppercase">
               Send to

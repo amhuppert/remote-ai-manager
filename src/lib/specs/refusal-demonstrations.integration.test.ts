@@ -1182,6 +1182,11 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
           outstandingSubjects: Array<{ gate: string; subject: string }>;
         };
         nextAction: { kind: string; gate: string; subject: string };
+        approvalRequests: Array<{
+          gate: string;
+          outcome: string;
+          attentionId: string | null;
+        }>;
       };
     };
     // The gate that is actually outstanding is requirements, introduced
@@ -1203,9 +1208,19 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
     expect(envelope.instruction).toBe(
       envelope.proposal.pendingBlock.instruction,
     );
-    expect(envelope.next).toBe(
-      `cctl spec request-approval ${slug} --gate requirements --subject R1`,
-    );
+    // The propose filed an ask per pending gate on its way out — this
+    // cumulative propose leaves both the withdrawn attempt's requirements gate
+    // and its own design gate open — so the caller is not sent to
+    // `request-approval` for requests that already exist.
+    expect(envelope.proposal.approvalRequests).toEqual([
+      {
+        gate: "requirements",
+        outcome: "filed",
+        attentionId: expect.any(String),
+      },
+      { gate: "design", outcome: "filed", attentionId: expect.any(String) },
+    ]);
+    expect(envelope.next).toBe(`cctl spec status ${slug}`);
 
     // A second spec in the same shape, because the propose above already
     // consumed the first one's draft.
@@ -1220,9 +1235,8 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
     expect(text.stdout).toContain(
       `acts next: human — ${envelope.proposal.pendingBlock.display}`,
     );
-    expect(text.stdout).toContain(
-      `next: cctl spec request-approval ${textSlug} --gate requirements --subject R1`,
-    );
+    expect(text.stdout).toContain("approval requests:\n  requirements filed (");
+    expect(text.stdout).toContain(`next: cctl spec status ${textSlug}`);
     // The stage-derived blocker named the wrong gate and offered a subjectless
     // request the server refuses as invalid_subject.
     expect(text.stdout).not.toContain("the design gate needs human sign-off");

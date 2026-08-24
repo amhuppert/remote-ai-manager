@@ -10,12 +10,20 @@ export {
   _resetAnnotatorBoundaryForTesting,
   _setAnnotatorBoundaryForTesting,
 } from "@/features/session/document-viewer/AnnotatedMarkdown";
-export type {
-  AnnotatedMarkdownProps,
-  CreateCommentInput,
-} from "@/features/session/document-viewer/AnnotatedMarkdown";
+export type { AnnotatedMarkdownProps } from "@/features/session/document-viewer/AnnotatedMarkdown";
 export type { ResolvedComment } from "@/features/session/document-viewer/types";
+export type {
+  CommentComposerCapability,
+  MarkdownAnchorState,
+  MarkdownAnnotationSource,
+  MarkdownAnnotationTarget,
+  MarkdownAnnotationTone,
+  PersistCommentInput,
+  ResolvedMarkdownAnnotation,
+  SpecThreadAnchorState,
+} from "./annotation-contract";
 export {
   blockAnnotatableText as _blockAnnotatableTextForTesting,
   rangeFromBlockOffsets as _rangeFromBlockOffsetsForTesting,
 } from "@/features/session/document-viewer/anchor-dom";
+export { useLiveMarkdownAnchorResolution } from "@/features/session/document-viewer/use-live-markdown-anchor-resolution";

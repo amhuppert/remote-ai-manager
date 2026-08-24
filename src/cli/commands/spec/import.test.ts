@@ -1,12 +1,95 @@
 import { describe, expect, it } from "vitest";
 
-import { importBundleSchema } from "@/lib/specs/schemas";
+import { renderCanonicalBundle } from "@/lib/specs/export";
+import {
+  importBundleSchema,
+  type Spec,
+  type SpecRevision,
+  type SpecRevisionSnapshot,
+} from "@/lib/specs/schemas";
+import {
+  computeSpecElementPayloadHash,
+  computeSpecRevisionCitationHash,
+} from "@/lib/state-store/specs-repo";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
 
 const BUNDLE_FILE = "/tmp/import-bundle.json";
 const CREATED_AT = "2026-08-11T00:00:00.000Z";
 const SOURCE_LABEL = "kiro:.kiro/specs/imported-feature";
+
+function canonicalExportBundle() {
+  const canonicalSpec: Spec = {
+    id: "canonical-spec",
+    projectPath: "/repos/demo",
+    slug: "canonical-export",
+    name: "Canonical Export",
+    gatePolicy: { preset: "contract-bearing" },
+    abandonedAt: null,
+    abandonedReason: null,
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  };
+  const canonicalRevision: SpecRevision = {
+    id: "canonical-revision-1",
+    specId: canonicalSpec.id,
+    number: 1,
+    state: "draft",
+    authoringStage: "requirements",
+    basedOnRevisionId: null,
+    contentHash: null,
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: computeSpecRevisionCitationHash(2, []),
+    proposedAt: null,
+    approvedAt: null,
+    externalDelivery: null,
+    createdAt: CREATED_AT,
+  };
+  const requirementPayload = {
+    kind: "requirement" as const,
+    statement: "Canonical exports are read-only verification artifacts.",
+    priority: "must" as const,
+    risk: "high" as const,
+  };
+  const canonicalSnapshot: SpecRevisionSnapshot = {
+    revision: canonicalRevision,
+    assumptionCitations: [],
+    elements: [
+      {
+        element: {
+          id: "canonical-requirement-1",
+          specId: canonicalSpec.id,
+          kind: "requirement",
+          number: 1,
+          parentElementId: null,
+          createdAt: CREATED_AT,
+        },
+        version: {
+          revisionId: canonicalRevision.id,
+          elementId: "canonical-requirement-1",
+          position: 0,
+          payload: requirementPayload,
+          payloadHash: computeSpecElementPayloadHash(requirementPayload),
+          elementVersion: 1,
+          createdAt: CREATED_AT,
+          updatedAt: CREATED_AT,
+        },
+      },
+    ],
+  };
+
+  return renderCanonicalBundle({
+    spec: canonicalSpec,
+    revisions: [{ snapshot: canonicalSnapshot }],
+    approvals: [],
+    gateAdmissions: [],
+    questions: [],
+    assumptions: [],
+    executions: [],
+    attentionAuditEvents: [],
+  });
+}
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://127.0.0.1:4999",
@@ -97,6 +180,9 @@ const RECEIPT = {
     authoringStage: "design",
     basedOnRevisionId: null,
     contentHash: "imported-hash",
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "a".repeat(64),
     proposedAt: CREATED_AT,
     approvedAt: CREATED_AT,
     externalDelivery: {
@@ -494,6 +580,23 @@ describe("cctl spec import", () => {
     expect(invalid.stderr).toContain("requirements");
     expect(invalid.stderr).toContain("cctl spec schema import-bundle");
     expect(offSchema.requests).toEqual([]);
+  });
+
+  it("rejects a canonical export bundle locally instead of restoring it", async () => {
+    const host = makeHost({
+      file: canonicalExportBundle(),
+    });
+
+    const result = await runCli(
+      ["spec", "import", "--file", BUNDLE_FILE],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("does not match the required schema");
+    expect(result.stderr).toContain("cctl spec schema import-bundle");
+    expect(host.requests).toEqual([]);
   });
 
   it("takes no positional argument — the slug is the bundle's", async () => {

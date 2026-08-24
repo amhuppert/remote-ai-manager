@@ -2,7 +2,10 @@
 
 import dynamic from "next/dynamic";
 import type { ReactNode } from "react";
-import type { ResolvedComment } from "../types";
+import type {
+  MarkdownAnnotationTarget,
+  ResolvedMarkdownAnnotation,
+} from "@/components/document-viewer/annotation-contract";
 
 /**
  * SSR-safe seam for the recogito text annotator. The annotator stack
@@ -20,23 +23,23 @@ interface RecogitoAnnotatorBoundaryProps {
   /** The rendered markdown (or any DOM) the annotator selects over. */
   children: ReactNode;
   /** Resolved comments to paint as status-styled highlights. */
-  comments?: ResolvedComment[];
+  annotations?: readonly ResolvedMarkdownAnnotation[];
   /** Invoked with the comment id when a highlighted passage is clicked. */
-  onOpenComment?: (commentId: string) => void;
+  onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
   /** Any change re-syncs highlights against the current DOM (e.g. content). */
   syncSignal?: string | null;
 }
 
 export default function RecogitoAnnotatorBoundary({
   children,
-  comments,
-  onOpenComment,
+  annotations,
+  onActivateAnnotation,
   syncSignal,
 }: RecogitoAnnotatorBoundaryProps): React.JSX.Element {
   return (
     <RecogitoAnnotator
-      comments={comments}
-      onOpenComment={onOpenComment}
+      annotations={annotations}
+      onActivateAnnotation={onActivateAnnotation}
       syncSignal={syncSignal}
     >
       {children}

@@ -1,10 +1,7 @@
 import type { CommentAnchor } from "@/lib/document-comments/schemas";
+import type { SpecThreadAnchorState } from "@/components/document-viewer/annotation-contract";
 
-export type SpecThreadAnchorState =
-  | { status: "anchored"; charStart: number; charEnd: number }
-  | { status: "reanchored"; charStart: number; charEnd: number }
-  | { status: "stale" }
-  | { status: "orphaned" };
+export type { SpecThreadAnchorState };
 
 export function reanchorSpecThread(
   anchor: CommentAnchor,

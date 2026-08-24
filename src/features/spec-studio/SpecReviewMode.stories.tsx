@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
 
@@ -90,6 +90,7 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
   const currentSnapshot = {
     revision: currentRevision,
     elements: currentElements,
+    assumptionCitations: [],
   };
 
   return {
@@ -183,10 +184,26 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
         handle: "Q1",
         elementId: "requirement-1",
         text: "Which gate owns pinned-scope validation?",
+        recordVersion: 1,
         status: blocked ? "open" : "answered",
         answer: blocked ? null : "The execution-start gate.",
         answeredAt: blocked ? null : NOW,
+        withdrawnAt: null,
         provenance: { kind: "human" },
+        presentation: {
+          state: "current",
+          attentionActive: blocked,
+          lastMutation: null,
+          humanCapability: blocked
+            ? { kind: "answer", allowed: true }
+            : {
+                kind: "answer",
+                allowed: false,
+                code: "terminal",
+                blockingRevisionId: null,
+                instruction: "This question is terminal.",
+              },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -196,10 +213,24 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
         handle: "Q2",
         elementId: null,
         text: "Does review retain raw diff access?",
+        recordVersion: 1,
         status: "answered",
         answer: "Yes, as a secondary view.",
         answeredAt: NOW,
+        withdrawnAt: null,
         provenance: { kind: "agent", conversationId: "conversation-1" },
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "answer",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This question is terminal.",
+          },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -211,11 +242,30 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
         handle: "A1",
         elementId: "requirement-1",
         text: "The gate screen can reuse the pinned scope projection.",
+        recordVersion: 1,
         disposition: blocked ? "proposed" : "confirmed",
         disposedAt: blocked ? null : NOW,
+        withdrawnAt: null,
         proposedBy: {
           kind: "agent",
           conversationId: "conversation-1",
+        },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: blocked,
+          lastMutation: null,
+          humanCapability: blocked
+            ? { kind: "dispose", allowed: true }
+            : {
+                kind: "dispose",
+                allowed: false,
+                code: "terminal",
+                blockingRevisionId: null,
+                instruction: "This assumption is terminal.",
+              },
         },
         createdAt: NOW,
         updatedAt: NOW,
@@ -226,9 +276,26 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
         handle: "A2",
         elementId: null,
         text: "Historical raw diffs use the same formatter.",
+        recordVersion: 1,
         disposition: "deferred",
         disposedAt: NOW,
+        withdrawnAt: null,
         proposedBy: { kind: "human" },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "dispose",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This assumption is terminal.",
+          },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -241,6 +308,64 @@ function fastPathReviewDetailFixture(): SpecDetailView {
   return {
     ...detail,
     spec: { ...detail.spec, gatePolicy: { preset: "fast-path" } },
+  };
+}
+
+function threadedReviewDetailFixture(): SpecDetailView {
+  const detail = reviewDetailFixture();
+  const root = {
+    ...detail.comments[0]!,
+    resolution: "open" as const,
+  };
+  return {
+    ...detail,
+    comments: [
+      root,
+      {
+        ...root,
+        id: "comment-agent-reply",
+        parentCommentId: root.id,
+        body: "The gate now reads the same immutable scope projection.",
+        author: {
+          kind: "agent",
+          conversationId: "conversation-threaded-review",
+          backend: "claude",
+        },
+        createdAt: "2026-08-22T12:05:00.000Z",
+        updatedAt: "2026-08-22T12:05:00.000Z",
+      },
+    ],
+  };
+}
+
+function historicalOrphanedDetailFixture(): SpecDetailView {
+  const detail = reviewDetailFixture();
+  const base = detail.baseRevision;
+  if (base === null) {
+    throw new Error("Historical thread story requires a base revision");
+  }
+  const root = detail.comments[0]!;
+  return {
+    ...detail,
+    comments: [
+      {
+        ...root,
+        id: "historical-root",
+        threadId: "historical-thread",
+        revisionId: base.revision.id,
+        revisionNumber: base.revision.number,
+        resolution: "open",
+      },
+      {
+        ...root,
+        id: "orphaned-root",
+        threadId: "orphaned-thread",
+        elementId: "removed-requirement",
+        handle: "R9",
+        body: "Preserve why the removed requirement no longer applies.",
+        resolution: "open",
+      },
+    ],
   };
 }
 
@@ -352,6 +477,57 @@ type Story = StoryObj<typeof meta>;
 export const Default: Story = {};
 
 export const SemanticChanges: Story = {};
+
+export const ThreadedReview: Story = {
+  args: { detail: threadedReviewDetailFixture() },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const thread = canvas.getByTestId("review-thread-thread-1");
+    await expect(within(thread).getAllByRole("listitem")).toHaveLength(2);
+    await expect(within(thread).getByText("Claude agent")).toBeVisible();
+    await expect(
+      within(thread).getByRole("button", { name: "Reply" }),
+    ).toBeVisible();
+    await expect(
+      within(thread).getByRole("button", { name: "Resolve" }),
+    ).toBeVisible();
+  },
+};
+
+export const HistoricalOrphanedThreads: Story = {
+  args: { detail: historicalOrphanedDetailFixture() },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const fallback = canvas
+      .getByRole("heading", {
+        name: "Historical & orphaned review threads",
+      })
+      .closest("section");
+    if (fallback === null) throw new Error("Fallback section missing");
+    await expect(
+      within(fallback).getByTestId("review-thread-historical-thread"),
+    ).toBeVisible();
+    await expect(
+      within(fallback).getByTestId("review-thread-orphaned-thread"),
+    ).toBeVisible();
+  },
+};
+
+export const ThreadedReviewMobile: Story = {
+  args: { detail: threadedReviewDetailFixture() },
+  parameters: {
+    viewport: {
+      defaultViewport: "threaded-review-mobile",
+      viewports: {
+        "threaded-review-mobile": {
+          name: "Threaded review mobile",
+          styles: { width: "390px", height: "844px" },
+          type: "mobile",
+        },
+      },
+    },
+  },
+};
 
 export const SemanticDeletion: Story = {
   args: { detail: deletionReviewDetailFixture() },

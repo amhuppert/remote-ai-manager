@@ -125,7 +125,9 @@ read-only.
 ## Command Center feedback and error wiring
 
 CC renders primary output → detail/issues → `reminder:` lines → `hint:` line and carries the same
-facts in JSON as `error`/`issues`/`code`/`instruction`/`reminders`/`hint`. The legacy
+facts in JSON as `error`/`issues`/`code`/`instruction`/`reminders`/`hint`. A refusal that states a
+`rationale` renders it as a `why:` line between its unmet conditions and its `instruction`, so the
+reason lands before the do-now text rather than after it. The legacy
 `stopInstruction` spelling remains only where the workflow protocol still emits it, and
 `stop-instruction.arch.test.ts` pins it to those files so a new command cannot spread it. One seam in
 `src/cli/shared.ts` arbitrates the tiers for success and failure alike: an `instruction` suppresses
@@ -137,9 +139,10 @@ The server authors reminders through directly tested state rules such as
 which no server can observe. Adding a client reminder means editing that list — with the recorded
 failure that earned it — in review; everything else is server-authored and only rendered by the CLI.
 
-The guidance prefixes are the five enumerated in `src/cli/guidance-prefixes.ts` — `instruction:`,
-`reminder:`, `hint:`, `next:` (the machine-composed drill-down pointer), and `context:` (help
-garnish). A sixth spelling does not add a meaning, it makes the other five ambiguous, so
+The guidance prefixes are the six enumerated in `src/cli/guidance-prefixes.ts` — `instruction:`,
+`reminder:`, `hint:`, `next:` (the machine-composed drill-down pointer), `context:` (help
+garnish), and `why:` (a refusal's server-authored reason, rendered only by `failure`). A seventh
+spelling does not add a meaning, it makes the other six ambiguous, so
 `guidance-prefix.arch.test.ts` fails on a line that opens with a competing one. A `label: value`
 line inside a command's own body is data, not guidance. `hint-tokens.arch.test.ts` resolves the
 `cctl …` paths named in CLI text against the registry, so renaming a verb breaks the guidance that

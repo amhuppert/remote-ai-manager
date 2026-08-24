@@ -194,4 +194,28 @@ describe("invalid element handle explanations", () => {
       "looks like an element id",
     );
   });
+
+  /**
+   * An element id reaching a handle-taking command is often a SECTION id, the
+   * one element kind that has no handle to convert to. Restating the handle
+   * grammar alone leaves that caller with no working read at all, so the
+   * explanation names the command that takes an element id.
+   */
+  it("names the element-id read on both id-shaped explanations", () => {
+    const shaped = explainInvalidElementHandle("problem-section");
+    const known = explainInvalidElementHandle(
+      "requirement-1",
+      new Map([["requirement-1", "R1"]]),
+    );
+    const ungrammatical = explainInvalidElementHandle("c2");
+
+    for (const explanation of [shaped, known]) {
+      expect(explanation).toContain(
+        "cctl spec section get <slug> --id <element-id>",
+      );
+    }
+    // Not on a value that is merely ungrammatical: it names no element at all,
+    // so pointing at the element-id read would be a guess, not guidance.
+    expect(ungrammatical).not.toContain("spec section get");
+  });
 });

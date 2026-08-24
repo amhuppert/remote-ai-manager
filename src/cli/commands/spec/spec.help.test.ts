@@ -46,6 +46,22 @@ async function generatedReference(path: string[]) {
 }
 
 describe("cctl spec help nodes", () => {
+  it("defines comment row metrics separately from review thread metrics", async () => {
+    const text = await helpText(["spec", "comments"]);
+
+    for (const field of [
+      "openCount",
+      "openBlockingCount",
+      "openThreadCount",
+      "openBlockingThreadCount",
+    ]) {
+      expect(text).toContain(field);
+    }
+    expect(text).toMatch(/openCount[^.]+message rows/i);
+    expect(text).toMatch(/openThreadCount[^.]+threads/i);
+    expect(text).toContain("spec-wide");
+  });
+
   /**
    * The ordering contract was previously guessed by an authoring agent, and the
    * guess (per-parent order, position implying nesting) was wrong. Every
@@ -212,6 +228,30 @@ describe("cctl spec help nodes", () => {
       expect(text, `request-approval help omits ${code}`).toContain(code);
     }
     expect(text).toContain("alreadyRequested");
+  });
+
+  /**
+   * The two-step is retired. A propose files the gate's ask itself, so help
+   * that still presents request-approval as the routine second step sends an
+   * agent to file a request the server has already filed — and, worse, teaches
+   * it to read a propose receipt as owing one.
+   */
+  it("presents request-approval as the recovery for a propose that could not file", async () => {
+    const text = await helpText(["spec", "request-approval"]);
+
+    expect(text).toMatch(/recovery|repair/i);
+    expect(text).toContain("cctl spec propose");
+    expect(text).toMatch(/delivery[- ]uncertain|not[- ]filed/i);
+    // The routine-second-step framing the reflection followed.
+    expect(text).not.toMatch(/after (a |the )?propose, (run|use) this/i);
+  });
+
+  it("states on the propose node that a successful propose files the ask itself", async () => {
+    const text = await helpText(["spec", "propose"]);
+
+    expect(text).toMatch(/files? the gate-scoped approval request/i);
+    expect(text).toContain("approvalRequests");
+    expect(text).toMatch(/request-approval[\s\S]{0,160}(recovery|repair)/i);
   });
 
   /**
@@ -588,5 +628,37 @@ describe("cctl spec help nodes", () => {
     expect(text).toMatch(
       /spec delta\s+— compare the approved spec against a delivered execution/,
     );
+  });
+
+  /**
+   * Sections are the one element kind with no handle, and the reflection's
+   * author guessed a handle for them rather than concluding none exists. The
+   * help has to say the rule at both doors: `spec get` is not the section read,
+   * and `spec section get` takes an element id because there is nothing else.
+   */
+  it("teaches the handle-less section read and routes it from the handle read", async () => {
+    const leaf = await helpText(["spec", "section", "get"]);
+    const group = await helpText(["spec", "section"]);
+    const root = await helpText(["spec"]);
+    const get = await helpText(["spec", "get"]);
+
+    expect(leaf).toContain("cctl spec section get <slug> --id <element-id>");
+    expect(leaf).toContain("--id");
+    expect(leaf).toContain("--revision");
+    expect(leaf.toLowerCase()).toContain("no handle");
+    expect(leaf).toContain("cctl spec show");
+    expect(leaf).toContain("historical_only");
+
+    // A hub points at its leaves rather than restating their usage, so the
+    // group and the root are checked for the route, not for the shape.
+    expect(group).toMatch(
+      /spec section get\s+— read one section by its element id/,
+    );
+    expect(group.toLowerCase()).toContain("no handle");
+    expect(root).toMatch(/spec section\s+— read the prose sections/);
+    // The two reads have to name each other: an agent holding a handle and an
+    // agent holding an element id each arrive at exactly one of them.
+    expect(get).toContain("spec section get");
+    expect(leaf).toContain("spec get");
   });
 });

@@ -13,6 +13,11 @@ import type {
   SpecGatePolicy,
   SpecGatePreset,
 } from "./schemas";
+import {
+  HUMAN_ACT_REQUIRED_RATIONALE,
+  LATER_STAGE_RATIONALE,
+  PLAN_IN_EVERGREEN_RATIONALE,
+} from "./refusal-rationale";
 import type { ExecutionScope, ScopePlan } from "./scope-validation";
 import {
   admitDraftWrite,
@@ -136,14 +141,28 @@ const scope: ExecutionScope = {
 };
 
 const contractPolicy: SpecGatePolicy = { preset: "contract-bearing" };
+const emptyCitationState = {
+  citationContractVersion: 2 as const,
+  citations: [],
+};
+const emptyCitationDiff = {
+  baseCitationContractVersion: 2 as const,
+  draftCitationContractVersion: 2 as const,
+  baseCitations: [],
+  draftCitations: [],
+};
 
 function reviewSnapshot(): SignOffReviewSnapshot {
   return {
     revisionId: "revision-2",
     governanceBaseRevisionId: "revision-1",
     governanceBaseRevisionRows: revisionRows(),
+    governanceBaseCitationState: emptyCitationState,
     revisionRows: revisionRows(),
+    citationContractVersion: 2,
+    citations: [],
     importBaselineRows: null,
+    importBaselineCitationState: null,
     blockingThreads: [],
     approvals: [
       {
@@ -185,10 +204,16 @@ function applicabilityFor(
   };
   return createApprovalApplicability({
     revisionId: review.revisionId,
+    basedOnRevisionId: "revision-1",
     ancestorRevisionIds:
       overrides.ancestorRevisionIds ?? new Set(Object.keys(rowsByRevision)),
     revisionRows: review.revisionRows,
-    rowsForRevision: (revisionId) => rowsByRevision[revisionId] ?? null,
+    citationContractVersion: review.citationContractVersion,
+    citations: review.citations,
+    stateForRevision: (revisionId) => {
+      const rows = rowsByRevision[revisionId];
+      return rows === undefined ? null : { rows, ...emptyCitationState };
+    },
   });
 }
 
@@ -351,6 +376,7 @@ describe("transition predicates", () => {
           unmetConditions: [
             "A task is authored in a delivery plan attempt, not an evergreen revision.",
           ],
+          rationale: PLAN_IN_EVERGREEN_RATIONALE,
           instruction:
             "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl spec plan edit <slug> --file <plan.json>`.",
         },
@@ -366,6 +392,39 @@ describe("transition predicates", () => {
         refusal: {
           instruction: expect.stringContaining("cctl spec plan open"),
         },
+      });
+    });
+
+    // Staged authoring is designed friction, so both branches say what the
+    // ordering buys rather than leaving the agent to read it as an obstacle.
+    it("says why the stage ordering exists on both blocked branches", () => {
+      expect(
+        admitDraftWrite("requirements", "decision", undefined, {
+          requirements: "gate",
+          design: "gate",
+          plan: "gate",
+        }),
+      ).toEqual({
+        ok: false,
+        refusal: {
+          code: "stage_blocked",
+          unmetConditions: [
+            "A decision cannot be authored during the requirements stage.",
+          ],
+          rationale: LATER_STAGE_RATIONALE,
+          instruction:
+            "Propose the requirements stage and obtain sign-off before authoring decision content.",
+        },
+      });
+      expect(
+        admitDraftWrite("requirements", "section", "design_narrative", {
+          requirements: "notify",
+          design: "notify",
+          plan: "notify",
+        }),
+      ).toMatchObject({
+        ok: false,
+        refusal: { rationale: LATER_STAGE_RATIONALE },
       });
     });
 
@@ -448,11 +507,12 @@ describe("transition predicates", () => {
       const draft = revisionRows();
       draft[0] = { ...draft[0]!, payloadHash: "requirement-changed" };
 
-      expect(consultedAuthoringGates("plan", base, draft)).toEqual([
-        "requirements",
-        "plan",
-      ]);
-      expect(consultedAuthoringGates("design", base, base)).toEqual(["design"]);
+      expect(
+        consultedAuthoringGates("plan", base, draft, emptyCitationDiff),
+      ).toEqual(["requirements", "plan"]);
+      expect(
+        consultedAuthoringGates("design", base, base, emptyCitationDiff),
+      ).toEqual(["design"]);
     });
 
     it("counts added and removed earlier-stage elements as modifications", () => {
@@ -466,7 +526,12 @@ describe("transition predicates", () => {
       ];
 
       expect(
-        consultedAuthoringGates("plan", base, withAddedRequirement),
+        consultedAuthoringGates(
+          "plan",
+          base,
+          withAddedRequirement,
+          emptyCitationDiff,
+        ),
       ).toEqual(["requirements", "design", "plan"]);
     });
   });
@@ -497,6 +562,48 @@ describe("transition predicates", () => {
               severity: "blocks_propose",
               elementHandle: "native-sdd",
               message: "Empty spec — nothing to review.",
+            },
+          ],
+          instruction:
+            "Nothing was proposed for revision revision-2. Run `cctl spec lint native-sdd`, resolve every blocking finding it reports, then re-run `cctl spec propose native-sdd --notes <notes.md>`.",
+        },
+      });
+    });
+
+    /**
+     * Prose is a reference surface too: renumbering leaves a citation in a
+     * requirement statement pointing at nothing, and propose must refuse it
+     * through the same lint panel it refuses a dangling id array with.
+     */
+    it("returns the lint panel findings when prose references a handle the draft lost", () => {
+      const elements = lintElements();
+      elements[0] = lintElement("requirement-1", "R1", {
+        ...requirementPayload,
+        statement: "Transitions cannot bypass the floor described in R12.2.",
+      });
+
+      const decision = propose({
+        revisionState: "draft",
+        authoringStage: "plan",
+        policy: contractPolicy,
+        draft: { specHandle: "native-sdd", authoringStage: "plan", elements },
+        records: {},
+        ...proposeReview(),
+      });
+
+      expect(decision).toEqual({
+        ok: false,
+        refusal: {
+          code: "lint_blocked",
+          unmetConditions: [
+            "R1 prose references unknown handle R12.2 in statement.",
+          ],
+          findings: [
+            {
+              ruleId: "9.6.dangling-handle",
+              severity: "blocks_propose",
+              elementHandle: "R1",
+              message: "R1 prose references unknown handle R12.2 in statement.",
             },
           ],
           instruction:
@@ -601,6 +708,7 @@ describe("transition predicates", () => {
         refusal: {
           code: "human_act_required",
           unmetConditions: ["Element approval is a human-only act."],
+          rationale: HUMAN_ACT_REQUIRED_RATIONALE,
           instruction: "Ask a human to approve the element in Spec Studio.",
         },
       });
@@ -1019,6 +1127,7 @@ describe("transition predicates", () => {
             "Waiver grant is a human-only act.",
             "A waiver requires a reason.",
           ],
+          rationale: HUMAN_ACT_REQUIRED_RATIONALE,
           instruction:
             "Ask a human to grant the waiver with a reason in Spec Studio.",
         },
@@ -1295,19 +1404,28 @@ describe("transition predicates", () => {
         authoringStage: "design",
         revisionId: "revision-2",
         governanceBaseRevisionRows: importedRows(),
+        governanceBaseCitationState: emptyCitationState,
         revisionRows,
+        revisionCitationState: emptyCitationState,
         // An import writes no approval rows at all — that is the whole point
         // of the basis — so the amendment starts from an empty approval set.
         approvals: [],
         handles,
         approvalApplies: createApprovalApplicability({
           revisionId: "revision-2",
+          basedOnRevisionId: "revision-1",
           ancestorRevisionIds: new Set(["revision-1"]),
           revisionRows,
-          rowsForRevision: (revisionId) =>
-            revisionId === "revision-1" ? importedRows() : null,
+          citationContractVersion: 2,
+          citations: [],
+          stateForRevision: (revisionId) =>
+            revisionId === "revision-1"
+              ? { rows: importedRows(), ...emptyCitationState }
+              : null,
         }),
         importBaselineRows,
+        importBaselineCitationState:
+          importBaselineRows === null ? null : emptyCitationState,
       });
     }
 
@@ -1389,6 +1507,52 @@ describe("transition predicates", () => {
         "Decision D1 needs a valid approval for revision-2.",
       ]);
     });
+  });
+
+  // An agent meets this class one member at a time — a sign-off here, a waiver
+  // there — so every member states the same boundary. A predicate that raised
+  // the code without the sentence would teach the agent that some human-only
+  // acts are arbitrary and worth retrying.
+  it("gives every human_act_required refusal the same reason", () => {
+    const decisions = [
+      advanceAuthoringStage("requirements", contractPolicy),
+      approveElement({
+        actor: agent,
+        revisionState: "proposed",
+        subjectKind: "requirement",
+      }),
+      signOffRevision(
+        signOffContext({ policy: { preset: "fast-path" }, actor: agent }),
+      ),
+      grantWaiver({
+        actor: agent,
+        reason: "Agent-requested exception.",
+        existingWaiver: false,
+      }),
+      changePolicy({
+        actor: agent,
+        currentPolicy: contractPolicy,
+        proposedPolicy: { preset: "exploratory" },
+        hardConfirmed: true,
+      }),
+      changePolicy({
+        actor: human,
+        currentPolicy: contractPolicy,
+        proposedPolicy: { preset: "exploratory" },
+        hardConfirmed: false,
+      }),
+    ];
+
+    const rationales = decisions.map((decision) =>
+      decision.ok
+        ? "unexpectedly allowed"
+        : `${decision.refusal.code}: ${decision.refusal.rationale ?? "no rationale"}`,
+    );
+    expect(rationales).toEqual(
+      decisions.map(
+        () => `human_act_required: ${HUMAN_ACT_REQUIRED_RATIONALE}`,
+      ),
+    );
   });
 
   it("is deterministic and leaves a loaded snapshot unchanged", () => {

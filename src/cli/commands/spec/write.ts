@@ -31,9 +31,12 @@ import {
 import { graphWorkflowLaunchLabel } from "@/lib/workflow-graph/launch-presentation";
 import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
 import { projectSpecComment } from "@/lib/specs/comment-projection";
+import { flattenDiagnosticText } from "@/lib/shared/diagnostic-text";
 import {
   importBundleSchema,
   specAliasSchema,
+  specAttentionEditPayloadSchema,
+  specAttentionMutationReceiptSchema,
   specCommentRowSchema,
   specElementSchema,
   specElementVersionSchema,
@@ -42,16 +45,21 @@ import {
   specRevisionSchema,
   specRevisionSupersessionSchema,
   specSchema,
+  specSupersedeAssumptionPayloadSchema,
   taskElementPayloadSchema,
 } from "@/lib/specs/schemas";
 import {
+  approvalLedgerSchema,
   lintFindingSchema,
   specAssumptionViewSchema,
   specEditContextViewSchema,
+  specElementGetResponseSchema,
   specLintViewSchema,
   specProposeResultViewSchema,
   specQuestionViewSchema,
   type SpecEditContextView,
+  type SpecProposeApprovalRequest,
+  type SpecProposeApprovalRequestOutcome,
   type SpecProposeResultView,
 } from "@/lib/specs/view-schemas";
 import {
@@ -77,7 +85,12 @@ import {
   type ProjectConversationContext,
   type GlobalFlags,
 } from "../../shared";
-import { countOf, pendingBlockLines } from "./projection-text";
+import {
+  approvalLedgerLines,
+  countOf,
+  pendingBlockLines,
+  reopenedApprovalLedgerLines,
+} from "./projection-text";
 
 const logger = createLogger("cli.spec");
 const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
@@ -154,11 +167,15 @@ const draftBatchResponseSchema = z
  */
 const draftBatchRefusalSchema = z
   .object({
+    input: z.enum(["element", "removal", "revision"]),
     index: z.number().int(),
     elementId: z.string().min(1).nullable(),
     code: z.string().min(1),
     unmetConditions: z.array(z.string()),
     currentElementVersion: z.number().int().positive().nullable(),
+    rationale: z.string().optional(),
+    instruction: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
     /**
      * Present only on a dangling-reference refusal. The handles are what the
      * author addressed the elements by; they are absent on a server that
@@ -198,7 +215,11 @@ const amendResponseSchema = z
   })
   .strict();
 const withdrawProposalResponseSchema = z
-  .object({ withdrawn: specRevisionSchema, draft: specRevisionSchema })
+  .object({
+    withdrawn: specRevisionSchema,
+    draft: specRevisionSchema,
+    approvalLedger: approvalLedgerSchema,
+  })
   .strict();
 const dismissSupersededResponseSchema = z
   .object({
@@ -297,6 +318,7 @@ const writeStatusSchema = z
         .object({
           id: z.string().min(1),
           handle: z.string().min(1),
+          recordVersion: z.number().int().positive(),
         })
         .passthrough(),
     ),
@@ -522,17 +544,47 @@ function batchRefusalLine(
   slug: string,
   refusal: z.infer<typeof draftBatchRefusalSchema>,
 ): string {
-  const subject = refusal.elementId ?? "the revision";
+  const subject = flattenDiagnosticText(refusal.elementId ?? "the revision");
+  const address =
+    refusal.input === "revision"
+      ? subject
+      : `${refusal.input}s[${refusal.index}] ${subject}`;
+  const code = flattenDiagnosticText(refusal.code);
+  const conditions = refusal.unmetConditions
+    .map((condition) => flattenDiagnosticText(condition))
+    .join(" ");
   const version =
     refusal.currentElementVersion === null
       ? ""
       : ` (element is at version ${refusal.currentElementVersion})`;
+  const structuralFacts = Object.entries(refusal.details ?? {}).flatMap(
+    ([field, value]) => {
+      const rendered =
+        typeof value === "string" ? value : JSON.stringify(value);
+      return rendered === undefined
+        ? []
+        : [
+            `      details.${flattenDiagnosticText(field)}: ${flattenDiagnosticText(rendered)}`,
+          ];
+    },
+  );
   return [
-    `  [${refusal.index}] ${subject}: ${refusal.code} — ${refusal.unmetConditions.join(" ")}${version}`,
-    ...(refusal.danglingReferences ?? []).map(
-      (reference) =>
-        `      ${referenceEnd(slug, reference.sourceElementId, reference.sourceHandle)} ${reference.relation} ${referenceEnd(slug, reference.targetId, reference.targetHandle)}, which this revision would not carry`,
-    ),
+    `  ${address}: ${code} — ${conditions}${version}`,
+    ...(refusal.rationale === undefined
+      ? []
+      : [`      why: ${flattenDiagnosticText(refusal.rationale)}`]),
+    ...structuralFacts,
+    ...(refusal.danglingReferences ?? []).map((reference) => {
+      const source = flattenDiagnosticText(
+        referenceEnd(slug, reference.sourceElementId, reference.sourceHandle),
+      );
+      const relation = flattenDiagnosticText(reference.relation);
+      const target = flattenDiagnosticText(
+        referenceEnd(slug, reference.targetId, reference.targetHandle),
+      );
+      return `      ${source} ${relation} ${target}, which this revision would not carry`;
+    }),
+    `      instruction: ${flattenDiagnosticText(refusal.instruction)}`,
   ].join("\n");
 }
 
@@ -812,6 +864,56 @@ function nextActionCommand(
     default:
       return `cctl spec amend ${slug}`;
   }
+}
+
+const APPROVAL_REQUEST_PHRASE: Record<
+  SpecProposeApprovalRequestOutcome,
+  string
+> = {
+  filed: "filed",
+  "already-filed": "already filed",
+  "not-needed": "not needed",
+  // The ask is durable and only its Needs You notice may be missing, so this
+  // never reads as a failure to file — repeating the request re-fires the
+  // notice against the same attention id.
+  "delivery-uncertain": "filed, notice delivery uncertain",
+  "not-filed": "not filed",
+};
+
+/**
+ * What the propose already did about each consulted gate. One line per gate,
+ * so an agent reads the ask that now exists rather than re-filing it — and the
+ * attention id it reads is the one the human's Needs You row carries.
+ */
+function approvalRequestLines(
+  requests: readonly SpecProposeApprovalRequest[],
+): string[] {
+  const entries = requests.map(
+    ({ gate, outcome, attentionId }) =>
+      `${gate} ${APPROVAL_REQUEST_PHRASE[outcome]}${
+        attentionId === null ? "" : ` (attention ${attentionId})`
+      }`,
+  );
+  const only = entries[0];
+  if (only === undefined) return [];
+  return entries.length === 1
+    ? [`approval requests: ${only}`]
+    : ["approval requests:", ...entries.map((entry) => `  ${entry}`)];
+}
+
+/**
+ * The gates whose asks a caller still has to file or re-fire itself:
+ * `not-filed` left no durable request behind, and `delivery-uncertain` left
+ * one whose notice may never have reached a human. Both are repaired by the
+ * same gate-scoped `request-approval`, whose ensure path reuses the stable id.
+ */
+function approvalRequestRepairs(
+  requests: readonly SpecProposeApprovalRequest[],
+): SpecProposeApprovalRequest[] {
+  return requests.filter(
+    ({ outcome }) =>
+      outcome === "not-filed" || outcome === "delivery-uncertain",
+  );
 }
 
 /**
@@ -1522,7 +1624,26 @@ async function submitDraftBatch(
       command: "draft",
       onRefusal: (error) => {
         const refused = draftBatchRefusalsSchema.safeParse(error.details);
-        if (!refused.success) return null;
+        if (!refused.success) {
+          const rawRefusals =
+            error.details !== undefined &&
+            "refusals" in error.details &&
+            Array.isArray(error.details.refusals)
+              ? error.details.refusals
+              : null;
+          if (rawRefusals === null) return null;
+          logger.debug("cli.spec.invalid_response", {
+            command: "draft",
+            issueCount: refused.error.issues.length,
+          });
+          return failure({
+            exitCode: EXIT_OPERATION_FAILED,
+            message:
+              "spec draft returned an unexpected batch refusal — is the CC server the same build as this CLI?",
+            code: "invalid_response",
+            json,
+          });
+        }
         return failure({
           exitCode: EXIT_OPERATION_FAILED,
           message: error.error,
@@ -1889,16 +2010,37 @@ export async function runSpecPropose(
   // names the stage rather than the gate, which is the wrong gate whenever an
   // earlier stage is also consulted — and it cannot name the subject at all.
   const block = response.value.pendingBlock;
+  const requests = response.value.approvalRequests;
+  const repairs = approvalRequestRepairs(requests);
+  const repairCommand = repairs
+    .map(
+      ({ gate }) => `cctl spec request-approval ${slug.value} --gate ${gate}`,
+    )
+    .join(" && ");
+  // Once every consulted ask is open, naming `request-approval` would send an
+  // agent to file a request that exists. The truthful next act is a human
+  // approving in Spec Studio.
+  const asked = requests.filter(({ outcome }) => outcome !== "not-needed");
+  const allFiled = asked.length > 0 && repairs.length === 0;
   return mutationResult(
     json,
     {
       changed: `proposed revision ${proposed.number}`,
       state: `revision ${proposed.number} is ${proposed.state}`,
       tokens: { revision: proposed.id },
-      actsNext: block?.actsNext ?? "agent",
+      actsNext: repairs.length === 0 ? (block?.actsNext ?? "agent") : "agent",
       blocked: block?.display ?? null,
-      ...(block === null ? {} : { detail: pendingBlockLines(block) }),
-      next: nextActionCommand(slug.value, response.value.nextAction),
+      detail: [
+        ...approvalLedgerLines(response.value.approvalLedger),
+        ...(block === null ? [] : pendingBlockLines(block)),
+        ...approvalRequestLines(requests),
+      ],
+      next:
+        repairs.length > 0
+          ? repairCommand
+          : allFiled
+            ? `cctl spec status ${slug.value}`
+            : nextActionCommand(slug.value, response.value.nextAction),
       ...(block === null ? {} : { instruction: block.instruction }),
     },
     "proposal",
@@ -1955,6 +2097,10 @@ export async function runSpecWithdrawProposal(
       tokens: { revision: draft.id, withdrawnRevision: withdrawn.id },
       actsNext: "agent",
       blocked: null,
+      // What the withdrawal actually cost. Without it the author reads the
+      // reopened draft's outstanding subjects as approvals the withdrawal
+      // destroyed, and re-litigates content nobody asked about.
+      detail: reopenedApprovalLedgerLines(response.value.approvalLedger),
       next: draftNextCommand(slug.value),
     },
     "withdrawal",
@@ -2219,7 +2365,11 @@ export async function runSpecAnswer(
     {
       method: "POST",
       path: actionPath(resolved.context, target.value.slug, "answer-question"),
-      body: { questionId: question.id, answer },
+      body: {
+        questionId: question.id,
+        recordVersion: question.recordVersion,
+        answer,
+      },
       schema: specQuestionViewSchema,
       command: "answer",
       // Answering is the human half of the question split: the agent opened
@@ -2231,6 +2381,9 @@ export async function runSpecAnswer(
               exitCode: EXIT_OPERATION_FAILED,
               message: error.error,
               code: error.code,
+              // The instruction is overridden here, but the server's reason
+              // for the constraint is not this command's to restate.
+              ...(error.rationale ? { rationale: error.rationale } : {}),
               instruction: `Answering a spec question is a human act performed in Spec Studio (Questions & assumptions). Ask the operator to answer ${target.value.handle} there — an answer given in conversation still gets recorded by the human, so the durable record shows who decided.`,
               json,
             })
@@ -2444,11 +2597,604 @@ export async function runSpecAssume(
       },
       actsNext: "human",
       blocked:
-        "a human accepts or rejects the assumption in Spec Studio — agents propose, never dispose",
+        "a human records the assumption's disposition in Spec Studio — agents propose, never dispose",
       next: `cctl spec status ${slug.value} — reports the assumption's disposition`,
     },
     "assumption",
     assumption,
+  );
+}
+
+type AttentionElementView = Extract<
+  z.infer<typeof specElementGetResponseSchema>,
+  { kind: "question" | "assumption" }
+>;
+
+function positiveVersion(
+  values: Record<string, string>,
+  name: "if-version" | "if-citation-version",
+  command: string,
+  json: boolean,
+  required: boolean,
+): CommandResult<number | undefined> {
+  const raw = values[name];
+  if (raw === undefined) {
+    return required
+      ? {
+          ok: false,
+          result: usageFailure(
+            `spec ${command} requires --${name} <n> from the record you read`,
+            json,
+          ),
+        }
+      : { ok: true, value: undefined };
+  }
+  if (!/^[1-9]\d*$/u.test(raw)) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `spec ${command}: --${name} takes a positive integer, not ${JSON.stringify(raw)}`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, value: Number(raw) };
+}
+
+async function readAttentionTarget(
+  slug: string,
+  rawHandle: string | undefined,
+  expectedKind: "question" | "assumption" | "either",
+  command: string,
+  context: ProjectConversationContext,
+  env: CliEnv,
+  host: CliHost,
+  json: boolean,
+): Promise<CommandResult<AttentionElementView>> {
+  if (rawHandle === undefined || !isWellFormedElementHandle(rawHandle, slug)) {
+    return {
+      ok: false,
+      result: usageFailure(`spec ${command} requires a Qn or An handle`, json),
+    };
+  }
+  const parsed = parseElementHandle(rawHandle, slug);
+  if (parsed.slug !== slug) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `spec ${command}: ${JSON.stringify(rawHandle)} addresses spec ${parsed.slug}, not ${slug}`,
+        json,
+      ),
+    };
+  }
+  if (
+    (parsed.kind !== "question" && parsed.kind !== "assumption") ||
+    (expectedKind !== "either" && parsed.kind !== expectedKind)
+  ) {
+    const expected =
+      expectedKind === "either"
+        ? "a question or assumption"
+        : `an ${expectedKind}`;
+    return {
+      ok: false,
+      result: usageFailure(
+        `spec ${command}: ${JSON.stringify(rawHandle)} must be ${expected} handle`,
+        json,
+      ),
+    };
+  }
+  const handle = rawHandle.includes("/")
+    ? rawHandle.slice(rawHandle.indexOf("/") + 1)
+    : rawHandle;
+  const response = await requestTyped(
+    host,
+    context,
+    env,
+    {
+      method: "GET",
+      path: `${specBasePath(context, slug)}/elements/${encodePathSegment(handle)}`,
+      schema: specElementGetResponseSchema,
+      command,
+    },
+    json,
+  );
+  if (!response.ok) return response;
+  if ("kind" in response.value && response.value.kind === "question") {
+    return { ok: true, value: response.value };
+  }
+  if ("kind" in response.value && response.value.kind === "assumption") {
+    return { ok: true, value: response.value };
+  }
+  return {
+    ok: false,
+    result: failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: `spec ${command}: ${handle} is not an attention record`,
+      code: "not_found",
+      instruction: `Read the record with cctl spec get ${slug}/${handle}.`,
+      json,
+    }),
+  };
+}
+
+function attentionReceiptResult(
+  json: boolean,
+  slug: string,
+  receipt: z.infer<typeof specAttentionMutationReceiptSchema>,
+): CliResult {
+  const versionItems = [
+    `  record versions: ${receipt.previousRecordVersion} -> ${receipt.newRecordVersion}`,
+    `  citation versions: ${receipt.previousCitationVersion ?? "none"} -> ${receipt.newCitationVersion ?? "none"}`,
+  ];
+  const citationItems = [
+    ...receipt.citationChanges.added.map((handle) => `  cited: ${handle}`),
+    ...receipt.citationChanges.removed.map((handle) => `  uncited: ${handle}`),
+    ...receipt.citationChanges.refreshed.map(
+      (handle) => `  refreshed: ${handle}`,
+    ),
+  ];
+  const replay = receipt.idempotentReplay ? " (idempotent replay)" : "";
+  const tokens: Record<string, string> = {
+    handle: `${slug}/${receipt.recordHandle}`,
+    record: receipt.recordId,
+    recordVersion: String(receipt.newRecordVersion),
+  };
+  if (receipt.draftRevisionId !== null) {
+    tokens.draftRevision = receipt.draftRevisionId;
+  }
+  if (receipt.newCitationVersion !== null) {
+    tokens.citationVersion = String(receipt.newCitationVersion);
+  }
+  if (receipt.successor !== undefined) {
+    tokens.successor = `${slug}/${receipt.successor.handle}`;
+  }
+  return mutationResult(
+    json,
+    {
+      changed: `${receipt.operation} ${slug}/${receipt.recordHandle}${replay}`,
+      items: [...versionItems, ...citationItems],
+      state: `${receipt.recordKind} ${receipt.recordHandle} is ${receipt.lifecycle} at record version ${receipt.newRecordVersion}`,
+      tokens,
+      actsNext: "agent",
+      blocked: null,
+      next: `cctl spec get ${slug}/${receipt.recordHandle}`,
+    },
+    "attention",
+    receipt,
+  );
+}
+
+export async function runSpecAttentionEdit(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const command = "attention edit";
+  const denied = checkFlags(values, `spec ${command}`, json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 2, command, json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], command, json);
+  if (!slug.ok) return slug.result;
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(`spec ${command} requires --file <update.json>`, json);
+  }
+  const expectedRecordVersion = positiveVersion(
+    values,
+    "if-version",
+    command,
+    json,
+    true,
+  );
+  if (!expectedRecordVersion.ok) return expectedRecordVersion.result;
+  const expectedCitationVersion = positiveVersion(
+    values,
+    "if-citation-version",
+    command,
+    json,
+    false,
+  );
+  if (!expectedCitationVersion.ok) return expectedCitationVersion.result;
+  const file = await readJsonObjectFile(
+    host,
+    filePath,
+    "attention update",
+    json,
+  );
+  if (!file.ok) return file.result;
+  const payload = specAttentionEditPayloadSchema.safeParse(file.value);
+  if (!payload.success) {
+    return invalidFileResult(
+      command,
+      filePath,
+      "attention update",
+      json,
+      payload.error,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const target = await readAttentionTarget(
+    slug.value,
+    rest[1],
+    "either",
+    command,
+    resolved.context,
+    env,
+    host,
+    json,
+  );
+  if (!target.ok) return target.result;
+  if (target.value.kind !== payload.data.kind) {
+    return usageFailure(
+      `spec ${command}: ${rest[1]} is a ${target.value.kind}, but the file declares ${payload.data.kind}`,
+      json,
+    );
+  }
+  if (
+    target.value.kind === "assumption" &&
+    payload.data.kind === "assumption" &&
+    expectedCitationVersion.value === undefined &&
+    (payload.data.citationIntent?.kind === "replace" ||
+      ((payload.data.text !== undefined ||
+        payload.data.attachment !== undefined) &&
+        (target.value.assumption.currentDraftCitations?.citations.length ?? 0) >
+          0))
+  ) {
+    return usageFailure(
+      `spec ${command} requires --if-citation-version <n> because this edit can change the current draft's frozen premise`,
+      json,
+    );
+  }
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "edit-attention"),
+      body: {
+        recordId:
+          target.value.kind === "question"
+            ? target.value.question.id
+            : target.value.assumption.id,
+        expectedRecordVersion: expectedRecordVersion.value,
+        ...(expectedCitationVersion.value === undefined
+          ? {}
+          : { expectedCitationVersion: expectedCitationVersion.value }),
+        payload: payload.data,
+      },
+      schema: specAttentionMutationReceiptSchema,
+      command,
+    },
+    json,
+  );
+  return response.ok
+    ? attentionReceiptResult(json, slug.value, response.value)
+    : response.result;
+}
+
+export async function runSpecAttentionWithdraw(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const command = "attention withdraw";
+  const denied = checkFlags(values, `spec ${command}`, json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 2, command, json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], command, json);
+  if (!slug.ok) return slug.result;
+  if (values["reason-file"] === undefined) {
+    return usageFailure(
+      `spec ${command} requires --reason-file <reason.md>`,
+      json,
+    );
+  }
+  const reason = await resolveProseArg(values, host, "reason", json);
+  if (!reason.ok) return reason.result;
+  if (reason.value === undefined) {
+    return usageFailure(
+      `spec ${command} requires --reason-file <reason.md>`,
+      json,
+    );
+  }
+  const expectedRecordVersion = positiveVersion(
+    values,
+    "if-version",
+    command,
+    json,
+    true,
+  );
+  if (!expectedRecordVersion.ok) return expectedRecordVersion.result;
+  const expectedCitationVersion = positiveVersion(
+    values,
+    "if-citation-version",
+    command,
+    json,
+    false,
+  );
+  if (!expectedCitationVersion.ok) return expectedCitationVersion.result;
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const target = await readAttentionTarget(
+    slug.value,
+    rest[1],
+    "either",
+    command,
+    resolved.context,
+    env,
+    host,
+    json,
+  );
+  if (!target.ok) return target.result;
+  if (
+    target.value.kind === "assumption" &&
+    expectedCitationVersion.value === undefined &&
+    (target.value.assumption.currentDraftCitations?.citations.length ?? 0) > 0
+  ) {
+    return usageFailure(
+      `spec ${command} requires --if-citation-version <n> because withdrawing this cited assumption changes the current draft's frozen premises`,
+      json,
+    );
+  }
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "withdraw-attention"),
+      body: {
+        recordId:
+          target.value.kind === "question"
+            ? target.value.question.id
+            : target.value.assumption.id,
+        expectedRecordVersion: expectedRecordVersion.value,
+        ...(expectedCitationVersion.value === undefined
+          ? {}
+          : { expectedCitationVersion: expectedCitationVersion.value }),
+        reason: reason.value,
+      },
+      schema: specAttentionMutationReceiptSchema,
+      command,
+    },
+    json,
+  );
+  return response.ok
+    ? attentionReceiptResult(json, slug.value, response.value)
+    : response.result;
+}
+
+export async function runSpecAttentionSupersede(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const command = "attention supersede";
+  const denied = checkFlags(values, `spec ${command}`, json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 2, command, json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], command, json);
+  if (!slug.ok) return slug.result;
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      `spec ${command} requires --file <successor.json>`,
+      json,
+    );
+  }
+  const expectedRecordVersion = positiveVersion(
+    values,
+    "if-version",
+    command,
+    json,
+    true,
+  );
+  if (!expectedRecordVersion.ok) return expectedRecordVersion.result;
+  const expectedCitationVersion = positiveVersion(
+    values,
+    "if-citation-version",
+    command,
+    json,
+    true,
+  );
+  if (!expectedCitationVersion.ok) return expectedCitationVersion.result;
+  const file = await readJsonObjectFile(
+    host,
+    filePath,
+    "assumption successor",
+    json,
+  );
+  if (!file.ok) return file.result;
+  const payload = specSupersedeAssumptionPayloadSchema.safeParse(file.value);
+  if (!payload.success) {
+    return invalidFileResult(
+      command,
+      filePath,
+      "assumption successor",
+      json,
+      payload.error,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const target = await readAttentionTarget(
+    slug.value,
+    rest[1],
+    "assumption",
+    command,
+    resolved.context,
+    env,
+    host,
+    json,
+  );
+  if (!target.ok) return target.result;
+  if (target.value.kind !== "assumption") {
+    return usageFailure(`spec ${command} requires an assumption handle`, json);
+  }
+  const draftRevisionId =
+    target.value.assumption.supersededByHandle === null
+      ? target.value.assumption.currentDraftCitations?.revisionId
+      : undefined;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "supersede-assumption"),
+      body: {
+        assumptionId: target.value.assumption.id,
+        ...(draftRevisionId === undefined ? {} : { draftRevisionId }),
+        expectedRecordVersion: expectedRecordVersion.value,
+        expectedCitationVersion: expectedCitationVersion.value,
+        payload: payload.data,
+      },
+      schema: specAttentionMutationReceiptSchema,
+      command,
+    },
+    json,
+  );
+  return response.ok
+    ? attentionReceiptResult(json, slug.value, response.value)
+    : response.result;
+}
+
+async function runSpecAttentionCitationMutation(
+  operation: "cite" | "uncite",
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const command = `attention ${operation}`;
+  const denied = checkFlags(values, `spec ${command}`, json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 2, command, json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], command, json);
+  if (!slug.ok) return slug.result;
+  const element = values["element"];
+  const revision = values["revision"];
+  if (element === undefined || revision === undefined) {
+    return usageFailure(
+      `spec ${command} requires --element <handle> --revision <draft-id>`,
+      json,
+    );
+  }
+  if (!isWellFormedElementHandle(element, slug.value)) {
+    return usageFailure(
+      `spec ${command}: --element ${explainInvalidElementHandle(element)}`,
+      json,
+    );
+  }
+  const parsedElement = parseElementHandle(element, slug.value);
+  if (
+    parsedElement.slug !== slug.value ||
+    parsedElement.kind === "question" ||
+    parsedElement.kind === "assumption"
+  ) {
+    return usageFailure(
+      `spec ${command}: --element must address a requirement, criterion, decision, or task in ${slug.value}`,
+      json,
+    );
+  }
+  const expectedCitationVersion = positiveVersion(
+    values,
+    "if-citation-version",
+    command,
+    json,
+    true,
+  );
+  if (!expectedCitationVersion.ok) return expectedCitationVersion.result;
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const target = await readAttentionTarget(
+    slug.value,
+    rest[1],
+    "assumption",
+    command,
+    resolved.context,
+    env,
+    host,
+    json,
+  );
+  if (!target.ok) return target.result;
+  if (target.value.kind !== "assumption") {
+    return usageFailure(`spec ${command} requires an assumption handle`, json);
+  }
+  const elementHandle = element.includes("/")
+    ? element.slice(element.indexOf("/") + 1)
+    : element;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, `${operation}-assumption`),
+      body: {
+        assumptionId: target.value.assumption.id,
+        revisionId: revision,
+        elementHandle,
+        expectedCitationVersion: expectedCitationVersion.value,
+      },
+      schema: specAttentionMutationReceiptSchema,
+      command,
+    },
+    json,
+  );
+  return response.ok
+    ? attentionReceiptResult(json, slug.value, response.value)
+    : response.result;
+}
+
+export function runSpecAttentionCite(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return runSpecAttentionCitationMutation(
+    "cite",
+    rest,
+    flags,
+    values,
+    env,
+    host,
+  );
+}
+
+export function runSpecAttentionUncite(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return runSpecAttentionCitationMutation(
+    "uncite",
+    rest,
+    flags,
+    values,
+    env,
+    host,
   );
 }
 
@@ -2525,6 +3271,14 @@ export async function runSpecRequestApproval(
         : receipt.signOffOutstanding
           ? " — every subject is approved; the revision awaits sign-off"
           : "";
+  // The ask committed either way; what is uncertain is whether the human can
+  // see it. That makes the next act the agent's — re-running this command
+  // re-fires the notice against the same request — while the gate itself is
+  // still blocked on the human it was never shown to.
+  const undelivered = receipt.deliveryOutcome === "delivery-uncertain";
+  const reRequest = `cctl spec request-approval ${slug.value} --gate ${gate.data}${
+    subject === undefined ? "" : ` --subject ${subject}`
+  }`;
   return mutationResult(
     json,
     {
@@ -2533,19 +3287,24 @@ export async function runSpecRequestApproval(
       changed: receipt.alreadyRequested
         ? `the request for ${asked} was already open — no second request was created${outstanding}`
         : `requested ${asked}${outstanding}`,
-      state: `${gate.data} approval request is pending`,
+      state: `${gate.data} approval request is pending — its Needs You notice ${
+        undelivered ? "may not have been delivered" : "was delivered"
+      }`,
       tokens: {
         attention: receipt.attentionId,
         revision: receipt.revisionId,
         scope: receipt.scope,
         ...(receipt.elementId === null ? {} : { elementId: receipt.elementId }),
       },
-      actsNext: "human",
-      blocked:
-        receipt.scope === "gate" && receipt.signOffOutstanding
+      actsNext: undelivered ? "agent" : "human",
+      blocked: undelivered
+        ? `the ${gate.data} gate waits on a human who may never have been shown the request`
+        : receipt.scope === "gate" && receipt.signOffOutstanding
           ? `a human admits the ${gate.data} gate by signing the revision off in Spec Studio — agents request, never approve`
           : `a human approves the ${gate.data} gate in Spec Studio — agents request, never approve`,
-      next: `cctl spec status ${slug.value} — reports the request until it is approved`,
+      next: undelivered
+        ? `${reRequest} — re-sends the notice for this same request, which opens no second entry`
+        : `cctl spec status ${slug.value} — reports the request until it is approved`,
     },
     "request",
     receipt,
@@ -2927,6 +3686,7 @@ export async function runSpecAbandon(
               exitCode: EXIT_OPERATION_FAILED,
               message: error.error,
               code: error.code,
+              ...(error.rationale ? { rationale: error.rationale } : {}),
               instruction: `Abandoning a whole spec is a human act performed in Spec Studio. Raise the proposal instead: cctl spec question ${slug.value} --text ${JSON.stringify(`Abandon this spec? ${reason}`)}`,
               json,
             })

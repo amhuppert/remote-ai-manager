@@ -188,7 +188,17 @@ async function humanComment(specId: string, revisionId: string) {
     elementId: "fb-r1",
     threadId: "thread-1",
     parentCommentId: null,
-    anchor: { quote: "review feedback" },
+    anchor: {
+      sectionId: "requirements",
+      headingLabel: "Requirements",
+      line: 1,
+      charStart: 0,
+      charEnd: 15,
+      quote: "review feedback",
+      prefix: "",
+      suffix: "",
+      docRevision: revisionId,
+    },
     body: "Where does the proposer read this?",
     blocking: false,
   });
@@ -267,6 +277,53 @@ describe("review feedback notices to the proposing conversation", () => {
       threadId: null,
       proposer: { kind: "agent", conversationId: "conversation-1" },
     });
+  });
+
+  /**
+   * The agent that has to act on the feedback is the one that mistakes a
+   * reopen for a loss, so the carry travels in the notice it reads — not only
+   * in the response the acting human sees.
+   */
+  it("carries the reopened draft's ledger and the carry rule into the feedback the proposer reads", async () => {
+    const { specId, revisionId } = await proposedSpec(AGENT);
+    const approved = await reviewing.approveItem({
+      specId,
+      revisionId,
+      subjectKind: "requirement",
+      elementId: "fb-r1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(approved.ok).toBe(true);
+    feedbackNotices.length = 0;
+
+    const reopened = await reviewing.requestChanges({
+      specId,
+      revisionId,
+      actor: HUMAN,
+    });
+
+    if (!reopened.ok) throw new Error("the request for changes was refused");
+    // R1 is unchanged, so the approval a human granted on the withdrawn
+    // revision still stands for the draft that replaced it.
+    expect(reopened.value.approvalLedger).toMatchObject({
+      satisfied: 1,
+      carried: 1,
+      currentRevision: 0,
+      carryRule: "unchanged subject content under the same applicable gate",
+    });
+    expect(
+      reopened.value.approvalLedger.subjects.map(
+        ({ subject, classification }) => [subject, classification],
+      ),
+    ).toEqual([
+      ["R1", "carried"],
+      ["D1", "pending"],
+    ]);
+    expect(feedbackNotices).toHaveLength(1);
+    expect(feedbackNotices[0]?.approvalLedger).toEqual(
+      reopened.value.approvalLedger,
+    );
   });
 
   it("reports signed_off once, not again on the idempotent repeat", async () => {

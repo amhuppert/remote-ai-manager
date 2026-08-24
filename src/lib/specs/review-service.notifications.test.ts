@@ -15,11 +15,17 @@ import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import type { Notification } from "@/lib/notifications/schemas";
+import type { SpecElementPayload } from "@/lib/specs/schemas";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
-import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import {
+  computeSpecElementPayloadHash,
+  computeSpecRevisionCitationHash,
+  computeSpecRevisionContentHashFromCanonical,
+  createSpecsRepo,
+} from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
@@ -41,6 +47,24 @@ const PROPOSED_REVISION_ID = "revision-proposed";
 const REQUIREMENT_ELEMENT_ID = "element-requirement-1";
 const TASK_ELEMENT_ID = "element-task-1";
 const NOW = "2026-07-19T09:00:00.000Z";
+
+const requirementPayload: Extract<SpecElementPayload, { kind: "requirement" }> =
+  {
+    kind: "requirement",
+    statement: "The system persists approvals durably.",
+    priority: "must",
+    risk: "medium",
+  };
+
+const taskPayload: Extract<SpecElementPayload, { kind: "task" }> = {
+  kind: "task",
+  title: "Deliver the approval cycle",
+  instructions: "Close the request when the human grants the gate.",
+  tracedRequirementElementIds: [],
+  tracedDecisionElementIds: [],
+  coveredCriterionElementIds: [],
+  dependsOnTaskElementIds: [],
+};
 
 describe("ReviewService spec approval notifications (runtime wiring)", () => {
   let db: Db;
@@ -210,8 +234,13 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
       });
 
     // The durable request commits before the notifier runs, so the first
-    // attempt fails after the fact and leaves no Needs You row behind.
-    await expect(request()).rejects.toThrow("notification pipeline down");
+    // attempt succeeds as an ask and leaves no Needs You row behind — the
+    // receipt names that gap rather than reporting the whole act as failed.
+    const first = await request();
+    expect(first).toMatchObject({
+      ok: true,
+      value: { alreadyRequested: false, deliveryOutcome: "delivery-uncertain" },
+    });
     expect(specRows()).toHaveLength(0);
 
     // The retry short-circuits on the existing durable request but still
@@ -219,7 +248,7 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
     const retried = await request();
     expect(retried).toMatchObject({
       ok: true,
-      value: { alreadyRequested: true },
+      value: { alreadyRequested: true, deliveryOutcome: "delivered" },
     });
     const rows = specRows();
     expect(rows).toHaveLength(1);
@@ -471,12 +500,25 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
 });
 
 function seedProposedRequirement(db: Db): void {
+  const contentHash = computeSpecRevisionContentHashFromCanonical("plan", [
+    {
+      elementId: REQUIREMENT_ELEMENT_ID,
+      kind: "requirement",
+      number: 1,
+      parentElementId: null,
+      position: 0,
+      payload: requirementPayload,
+    },
+  ]);
+  const citationHash = computeSpecRevisionCitationHash(2, []);
+
   db.prepare(
     `INSERT INTO spec_revisions (
        id, spec_id, number, state, based_on_revision_id, content_hash,
-       proposed_at, approved_at, created_at
-     ) VALUES (?, ?, 2, 'proposed', NULL, 'hash-2', ?, NULL, ?)`,
-  ).run(PROPOSED_REVISION_ID, SPEC_ID, NOW, NOW);
+       citation_contract_version, citation_hash, proposed_at, approved_at,
+       created_at
+     ) VALUES (?, ?, 2, 'proposed', NULL, ?, 2, ?, ?, NULL, ?)`,
+  ).run(PROPOSED_REVISION_ID, SPEC_ID, contentHash, citationHash, NOW, NOW);
   db.prepare(
     `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
      VALUES (?, ?, 'requirement', 1, NULL, ?)`,
@@ -485,22 +527,30 @@ function seedProposedRequirement(db: Db): void {
     `INSERT INTO spec_element_versions (
        revision_id, element_id, position, payload_json, payload_hash,
        element_version, created_at, updated_at
-     ) VALUES (?, ?, 0, ?, 'payload-hash-1', 1, ?, ?)`,
+     ) VALUES (?, ?, 0, ?, ?, 1, ?, ?)`,
   ).run(
     PROPOSED_REVISION_ID,
     REQUIREMENT_ELEMENT_ID,
-    JSON.stringify({
-      kind: "requirement",
-      statement: "The system persists approvals durably.",
-      priority: "must",
-      risk: "medium",
-    }),
+    JSON.stringify(requirementPayload),
+    computeSpecElementPayloadHash(requirementPayload),
     NOW,
     NOW,
   );
 }
 
 function seed(db: Db): void {
+  const contentHash = computeSpecRevisionContentHashFromCanonical("plan", [
+    {
+      elementId: TASK_ELEMENT_ID,
+      kind: "task",
+      number: 1,
+      parentElementId: null,
+      position: 0,
+      payload: taskPayload,
+    },
+  ]);
+  const citationHash = computeSpecRevisionCitationHash(2, []);
+
   db.prepare(
     `INSERT INTO specs (
        id, project_path, slug, name, gate_policy_json,
@@ -518,9 +568,18 @@ function seed(db: Db): void {
   db.prepare(
     `INSERT INTO spec_revisions (
        id, spec_id, number, state, based_on_revision_id, content_hash,
-       proposed_at, approved_at, created_at
-     ) VALUES (?, ?, 1, 'approved', NULL, 'hash-1', ?, ?, ?)`,
-  ).run(APPROVED_REVISION_ID, SPEC_ID, NOW, NOW, NOW);
+       citation_contract_version, citation_hash, proposed_at, approved_at,
+       created_at
+     ) VALUES (?, ?, 1, 'approved', NULL, ?, 2, ?, ?, ?, ?)`,
+  ).run(
+    APPROVED_REVISION_ID,
+    SPEC_ID,
+    contentHash,
+    citationHash,
+    NOW,
+    NOW,
+    NOW,
+  );
   // The delivery requests below name T1, so the approved revision the run pins
   // has to actually contain it.
   db.prepare(
@@ -531,19 +590,12 @@ function seed(db: Db): void {
     `INSERT INTO spec_element_versions (
        revision_id, element_id, position, payload_json, payload_hash,
        element_version, created_at, updated_at
-     ) VALUES (?, ?, 0, ?, 'payload-hash-task-1', 1, ?, ?)`,
+     ) VALUES (?, ?, 0, ?, ?, 1, ?, ?)`,
   ).run(
     APPROVED_REVISION_ID,
     TASK_ELEMENT_ID,
-    JSON.stringify({
-      kind: "task",
-      title: "Deliver the approval cycle",
-      instructions: "Close the request when the human grants the gate.",
-      tracedRequirementElementIds: [],
-      tracedDecisionElementIds: [],
-      coveredCriterionElementIds: [],
-      dependsOnTaskElementIds: [],
-    }),
+    JSON.stringify(taskPayload),
+    computeSpecElementPayloadHash(taskPayload),
     NOW,
     NOW,
   );

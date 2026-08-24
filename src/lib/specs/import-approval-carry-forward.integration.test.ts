@@ -162,6 +162,7 @@ async function statusProjection(spec: Spec, revisionId: string) {
       snapshot,
       governanceBaseSnapshot: loaded.governanceBaseSnapshot,
       importBaselineRows: loaded.importBaselineRows,
+      importBaselineCitationState: loaded.importBaselineCitationState,
       approvals: harness.review.findApprovalsBySpecId(spec.id),
       admissions: harness.review.findGateAdmissionsBySpecId(spec.id),
       currentExecution: null,

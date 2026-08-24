@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   lint,
+  type LintFinding,
   type MaterializedTaskRecord,
   type RevisionElement,
   type RevisionSnapshot,
   type SpecRecords,
 } from "./lint";
+import {
+  specAssumptionDispositionSchema,
+  specQuestionStatusSchema,
+} from "./schemas";
 
 const requirement = (
   id: string,
@@ -635,5 +640,370 @@ describe("lint", () => {
     expect(
       lint(draft, records()).map((finding) => finding.elementHandle),
     ).toEqual(["R1.1", "R2.1"]);
+  });
+});
+
+/**
+ * The prose half of 9.6: a handle an author wrote into Markdown text is as much
+ * a reference as one written into a typed id array, and renumbering leaves the
+ * prose one silently pointing at nothing. The scanner's false-positive boundary
+ * lives in `prose-references.test.ts`; these tests own which fields are read,
+ * how a finding reads, and what counts as resolved.
+ */
+describe("lint 9.6 over Markdown prose", () => {
+  const proseFindings = (
+    elements: RevisionElement[],
+    overrides: Partial<SpecRecords> = {},
+  ): LintFinding[] =>
+    lint(snapshot(elements, "design"), records(overrides)).filter((finding) =>
+      finding.message.includes("prose references"),
+    );
+
+  const section = (
+    id: string,
+    title: string,
+    body: string,
+  ): RevisionElement => ({
+    id,
+    // Sections have no handle, so the projection addresses them by element id.
+    handle: id,
+    payloadHash: `${id}-hash`,
+    payload: { kind: "section", role: "design_narrative", title, body },
+  });
+
+  const decision = (
+    id: string,
+    handle: string,
+    overrides: Partial<{
+      title: string;
+      chosenApproach: string;
+      reason: string;
+      rejectedAlternatives: Array<{ label: string; reason: string }>;
+    }> = {},
+  ): RevisionElement => ({
+    id,
+    handle,
+    payloadHash: `${id}-hash`,
+    payload: {
+      kind: "decision",
+      title: overrides.title ?? `Decision ${handle}`,
+      chosenApproach: overrides.chosenApproach ?? "Use immutable snapshots.",
+      rejectedAlternatives: overrides.rejectedAlternatives ?? [],
+      reason: overrides.reason ?? "Preserve approved history.",
+      tracedRequirementElementIds: ["requirement-1"],
+    },
+  });
+
+  const taskWith = (
+    id: string,
+    handle: string,
+    prose: { title?: string; instructions?: string },
+  ): RevisionElement => {
+    const base = task(id, handle, { coveredCriterionElementIds: [] });
+    if (base.payload.kind !== "task") throw new Error("expected a task");
+    return { ...base, payload: { ...base.payload, ...prose } };
+  };
+
+  const unknownIn = (
+    elementHandle: string,
+    token: string,
+    field: string,
+  ): LintFinding => ({
+    ruleId: "9.6.dangling-handle",
+    severity: "blocks_propose",
+    elementHandle,
+    message: `${elementHandle} prose references unknown handle ${token} in ${field}.`,
+  });
+
+  it.each([
+    {
+      kind: "section title",
+      element: section("overview", "How R9 lands", "Nothing to see."),
+      expected: unknownIn("overview", "R9", "title"),
+    },
+    {
+      kind: "section body",
+      element: section("overview", "Overview", "The shape follows R9 exactly."),
+      expected: unknownIn("overview", "R9", "body"),
+    },
+    {
+      kind: "requirement statement",
+      element: {
+        ...requirement("requirement-2", "R2"),
+        payload: {
+          kind: "requirement",
+          statement: "The importer must satisfy R9.",
+          priority: "must",
+          risk: "medium",
+        },
+      } satisfies RevisionElement,
+      expected: unknownIn("R2", "R9", "statement"),
+    },
+    {
+      kind: "criterion text",
+      element: {
+        ...criterion("criterion-2", "R1.2", "requirement-1"),
+        payload: {
+          kind: "criterion",
+          text: "Given R9, the import is refused.",
+          validationStrategy: { kinds: ["test_run"] },
+        },
+      } satisfies RevisionElement,
+      expected: unknownIn("R1.2", "R9", "text"),
+    },
+    {
+      kind: "criterion validation note",
+      element: {
+        ...criterion("criterion-2", "R1.2", "requirement-1"),
+        payload: {
+          kind: "criterion",
+          text: "The import is refused.",
+          validationStrategy: {
+            kinds: ["test_run"],
+            note: "Reuse the harness from R9.",
+          },
+        },
+      } satisfies RevisionElement,
+      expected: unknownIn("R1.2", "R9", "validationStrategy.note"),
+    },
+    {
+      kind: "decision title",
+      element: decision("decision-1", "D1", { title: "Why R9 wins" }),
+      expected: unknownIn("D1", "R9", "title"),
+    },
+    {
+      kind: "decision chosen approach",
+      element: decision("decision-1", "D1", {
+        chosenApproach: "Adopt the shape R9 describes.",
+      }),
+      expected: unknownIn("D1", "R9", "chosenApproach"),
+    },
+    {
+      kind: "decision reason",
+      element: decision("decision-1", "D1", {
+        reason: "R9 leaves no alternative.",
+      }),
+      expected: unknownIn("D1", "R9", "reason"),
+    },
+    {
+      kind: "rejected alternative reason",
+      element: decision("decision-1", "D1", {
+        rejectedAlternatives: [
+          { label: "A parallel store", reason: "It contradicts R9." },
+        ],
+      }),
+      expected: unknownIn("D1", "R9", "rejectedAlternatives[0].reason"),
+    },
+    {
+      kind: "task title",
+      element: taskWith("task-2", "T2", { title: "Finish R9" }),
+      expected: unknownIn("T2", "R9", "title"),
+    },
+    {
+      kind: "task instructions",
+      element: taskWith("task-2", "T2", { instructions: "Implement R9" }),
+      expected: unknownIn("T2", "R9", "instructions"),
+    },
+  ])("scans the $kind field", ({ element, expected }) => {
+    expect(proseFindings([...cleanElements(), element])).toEqual([expected]);
+  });
+
+  it("excludes a rejected alternative's label, which is plain text", () => {
+    expect(
+      proseFindings([
+        ...cleanElements(),
+        decision("decision-1", "D1", {
+          rejectedAlternatives: [
+            { label: "The R9 approach", reason: "It costs too much." },
+          ],
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("distinguishes a removed target from an unknown one", () => {
+    const elements = [
+      ...cleanElements(),
+      decision("decision-1", "D1", {
+        reason: "Superseded by R2 and R9.",
+      }),
+    ];
+
+    expect(
+      proseFindings(elements, {
+        knownElements: [
+          { elementId: "requirement-2", handle: "R2", kind: "requirement" },
+        ],
+      }),
+    ).toEqual([
+      {
+        ruleId: "9.6.dangling-handle",
+        severity: "blocks_propose",
+        elementHandle: "D1",
+        message: "D1 prose references removed requirement R2 in reason.",
+      },
+      unknownIn("D1", "R9", "reason"),
+    ]);
+  });
+
+  it("resolves a handle the draft still carries, bare or qualified with its own slug", () => {
+    expect(
+      proseFindings([
+        ...cleanElements(),
+        decision("decision-1", "D1", {
+          reason: "R1 and native-sdd/R1.1 are both current.",
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("deduplicates per element, field, and token", () => {
+    expect(
+      proseFindings([
+        ...cleanElements(),
+        decision("decision-1", "D1", {
+          reason: "R9 restates R9, and R9 again.",
+          chosenApproach: "R9 once more.",
+        }),
+      ]),
+    ).toEqual([
+      unknownIn("D1", "R9", "chosenApproach"),
+      unknownIn("D1", "R9", "reason"),
+    ]);
+  });
+
+  /**
+   * A reference asserts that a record exists, not that it is still live, so
+   * every lifecycle state must resolve. The cases are derived from the enums
+   * rather than listed: a lifecycle state added later joins this matrix instead
+   * of quietly escaping it, and filtering prose resolution by state — the
+   * regression this guards — turns the whole matrix red.
+   */
+  it.each(specQuestionStatusSchema.options.map((status) => ({ status })))(
+    "resolves a question reference to a $status record",
+    ({ status }) => {
+      expect(
+        proseFindings(
+          [
+            ...cleanElements(),
+            decision("decision-1", "D1", { reason: "Settled by Q1." }),
+          ],
+          {
+            questions: [{ questionId: "question-1", handle: "Q1", status }],
+          },
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(
+    specAssumptionDispositionSchema.options.map((disposition) => ({
+      disposition,
+    })),
+  )(
+    "resolves an assumption reference to a $disposition record",
+    ({ disposition }) => {
+      expect(
+        proseFindings(
+          [
+            ...cleanElements(),
+            decision("decision-1", "D1", { reason: "Rests on A4." }),
+          ],
+          {
+            assumptions: [
+              { assumptionId: "assumption-4", handle: "A4", disposition },
+            ],
+          },
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * Supersession retires an assumption without deleting it: the predecessor row
+   * survives under its own number and the successor is allocated a new one, so
+   * both handles stay addressable and prose citing either side resolves.
+   */
+  it("resolves both sides of a supersession", () => {
+    expect(
+      proseFindings(
+        [
+          ...cleanElements(),
+          decision("decision-1", "D1", {
+            reason: "A4 was superseded by A5.",
+          }),
+        ],
+        {
+          assumptions: [
+            {
+              assumptionId: "assumption-4",
+              handle: "A4",
+              disposition: "confirmed",
+            },
+            {
+              assumptionId: "assumption-5",
+              handle: "A5",
+              disposition: "proposed",
+            },
+          ],
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports a question or assumption reference with no record behind it", () => {
+    expect(
+      proseFindings([
+        ...cleanElements(),
+        decision("decision-1", "D1", { reason: "Rests on Q7 and A8." }),
+      ]),
+    ).toEqual([
+      unknownIn("D1", "A8", "reason"),
+      unknownIn("D1", "Q7", "reason"),
+    ]);
+  });
+
+  /**
+   * A section has no handle, so the projection displays its element id — and an
+   * element id is an opaque string (`z.string().min(1)`), not an address. If a
+   * display id were admitted into the target lookup, a section whose id happens
+   * to read like a handle would silently satisfy prose citing a requirement
+   * that does not exist, and the draft would clear propose on a phantom.
+   */
+  it("never resolves a prose reference against a section's element-id fallback", () => {
+    expect(
+      proseFindings([
+        ...cleanElements(),
+        section("R9", "Overview", "Nothing to see."),
+        decision("decision-1", "D1", { reason: "Rests on R9." }),
+      ]),
+    ).toEqual([unknownIn("D1", "R9", "reason")]);
+  });
+
+  it("never resolves a prose reference against a removed section's element id", () => {
+    expect(
+      proseFindings(
+        [
+          ...cleanElements(),
+          decision("decision-1", "D1", { reason: "Rests on R9." }),
+        ],
+        {
+          knownElements: [{ elementId: "R9", handle: "R9", kind: "section" }],
+        },
+      ),
+    ).toEqual([unknownIn("D1", "R9", "reason")]);
+  });
+
+  it("ignores a token inside fenced or inline code", () => {
+    expect(
+      proseFindings([
+        ...cleanElements(),
+        section(
+          "overview",
+          "Overview",
+          "Write `R9` literally.\n\n```\nR9\n```\n",
+        ),
+      ]),
+    ).toEqual([]);
   });
 });

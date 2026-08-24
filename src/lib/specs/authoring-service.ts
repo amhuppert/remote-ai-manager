@@ -44,8 +44,10 @@ import type {
   SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
 import { markWaiversStaleAtSignOffInTransaction } from "./waiver-staleness";
+import type { ApprovalLedger } from "./approval-ledger";
 import {
   authoringReviewProjection,
+  isAuthoringGate,
   type AuthoringNextAction,
   type AuthoringPendingBlock,
 } from "./authoring-review-projection";
@@ -62,16 +64,18 @@ import {
 import { specSlugSchema } from "./handles";
 import { lint, type LintFinding } from "./lint";
 import type { SpecMeasureEventPayload } from "./measures";
-import { resolveDial } from "./policy";
+import { authoringApprovalsCollapseIntoSignOff, resolveDial } from "./policy";
 import {
   liveSiblingProposals,
   proposalAlreadyLiveRefusal,
 } from "./proposal-integrity";
 import { oversizedProposalNotesRefusal } from "./proposal-notes";
+import { PARENT_IMMUTABLE_RATIONALE } from "./refusal-rationale";
 import { diffRevisions, type RevisionDiffResult } from "./revision-diff";
 import {
   elementHandleInSnapshot,
   loadProposalState,
+  toCitationDiffContext,
   toDiffRows,
 } from "./review-state";
 import {
@@ -87,8 +91,11 @@ import {
   openDraftAuthoringStage,
   propose,
   resolveAuthoringDials,
+  type AuthoringGate,
   type TransitionRefusal,
 } from "./transitions";
+import type { ReviewService } from "./review-service";
+import type { SpecProposeApprovalRequest } from "./view-schemas";
 
 const logger = createLogger("specs.authoring-service");
 
@@ -98,7 +105,16 @@ export const draftElementWriteInputSchema = z
     revisionId: z.string().min(1),
     elementId: z.string().min(1),
     kind: specElementKindSchema,
-    parentElementId: z.string().min(1).nullable(),
+    /**
+     * The element that contains this one. Stated exactly once, at creation: a
+     * create must name it (null for a top-level element) because
+     * `parent_immutable` makes the choice permanent, and an update may leave
+     * it out because an update cannot change it. Optional here rather than in
+     * two schemas, so a lone element and a batch item stay one document shape;
+     * which of the two rules applies is decided by `baseElementVersion`, and
+     * the admission owns both.
+     */
+    parentElementId: z.string().min(1).nullable().optional(),
     /**
      * One global order per revision, tiebroken by element id. Omit it to
      * append: a create takes the next slot, an update keeps the slot it has.
@@ -257,6 +273,18 @@ export interface DraftElementBatchRefusal {
    * structurally so a writer can repair them without parsing prose.
    */
   readonly danglingReferences?: readonly BatchReferenceIssue[];
+  /**
+   * The sentence saying why the rule exists, on the refusals whose friction is
+   * the product rather than a defect. A batch prints one line per index, so
+   * without it the reader of a refused batch would be the only one who never
+   * learns what the constraint protects.
+   */
+  readonly rationale?: string;
+  /**
+   * The refusal's structural facts, for the codes that carry them. Absent on
+   * the refusals that state everything in their unmet condition.
+   */
+  readonly details?: Record<string, unknown>;
 }
 
 export type DraftElementBatchResult =
@@ -281,7 +309,13 @@ export const createSpecInitialElementSchema = draftElementDocumentSchema
   .omit({
     baseElementVersion: true,
   })
-  .extend({ baseElementVersion: z.null().optional() });
+  // This document is only ever a create, so containment is required here
+  // rather than admitted case by case: there is no update form of the first
+  // save for an omission to be the ordinary shape of.
+  .extend({
+    baseElementVersion: z.null().optional(),
+    parentElementId: z.string().min(1).nullable(),
+  });
 export type CreateSpecInitialElement = z.infer<
   typeof createSpecInitialElementSchema
 >;
@@ -424,6 +458,13 @@ export interface AuthoringServiceDeps {
   waivers?: Pick<SpecDeliveryRepo, "findWaiversBySpecId" | "saveWaiver">;
   /** Post-hoc notices for Notify-dial authoring-gate admissions (R11.2). */
   policyNotifier?: SpecPolicyAdmissionNotifier;
+  /**
+   * Files the gate-scoped asks a successful proposal owes (R10.13). Optional
+   * because the authoring service is composed on its own in narrower entry
+   * paths; a proposal made without it reports `not-filed` rather than pretend
+   * a durable request exists, which leaves `request-approval` the recovery.
+   */
+  approvalRequests?: ApprovalRequestPort;
   newId?(prefix: string): string;
   now?(): string;
 }
@@ -446,22 +487,72 @@ export type ProposeAuthoringRevisionInput = z.infer<
   typeof proposeAuthoringRevisionInputSchema
 >;
 
-export type ProposeResult =
-  | {
-      readonly ok: true;
-      readonly revision: SpecRevision;
-      readonly diff: RevisionDiffResult;
-      readonly absorbedSignOff: boolean;
-      /**
-       * What the proposed revision still owes, read from the server's
-       * projection after invalidation and the policy admissions. Null when the
-       * transition left nothing outstanding. A caller renders this; deriving a
-       * blocker from the revision's authoring stage names the wrong gate.
-       */
-      readonly pendingBlock: AuthoringPendingBlock | null;
-      readonly nextAction: AuthoringNextAction;
-    }
-  | { readonly ok: false; readonly refusal: TransitionRefusal };
+export interface ProposeSuccess {
+  readonly ok: true;
+  readonly revision: SpecRevision;
+  readonly diff: RevisionDiffResult;
+  readonly absorbedSignOff: boolean;
+  /**
+   * What the proposed revision still owes, read from the server's projection
+   * after invalidation and the policy admissions. Null when the transition
+   * left nothing outstanding. A caller renders this; deriving a blocker from
+   * the revision's authoring stage names the wrong gate.
+   */
+  readonly pendingBlock: AuthoringPendingBlock | null;
+  readonly nextAction: AuthoringNextAction;
+  /**
+   * Both sides of what the consulted gates ask for, so a propose that lands
+   * with work outstanding reads as a position rather than as a failure: what
+   * carried, and what a human still owes.
+   */
+  readonly approvalLedger: ApprovalLedger;
+  /**
+   * What the post-commit coordinator did about the ask each consulted
+   * authoring gate owes (R10.13). One entry per consulted gate, in authoring
+   * order, so a caller can tell an ask that now exists from one it still has
+   * to file itself.
+   */
+  readonly approvalRequests: readonly SpecProposeApprovalRequest[];
+}
+
+export interface ProposeRefused {
+  readonly ok: false;
+  readonly refusal: TransitionRefusal;
+}
+
+export type ProposeResult = ProposeSuccess | ProposeRefused;
+
+/**
+ * The transaction's answer, before the post-commit coordinator files anything.
+ * The asks are deliberately outside the transaction: a durable request is a
+ * second act on a revision the freeze has already committed, and rolling the
+ * freeze back because an ask failed would lose the proposal a human is waiting
+ * to review.
+ */
+type ProposeTransitionResult =
+  | Omit<ProposeSuccess, "approvalRequests">
+  | ProposeRefused;
+
+/**
+ * The approval-request verb the propose coordinator files through. Structural
+ * so the authoring service composes the review service rather than importing
+ * its implementation — the two are built side by side in the service factory.
+ */
+export type ApprovalRequestPort = Pick<ReviewService, "requestApproval">;
+
+/** What the committed transition leaves for the coordinator to act on. */
+interface ProposalGateAsk {
+  /** Every authoring gate the proposal consulted, in authoring order. */
+  readonly consulted: readonly AuthoringGate[];
+  /** The consulted gates the post-transition projection still leaves pending. */
+  readonly pending: ReadonlySet<AuthoringGate>;
+  /**
+   * True when the policy folds every authoring approval into the one sign-off
+   * (R11.5). A gate-scoped ask per gate would then open three Needs You rows
+   * for a single human act that none of them names.
+   */
+  readonly collapsed: boolean;
+}
 
 export const advanceAuthoringStageInputSchema = z
   .object({
@@ -599,6 +690,117 @@ export function historicalElementRefusal(
 }
 
 /**
+ * A refused rehoming. Every field is present because there is no version of
+ * this refusal that leaves one out: the reader needs both parents to see which
+ * of them it actually meant, and the rule only recruits when the sentence
+ * saying why it exists travels with it.
+ */
+export type ParentImmutableRefusal = Required<
+  Pick<
+    TransitionRefusal,
+    "code" | "unmetConditions" | "instruction" | "details" | "rationale"
+  >
+>;
+
+/**
+ * The one refusal every surface renders for an attempt to move an element the
+ * revision carries. There is no retry shape and no override flag: a handle is
+ * composed from its parent's number and every frozen revision recorded what
+ * contained what, so the way to a different parent is a different element.
+ */
+export function parentImmutableRefusal(input: {
+  elementId: string;
+  handle: string | null;
+  currentParentElementId: string | null;
+  requestedParentElementId: string | null;
+}): ParentImmutableRefusal {
+  const address = input.handle ?? input.elementId;
+  const destination =
+    input.requestedParentElementId === null
+      ? "at the top level"
+      : `under ${input.requestedParentElementId}`;
+  return {
+    code: "parent_immutable",
+    unmetConditions: [
+      `${address}'s parent (${input.currentParentElementId ?? "none"}) is part of its stable identity across revisions and cannot change after creation.`,
+    ],
+    rationale: PARENT_IMMUTABLE_RATIONALE,
+    instruction: `Nothing was written. Author the content as a new element ${destination}, then take ${address} out of the draft with \`cctl spec remove\`.`,
+    details: {
+      elementId: input.elementId,
+      handle: input.handle,
+      currentParentElementId: input.currentParentElementId,
+      requestedParentElementId: input.requestedParentElementId,
+    },
+  };
+}
+
+/**
+ * A create that leaves its containment to a default. Refused rather than
+ * defaulted, because `parent_immutable` makes the parent an element is born
+ * under permanent: a silently chosen one is a permanent mistake, repairable
+ * only by removing the element and writing it again.
+ */
+function creationParentRequiredRefusal(
+  elementId: string,
+): Pick<TransitionRefusal, "code" | "unmetConditions" | "instruction"> {
+  return {
+    code: "validation",
+    unmetConditions: [
+      `${elementId} is being created and states no parentElementId, which is the one write that can state it.`,
+    ],
+    instruction: `Nothing was written. Give ${elementId} a "parentElementId": the element id of the element that contains it, or null for a top-level element. Later updates may leave it out, because an element's parent never changes.`,
+  };
+}
+
+/**
+ * The containment rule for one element write, or null when the write obeys it.
+ * Containment is stated exactly once, at creation, which is why both halves
+ * live here: a create must choose, and an update has nothing left to say.
+ *
+ * An update that omits the field states no move, and one that echoes the
+ * stored parent is the ordinary read-modify-write shape, so neither is an
+ * attempt at anything; naming a different parent is the move `parent_immutable`
+ * refuses. Only an update can rehome — a create over an element the revision
+ * already carries is a stale-version conflict whatever parent it names, and a
+ * create over one it does not carry has no stored parent to contradict, the
+ * reintroduction among those judging its own parent under
+ * `historical_element_id`.
+ */
+export function elementContainmentRefusal(input: {
+  current: readonly GuardedElement[];
+  elementId: string;
+  requestedParentElementId: string | null | undefined;
+  baseElementVersion: number | null;
+  handleOf: (elementId: string) => string | null;
+}): Pick<
+  TransitionRefusal,
+  "code" | "unmetConditions" | "instruction" | "details" | "rationale"
+> | null {
+  if (input.baseElementVersion === null) {
+    return input.requestedParentElementId === undefined
+      ? creationParentRequiredRefusal(input.elementId)
+      : null;
+  }
+  if (input.requestedParentElementId === undefined) return null;
+  const existing = input.current.find(
+    (element) => element.id === input.elementId,
+  );
+  if (
+    existing === undefined ||
+    existing.parentElementId === input.requestedParentElementId
+  ) {
+    return null;
+  }
+  return parentImmutableRefusal({
+    elementId: input.elementId,
+    handle: input.handleOf(input.elementId),
+    currentParentElementId: existing.parentElementId,
+    requestedParentElementId: input.requestedParentElementId,
+  });
+}
+
+/**
  * An ordinary authoring continuation refuses while a revision is under review.
  * Continuing from the approved base would number the new revision above the
  * proposed one while carrying none of its content, so the revision the
@@ -696,17 +898,32 @@ function currentGuardedElements(
 /**
  * The parent a written element ends up with. Containment is fixed at creation
  * — an update carries no parent — so an upsert over an existing element keeps
- * the row's parent rather than whatever the caller happened to send.
+ * the row's parent rather than whatever the caller happened to send. A create
+ * that states none never reaches here: the containment admission refuses it
+ * ahead of every staging read, and the null is the total function's answer
+ * rather than a default anything can land under.
  */
 function stagedParentElementId(
   current: readonly GuardedElement[],
   elementId: string,
-  requestedParentElementId: string | null,
+  requestedParentElementId: string | null | undefined,
 ): string | null {
   const existing = current.find((element) => element.id === elementId);
   return existing === undefined
-    ? requestedParentElementId
+    ? (requestedParentElementId ?? null)
     : existing.parentElementId;
+}
+
+/**
+ * The parent a create writes. Every create that states none is refused by the
+ * containment admission before any write path reaches here, so the null branch
+ * is what makes the function total rather than a default an author can land
+ * under by omission.
+ */
+function admittedCreationParentElementId(
+  requestedParentElementId: string | null | undefined,
+): string | null {
+  return requestedParentElementId ?? null;
 }
 
 /**
@@ -896,7 +1113,7 @@ function writeOneElement(
       specId: batch.specId,
       revisionId: batch.revisionId,
       kind: item.kind,
-      parentElementId: item.parentElementId,
+      parentElementId: admittedCreationParentElementId(item.parentElementId),
       position: item.position,
       payload: item.payload,
       ...(item.reintroduceHistorical === undefined
@@ -934,6 +1151,92 @@ function writtenElementHandle(
   return snapshot === null
     ? null
     : elementHandleInSnapshot(snapshot, elementId);
+}
+
+/**
+ * Files the gate-scoped ask each consulted authoring gate owes after a
+ * proposal commits (R10.13), and reports what happened per gate.
+ *
+ * The ask carries no subject on purpose: it is the request a gate with a dozen
+ * outstanding subjects can make and the only one that still means the same
+ * thing once they are all approved. Its durable identity
+ * (`specId, revisionId, gate, scope: "gate"`) dedupes a second ask onto the
+ * one still open under that identity rather than opening a second row. Request
+ * Changes retires the reviewed revision's asks and opens a new revision, so
+ * the propose that follows it files a fresh ask under the new revision id.
+ *
+ * Nothing here can fail the proposal. A filing failure and a delivery failure
+ * are reported apart because only the second leaves a durable request behind,
+ * and `request-approval` repairs one but files the other.
+ */
+async function fileProposalApprovalRequests(
+  port: ApprovalRequestPort | undefined,
+  input: {
+    specId: string;
+    revisionId: string;
+    actor: ActorProvenance;
+    gateAsk: ProposalGateAsk;
+  },
+): Promise<SpecProposeApprovalRequest[]> {
+  const notNeeded = (gate: AuthoringGate): SpecProposeApprovalRequest => ({
+    gate,
+    outcome: "not-needed",
+    attentionId: null,
+  });
+  const outcomes: SpecProposeApprovalRequest[] = [];
+  for (const gate of input.gateAsk.consulted) {
+    if (input.gateAsk.collapsed || !input.gateAsk.pending.has(gate)) {
+      outcomes.push(notNeeded(gate));
+      continue;
+    }
+    if (port === undefined) {
+      outcomes.push({ gate, outcome: "not-filed", attentionId: null });
+      continue;
+    }
+    try {
+      const filed = await port.requestApproval({
+        specId: input.specId,
+        revisionId: input.revisionId,
+        gate,
+        actor: input.actor,
+      });
+      if (!filed.ok) {
+        // A gate the request validator calls satisfied owes no ask; every
+        // other refusal leaves the gate blocking with nothing filed for it.
+        outcomes.push(
+          filed.refusal.code === "already_satisfied"
+            ? notNeeded(gate)
+            : { gate, outcome: "not-filed", attentionId: null },
+        );
+        logger.warn("specs.authoring.propose_approval_request_refused", {
+          specId: input.specId,
+          revisionId: input.revisionId,
+          gate,
+          refusalCode: filed.refusal.code,
+        });
+        continue;
+      }
+      outcomes.push({
+        gate,
+        outcome:
+          filed.value.deliveryOutcome === "delivery-uncertain"
+            ? "delivery-uncertain"
+            : filed.value.alreadyRequested
+              ? "already-filed"
+              : "filed",
+        attentionId: filed.value.attentionId,
+      });
+    } catch (error) {
+      logger.warn("specs.authoring.propose_approval_request_failed", {
+        specId: input.specId,
+        revisionId: input.revisionId,
+        gate,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      outcomes.push({ gate, outcome: "not-filed", attentionId: null });
+    }
+  }
+  return outcomes;
 }
 
 export function createAuthoringService(
@@ -1354,9 +1657,10 @@ export function createAuthoringService(
               result: {
                 ok: false,
                 refusal: oversized,
-              } satisfies ProposeResult,
+              } satisfies ProposeTransitionResult,
               prepared: [] as PreparedSpecEventPublication[],
               policyNotices: [] as SpecPolicyAdmissionNotice[],
+              gateAsk: null,
             };
           }
           const spec = requireSpec(repo, parsed.specId);
@@ -1399,9 +1703,10 @@ export function createAuthoringService(
                 }
               : decision.refusal;
             return {
-              result: { ok: false, refusal } satisfies ProposeResult,
+              result: { ok: false, refusal } satisfies ProposeTransitionResult,
               prepared: [] as PreparedSpecEventPublication[],
               policyNotices: [] as SpecPolicyAdmissionNotice[],
+              gateAsk: null,
             };
           }
 
@@ -1418,9 +1723,10 @@ export function createAuthoringService(
               result: {
                 ok: false,
                 refusal: proposalAlreadyLiveRefusal(liveProposal),
-              } satisfies ProposeResult,
+              } satisfies ProposeTransitionResult,
               prepared: [] as PreparedSpecEventPublication[],
               policyNotices: [] as SpecPolicyAdmissionNotice[],
+              gateAsk: null,
             };
           }
 
@@ -1429,7 +1735,11 @@ export function createAuthoringService(
               ? []
               : toDiffRows(loaded.reviewBaseSnapshot);
           const draftRows = toDiffRows(snapshot);
-          const diff = diffRevisions(baseRows, draftRows);
+          const diff = diffRevisions(
+            baseRows,
+            draftRows,
+            toCitationDiffContext(loaded.reviewBaseSnapshot, snapshot),
+          );
           const classificationById = new Map(
             diff.classifications.map((classification) => [
               classification.elementId,
@@ -1497,6 +1807,16 @@ export function createAuthoringService(
             revision.authoringStage,
             loaded.reviewSnapshot.governanceBaseRevisionRows,
             loaded.reviewSnapshot.revisionRows,
+            {
+              baseCitationContractVersion:
+                loaded.reviewSnapshot.governanceBaseCitationState
+                  .citationContractVersion,
+              draftCitationContractVersion:
+                loaded.reviewSnapshot.citationContractVersion,
+              baseCitations:
+                loaded.reviewSnapshot.governanceBaseCitationState.citations,
+              draftCitations: loaded.reviewSnapshot.citations,
+            },
           );
           const resolvedGates = proposeGates.map((gate) => ({
             gate,
@@ -1568,6 +1888,7 @@ export function createAuthoringService(
             snapshot: { ...snapshot, revision: proposed },
             governanceBaseSnapshot: loaded.governanceBaseSnapshot,
             importBaselineRows: loaded.importBaselineRows,
+            importBaselineCitationState: loaded.importBaselineCitationState,
             approvals: deps.review.findApprovalsBySpecId(spec.id),
             admissions: deps.review.findGateAdmissionsByRevision(revision.id),
             // A propose speaks for the authoring gates; the execution-scoped
@@ -1638,9 +1959,10 @@ export function createAuthoringService(
               result: {
                 ok: false,
                 refusal: absorbedRefusal,
-              } satisfies ProposeResult,
+              } satisfies ProposeTransitionResult,
               prepared,
               policyNotices,
+              gateAsk: null,
             };
           }
           return {
@@ -1651,9 +1973,26 @@ export function createAuthoringService(
               absorbedSignOff: absorbsSignOff,
               pendingBlock: projection.pendingBlock,
               nextAction: projection.nextAction,
-            } satisfies ProposeResult,
+              approvalLedger: projection.approvalLedger,
+            } satisfies ProposeTransitionResult,
             prepared,
             policyNotices,
+            gateAsk: {
+              consulted: proposeGates,
+              // The projection is read after the admissions land, so an
+              // absorbed or already-admitted gate is absent from it and owes
+              // no ask.
+              pending: new Set(
+                (projection.pendingBlock?.gates ?? [])
+                  .filter((entry) => entry.state === "pending")
+                  .map((entry) => entry.gate)
+                  .filter(isAuthoringGate),
+              ),
+              collapsed: authoringApprovalsCollapseIntoSignOff(
+                spec.gatePolicy,
+                revision.authoringStage,
+              ),
+            } satisfies ProposalGateAsk,
           };
         },
       );
@@ -1662,20 +2001,45 @@ export function createAuthoringService(
       // surfaced a refusal — the Notify-dial propose itself proceeded, so the
       // post-hoc notices fire either way.
       for (const notice of transactionResult.policyNotices) {
-        deps.policyNotifier?.policyAdmitted(notice);
+        try {
+          deps.policyNotifier?.policyAdmitted(notice);
+        } catch {
+          logger.warn(
+            "specs.authoring.propose_revision.policy_notification_failed",
+            {
+              specId: notice.specId,
+              revisionId: notice.revisionId,
+              gate: notice.gate,
+              admissionId: notice.admissionId,
+            },
+          );
+        }
       }
+      const transition = transactionResult.result;
+      const approvalRequests =
+        transition.ok && transactionResult.gateAsk !== null
+          ? await fileProposalApprovalRequests(deps.approvalRequests, {
+              specId: parsed.specId,
+              revisionId: parsed.revisionId,
+              actor: parsed.actor,
+              gateAsk: transactionResult.gateAsk,
+            })
+          : [];
       logger.info("specs.authoring.propose_revision.complete", {
         specId: parsed.specId,
         revisionId: parsed.revisionId,
-        ok: transactionResult.result.ok,
-        ...(transactionResult.result.ok
+        ok: transition.ok,
+        ...(transition.ok
           ? {
-              state: transactionResult.result.revision.state,
-              absorbedSignOff: transactionResult.result.absorbedSignOff,
+              state: transition.revision.state,
+              absorbedSignOff: transition.absorbedSignOff,
+              approvalRequests: approvalRequests.map(
+                ({ gate, outcome }) => `${gate}:${outcome}`,
+              ),
             }
-          : { refusalCode: transactionResult.result.refusal.code }),
+          : { refusalCode: transition.refusal.code }),
       });
-      return transactionResult.result;
+      return transition.ok ? { ...transition, approvalRequests } : transition;
     },
 
     async upsertDraftElement(input) {
@@ -1708,7 +2072,34 @@ export function createAuthoringService(
             return { ok: false as const, refusal: decision.refusal };
           }
 
-          const staged = currentGuardedElements(repo, parsed.revisionId);
+          const before = repo.getRevisionSnapshot(parsed.revisionId);
+          const staged = guardedElements(before);
+          // Judged on the input itself, before the write is staged against
+          // anything: `stagedParentElementId` below would quietly substitute
+          // the stored parent, which is exactly the silent no-op this refusal
+          // replaces.
+          const containment = elementContainmentRefusal({
+            current: staged,
+            elementId: parsed.elementId,
+            requestedParentElementId: parsed.parentElementId,
+            baseElementVersion: parsed.baseElementVersion,
+            handleOf: (elementId) =>
+              before === null
+                ? null
+                : elementHandleInSnapshot(before, elementId),
+          });
+          if (containment !== null) {
+            appendWriteIntervention(
+              spec.id,
+              revision.id,
+              parsed.elementId,
+              parsed.actor,
+              occurredAt,
+              containment,
+            );
+            return { ok: false as const, refusal: containment };
+          }
+
           const referenceIssues = stagedReferenceIssues(staged, [
             {
               op: "write",
@@ -1755,7 +2146,9 @@ export function createAuthoringService(
               specId: parsed.specId,
               revisionId: parsed.revisionId,
               kind: parsed.kind,
-              parentElementId: parsed.parentElementId,
+              parentElementId: admittedCreationParentElementId(
+                parsed.parentElementId,
+              ),
               position: parsed.position,
               payload: parsed.payload,
               ...(parsed.reintroduceHistorical === undefined
@@ -1937,6 +2330,40 @@ export function createAuthoringService(
                   unmetConditions: decision.refusal.unmetConditions,
                   instruction: decision.refusal.instruction,
                   currentElementVersion: null,
+                  ...(decision.refusal.rationale === undefined
+                    ? {}
+                    : { rationale: decision.refusal.rationale }),
+                  ...(decision.refusal.details === undefined
+                    ? {}
+                    : { details: decision.refusal.details }),
+                });
+                return;
+              }
+              const containment = elementContainmentRefusal({
+                current: staged,
+                elementId: item.elementId,
+                requestedParentElementId: item.parentElementId,
+                baseElementVersion: item.baseElementVersion,
+                handleOf: (elementId) =>
+                  before === null
+                    ? null
+                    : elementHandleInSnapshot(before, elementId),
+              });
+              if (containment !== null) {
+                blockedWrites.push({
+                  elementId: item.elementId,
+                  refusal: containment,
+                });
+                refusals.push({
+                  input: "element",
+                  index,
+                  elementId: item.elementId,
+                  code: containment.code,
+                  unmetConditions: containment.unmetConditions,
+                  instruction: containment.instruction,
+                  currentElementVersion: null,
+                  rationale: containment.rationale,
+                  details: containment.details,
                 });
                 return;
               }
@@ -1979,6 +2406,12 @@ export function createAuthoringService(
                     unmetConditions: decision.refusal.unmetConditions,
                     instruction: decision.refusal.instruction,
                     currentElementVersion: null,
+                    ...(decision.refusal.rationale === undefined
+                      ? {}
+                      : { rationale: decision.refusal.rationale }),
+                    ...(decision.refusal.details === undefined
+                      ? {}
+                      : { details: decision.refusal.details }),
                   });
                   return;
                 }

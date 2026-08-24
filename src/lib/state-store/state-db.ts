@@ -23,7 +23,12 @@ import {
 import {
   enforceCurrentSchemaCompatibility,
   enforceSchemaCompatibilityBarrier,
+  publishSchemaCompatibilityBarrierSync,
 } from "./schema-compatibility";
+import {
+  applyNativeSddAttentionCitationsSchema,
+  NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION,
+} from "./migrations/0034-native-sdd-attention-citations";
 
 const logger = createLogger("state-store/state-db");
 
@@ -123,8 +128,14 @@ const DB_FILE_NAME = "command-center.db";
  * would lose every execution's workflow state, not just the halted run's.
  * Nothing is rewritten: the migration exists only to publish the barrier and
  * stamp the version.
+ *
+ * Version 11 is the Native SDD attention/citation cutover: migration
+ * `0034-native-sdd-attention-citations` rebuilds question and assumption
+ * lifecycle storage and makes assumption citations revision-owned. Older
+ * readers cannot interpret either contract and are refused before opening the
+ * upgraded database.
  */
-export const KNOWN_SCHEMA_VERSION = 10;
+export const KNOWN_SCHEMA_VERSION = 11;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -476,6 +487,7 @@ const SPEC_SCHEMA_DDL = `
     number             INTEGER CHECK (number > 0),
     parent_element_id  TEXT,
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (id, spec_id),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
     FOREIGN KEY (parent_element_id) REFERENCES spec_elements(id)
   );
@@ -497,10 +509,23 @@ const SPEC_SCHEMA_DDL = `
     ),
     based_on_revision_id  TEXT,
     content_hash          TEXT,
+    citation_contract_version INTEGER NOT NULL DEFAULT 2 CHECK (
+      citation_contract_version IN (1, 2)
+    ),
+    citation_version      INTEGER NOT NULL DEFAULT 1 CHECK (
+      citation_version > 0
+    ),
+    citation_hash         TEXT NOT NULL DEFAULT
+      '551ce2879a567c8baca5a19f5af4385373bd63b916be6091fa891dd8a307d1df'
+      CHECK (
+        length(citation_hash) = 64
+        AND citation_hash NOT GLOB '*[^0-9a-f]*'
+      ),
     proposed_at           TEXT,
     approved_at           TEXT,
     external_delivery_json TEXT,
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (id, spec_id),
     UNIQUE (spec_id, number),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
     FOREIGN KEY (based_on_revision_id) REFERENCES spec_revisions(id)
@@ -582,39 +607,185 @@ const SPEC_SCHEMA_DDL = `
     element_id       TEXT,
     text             TEXT NOT NULL,
     provenance_json  TEXT NOT NULL,
-    status           TEXT NOT NULL CHECK (status IN ('open', 'answered')),
+    record_version   INTEGER NOT NULL DEFAULT 1 CHECK (record_version > 0),
+    status           TEXT NOT NULL CHECK (status IN (
+      'open', 'answered', 'withdrawn'
+    )),
     answer           TEXT,
     answered_at      TEXT,
+    withdrawn_at     TEXT,
     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (id, spec_id),
     UNIQUE (spec_id, number),
+    CHECK (
+      (status = 'open' AND answer IS NULL AND answered_at IS NULL
+        AND withdrawn_at IS NULL)
+      OR
+      (status = 'answered' AND answer IS NOT NULL AND length(answer) > 0
+        AND answered_at IS NOT NULL AND withdrawn_at IS NULL)
+      OR
+      (status = 'withdrawn' AND answer IS NULL AND answered_at IS NULL
+        AND withdrawn_at IS NOT NULL)
+    ),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
+    FOREIGN KEY (element_id, spec_id) REFERENCES spec_elements(id, spec_id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_spec_questions_spec_status
     ON spec_questions (spec_id, status, number);
 
   CREATE TABLE IF NOT EXISTS spec_assumptions (
-    id                TEXT PRIMARY KEY,
-    spec_id           TEXT NOT NULL,
-    number            INTEGER NOT NULL CHECK (number > 0),
-    element_id        TEXT,
-    text              TEXT NOT NULL,
-    proposed_by_json  TEXT NOT NULL,
-    disposition       TEXT NOT NULL CHECK (disposition IN (
-      'proposed', 'confirmed', 'rejected', 'deferred'
+    id                           TEXT PRIMARY KEY,
+    spec_id                      TEXT NOT NULL,
+    number                       INTEGER NOT NULL CHECK (number > 0),
+    element_id                   TEXT,
+    text                         TEXT NOT NULL,
+    proposed_by_json             TEXT NOT NULL,
+    record_version               INTEGER NOT NULL DEFAULT 1 CHECK (
+      record_version > 0
+    ),
+    disposition                  TEXT NOT NULL CHECK (disposition IN (
+      'proposed', 'confirmed', 'rejected', 'deferred', 'withdrawn'
     )),
-    disposed_at       TEXT,
-    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    disposed_at                  TEXT,
+    withdrawn_at                 TEXT,
+    supersedes_assumption_id     TEXT,
+    supersession_operation_id    TEXT,
+    supersession_request_hash    TEXT CHECK (
+      supersession_request_hash IS NULL OR (
+        length(supersession_request_hash) = 64
+        AND supersession_request_hash NOT GLOB '*[^0-9a-f]*'
+      )
+    ),
+    created_at                   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (id, spec_id),
     UNIQUE (spec_id, number),
+    CHECK (
+      (disposition = 'proposed' AND disposed_at IS NULL
+        AND withdrawn_at IS NULL)
+      OR
+      (disposition IN ('confirmed', 'rejected', 'deferred')
+        AND disposed_at IS NOT NULL AND withdrawn_at IS NULL)
+      OR
+      (disposition = 'withdrawn' AND disposed_at IS NULL
+        AND withdrawn_at IS NOT NULL)
+    ),
+    CHECK (
+      supersedes_assumption_id IS NULL OR id <> supersedes_assumption_id
+    ),
+    CHECK (
+      (supersedes_assumption_id IS NULL
+        AND supersession_operation_id IS NULL
+        AND supersession_request_hash IS NULL)
+      OR
+      (supersedes_assumption_id IS NOT NULL
+        AND supersession_operation_id IS NOT NULL
+        AND supersession_request_hash IS NOT NULL)
+    ),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (element_id) REFERENCES spec_elements(id)
+    FOREIGN KEY (element_id, spec_id) REFERENCES spec_elements(id, spec_id),
+    FOREIGN KEY (supersedes_assumption_id, spec_id)
+      REFERENCES spec_assumptions(id, spec_id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_spec_assumptions_spec_disposition
     ON spec_assumptions (spec_id, disposition, number);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_assumptions_predecessor
+    ON spec_assumptions (spec_id, supersedes_assumption_id)
+    WHERE supersedes_assumption_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_assumptions_operation
+    ON spec_assumptions (spec_id, supersession_operation_id)
+    WHERE supersession_operation_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS spec_revision_assumption_citations (
+    revision_id              TEXT NOT NULL,
+    spec_id                  TEXT NOT NULL,
+    element_id               TEXT NOT NULL,
+    assumption_id            TEXT NOT NULL,
+    assumption_snapshot_json TEXT NOT NULL CHECK (
+      json_valid(assumption_snapshot_json)
+    ),
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL,
+    PRIMARY KEY (revision_id, element_id, assumption_id),
+    FOREIGN KEY (revision_id, spec_id)
+      REFERENCES spec_revisions(id, spec_id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id, element_id)
+      REFERENCES spec_element_versions(revision_id, element_id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (assumption_id, spec_id)
+      REFERENCES spec_assumptions(id, spec_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_revision_citations_revision_assumption
+    ON spec_revision_assumption_citations (revision_id, assumption_id);
+  CREATE INDEX IF NOT EXISTS idx_spec_revision_citations_assumption_revision
+    ON spec_revision_assumption_citations (assumption_id, revision_id);
+
+  CREATE TRIGGER IF NOT EXISTS spec_revision_citations_same_spec_insert
+  BEFORE INSERT ON spec_revision_assumption_citations
+  WHEN NOT EXISTS (
+    SELECT 1 FROM spec_elements
+    WHERE id = NEW.element_id AND spec_id = NEW.spec_id
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'citation element must belong to the same spec');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS spec_revision_citations_same_spec_update
+  BEFORE UPDATE ON spec_revision_assumption_citations
+  WHEN NOT EXISTS (
+    SELECT 1 FROM spec_elements
+    WHERE id = NEW.element_id AND spec_id = NEW.spec_id
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'citation element must belong to the same spec');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS spec_revision_citations_frozen_insert
+  BEFORE INSERT ON spec_revision_assumption_citations
+  WHEN COALESCE((
+    SELECT state FROM spec_revisions WHERE id = NEW.revision_id
+  ), '') <> 'draft'
+  BEGIN
+    SELECT RAISE(ABORT, 'frozen revision citations require a draft');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS spec_revision_citations_frozen_update
+  BEFORE UPDATE ON spec_revision_assumption_citations
+  WHEN COALESCE((
+    SELECT state FROM spec_revisions WHERE id = OLD.revision_id
+  ), '') <> 'draft'
+    OR COALESCE((
+      SELECT state FROM spec_revisions WHERE id = NEW.revision_id
+    ), '') <> 'draft'
+  BEGIN
+    SELECT RAISE(ABORT, 'frozen revision citations require a draft');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS spec_revision_citations_frozen_delete
+  BEFORE DELETE ON spec_revision_assumption_citations
+  WHEN COALESCE((
+    SELECT state FROM spec_revisions WHERE id = OLD.revision_id
+  ), '') <> 'draft'
+  BEGIN
+    SELECT RAISE(ABORT, 'frozen revision citations require a draft');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS spec_revision_citation_metadata_frozen_update
+  BEFORE UPDATE OF
+    citation_contract_version, citation_version, citation_hash
+  ON spec_revisions
+  WHEN OLD.state <> 'draft' AND (
+    NEW.citation_contract_version <> OLD.citation_contract_version
+    OR NEW.citation_version <> OLD.citation_version
+    OR NEW.citation_hash <> OLD.citation_hash
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'frozen revision citation metadata requires a draft');
+  END;
 
   CREATE TABLE IF NOT EXISTS spec_comments (
     id                 TEXT PRIMARY KEY,
@@ -2924,6 +3095,23 @@ function isNodeErrorCode(err: unknown, code: string): boolean {
 
 function initializeSchema(db: Db, dbPath: string): void {
   enforceCurrentSchemaCompatibility(db, dbPath, KNOWN_SCHEMA_VERSION);
+  if (
+    columnExists(db, "spec_revisions", "content_hash") &&
+    !columnExists(db, "spec_revisions", "citation_contract_version")
+  ) {
+    const startedAt = Date.now();
+    if (dbPath !== ":memory:") {
+      publishSchemaCompatibilityBarrierSync(
+        path.dirname(dbPath),
+        NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION,
+      );
+    }
+    const result = applyNativeSddAttentionCitationsSchema(db);
+    logger.info("state-store.attention_citations_floor_complete", {
+      ...result,
+      durationMs: Date.now() - startedAt,
+    });
+  }
   db.exec(SCHEMA_DDL);
   migrateNotificationsTable(db);
   db.exec(NOTIFICATIONS_INDEX_DDL);

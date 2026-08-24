@@ -49,27 +49,45 @@ export function latestRevision(
 }
 
 /**
- * Whether a human's approval of this subject stands for the revision the
- * projection reads. Decided by `approvalAppliesToRevision` alone, so status,
- * request validation, and sign-off cannot disagree about what is outstanding.
+ * The human approval of this subject that stands for the revision the
+ * projection reads, or null when none does. Decided by
+ * `approvalAppliesToRevision` alone, so status, request validation, and
+ * sign-off cannot disagree about what is outstanding.
+ *
+ * The row itself is returned because which revision the approving human read
+ * is what separates a carried approval from one granted on this revision. When
+ * a subject holds several — a human re-approving content an ancestor approval
+ * already carried — the most recently granted one is the act to report.
  */
 export function approvalHeld(
   approvals: readonly SpecApprovalRow[],
   applies: ApprovalApplicability,
   subjectKind: ApprovalSubjectKind,
   elementId: string | null,
-): boolean {
-  return approvals.some(
-    (approval) =>
-      approval.subject_kind === subjectKind &&
-      approval.element_id === elementId &&
-      applies({
+): SpecApprovalRow | null {
+  let held: SpecApprovalRow | null = null;
+  for (const approval of approvals) {
+    if (approval.subject_kind !== subjectKind) continue;
+    if (approval.element_id !== elementId) continue;
+    if (
+      !applies({
         subjectKind,
         elementId: approval.element_id,
         revisionId: approval.revision_id,
         validity: approval.validity,
-      }),
-  );
+      })
+    ) {
+      continue;
+    }
+    if (
+      held === null ||
+      approval.granted_at > held.granted_at ||
+      (approval.granted_at === held.granted_at && approval.id > held.id)
+    ) {
+      held = approval;
+    }
+  }
+  return held;
 }
 
 /**
@@ -413,12 +431,13 @@ function subjectAlreadyApproved(
   if (subjectKind === "plan") {
     return (
       subject === "plan" &&
-      approvalHeld(context.approvals, context.applies, "plan", null)
+      approvalHeld(context.approvals, context.applies, "plan", null) !== null
     );
   }
   const elementId = elementForSubject(context.snapshot, subject);
   return (
     elementId !== null &&
-    approvalHeld(context.approvals, context.applies, subjectKind, elementId)
+    approvalHeld(context.approvals, context.applies, subjectKind, elementId) !==
+      null
   );
 }

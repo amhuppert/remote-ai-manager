@@ -5,6 +5,7 @@ import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import type {
   SpecAuthoringStage,
   SpecRevision,
+  SpecRevisionSnapshot,
   SpecRevisionState,
 } from "@/lib/specs/schemas";
 
@@ -16,6 +17,13 @@ import SpecPhaseStepper from "./SpecPhaseStepper";
 import { reviewView } from "./delivery-plan-review.fixtures";
 
 const AUTHORING_STAGES = ["requirements", "design"] as const;
+
+function snapshotFor(
+  revision: SpecRevision,
+  elements: SpecRevisionSnapshot["elements"],
+): SpecRevisionSnapshot {
+  return { revision, elements, assumptionCitations: [] };
+}
 
 function parsedDetail(detail: SpecDetailView): SpecDetailView {
   return specDetailViewSchema.parse(detail);
@@ -69,12 +77,12 @@ function authoringDetail(
     baseRevision:
       currentApprovedRevision === null
         ? null
-        : { revision: currentApprovedRevision, elements },
-    currentRevision: { revision: currentRevision, elements },
+        : snapshotFor(currentApprovedRevision, elements),
+    currentRevision: snapshotFor(currentRevision, elements),
     currentApprovedRevision:
       currentApprovedRevision === null
         ? null
-        : { revision: currentApprovedRevision, elements },
+        : snapshotFor(currentApprovedRevision, elements),
     executionRevisionSnapshots: [],
     status: {
       ...base.status,
@@ -98,8 +106,8 @@ function approvedDesignDetail(): SpecDetailView {
     ...base,
     revisions: [approved],
     baseRevision: null,
-    currentRevision: { revision: approved, elements },
-    currentApprovedRevision: { revision: approved, elements },
+    currentRevision: snapshotFor(approved, elements),
+    currentApprovedRevision: snapshotFor(approved, elements),
     executionRevisionSnapshots: [],
     status: { ...base.status, phase: { primary: "approved" } },
   });
@@ -257,7 +265,7 @@ function concurrentAuthoringDetail(): SpecDetailView {
   return parsedDetail({
     ...detail,
     revisions: [template, amendment],
-    currentRevision: { revision: amendment, elements },
+    currentRevision: snapshotFor(amendment, elements),
     status: {
       ...detail.status,
       phase: { primary: "executing", authoringFacet: "in_review" },

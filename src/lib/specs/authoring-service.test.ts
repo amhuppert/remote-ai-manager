@@ -9,6 +9,8 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
+import { z } from "zod";
+
 import type { SSEEvent } from "@/lib/api/sse-events";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
@@ -22,12 +24,15 @@ import {
   createAuthoringService,
   SpecRevisionInReviewError,
   SpecSlugTakenError,
+  StageBlockedWriteError,
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
 
 const PROJECT_PATH = "/repos/native-sdd";
 const ACTOR = { kind: "agent", conversationId: "conversation-1" } as const;
+
+const interventionRowSchema = z.object({ payload_json: z.string() });
 
 /** Which composition seam of the specs repository a service call entered. */
 interface SeamCall {
@@ -111,6 +116,14 @@ function firstElement(statement: string, elementId = "requirement-1") {
     parentElementId: null,
     position: 0,
     payload: requirement(statement),
+  };
+}
+
+function criterion(text: string) {
+  return {
+    kind: "criterion" as const,
+    text,
+    validationStrategy: { kinds: ["test_run" as const] },
   };
 }
 
@@ -973,5 +986,401 @@ describe("AuthoringService rename", () => {
     expect((await service.getSpec(PROJECT_PATH, "other-spec"))?.id).toBe(
       other.spec.id,
     );
+  });
+});
+
+describe("AuthoringService parent immutability", () => {
+  /**
+   * A draft carrying two requirements and one criterion nested under the
+   * first, which is the smallest shape a rehoming attempt can be written
+   * against: the criterion has a real parent, and a second legal parent exists
+   * for the attempt to name.
+   */
+  async function draftWithNestedCriterion() {
+    const created = await createDraft();
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "requirement-2",
+      kind: "requirement",
+      parentElementId: null,
+      payload: requirement("A second home the criterion cannot move to."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    const nested = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: criterion("Containment is fixed at creation."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    return { created, nested };
+  }
+
+  async function storedElement(revisionId: string, elementId: string) {
+    const snapshot = await service.getRevisionSnapshot(revisionId);
+    return snapshot?.elements.find(({ element }) => element.id === elementId);
+  }
+
+  it("refuses an update that names a different parent and writes nothing", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "criterion-1",
+        kind: "criterion",
+        parentElementId: "requirement-2",
+        payload: criterion("Rehomed under the second requirement."),
+        baseElementVersion: nested.version.elementVersion,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "parent_immutable" });
+
+    const stored = await storedElement(created.draft.id, "criterion-1");
+    expect(stored?.element.parentElementId).toBe("requirement-1");
+    expect(stored?.version.elementVersion).toBe(1);
+    expect(stored?.version.payload).toEqual(
+      criterion("Containment is fixed at creation."),
+    );
+  });
+
+  it("refuses null against a stored parent and a parent against a stored null", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "criterion-1",
+        kind: "criterion",
+        parentElementId: null,
+        payload: criterion("Orphaned out of its requirement."),
+        baseElementVersion: nested.version.elementVersion,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "parent_immutable" });
+
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "requirement-2",
+        kind: "requirement",
+        parentElementId: "requirement-1",
+        payload: requirement("A top-level requirement given a parent."),
+        baseElementVersion: 1,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "parent_immutable" });
+
+    expect(
+      (await storedElement(created.draft.id, "criterion-1"))?.element
+        .parentElementId,
+    ).toBe("requirement-1");
+    expect(
+      (await storedElement(created.draft.id, "requirement-2"))?.element
+        .parentElementId,
+    ).toBeNull();
+  });
+
+  it("carries the handle, both parents, the rationale, and the replacement path", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    const error = await service
+      .upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "criterion-1",
+        kind: "criterion",
+        parentElementId: "requirement-2",
+        payload: criterion("Rehomed under the second requirement."),
+        baseElementVersion: nested.version.elementVersion,
+        actor: ACTOR,
+      })
+      .then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+
+    expect(error).toMatchObject({
+      refusal: {
+        code: "parent_immutable",
+        details: {
+          elementId: "criterion-1",
+          handle: "R1.1",
+          currentParentElementId: "requirement-1",
+          requestedParentElementId: "requirement-2",
+        },
+        rationale:
+          "containment is identity: a moved element would retroactively change what every frozen revision contained",
+      },
+    });
+    if (!(error instanceof StageBlockedWriteError)) throw error;
+    expect(error.refusal.unmetConditions.join(" ")).toContain("R1.1");
+    // The way out is a new element under the desired parent plus a removal of
+    // the old one — an agent that is only told "no" writes the same thing again.
+    expect(error.refusal.instruction).toContain("requirement-2");
+    expect(error.refusal.instruction).toContain("cctl spec remove");
+  });
+
+  it("records the refused rehoming as a durable intervention", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "criterion-1",
+        kind: "criterion",
+        parentElementId: "requirement-2",
+        payload: criterion("Rehomed under the second requirement."),
+        baseElementVersion: nested.version.elementVersion,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "parent_immutable" });
+
+    const interventions = db
+      .prepare(
+        "SELECT payload_json FROM spec_events WHERE spec_id = ? AND event_type = 'spec-intervention-recorded'",
+      )
+      .all(created.spec.id)
+      .map((row) => JSON.parse(interventionRowSchema.parse(row).payload_json));
+    expect(interventions).toEqual([
+      expect.objectContaining({
+        kind: "draft-write-refused",
+        elementId: "criterion-1",
+        refusal: expect.objectContaining({ code: "parent_immutable" }),
+      }),
+    ]);
+  });
+
+  it("keeps an echoed parent and an omitted-parent update legal", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    const updated = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: criterion("Edited in place, under the same requirement."),
+      baseElementVersion: nested.version.elementVersion,
+      actor: ACTOR,
+    });
+
+    expect(updated.version.elementVersion).toBe(2);
+    expect(updated.element.parentElementId).toBe("requirement-1");
+    expect(updated.handle).toBe("R1.1");
+  });
+
+  /**
+   * An update cannot move an element, so requiring it to restate the parent is
+   * ceremony that only creates opportunities to state it wrong. The omission
+   * has to be legal through the accepting schema, not just past the admission
+   * check — an author who leaves the field out is writing the ordinary shape.
+   */
+  it("accepts an update that omits parentElementId, in both write paths", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    const updated = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      payload: criterion("Edited without restating containment."),
+      baseElementVersion: nested.version.elementVersion,
+      actor: ACTOR,
+    });
+
+    expect(updated.version.elementVersion).toBe(2);
+    expect(updated.element.parentElementId).toBe("requirement-1");
+    expect(updated.handle).toBe("R1.1");
+
+    const batched = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elements: [
+        {
+          elementId: "criterion-1",
+          kind: "criterion",
+          payload: criterion("Edited in a batch without restating it either."),
+          baseElementVersion: 2,
+        },
+      ],
+      actor: ACTOR,
+    });
+
+    expect(batched.ok).toBe(true);
+    const stored = await storedElement(created.draft.id, "criterion-1");
+    expect(stored?.element.parentElementId).toBe("requirement-1");
+    expect(stored?.version.elementVersion).toBe(3);
+  });
+
+  /**
+   * The mirror of the omission rule. A create is the one moment containment is
+   * choosable, and `parent_immutable` makes the choice permanent, so a create
+   * that leaves it out is refused rather than handed a silent default it could
+   * only undo by removing the element.
+   */
+  it("refuses a create that states no parent, in both write paths", async () => {
+    const created = await createDraft();
+
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "criterion-1",
+        kind: "criterion",
+        payload: criterion("Born without stating what contains it."),
+        baseElementVersion: null,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      refusal: {
+        instruction: expect.stringContaining("parentElementId"),
+      },
+    });
+
+    const batched = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elements: [
+        {
+          elementId: "criterion-2",
+          kind: "criterion",
+          payload: criterion("Born parentless inside a batch."),
+          baseElementVersion: null,
+        },
+      ],
+      actor: ACTOR,
+    });
+
+    expect(batched).toMatchObject({
+      ok: false,
+      refusals: [{ input: "element", index: 0, code: "validation" }],
+    });
+    expect(
+      await storedElement(created.draft.id, "criterion-1"),
+    ).toBeUndefined();
+    expect(
+      await storedElement(created.draft.id, "criterion-2"),
+    ).toBeUndefined();
+  });
+
+  it("leaves the create branch alone", async () => {
+    const created = await createDraft();
+
+    // A create names the parent the element is born under; there is no stored
+    // parent to contradict.
+    const born = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: criterion("Born under its requirement."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    expect(born.handle).toBe("R1.1");
+
+    // A create over an element the revision already carries stays a
+    // stale-version conflict whatever parent it names.
+    await expect(
+      service.upsertDraftElement({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        elementId: "criterion-1",
+        kind: "criterion",
+        parentElementId: null,
+        payload: criterion("A create over live content."),
+        baseElementVersion: null,
+        actor: ACTOR,
+      }),
+    ).rejects.toMatchObject({ code: "stale_element" });
+  });
+
+  it("refuses the rehoming batch item by index and rolls the whole batch back", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    const result = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elements: [
+        {
+          elementId: "requirement-3",
+          kind: "requirement",
+          parentElementId: null,
+          payload: requirement("A legal sibling in the same batch."),
+          baseElementVersion: null,
+        },
+        {
+          elementId: "criterion-1",
+          kind: "criterion",
+          parentElementId: "requirement-2",
+          payload: criterion("Rehomed inside a batch."),
+          baseElementVersion: nested.version.elementVersion,
+        },
+      ],
+      actor: ACTOR,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusals: [
+        {
+          input: "element",
+          index: 1,
+          elementId: "criterion-1",
+          code: "parent_immutable",
+          details: {
+            handle: "R1.1",
+            currentParentElementId: "requirement-1",
+            requestedParentElementId: "requirement-2",
+          },
+          rationale:
+            "containment is identity: a moved element would retroactively change what every frozen revision contained",
+        },
+      ],
+    });
+    expect(
+      await storedElement(created.draft.id, "requirement-3"),
+    ).toBeUndefined();
+    expect(
+      (await storedElement(created.draft.id, "criterion-1"))?.version
+        .elementVersion,
+    ).toBe(1);
+  });
+
+  it("keeps an echoed parent legal inside a batch", async () => {
+    const { created, nested } = await draftWithNestedCriterion();
+
+    const result = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elements: [
+        {
+          elementId: "criterion-1",
+          kind: "criterion",
+          parentElementId: "requirement-1",
+          payload: criterion("Edited inside a batch, under the same parent."),
+          baseElementVersion: nested.version.elementVersion,
+        },
+      ],
+      actor: ACTOR,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      (await storedElement(created.draft.id, "criterion-1"))?.version
+        .elementVersion,
+    ).toBe(2);
   });
 });

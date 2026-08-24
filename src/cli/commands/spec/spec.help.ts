@@ -16,6 +16,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec reply <slug> --thread <threadId> --body <text>",
       "cctl spec lint <slug>",
       "cctl spec get <slug>/<handle>",
+      "cctl spec section get <slug> --id <element-id>",
       "cctl spec search <slug> <query>",
       "cctl spec search --all <query>",
       "cctl spec diff <slug> [--from <revisionId>] [--to <revisionId>] [--baseline governance]",
@@ -33,6 +34,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec question <slug> --text <text> [--element <handle>]",
       "cctl spec answer <slug>/Q2 --answer <text>",
       "cctl spec assume <slug> --text <text> [--element <handle>]",
+      "cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n>",
+      "cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n>",
+      "cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>",
+      "cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>",
+      "cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>",
       "cctl spec plan open <slug> [--seed-from last]",
       "cctl spec plan edit <slug> --file <plan.json>",
       "cctl spec plan propose <slug>",
@@ -47,7 +53,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     flags: [],
     examples: [],
     domainContext:
-      "A slug identifies the durable spec across renames through aliases. Element handles are R3, R3.2, D2, T7, Q2, or A1; qualify them as <slug>/<handle> when no slug argument is present.",
+      "A slug identifies the durable spec across renames through aliases. Element handles are R3, R3.2, D2, T7, Q2, or A1; qualify them as <slug>/<handle> when no slug argument is present. Sections carry no handle at all — read one by its element id with `cctl spec section get`.",
     related: [
       {
         command: "spec show",
@@ -88,6 +94,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec plan",
         oneLiner: "author the delivery plan that becomes the executed graph",
+      },
+      {
+        command: "spec section",
+        oneLiner: "read the prose sections, which have no handle",
       },
     ],
   },
@@ -269,7 +279,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl spec comments ephemeral-workflows --open --json",
         explanation:
-          "read the outstanding review feedback as data after status reports open comments",
+          "read the outstanding review feedback as data after status reports open review threads",
       },
       {
         invocation: "cctl spec comments ephemeral-workflows --element R6",
@@ -277,7 +287,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Comments are written by humans reviewing a proposed revision; openCount and openBlockingCount are spec-wide even when --element or --open narrows the listed rows, so a filtered read still reports how much feedback is outstanding. Comments do not reopen the draft: repairing a commented element needs the human to Request Changes in Spec Studio first, and status names that dependency when it applies.",
+      "Comments are written by humans reviewing a proposed revision. openCount counts open message rows and openBlockingCount counts open blocking message rows; openThreadCount counts open threads and openBlockingThreadCount counts open threads containing a blocking row. All four metrics are spec-wide even when --element or --open narrows the listed rows, so a filtered read still reports how much feedback is outstanding. Comments do not reopen the draft: repairing a commented element needs the human to Request Changes in Spec Studio first, and status names that dependency when it applies.",
     related: [
       {
         command: "spec status",
@@ -378,14 +388,26 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "get"],
     summary: "read one spec element with approval and evidence state",
     description:
-      "Read one requirement, criterion, decision, or task, or a question/assumption record by its Q/A handle. Text mode is a complete line-oriented field view; --json wraps the same selected element under the named element payload. Use a qualified handle, or pass the slug and a bare handle as separate arguments.",
+      "Read one requirement, criterion, decision, or task, or a question/assumption record by its Q/A handle. Text mode is a complete line-oriented field view; --json wraps the same selected element under the named element payload. Use a qualified handle, or pass the slug and a bare handle as separate arguments. A read without --revision only ever answers from the current revision: a handle the current revision retired is refused with historical_only, which names the revision that last carried it.",
     usage: ["cctl spec get <slug>/<handle>", "cctl spec get <slug> <handle>"],
-    flags: [],
+    flags: [
+      {
+        name: "revision",
+        kind: "value",
+        description:
+          "read from this revision instead of the current one (a number, or a revision id)",
+      },
+    ],
     examples: [
       {
         invocation: "cctl spec get native-sdd/R3.2",
         explanation:
           "read the criterion plus its approval, evidence, verdict, and waiver state",
+      },
+      {
+        invocation: "cctl spec get native-sdd/R7 --revision 4",
+        explanation:
+          "read a handle the current revision no longer carries, after a historical_only refusal named revision 4",
       },
     ],
     related: [
@@ -394,6 +416,73 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec search",
         oneLiner: "find a requirement or decision handle",
+      },
+      {
+        command: "spec section get",
+        oneLiner: "read a section, which has no handle to address",
+      },
+    ],
+  },
+  {
+    path: ["spec", "section"],
+    summary: "read the prose sections, which carry no element handle",
+    description:
+      "Sections are the only spec content with no handle: handles are allocated to requirements, criteria, decisions, tasks, and Q/A records, and a section has none to allocate. They are read one at a time by the stable element id `cctl spec show` publishes.",
+    usage: ["cctl spec section get <slug> --id <element-id>"],
+    flags: [],
+    examples: [],
+    domainContext:
+      "An element id is caller-chosen and stable across revisions; a handle is an allocated address that can be renumbered. Sections keep the id and never gain a handle, so nothing addresses them as <slug>/<handle>.",
+    related: [
+      {
+        command: "spec show",
+        oneLiner: "list the section element ids this read takes",
+      },
+      { command: "spec get", oneLiner: "read an element that has a handle" },
+    ],
+  },
+  {
+    path: ["spec", "section", "get"],
+    summary: "read one section by its element id",
+    description:
+      "Read one section's role, title, body, position, and elementVersion from the current revision. Sections have no handle, so --id takes the element id `cctl spec show` lists; an id that resolves to a handled element is refused with that element's kind and handle. Text mode is a complete line-oriented field view; --json wraps the same view under the named section payload. A read without --revision only ever answers from the current revision: an id the current revision retired is refused with historical_only, which names the revision that last carried it. elementVersion is the compare-and-swap token the next `cctl spec draft` of this section needs.",
+    usage: ["cctl spec section get <slug> --id <element-id>"],
+    flags: [
+      {
+        name: "id",
+        kind: "value",
+        valuePlaceholder: "<element-id>",
+        description: "the section's stable element id (required)",
+      },
+      {
+        name: "revision",
+        kind: "value",
+        description:
+          "read from this revision instead of the current one (a number, or a revision id)",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec section get native-sdd --id problem-section",
+        explanation:
+          "read the section's body and the elementVersion a redraft has to send",
+      },
+      {
+        invocation:
+          "cctl spec section get native-sdd --id problem-section --revision 4",
+        explanation:
+          "read a section the current revision no longer carries, after a historical_only refusal named revision 4",
+      },
+    ],
+    related: [
+      {
+        command: "spec show",
+        oneLiner: "list every section element id in the outline",
+      },
+      { command: "spec get", oneLiner: "read an element that has a handle" },
+      {
+        command: "spec draft",
+        oneLiner: "rewrite the section at the version you just read",
       },
     ],
   },
@@ -537,7 +626,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Element position is one global order per revision, sorted by position then elementId; omit position on create to append and on update to keep the current slot. Nesting comes from parentElementId alone, never from position, and duplicate positions are accepted and resolved by the elementId tiebreak.",
+      "Element position is one global order per revision, sorted by position then the UTF-8 byte order of elementId; omit position on create to append and on update to keep the current slot. Nesting comes from parentElementId alone, never from position, and duplicate positions are accepted and resolved by that elementId tiebreak.",
     related: [
       {
         command: "spec draft",
@@ -661,7 +750,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The destination default does not transform the bundle: a file this command writes contains the same canonical format 3 bytes that --stdout emits. Format 3 renders parents before their children. `cctl spec verify --against` reports an older format as bundle_format_mismatch and directs the caller to export a fresh bundle; ordinary content drift remains integrity_mismatch. The content hash covers the exact current bytes, so two exports of unchanged content report the same hash.",
+      "The destination default does not transform the bundle: a file this command writes contains the same canonical format 4 bytes that --stdout emits. Format 4 renders parents before their children and carries frozen assumption citations plus attention audit history. `cctl spec verify --against` reports an older format as bundle_format_mismatch and directs the caller to export a fresh bundle; ordinary content or citation drift remains integrity_mismatch. The integrity hashes cover the exact current content and citation contract, so two exports of unchanged state report the same hashes.",
     related: [
       {
         command: "spec verify",
@@ -865,7 +954,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec request-approval",
         oneLiner:
-          "route a revision_in_review revision to the human who ends the review",
+          "re-fire the ask the propose already filed, if its notice was uncertain",
       },
       {
         command: "spec withdraw-proposal",
@@ -878,7 +967,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "draft"],
     summary: "save a draft element at the version it replaces",
     description:
-      "Upsert one element admitted by the current authoring stage into the editable revision. The element states the version it replaces in the file itself, as baseElementVersion: the version you last read, or null to create the element; a stale write returns the winning version, and the lone-element form returns the winning content with it. Element versions are per revision and restart at 1 — `cctl spec amend` copies the approved content into the new revision as version 1 — so re-read an element after an amendment instead of reusing a version from the revision before it. Element order is one global order per revision, sorted by position then elementId: omit position on create to append after the current last element, and omit it on update to keep the element's current slot. Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak. A --file holding a JSON array is a batch: every element in it is written in one transaction, each against its own baseElementVersion, and the response names each element by its index in the array. A write lands only in a draft, and the target revision's state picks the refusal: approved or withdrawn content returns amendment_required, so run `cctl spec amend <slug>` first; a revision already proposed returns revision_in_review, which amend refuses too until a human signs it off in Spec Studio, requests changes on it, or the conversation that proposed it takes it back with `cctl spec withdraw-proposal <slug> --revision <revision-id>`. Every element id a payload names must resolve, in this revision, to an element of the kind the field expects, or the write returns dangling_reference and nothing lands — a batch resolves ids against its own final result, so an element may reference another element the same batch introduces, in either order. An empty id array is always legal; only a populated one that does not resolve refuses. An element id this spec already owns but this revision does not carry — one introduced by a revision a human ended, or removed from the draft — is refused with historical_element_id rather than written under a fork; retry that write with \"reintroduceHistorical\": true and a null base version to bring the element back with its number and handle intact (R3 returns as R3), keeping its original kind and parent. An id owned by a DIFFERENT spec — including an ABANDONED one, which keeps its ids forever — is element_id_taken and has no such recovery: choose another id. Prefix element ids with the spec slug from the start so the collision never happens.",
+      "Upsert one element admitted by the current authoring stage into the editable revision. The element states the version it replaces in the file itself, as baseElementVersion: the version you last read, or null to create the element; a stale write returns the winning version, and the lone-element form returns the winning content with it. Element versions are per revision and restart at 1 — `cctl spec amend` copies the approved content into the new revision as version 1 — so re-read an element after an amendment instead of reusing a version from the revision before it. Element order is one global order per revision, sorted by position then the UTF-8 byte order of elementId: omit position on create to append after the current last element, and omit it on update to keep the element's current slot. Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by that elementId tiebreak. A --file holding a JSON array is a batch: every element in it is written in one transaction, each against its own baseElementVersion, and the response names each element by its index in the array. A write lands only in a draft, and the target revision's state picks the refusal: approved or withdrawn content returns amendment_required, so run `cctl spec amend <slug>` first; a revision already proposed returns revision_in_review, which amend refuses too until a human signs it off in Spec Studio, requests changes on it, or the conversation that proposed it takes it back with `cctl spec withdraw-proposal <slug> --revision <revision-id>`. Every element id a payload names must resolve, in this revision, to an element of the kind the field expects, or the write returns dangling_reference and nothing lands — a batch resolves ids against its own final result, so an element may reference another element the same batch introduces, in either order. An empty id array is always legal; only a populated one that does not resolve refuses. An element id this spec already owns but this revision does not carry — one introduced by a revision a human ended, or removed from the draft — is refused with historical_element_id rather than written under a fork; retry that write with \"reintroduceHistorical\": true and a null base version to bring the element back with its number and handle intact (R3 returns as R3), keeping its original kind and parent. An id owned by a DIFFERENT spec — including an ABANDONED one, which keeps its ids forever — is element_id_taken and has no such recovery: choose another id. Prefix element ids with the spec slug from the start so the collision never happens.",
     usage: [
       "cctl spec draft <slug> --file <element.json>",
       "cctl spec draft <slug> --file <elements.json>",
@@ -975,7 +1064,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "propose"],
     summary: "propose the current authoring stage for review",
     description:
-      "Freeze the editable requirements or design revision and enter review for its current authoring stage. Delivery-plan attempts use `cctl spec plan propose <slug>` instead; legacy evergreen Plan revisions remain readable but are not the active graph-authoring surface. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending. The receipt carries the server's pending block — every gate the transition consults, the subjects each still needs, all unmet sign-off conditions, and the exact next command — so read that rather than inferring a gate from the revision's authoring stage.",
+      "Freeze the editable requirements or design revision and enter review for its current authoring stage. Delivery-plan attempts use `cctl spec plan propose <slug>` instead; legacy evergreen Plan revisions remain readable but are not the active graph-authoring surface. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending. The receipt carries the server's pending block — every gate the transition consults, the subjects each still needs, all unmet sign-off conditions, and the exact next command — so read that rather than inferring a gate from the revision's authoring stage. A successful propose then files the gate-scoped approval request for every gate that block names, so no separate ask is owed: `approvalRequests` reports one outcome per gate — filed, already-filed, not-needed, delivery-uncertain (the request is durable, only its Needs You notice may not have landed), or not-filed (no request exists) — with the attention id each one carries. Only the last two are yours to act on, and `cctl spec request-approval` is that recovery; the receipt prints it as the next command exactly then. The receipt also carries the approval ledger, so what carried from an ancestor revision is read beside what a human still owes.",
     usage: [
       "cctl spec propose <slug>",
       "cctl spec propose <slug> --notes <notes.md>",
@@ -1008,7 +1097,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
       { command: "spec draft", oneLiner: "resolve findings in the draft" },
       {
         command: "spec request-approval",
-        oneLiner: "route the proposed gate to the user",
+        oneLiner:
+          "recovery when a propose reports delivery-uncertain or not-filed",
       },
       {
         command: "spec status",
@@ -1060,7 +1150,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
       {
         command: "spec request-approval",
-        oneLiner: "route the review to a human instead of taking it back",
+        oneLiner:
+          "re-fire the ask the propose filed instead of taking the proposal back",
       },
       { command: "spec status", oneLiner: "read which revision is proposed" },
     ],
@@ -1240,6 +1331,197 @@ export const specHelpEntries: CommandHelpEntry[] = [
       { command: "spec status", oneLiner: "inspect current review state" },
     ],
   },
+  {
+    path: ["spec", "attention"],
+    summary: "correct and cite durable question and assumption records",
+    description:
+      "Edit or withdraw an obsolete open record, supersede a terminal assumption, or change the exact assumptions cited by the current draft. Every mutation uses the record or citation version returned by `cctl spec get`; stale writers are refused instead of overwriting a later act.",
+    usage: [
+      "cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]",
+      "cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]",
+      "cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>",
+      "cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>",
+      "cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>",
+    ],
+    flags: [],
+    examples: [],
+    domainContext:
+      "Agents correct authoring records; humans answer questions and dispose assumptions. Answered, disposed, withdrawn, and superseded records are immutable history. Supersede a terminal assumption to preserve lineage instead of rewriting the decision a human made.",
+    related: [
+      { command: "spec get", oneLiner: "read record and citation versions" },
+      { command: "spec question", oneLiner: "open a new question" },
+      { command: "spec assume", oneLiner: "propose a new assumption" },
+    ],
+  },
+  {
+    path: ["spec", "attention", "edit"],
+    summary: "correct an open question or proposed assumption",
+    description:
+      "Apply a strict file-backed edit at the record version you read. The file kind must match the Q/A handle. Editing a cited assumption's text or attachment also requires the current draft citation version.",
+    usage: [
+      "cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<path>",
+        description: "strict question or assumption update JSON",
+      },
+      {
+        name: "if-version",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "recordVersion returned by the last read",
+      },
+      {
+        name: "if-citation-version",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "citationVersion when the edit can change draft citations",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec attention edit native-sdd Q2 --file .cc/temp/question-update.json --if-version 3",
+        explanation: "correct Q2 without overwriting a later mutation",
+      },
+    ],
+    related: [
+      { command: "spec get", oneLiner: "read the current CAS tokens" },
+      {
+        command: "spec attention withdraw",
+        oneLiner: "retire an obsolete open record",
+      },
+    ],
+  },
+  {
+    path: ["spec", "attention", "withdraw"],
+    summary: "retire an obsolete open question or proposed assumption",
+    description:
+      "Withdraw an active attention record at the version you read. The reason is durable audit content and therefore comes from a file; mutation receipts do not echo it.",
+    usage: [
+      "cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]",
+    ],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<text>",
+        fileSource: true,
+        description:
+          "durable withdrawal reason (the command requires --reason-file)",
+      },
+      {
+        name: "if-version",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "recordVersion returned by the last read",
+      },
+      {
+        name: "if-citation-version",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "citationVersion when withdrawing a cited assumption",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec attention withdraw native-sdd Q2 --reason-file .cc/temp/reason.md --if-version 3",
+        explanation: "retire Q2 while preserving it in History",
+      },
+    ],
+    related: [
+      { command: "spec get", oneLiner: "read the current CAS tokens" },
+      {
+        command: "spec attention supersede",
+        oneLiner: "replace a terminal assumption with lineage",
+      },
+    ],
+  },
+  {
+    path: ["spec", "attention", "supersede"],
+    summary: "replace a terminal assumption while preserving lineage",
+    description:
+      "Create one successor for an immutable disposed assumption in the current amendment draft. The strict file carries a stable operationId, reason, replacement text, attachment, and citation intent so an ambiguous retry returns the same successor.",
+    usage: [
+      "cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<path>",
+        description: "strict successor assumption JSON",
+      },
+      {
+        name: "if-version",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "predecessor recordVersion returned by the last read",
+      },
+      {
+        name: "if-citation-version",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "current amendment citationVersion",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec attention supersede native-sdd A2 --file .cc/temp/successor.json --if-version 4 --if-citation-version 2",
+        explanation: "create the single durable successor of A2",
+      },
+    ],
+    related: [
+      { command: "spec amend", oneLiner: "open the required amendment" },
+      { command: "spec get", oneLiner: "read versions and lineage" },
+    ],
+  },
+  ...(["cite", "uncite"] as const).map(
+    (operation): CommandHelpEntry => ({
+      path: ["spec", "attention", operation],
+      summary: `${operation} an assumption on one draft element`,
+      description:
+        "Change the selected draft revision's exact assumption citation set at the citation version you read. The revision id and CAS token are explicit so the command cannot retarget a newer amendment silently.",
+      usage: [
+        `cctl spec attention ${operation} <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`,
+      ],
+      flags: [
+        {
+          name: "element",
+          kind: "value",
+          valuePlaceholder: "<handle>",
+          description: "requirement, criterion, decision, or task handle",
+        },
+        {
+          name: "revision",
+          kind: "value",
+          valuePlaceholder: "<draft-id>",
+          description: "writable draft revision id returned by the last read",
+        },
+        {
+          name: "if-citation-version",
+          kind: "value",
+          valuePlaceholder: "<n>",
+          description: "citationVersion returned by the last read",
+        },
+      ],
+      examples: [
+        {
+          invocation: `cctl spec attention ${operation} native-sdd A2 --element R1 --revision revision-draft --if-citation-version 2`,
+          explanation: `${operation} A2 against requirement R1`,
+        },
+      ],
+      related: [
+        { command: "spec get", oneLiner: "read the exact citation set" },
+        { command: "spec diff", oneLiner: "inspect citation-aware drift" },
+      ],
+    }),
+  ),
   {
     path: ["spec", "plan"],
     summary: "author the delivery plan attempt that becomes the executed graph",
@@ -1585,9 +1867,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["spec", "request-approval"],
-    summary: "route a spec gate to the user",
+    summary: "repair or re-fire a gate's approval request",
     description:
-      "Create durable attention for a human-controlled gate. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The evergreen plan gate is legacy-only; approve the finalized delivery candidate with `cctl spec plan sign-off <slug>`. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
+      "Create durable attention for a human-controlled gate. This is recovery, not the routine second step it used to be: a successful `cctl spec propose` files the gate-scoped request itself, and running this after one that reported filed or already-filed only returns that same request unchanged. Reach for it when a propose reported delivery-uncertain (the durable request exists but its Needs You notice may never have reached a human — repeating the ask re-fires the notice against the same attention id) or not-filed (no request exists, so this is what creates it), or when the gate is one no propose consults: execution_start and delivery are routed only from here. A revision a human sent back is not one of those cases — its asks are retired with it, and the propose of the follow-up revision files the replacements. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The evergreen plan gate is legacy-only; approve the finalized delivery candidate with `cctl spec plan sign-off <slug>`. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
     usage: [
       "cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]",
     ],

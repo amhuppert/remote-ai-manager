@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -17,6 +18,7 @@ import {
   specRevisionSchema,
   specRevisionSupersessionSchema,
   specSchema,
+  type SpecAssumptionCitationSnapshot,
   type CriterionElementPayload,
   type RequirementElementPayload,
   type Spec,
@@ -24,6 +26,7 @@ import {
   type TaskElementPayload,
 } from "@/lib/specs/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { stableStringify } from "./serialization";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -125,6 +128,79 @@ function maximalTaskPayload(): TaskElementPayload {
     executionLane: "persistence-lane",
     touchedPaths: ["src/lib/specs", "src/lib/state-store"],
   };
+}
+
+function seedAssumption(input: {
+  id: string;
+  specId: string;
+  number: number;
+  elementId: string | null;
+  text?: string;
+}): SpecAssumptionCitationSnapshot {
+  const text = input.text ?? `Premise ${input.number}`;
+  const actor = {
+    kind: "agent" as const,
+    conversationId: "conversation-citation-contract",
+  };
+  fixture.db
+    .prepare(
+      `INSERT INTO spec_assumptions (
+         id, spec_id, number, element_id, text, proposed_by_json,
+         record_version, disposition, disposed_at, withdrawn_at,
+         supersedes_assumption_id, supersession_operation_id,
+         supersession_request_hash, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 1, 'proposed', NULL, NULL, NULL, NULL,
+                 NULL, ?, ?)`,
+    )
+    .run(
+      input.id,
+      input.specId,
+      input.number,
+      input.elementId,
+      text,
+      stableStringify(actor),
+      CREATED_AT,
+      CREATED_AT,
+    );
+  return {
+    schemaVersion: 1,
+    captureKind: "native",
+    capturedAt: UPDATED_AT,
+    assumptionId: input.id,
+    number: input.number,
+    recordVersion: 1,
+    text,
+    elementId: input.elementId,
+    proposedBy: actor,
+    disposition: "proposed",
+    disposedAt: null,
+    withdrawnAt: null,
+    supersedesAssumptionId: null,
+    createdAt: CREATED_AT,
+    updatedAt: CREATED_AT,
+  };
+}
+
+function citationHash(
+  contractVersion: 1 | 2,
+  citations: ReadonlyArray<{
+    elementId: string;
+    assumptionId: string;
+    snapshot: SpecAssumptionCitationSnapshot;
+  }>,
+): string {
+  return createHash("sha256")
+    .update(
+      stableStringify({
+        citationContractVersion: contractVersion,
+        citations: citations.map(({ elementId, assumptionId, snapshot }) => ({
+          elementId,
+          assumptionId,
+          snapshot,
+        })),
+      }),
+    )
+    .digest("hex");
 }
 
 async function addRequirement(
@@ -342,6 +418,9 @@ describe("maximal persistence contracts", () => {
           authoringStage: "design",
           basedOnRevisionId: created.revision.id,
           contentHash: "derived-by-propose",
+          citationContractVersion: 2,
+          citationVersion: 1,
+          citationHash: citationHash(2, []),
           proposedAt: PROPOSED_AT,
           approvedAt: APPROVED_AT,
           externalDelivery: {
@@ -668,6 +747,8 @@ describe("revision snapshots and aliases", () => {
       ok: true,
       expectedContentHash: proposed.contentHash,
       actualContentHash: proposed.contentHash,
+      expectedCitationHash: proposed.citationHash,
+      actualCitationHash: proposed.citationHash,
       mismatchedElementIds: [],
     });
   });
@@ -691,6 +772,116 @@ describe("revision snapshots and aliases", () => {
     ).resolves.toMatchObject({
       ok: false,
     });
+  });
+
+  it("keeps a proposed revision frozen when any approval integrity witness is corrupt", async () => {
+    const elementHashCorruption = await createSpec({
+      id: "spec-approval-element-hash-corruption",
+    });
+    const elementHashRequirement = await addRequirement(
+      elementHashCorruption.spec.id,
+      elementHashCorruption.revision.id,
+    );
+    await repo.proposeRevision({
+      revisionId: elementHashCorruption.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    fixture.db
+      .prepare(
+        `UPDATE spec_element_versions
+         SET payload_json = ?
+         WHERE revision_id = ? AND element_id = ?`,
+      )
+      .run(
+        stableStringify(requirementPayload("Tampered after proposal.")),
+        elementHashCorruption.revision.id,
+        elementHashRequirement.element.id,
+      );
+
+    const contentHashCorruption = await createSpec({
+      id: "spec-approval-content-hash-corruption",
+    });
+    const contentHashRequirement = await addRequirement(
+      contentHashCorruption.spec.id,
+      contentHashCorruption.revision.id,
+    );
+    await repo.proposeRevision({
+      revisionId: contentHashCorruption.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    const tamperedPayload = requirementPayload("Tampered coherently.");
+    fixture.db
+      .prepare(
+        `UPDATE spec_element_versions
+         SET payload_json = ?, payload_hash = ?
+         WHERE revision_id = ? AND element_id = ?`,
+      )
+      .run(
+        stableStringify(tamperedPayload),
+        createHash("sha256")
+          .update(stableStringify(tamperedPayload))
+          .digest("hex"),
+        contentHashCorruption.revision.id,
+        contentHashRequirement.element.id,
+      );
+
+    const citationHashCorruption = await createSpec({
+      id: "spec-approval-citation-hash-corruption",
+    });
+    const citationRequirement = await addRequirement(
+      citationHashCorruption.spec.id,
+      citationHashCorruption.revision.id,
+    );
+    const citationSnapshot = seedAssumption({
+      id: "assumption-approval-citation-hash-corruption",
+      specId: citationHashCorruption.spec.id,
+      number: 1,
+      elementId: citationRequirement.element.id,
+    });
+    await repo.replaceAssumptionDraftCitations({
+      revisionId: citationHashCorruption.revision.id,
+      specId: citationHashCorruption.spec.id,
+      expectedCitationVersion: 1,
+      replacements: [
+        {
+          assumptionId: citationSnapshot.assumptionId,
+          elementIds: [citationRequirement.element.id],
+          snapshot: citationSnapshot,
+        },
+      ],
+      updatedAt: UPDATED_AT,
+    });
+    await repo.proposeRevision({
+      revisionId: citationHashCorruption.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    fixture.db.exec("DROP TRIGGER spec_revision_citations_frozen_update");
+    fixture.db
+      .prepare(
+        `UPDATE spec_revision_assumption_citations
+         SET assumption_snapshot_json = ?
+         WHERE revision_id = ? AND element_id = ? AND assumption_id = ?`,
+      )
+      .run(
+        stableStringify({ ...citationSnapshot, text: "Tampered citation." }),
+        citationHashCorruption.revision.id,
+        citationRequirement.element.id,
+        citationSnapshot.assumptionId,
+      );
+
+    for (const revisionId of [
+      elementHashCorruption.revision.id,
+      contentHashCorruption.revision.id,
+      citationHashCorruption.revision.id,
+    ]) {
+      await expect(
+        repo.approveRevision({ revisionId, approvedAt: APPROVED_AT }),
+      ).rejects.toThrow();
+      await expect(repo.findRevision(revisionId)).resolves.toMatchObject({
+        state: "proposed",
+        approvedAt: null,
+      });
+    }
   });
 
   it("resolves a renamed spec by both its current slug and appended alias", async () => {
@@ -806,6 +997,448 @@ describe("revision snapshots and aliases", () => {
       }),
     ).resolves.toMatchObject({
       spec: { id: created.spec.id, slug: "first-slug" },
+    });
+  });
+});
+
+describe("revision-owned assumption citations", () => {
+  it("starts every new draft on contract 2 with a verified empty citation set", async () => {
+    const created = await createSpec();
+
+    expect(await repo.getRevisionSnapshot(created.revision.id)).toMatchObject({
+      revision: {
+        citationContractVersion: 2,
+        citationVersion: 1,
+        citationHash: citationHash(2, []),
+      },
+      assumptionCitations: [],
+    });
+  });
+
+  it("hashes citation mutations in snapshot code-unit order", async () => {
+    const created = await createSpec();
+    const upper = await repo.createDraftElement({
+      id: "Z-citation-element",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 0,
+      payload: requirementPayload("Uppercase citation subject."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    const lower = await repo.createDraftElement({
+      id: "a-citation-element",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 1,
+      payload: requirementPayload("Lowercase citation subject."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    const snapshot = seedAssumption({
+      id: "assumption-mixed-case-citations",
+      specId: created.spec.id,
+      number: 1,
+      elementId: upper.element.id,
+    });
+
+    const replaced = await repo.replaceAssumptionDraftCitations({
+      revisionId: created.revision.id,
+      specId: created.spec.id,
+      expectedCitationVersion: 1,
+      replacements: [
+        {
+          assumptionId: snapshot.assumptionId,
+          elementIds: [lower.element.id, upper.element.id],
+          snapshot,
+        },
+      ],
+      updatedAt: UPDATED_AT,
+    });
+    const citations = await repo.readRevisionCitations(created.revision.id);
+
+    expect(citations.map(({ elementId }) => elementId)).toEqual([
+      upper.element.id,
+      lower.element.id,
+    ]);
+    expect(replaced).toMatchObject({
+      kind: "success",
+      revision: { citationHash: citationHash(2, citations) },
+    });
+    await expect(
+      repo.proposeRevision({
+        revisionId: created.revision.id,
+        proposedAt: PROPOSED_AT,
+      }),
+    ).resolves.toMatchObject({ state: "proposed" });
+  });
+
+  it("reads citations in snapshot code-unit order when SQLite byte order differs", async () => {
+    const created = await createSpec();
+    const astral = await repo.createDraftElement({
+      id: "id-\u{10000}",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 0,
+      payload: requirementPayload("Astral citation subject."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    const privateUse = await repo.createDraftElement({
+      id: "id-\uE000",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 1,
+      payload: requirementPayload("Private-use citation subject."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    const assumptionSnapshot = seedAssumption({
+      id: "assumption-unicode-citations",
+      specId: created.spec.id,
+      number: 1,
+      elementId: astral.element.id,
+    });
+
+    await repo.replaceAssumptionDraftCitations({
+      revisionId: created.revision.id,
+      specId: created.spec.id,
+      expectedCitationVersion: 1,
+      replacements: [
+        {
+          assumptionId: assumptionSnapshot.assumptionId,
+          elementIds: [privateUse.element.id, astral.element.id],
+          snapshot: assumptionSnapshot,
+        },
+      ],
+      updatedAt: UPDATED_AT,
+    });
+
+    const citations = await repo.readRevisionCitations(created.revision.id);
+    expect(citations.map(({ elementId }) => elementId)).toEqual([
+      astral.element.id,
+      privateUse.element.id,
+    ]);
+    await expect(
+      repo.getRevisionSnapshot(created.revision.id),
+    ).resolves.toMatchObject({ assumptionCitations: citations });
+  });
+
+  it("replaces, refreshes, and removes exact draft citations with one CAS increment", async () => {
+    const created = await createSpec();
+    const first = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+      "First citation subject.",
+    );
+    const second = await repo.createDraftElement({
+      id: "requirement-citation-second",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 1,
+      payload: requirementPayload("Second citation subject."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    const snapshot = seedAssumption({
+      id: "assumption-citation",
+      specId: created.spec.id,
+      number: 1,
+      elementId: first.element.id,
+    });
+
+    const replaced = await repo.replaceAssumptionDraftCitations({
+      revisionId: created.revision.id,
+      specId: created.spec.id,
+      expectedCitationVersion: 1,
+      replacements: [
+        {
+          assumptionId: snapshot.assumptionId,
+          elementIds: [second.element.id, first.element.id],
+          snapshot,
+        },
+      ],
+      updatedAt: UPDATED_AT,
+    });
+    expect(replaced).toMatchObject({
+      kind: "success",
+      changed: true,
+      revision: { citationVersion: 2 },
+      added: [
+        {
+          elementId: first.element.id,
+          assumptionId: snapshot.assumptionId,
+        },
+        {
+          elementId: second.element.id,
+          assumptionId: snapshot.assumptionId,
+        },
+      ],
+      removed: [],
+      refreshed: [],
+    });
+    expect(
+      (await repo.readRevisionCitations(created.revision.id)).map(
+        ({ elementId, assumptionId }) => [elementId, assumptionId],
+      ),
+    ).toEqual([
+      [first.element.id, snapshot.assumptionId],
+      [second.element.id, snapshot.assumptionId],
+    ]);
+
+    const noOp = await repo.replaceAssumptionDraftCitations({
+      revisionId: created.revision.id,
+      specId: created.spec.id,
+      expectedCitationVersion: 2,
+      replacements: [
+        {
+          assumptionId: snapshot.assumptionId,
+          elementIds: [first.element.id, second.element.id],
+          snapshot,
+        },
+      ],
+      updatedAt: PROPOSED_AT,
+    });
+    expect(noOp).toMatchObject({
+      kind: "success",
+      changed: false,
+      revision: { citationVersion: 2 },
+      added: [],
+      removed: [],
+      refreshed: [],
+    });
+    expect(
+      await repo.replaceAssumptionDraftCitations({
+        revisionId: created.revision.id,
+        specId: created.spec.id,
+        expectedCitationVersion: 1,
+        replacements: [],
+        updatedAt: PROPOSED_AT,
+      }),
+    ).toEqual({ kind: "stale_version", currentVersion: 2 });
+
+    const refreshedSnapshot = {
+      ...snapshot,
+      recordVersion: 2,
+      text: "The premise was corrected.",
+      capturedAt: PROPOSED_AT,
+      updatedAt: PROPOSED_AT,
+    };
+    expect(
+      await repo.replaceAssumptionDraftCitations({
+        revisionId: created.revision.id,
+        specId: created.spec.id,
+        expectedCitationVersion: 2,
+        replacements: [
+          {
+            assumptionId: snapshot.assumptionId,
+            elementIds: [first.element.id, second.element.id],
+            snapshot: refreshedSnapshot,
+          },
+        ],
+        updatedAt: PROPOSED_AT,
+      }),
+    ).toMatchObject({
+      kind: "success",
+      changed: true,
+      revision: { citationVersion: 3 },
+      added: [],
+      removed: [],
+      refreshed: [
+        {
+          elementId: first.element.id,
+          assumptionId: snapshot.assumptionId,
+        },
+        {
+          elementId: second.element.id,
+          assumptionId: snapshot.assumptionId,
+        },
+      ],
+    });
+
+    expect(
+      await repo.mutateDraftCitation({
+        operation: "uncite",
+        revisionId: created.revision.id,
+        specId: created.spec.id,
+        assumptionId: snapshot.assumptionId,
+        elementId: first.element.id,
+        expectedCitationVersion: 3,
+        updatedAt: APPROVED_AT,
+      }),
+    ).toMatchObject({
+      kind: "success",
+      changed: true,
+      revision: { citationVersion: 4 },
+      removed: [
+        {
+          elementId: first.element.id,
+          assumptionId: snapshot.assumptionId,
+        },
+      ],
+    });
+
+    const secondVersion = await repo.findElementVersion(
+      created.revision.id,
+      second.element.id,
+    );
+    if (secondVersion === null)
+      throw new Error("missing second element version");
+    await repo.removeDraftElement({
+      revisionId: created.revision.id,
+      elementId: second.element.id,
+      expectedElementVersion: secondVersion.elementVersion,
+    });
+    expect(await repo.findRevision(created.revision.id)).toMatchObject({
+      citationVersion: 5,
+      citationHash: citationHash(2, []),
+    });
+    expect(await repo.readRevisionCitations(created.revision.id)).toEqual([]);
+  });
+
+  it("refuses stale, cross-spec, non-member, and frozen citation mutations", async () => {
+    const created = await createSpec();
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+    const foreign = await createSpec({ id: "spec-citation-foreign" });
+    const foreignRequirement = await addRequirement(
+      foreign.spec.id,
+      foreign.revision.id,
+    );
+    const snapshot = seedAssumption({
+      id: "assumption-citation-membership",
+      specId: created.spec.id,
+      number: 1,
+      elementId: requirement.element.id,
+    });
+
+    await expect(
+      repo.mutateDraftCitation({
+        operation: "cite",
+        revisionId: created.revision.id,
+        specId: created.spec.id,
+        assumptionId: snapshot.assumptionId,
+        elementId: foreignRequirement.element.id,
+        expectedCitationVersion: 1,
+        snapshot,
+        updatedAt: UPDATED_AT,
+      }),
+    ).resolves.toEqual({
+      kind: "invalid_relation",
+      reason: "element_not_in_revision",
+    });
+    await expect(
+      repo.mutateDraftCitation({
+        operation: "cite",
+        revisionId: created.revision.id,
+        specId: foreign.spec.id,
+        assumptionId: snapshot.assumptionId,
+        elementId: requirement.element.id,
+        expectedCitationVersion: 1,
+        snapshot,
+        updatedAt: UPDATED_AT,
+      }),
+    ).resolves.toEqual({
+      kind: "invalid_relation",
+      reason: "revision_spec_mismatch",
+    });
+
+    await repo.proposeRevision({
+      revisionId: created.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    await expect(
+      repo.mutateDraftCitation({
+        operation: "cite",
+        revisionId: created.revision.id,
+        specId: created.spec.id,
+        assumptionId: snapshot.assumptionId,
+        elementId: requirement.element.id,
+        expectedCitationVersion: 1,
+        snapshot,
+        updatedAt: UPDATED_AT,
+      }),
+    ).resolves.toMatchObject({
+      kind: "illegal_lifecycle",
+      state: "proposed",
+    });
+  });
+
+  it("copies citation triples and snapshot bytes atomically when forking a draft", async () => {
+    const created = await createSpec();
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+    const snapshot = seedAssumption({
+      id: "assumption-citation-copy",
+      specId: created.spec.id,
+      number: 1,
+      elementId: requirement.element.id,
+    });
+    await repo.mutateDraftCitation({
+      operation: "cite",
+      revisionId: created.revision.id,
+      specId: created.spec.id,
+      assumptionId: snapshot.assumptionId,
+      elementId: requirement.element.id,
+      expectedCitationVersion: 1,
+      snapshot,
+      updatedAt: UPDATED_AT,
+    });
+    await repo.proposeRevision({
+      revisionId: created.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    await repo.approveRevision({
+      revisionId: created.revision.id,
+      approvedAt: APPROVED_AT,
+    });
+    const baseBytes = fixture.db
+      .prepare(
+        `SELECT assumption_snapshot_json FROM spec_revision_assumption_citations
+         WHERE revision_id = ?`,
+      )
+      .get(created.revision.id);
+
+    const fork = await repo.createDraftFromBase({
+      id: "revision-citation-copy",
+      specId: created.spec.id,
+      baseRevisionId: created.revision.id,
+      authoringStage: "requirements",
+      createdAt: APPROVED_AT,
+    });
+    const forkBytes = fixture.db
+      .prepare(
+        `SELECT assumption_snapshot_json FROM spec_revision_assumption_citations
+         WHERE revision_id = ?`,
+      )
+      .get(fork.id);
+    expect(forkBytes).toEqual(baseBytes);
+    expect(await repo.getRevisionSnapshot(fork.id)).toMatchObject({
+      revision: {
+        citationContractVersion: 2,
+        citationVersion: 1,
+      },
+      assumptionCitations: [
+        {
+          elementId: requirement.element.id,
+          assumptionId: snapshot.assumptionId,
+          snapshot,
+        },
+      ],
     });
   });
 });
@@ -1023,6 +1656,29 @@ describe("draft compare-and-swap", () => {
     expect(snapshot?.elements.map(({ version }) => version.position)).toEqual([
       0, 0, 0,
     ]);
+  });
+
+  it("uses SQLite UTF-8 byte order for the element-id tiebreak", async () => {
+    const created = await createSpec();
+    const expectedOrder = ["requirement-\uE000", "requirement-\u{10000}"];
+    for (const id of [...expectedOrder].reverse()) {
+      await repo.createDraftElement({
+        id,
+        specId: created.spec.id,
+        revisionId: created.revision.id,
+        kind: "requirement",
+        parentElementId: null,
+        position: 0,
+        payload: requirementPayload(`Statement for ${id}.`),
+        createdAt: CREATED_AT,
+        updatedAt: UPDATED_AT,
+      });
+    }
+
+    const snapshot = await repo.getRevisionSnapshot(created.revision.id);
+    expect(snapshot?.elements.map(({ element }) => element.id)).toEqual(
+      expectedOrder,
+    );
   });
 
   it("keeps one global order across parents and children, with nesting carried by the parent alone", async () => {

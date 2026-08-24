@@ -90,12 +90,29 @@ function prototypeDetailFixture(): SpecDetailView {
         handle: "A2",
         elementId: null,
         text: "Approval controls can reuse the review surface.",
+        recordVersion: 1,
         disposition: "rejected",
         disposedAt: SPEC_CONTROLS_FIXTURE_NOW,
+        withdrawnAt: null,
         proposedBy: {
           kind: "agent",
           conversationId: "conversation-1",
           backend: "claude",
+        },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "dispose",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This assumption is terminal.",
+          },
         },
         createdAt: SPEC_CONTROLS_FIXTURE_NOW,
         updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
@@ -286,7 +303,7 @@ describe("Spec detail prototype structure", () => {
     expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
   });
 
-  it("keeps every linked-context lane visible and exposes inline assumption dispositions", () => {
+  it("keeps every linked-context lane visible and directs assumption disposition to the attention workspace", () => {
     renderPrototypeDetail();
 
     const narrative = screen.getByRole("region", { name: "Spec narrative" });
@@ -297,13 +314,19 @@ describe("Spec detail prototype structure", () => {
       name: "Questions & assumptions",
     });
     expect(
-      within(questions).getByRole("button", { name: "Confirm A2" }),
+      within(questions).getByRole("link", {
+        name: "Open Questions & assumptions",
+      }),
     ).toBeVisible();
+    expect(within(questions).getByText("Rejected")).toBeVisible();
     expect(
-      within(questions).getByRole("button", { name: "Reject A2" }),
-    ).toBeVisible();
+      within(questions).queryByRole("button", { name: "Confirm A2" }),
+    ).toBeNull();
     expect(
-      within(questions).getByRole("button", { name: "Defer A2" }),
-    ).toBeVisible();
+      within(questions).queryByRole("button", { name: "Reject A2" }),
+    ).toBeNull();
+    expect(
+      within(questions).queryByRole("button", { name: "Defer A2" }),
+    ).toBeNull();
   });
 });

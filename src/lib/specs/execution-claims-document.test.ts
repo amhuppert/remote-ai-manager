@@ -45,11 +45,15 @@ const snapshot: SpecRevisionSnapshot = {
     authoringStage: "plan",
     basedOnRevisionId: null,
     contentHash: "sha256:claims-document",
+    citationContractVersion: 2,
+    citationVersion: 1,
+    citationHash: "0".repeat(64),
     proposedAt: NOW,
     approvedAt: NOW,
     externalDelivery: null,
     createdAt: NOW,
   },
+  assumptionCitations: [],
   elements: binding.dispositions.map((disposition, index) => ({
     element: {
       id: disposition.criterionElementId,

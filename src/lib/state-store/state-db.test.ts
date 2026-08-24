@@ -79,6 +79,217 @@ describe("state-db pragmas", () => {
 });
 
 describe("state-db schema initialization", () => {
+  it("opens and upgrades a schema-10 attention database before current DDL reads schema-11 columns", () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "cc-attention-floor-"));
+    const dbPath = path.join(tempDir, "command-center.db");
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schema_migrations (version, description)
+      VALUES (10, 'candidate-unstable halt vocabulary');
+
+      CREATE TABLE projects (
+        root_path TEXT PRIMARY KEY,
+        archived INTEGER NOT NULL DEFAULT 0,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        pin_order INTEGER,
+        mcp_overrides TEXT,
+        agent_capability_overrides TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE specs (
+        id TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        gate_policy_json TEXT NOT NULL,
+        abandoned_at TEXT,
+        abandoned_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE spec_aliases (
+        project_path TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        spec_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (project_path, slug)
+      );
+      CREATE TABLE spec_counters (
+        spec_id TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        last_number INTEGER NOT NULL,
+        PRIMARY KEY (spec_id, scope_key)
+      );
+      CREATE TABLE spec_elements (
+        id TEXT PRIMARY KEY,
+        spec_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        number INTEGER,
+        parent_element_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE spec_revisions (
+        id TEXT PRIMARY KEY,
+        spec_id TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        authoring_stage TEXT NOT NULL,
+        based_on_revision_id TEXT,
+        content_hash TEXT,
+        proposed_at TEXT,
+        approved_at TEXT,
+        external_delivery_json TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (spec_id, number)
+      );
+      CREATE TABLE spec_element_versions (
+        revision_id TEXT NOT NULL,
+        element_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        element_version INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (revision_id, element_id)
+      );
+      CREATE TABLE spec_questions (
+        id TEXT PRIMARY KEY,
+        spec_id TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        element_id TEXT,
+        text TEXT NOT NULL,
+        provenance_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        answer TEXT,
+        answered_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (spec_id, number)
+      );
+      CREATE TABLE spec_assumptions (
+        id TEXT PRIMARY KEY,
+        spec_id TEXT NOT NULL,
+        number INTEGER NOT NULL,
+        element_id TEXT,
+        text TEXT NOT NULL,
+        proposed_by_json TEXT NOT NULL,
+        disposition TEXT NOT NULL,
+        disposed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (spec_id, number)
+      );
+
+      INSERT INTO projects (root_path) VALUES ('/repos/attention-floor');
+      INSERT INTO specs (
+        id, project_path, slug, name, gate_policy_json, created_at, updated_at
+      ) VALUES (
+        'spec-floor', '/repos/attention-floor', 'attention-floor',
+        'Attention floor', '{"preset":"contract-bearing"}',
+        '2026-08-23T12:00:00.000Z', '2026-08-23T12:00:00.000Z'
+      );
+      INSERT INTO spec_revisions (
+        id, spec_id, number, state, authoring_stage, created_at
+      ) VALUES (
+        'revision-floor', 'spec-floor', 1, 'draft', 'requirements',
+        '2026-08-23T12:00:00.000Z'
+      );
+      INSERT INTO spec_questions (
+        id, spec_id, number, element_id, text, provenance_json, status,
+        answer, answered_at, created_at, updated_at
+      ) VALUES (
+        'question-floor', 'spec-floor', 1, NULL, 'Which validator?',
+        '{"kind":"agent","conversationId":"conversation-floor"}',
+        'open', NULL, NULL, '2026-08-23T12:00:00.000Z',
+        '2026-08-23T12:00:00.000Z'
+      );
+      INSERT INTO spec_assumptions (
+        id, spec_id, number, element_id, text, proposed_by_json,
+        disposition, disposed_at, created_at, updated_at
+      ) VALUES (
+        'assumption-floor', 'spec-floor', 1, NULL, 'The validator is local.',
+        '{"kind":"agent","conversationId":"conversation-floor"}',
+        'proposed', NULL, '2026-08-23T12:00:00.000Z',
+        '2026-08-23T12:00:00.000Z'
+      );
+    `);
+    legacy.close();
+
+    try {
+      const upgraded = _createTestDbAtPath(dbPath);
+      expect(
+        upgraded
+          .prepare(
+            `SELECT record_version, withdrawn_at
+             FROM spec_questions WHERE id = 'question-floor'`,
+          )
+          .get(),
+      ).toEqual({ record_version: 1, withdrawn_at: null });
+      expect(
+        upgraded
+          .prepare(
+            `SELECT record_version, withdrawn_at, supersedes_assumption_id
+             FROM spec_assumptions WHERE id = 'assumption-floor'`,
+          )
+          .get(),
+      ).toEqual({
+        record_version: 1,
+        withdrawn_at: null,
+        supersedes_assumption_id: null,
+      });
+      expect(
+        upgraded
+          .prepare(
+            `SELECT citation_contract_version, citation_version
+             FROM spec_revisions WHERE id = 'revision-floor'`,
+          )
+          .get(),
+      ).toEqual({ citation_contract_version: 2, citation_version: 1 });
+      expect(
+        upgraded
+          .prepare(
+            `SELECT name FROM sqlite_master
+             WHERE type = 'table'
+               AND name = 'spec_revision_assumption_citations'`,
+          )
+          .get(),
+      ).toEqual({ name: "spec_revision_assumption_citations" });
+      expect(
+        upgraded
+          .prepare(
+            "SELECT description FROM schema_migrations WHERE version = 11",
+          )
+          .get(),
+      ).toEqual({
+        description:
+          "native-SDD attention lifecycle and revision-owned assumption citations",
+      });
+      expect(
+        JSON.parse(
+          readFileSync(
+            schemaCompatibilityBarrierPath(tempDir, KNOWN_SCHEMA_VERSION),
+            "utf8",
+          ),
+        ),
+      ).toEqual({ version: KNOWN_SCHEMA_VERSION });
+      upgraded.close();
+
+      const reopened = _createTestDbAtPath(dbPath);
+      expect(reopened.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      reopened.close();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rebuilds legacy spec launch storage without a saved-definition projection", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "cc-direct-launch-"));
     const dbPath = path.join(tempDir, "command-center.db");
@@ -971,8 +1182,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 10 after the candidate-unstable halt vocabulary", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(10);
+  it("this build understands schema version 11 after the Native SDD attention/citation cutover", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

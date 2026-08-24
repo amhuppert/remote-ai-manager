@@ -67,11 +67,15 @@ function snapshotOf(
       authoringStage: "plan",
       basedOnRevisionId: null,
       contentHash: `content-${revisionId}`,
+      citationContractVersion: 2,
+      citationVersion: 1,
+      citationHash: "0".repeat(64),
       proposedAt: TS,
       approvedAt: TS,
       externalDelivery: null,
       createdAt: TS,
     },
+    assumptionCitations: [],
     elements: [
       requirement,
       ...Object.entries(criterionHashes).map(

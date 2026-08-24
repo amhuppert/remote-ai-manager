@@ -1,3 +1,4 @@
+import { emptyApprovalLedger } from "@/lib/specs/approval-ledger";
 import { remainingAuthoringSequence } from "@/lib/specs/authoring-sequence";
 import { liveProposalProjection } from "@/lib/specs/proposal-integrity";
 import type { SpecDetailView } from "@/lib/specs/queries";
@@ -17,6 +18,13 @@ import {
 import type { PolicyImpactDraft } from "./SpecPolicyImpact";
 
 export const SPEC_CONTROLS_FIXTURE_NOW = "2026-07-18T12:00:00.000Z";
+const EMPTY_CITATION_HASH = "0".repeat(64);
+const EMPTY_CITATION_DIFF = {
+  baseCitationContractVersion: 2 as const,
+  draftCitationContractVersion: 2 as const,
+  baseCitations: [],
+  draftCitations: [],
+};
 
 /** The dense fixture's prior delivered run predates the current run. */
 const PRIOR_RUN_CREATED_AT = "2026-07-17T09:00:00.000Z";
@@ -51,6 +59,7 @@ export function policyImpactDraftFixture(
           },
         },
       ],
+      EMPTY_CITATION_DIFF,
     ),
   };
 }
@@ -191,13 +200,21 @@ export function strandedProposalDetailFixture(): SpecDetailView {
     ...base,
     revisions,
     liveProposals: liveProposalsFixture(revisions, [
-      { revision: approved, elements },
-      { revision: stranded, elements },
-      { revision: forkedPast, elements },
+      { revision: approved, elements, assumptionCitations: [] },
+      { revision: stranded, elements, assumptionCitations: [] },
+      { revision: forkedPast, elements, assumptionCitations: [] },
     ]),
-    baseRevision: { revision: approved, elements },
-    currentRevision: { revision: forkedPast, elements },
-    currentApprovedRevision: { revision: forkedPast, elements },
+    baseRevision: { revision: approved, elements, assumptionCitations: [] },
+    currentRevision: {
+      revision: forkedPast,
+      elements,
+      assumptionCitations: [],
+    },
+    currentApprovedRevision: {
+      revision: forkedPast,
+      elements,
+      assumptionCitations: [],
+    },
     executionRevisionSnapshots: [],
   };
 }
@@ -216,6 +233,9 @@ export function specControlsDetailFixture(
     proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
     approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
     externalDelivery: null,
+    citationContractVersion: 2 as const,
+    citationVersion: 1,
+    citationHash: EMPTY_CITATION_HASH,
     createdAt: SPEC_CONTROLS_FIXTURE_NOW,
   };
   const elements = [
@@ -322,12 +342,15 @@ export function specControlsDetailFixture(
     },
     aliases: [],
     revisions: [revision],
+    attentionAuditEvents: [],
     // The fixture's one revision is approved, so nothing is under review.
     liveProposals: [],
     baseRevision: null,
-    currentRevision: { revision, elements },
-    currentApprovedRevision: { revision, elements },
-    executionRevisionSnapshots: [{ revision, elements }],
+    currentRevision: { revision, elements, assumptionCitations: [] },
+    currentApprovedRevision: { revision, elements, assumptionCitations: [] },
+    executionRevisionSnapshots: [
+      { revision, elements, assumptionCitations: [] },
+    ],
     approvals: [],
     comments: [],
     linkedTickets: [],
@@ -355,6 +378,9 @@ export function specControlsDetailFixture(
       authoringSequence: null,
       pendingApprovals: [],
       importCarriedApprovals: [],
+      // Nothing is under review, so no gate is consulted and the ledger has
+      // no subject to account for.
+      approvalLedger: emptyApprovalLedger(),
       applicableGates: [],
       revisionSignOff: null,
       pendingBlock: null,
@@ -692,10 +718,24 @@ export function importedDeliveredSpecDetailFixture(): SpecDetailView {
       handle: "Q1",
       elementId: null,
       text: "Which retention window applies?",
+      recordVersion: 1,
       status: "answered",
       answer: "Thirty days, per the source spec.",
       answeredAt: SPEC_CONTROLS_FIXTURE_NOW,
+      withdrawnAt: null,
       provenance: { kind: "agent", conversationId: "conversation-1" },
+      presentation: {
+        state: "current",
+        attentionActive: false,
+        lastMutation: null,
+        humanCapability: {
+          kind: "answer",
+          allowed: false,
+          code: "terminal",
+          blockingRevisionId: null,
+          instruction: "This question has a terminal answer.",
+        },
+      },
       createdAt: SPEC_CONTROLS_FIXTURE_NOW,
       updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
     },
@@ -707,11 +747,93 @@ export function importedDeliveredSpecDetailFixture(): SpecDetailView {
       handle: "A1",
       elementId: null,
       text: "Retention defaults to 30 days.",
+      recordVersion: 1,
       disposition: "confirmed",
       disposedAt: SPEC_CONTROLS_FIXTURE_NOW,
+      withdrawnAt: null,
       proposedBy: { kind: "agent", conversationId: "conversation-1" },
+      supersedesHandle: null,
+      supersededByHandle: null,
+      currentDraftCitations: null,
+      presentation: {
+        state: "current",
+        attentionActive: false,
+        lastMutation: null,
+        humanCapability: {
+          kind: "dispose",
+          allowed: false,
+          code: "terminal",
+          blockingRevisionId: null,
+          instruction: "This assumption is terminal.",
+        },
+      },
       createdAt: SPEC_CONTROLS_FIXTURE_NOW,
       updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+    },
+  ];
+  detail.attentionAuditEvents = [
+    {
+      kind: "record",
+      eventId: 1,
+      occurredAt: SPEC_CONTROLS_FIXTURE_NOW,
+      actor: { kind: "agent", conversationId: "conversation-1" },
+      payload: {
+        schemaVersion: 1,
+        recordKind: "question",
+        recordId: "question-1",
+        recordNumber: 1,
+        attentionId: "question-1",
+        operation: "imported",
+        active: false,
+        before: null,
+        after: {
+          kind: "question",
+          recordId: "question-1",
+          number: 1,
+          recordVersion: 1,
+          text: "Which retention window applies?",
+          elementId: null,
+          provenance: { kind: "agent", conversationId: "conversation-1" },
+          status: "answered",
+          answer: "Thirty days, per the source spec.",
+          answeredAt: SPEC_CONTROLS_FIXTURE_NOW,
+          withdrawnAt: null,
+          createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+          updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+        },
+      },
+    },
+    {
+      kind: "record",
+      eventId: 2,
+      occurredAt: SPEC_CONTROLS_FIXTURE_NOW,
+      actor: { kind: "agent", conversationId: "conversation-1" },
+      payload: {
+        schemaVersion: 1,
+        recordKind: "assumption",
+        recordId: "assumption-1",
+        recordNumber: 1,
+        attentionId: "assumption-1",
+        operation: "imported",
+        active: false,
+        before: null,
+        after: {
+          kind: "assumption",
+          recordId: "assumption-1",
+          number: 1,
+          recordVersion: 1,
+          text: "Retention defaults to 30 days.",
+          elementId: null,
+          proposedBy: { kind: "agent", conversationId: "conversation-1" },
+          disposition: "confirmed",
+          disposedAt: SPEC_CONTROLS_FIXTURE_NOW,
+          withdrawnAt: null,
+          supersedesAssumptionId: null,
+          supersededByAssumptionId: null,
+          createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+          updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+        },
+      },
     },
   ];
   detail.status.imported = true;
@@ -755,6 +877,7 @@ export function importedThenAmendedSpecDetailFixture(): SpecDetailView {
       createdAt: AMENDMENT_APPROVED_AT,
     },
     elements: imported.elements,
+    assumptionCitations: imported.assumptionCitations,
   };
   detail.revisions = [imported.revision, amendment.revision];
   detail.baseRevision = imported;
@@ -815,6 +938,7 @@ export function draftingSpecControlsDetailFixture(
       externalDelivery: null,
     },
     elements: approved.elements,
+    assumptionCitations: approved.assumptionCitations,
   };
   detail.revisions = [approved.revision, draft.revision];
   detail.baseRevision = approved;
@@ -829,6 +953,7 @@ export function draftingSpecControlsDetailFixture(
       pinnedStage,
       toDiffRows(approved),
       toDiffRows(draft),
+      EMPTY_CITATION_DIFF,
     ),
   });
   return detail;

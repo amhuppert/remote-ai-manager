@@ -487,3 +487,179 @@
 - [x] 24.6 Studio reachability (F14/F15/F16/F18/F26): Controls joins the primary tabbed views; the pending-approvals banner and the executing-phase CTA deep-link to the approving control; `?el=delivery` resolves to the focused merge-gate panel (cold-load safe, focusable section); each execution view carries a required server-computed `deliveryProjection` rendered verbatim with per-criterion proof-state chips, strategy-kind chips, and the split proof counter; Storybook variants cover every proof state
   - Done when: navigation, deep-link, banner, and CTA tests pass; the route-level projection test pins every proof state, waiver precedence over delivered runs, and older-pin waiver visibility; the fixtures schema guard forces `deliveryProjection` on every execution fixture
   - _Requirements: 8.10, 18.7, 1.5_
+
+- [x] 25. Audit-safe attention records and revision-owned assumption citations (ticket command-center#87; amendment approved 2026-08-23)
+  - Every behavior task follows red-green-refactor. Run the registered test command against the single named test file while iterating: `cctl validate run test --wait -- <file>`. Story scaffolding, type/config wiring, and visual-only adjustments are the only test-first exceptions.
+  - The schema-11 cutover is coordinated and breaking. Do not add a compatibility shim, fallback citation inference, dual write, optional old shape, mixed-version path, or old-bundle reader.
+
+- [x] 25.1 Attention, citation, revision-integrity, audit-event, and refusal schemas
+  - Start in `src/lib/specs/schemas.test.ts` with failing behavior tests for legal and illegal question/assumption lifecycle combinations, positive record/citation versions, successor/idempotency constraints, strict citation snapshots, revision citation metadata, the two typed audit-event payload families, presentation projections, mutation payloads/receipts, and the five typed refusal codes.
+  - Implement only the Zod schemas and derived types needed to pass; preserve schema-first typing and strict external-input parsing.
+  - Done when: the focused schema file proves every lifecycle cross-field rule, strict snapshot/event parsing, current/history/capability shapes, and rejection of legacy or ambiguous payloads.
+  - _Requirements: 6.2, 6.3, 6.5, 12.1–12.12, 12.18–12.25_
+
+- [x] 25.2 Migration `0034-native-sdd-attention-citations`, authoritative floor, and schema-11 barrier
+  - Start in `src/lib/state-store/migrations/0034-native-sdd-attention-citations.test.ts` with failing tests for bounded preflight refusal, atomic table rebuild, lifecycle checks, same-spec successor/citation foreign keys, exact draft/frozen legacy citation backfill, contract assignment, deterministic hashes, non-draft mutation triggers, trigger probes, idempotent replay, rollback, fresh/in-memory floor parity, and older-process refusal after `KNOWN_SCHEMA_VERSION` 10 → 11.
+  - Implement the migration registry entry and synchronous floor together. Install frozen-revision triggers only after backfill and verification. Never normalize contradictory legacy rows silently.
+  - Done when: a frozen schema-10 fixture migrates exactly once, reloads through live schemas/repos, passes full integrity verification, refuses every frozen mutation probe, rolls back on any preflight/verification defect, and schema 11 blocks an older opener before it writes.
+  - _Depends: 25.1_
+  - _Requirements: 2.5, 12.1–12.3, 12.7–12.12, 12.17, 12.23, 12.24, 12.26_
+
+- [x] 25.3 Guarded attention repository operations and terminal-race contracts
+  - Start in `src/lib/state-store/spec-review-repo.contract.test.ts` with failing reproductions for broad-upsert corruption, stale record writers, second answers/dispositions, withdrawn/terminal mutation attempts, same-spec successor constraints, simultaneous successor races, stable handle allocation, same-operation replay, and operation-id conflict.
+  - Replace mutation upserts with guarded `updateOpenQuestion`, `updateProposedAssumption`, `answerOpenQuestion`, `disposeProposedAssumption`, and `insertAssumptionSuccessor` outcomes. Creation may retain narrow insert operations; update inputs must not expose identity, creation provenance, or terminal human results.
+  - Done when: exactly one terminal writer wins, exactly one successor is allocated, replay returns the original successor/versions without a new handle, and outcomes distinguish stale version, illegal lifecycle, uniqueness conflict, and success without SQLite-message parsing.
+  - _Depends: 25.1, 25.2_
+  - _Requirements: 12.4–12.8, 12.14, 12.15, 12.21_
+
+- [x] 25.4 Revision citation repository, snapshot integrity, and draft-fork primitive
+  - Start in SpecsRepo contract coverage with failing tests for empty contract-2 drafts; atomic citation copy with byte-identical snapshots; exact replace/remove/refresh behavior; canonical sort; same-spec and revision-membership refusal; citation CAS/no-op semantics; citation hash verification; non-draft trigger refusal; and element-removal cascade without implicit restore on reintroduction.
+  - Implement `readRevisionCitations`, `replaceAssumptionDraftCitations`, and `mutateDraftCitation`, extend `SpecRevisionSnapshot`, and centralize every draft fork on one citation-copy primitive.
+  - Done when: all current draft citation changes increment/hash once, no-op changes do neither, frozen rows remain byte-for-byte unchanged, and every revision read validates strict snapshots and the full integrity tuple.
+  - _Depends: 25.1, 25.2_
+  - _Requirements: 2.5, 10.8, 12.9–12.13, 12.16, 12.17, 12.22, 12.23_
+
+- [x] 25.5 Citation-aware semantic diff, lint, and approval applicability
+  - Start in `src/lib/specs/revision-diff.test.ts` with failing tests for citation add/remove/move, cited-snapshot lifecycle/text changes, contract boundary, deterministic ordering/copy, and citation-only amendments never appearing unchanged.
+  - Start in `src/lib/specs/approval-applicability.test.ts` with failing tests for requirement-plus-criteria and decision citation subhashes, affected item/sign-off invalidation, unrelated approval carry, contract-1 no-citation carry, and cited contract-1 pending reason. Add focused lint tests proving rejected premise state comes from the frozen snapshot, not the current assumption row.
+  - Implement the smallest pure-domain changes after each red test; import settlement stays distinct from carried human approval.
+  - Done when: diff, lint, item fingerprints, sign-off fingerprints, and legacy-boundary decisions all price the same revision-owned citation truth.
+  - _Depends: 25.4_
+  - _Requirements: 9.8, 10.4, 10.8, 12.19, 12.22, 12.23_
+
+- [x] 25.6 Review-service authority, correction, withdrawal, disposition, and supersession transactions
+  - Start in `src/lib/specs/review-service.questions.test.ts` with failing behavior cases for later-conversation edit/withdraw, human correction refusal, agent answer/disposition refusal, stale record/citation CAS, abandoned-spec refusal, terminal immutability, first disposition, frozen-citation amendment requirement, explicit attachment citation intent, text snapshot refresh, withdrawal citation removal, supersession clear/replace, replay/conflict, and rollback at each injected repository failure.
+  - Implement the common actor/abandoned/lifecycle/version guards and `editAttentionRecord`, `withdrawAttentionRecord`, `supersedeAssumption`, `citeAssumption`, and `unciteAssumption`; retrofit create/answer/dispose through the same invariant seam.
+  - Append strict record/citation audit events inside the transaction and publish bounded active/inactive invalidation only after commit. Structured logs carry ids, operations, versions, counts, outcome/refusal code, and duration but no content bodies.
+  - Done when: creator conversation never affects authorization, terminal human acts cannot be rewritten, ambiguous supersession retries are idempotent, and every row/citation/hash/event change commits or rolls back together.
+  - _Depends: 25.3, 25.4_
+  - _Requirements: 6.7, 12.4–12.16, 12.19–12.21, 12.26, 19.4_
+
+- [x] 25.7 Citation ownership across every revision-opening, removal, proposal, and import path
+  - Before changing each path, add one failing focused test for ordinary continuation, explicit amendment, Request Changes, link-service entry, attached-assumption creation, spec-level assumption creation, element removal/reintroduction, proposal freeze, and born-approved import materialization/finalization.
+  - Route every draft creation through the central fork primitive; make assumption/citation creation and element/citation removal atomic; verify both hashes before proposal/import finalization.
+  - Done when: the path matrix proves exact citation initialization/copy/removal/materialization, no path infers from mutable display attachment, and all source frozen snapshots remain byte-identical.
+  - _Depends: 25.4, 25.6_
+  - _Requirements: 2.4, 2.5, 4.1, 8.5, 12.9–12.17, 12.22–12.24_
+
+- [x] 25.8 Complete current/active/history projections, capabilities, routes, and attention invalidation
+  - Start with route/projection tests for complete record retention, current/history partition, active-only counts, creation/latest mutation provenance, predecessor/successor handles, exact current-draft citations, current citation integrity, human capability (`allowed`, terminal, amendment-required, read-only), actor-kind admission, versioned human requests/receipts, and typed refusal status mapping.
+  - Remove client-only blanket sign-off blockers; expose the canonical server lint result and `blocks_signoff` flag. Ensure withdrawn/superseded invalidation removes active attention without deleting durable detail/history.
+  - Done when: status, Needs You, badges, detail, handle lookup, route receipts, and SSE reactions agree on the three projections and never hide answered/disposed durable facts.
+  - _Depends: 25.5, 25.6, 25.7_
+  - _Requirements: 6.3, 6.5, 8.11–8.15, 9.8, 12.18–12.21, 19.1–19.4_
+
+- [x] 25.9 Canonical format-4 strict decoding and citation-aware verification
+  - Start with export/verify tests for strict outer and manifest shapes; complete versioned Q/A rows; sorted citations/snapshots; revision integrity metadata; only the two Q/A audit families in event-id order; canonical decode/re-render equivalence; element, citation, event, manifest-byte, and Markdown path/order/content tamper detection; same-spec/membership violations; lifecycle/lineage defects; contract-1 preservation; and missing/old-format refusal before network or write. Pin the separate external-source `cctl spec import` boundary with a negative test proving it rejects a canonical export bundle.
+  - Implement a read-only format-4 decoder and make `verify --against` run it locally before contacting the server. After strict structural and semantic verification, canonically re-render the manifest and Markdown and compare exact manifest bytes plus the ordered Markdown file structure and content. Do not add canonical persistence restoration, an old-format reader, conversion, dual write, shape inference, or fallback.
+  - Done when: a deterministic format-4 export strictly decodes, re-renders byte-for-byte and structure-for-structure, and verifies against current durable state; every integrity mutation is named precisely without echoing authored bodies; a missing or different format fails with `bundle_format_mismatch` before network or write; and `cctl spec import` cannot consume canonical exports.
+  - _Depends: 25.1, 25.4, 25.5, 25.7_
+  - _Requirements: 2.5, 6.8, 12.18, 12.21–12.24, 24.18_
+
+- [x] 25.10 `cctl spec attention` contracts, help, schemas, preflight, and non-echoing receipts
+  - Start with CLI help/contract tests for the `attention` group and `edit`, `withdraw`, `supersede`, `cite`, and `uncite` leaves; strict file/reason payloads; record/citation token preflight; attachment intent; current-draft revision checks; local-vs-server validation; typed refusal recovery; idempotent replay; bounded text/JSON parity; and receipts that do not echo authored bodies.
+  - Wire through the real route boundary. Update `spec get`, bounded attention reads, offline schema documents, help registry, generated command reference, and mutation guidance together.
+  - Done when: every act reports ids/handles, before/after versions, lifecycle, draft/citation changes, replay status, and exact follow-up read; help presents creation before correction and never tells an agent to reject an assumption or park design in Q/A.
+  - _Depends: 25.8, 25.9_
+  - _Requirements: 6.1–6.5, 6.7–6.9, 12.20, 12.24, 12.25, 24.1, 24.4_
+
+- [x] 25.11 Spec Studio attention-register Storybook prototype and review
+  - Build focused stories for edited open question, agent-proposed assumption, all human terminal outcomes, withdrawn record, supersession chain, collapsed/expanded/empty history, pending/failure retention, import/legacy provenance, abandoned read-only, historical deep link, revision-pinned citation, Mobile390, and requirements-stage lock. Use existing primitives and feature-local attribution only; add no dependency, token, global CSS, or shared primitive.
+  - Story scaffolding is visual-only and may precede behavior tests. Set every story's a11y policy to error, then review desktop, actual 390-pixel layout, and actual 200% browser zoom with Alex before production mutation wiring.
+  - Done when: the state matrix matches the approved design, historical targets mount before focus, metadata/actions reflow, targets are at least 44-by-44 CSS pixels, and Alex approves the prototype.
+  - _Depends: 25.8_
+  - _Requirements: 8.11–8.16, 12.18–12.20, 22.1–22.3_
+
+- [x] 25.12 Production attention register and card-local human mutation behavior
+  - After prototype approval, start component tests for current/history partition and order, empty-history semantics, terminal-control absence, record-version submission, answer Markdown, radio keyboard/commit behavior, capability refusal rendering, card-local pending/error/success, draft retention, provenance/conversation links, lineage/citation separation, success focus restoration, and historical deep-link opening/focus.
+  - Implement the Questions & Assumptions view with real queries/mutations and the external fetch boundary only; do not mock internal hooks, stores, or query modules.
+  - Done when: behavior tests prove the register's public UI contract and mutation state on one card cannot disable or erase another card.
+  - _Depends: 25.10, 25.11_
+  - _Requirements: 8.11–8.16, 12.18–12.20_
+
+- [x] 25.13 Revision-pinned Review, typed History, and read-only Overview integration
+  - Start page tests before changing each surface: Review must render selected-revision citation snapshots even after current-row mutation; History must consume typed record/citation events with an Attention records filter and honest pre-cutover coverage; Overview must remove disposition mutations and retain its read-only status summary/Open link.
+  - Remove mutable whole-spec assumption reconstruction and timestamp-synthesized attention history.
+  - Done when: current mutation cannot alter historical Review, History names actor/time/operation/before/after from durable events, and Overview contains no undersized or duplicate mutation control.
+  - _Depends: 25.8, 25.9, 25.12_
+  - _Requirements: 8.11–8.16, 12.18, 12.20–12.24_
+
+- [x] 25.14 Accessibility, responsive, keyboard, and browser verification
+  - Add Storybook play tests for radio keyboard selection, multiline submission, failure retention, disclosure Enter/Space, deep-link focus, and terminal-control absence. Run axe with errors fatal.
+  - Use `cctl dev ensure` before Storybook/browser work. Verify Mobile390 at actual 200% browser zoom, no horizontal scroll, 44-by-44 CSS-pixel targets, screen-reader labels/status/alerts, and complete keyboard operation.
+  - Done when: focused stories and aggregate page stories pass play/axe, and browser evidence records the responsive/zoom/keyboard checks against this worktree's assigned server.
+  - _Depends: 25.12, 25.13_
+  - _Requirements: 8.14, 8.16_
+
+- [x] 25.15 Integrated schema-11 cutover and live-system verification
+  - Run registered changed-scope test, typecheck, lint, format, and build validations. On a scratch database, exercise create attached assumption → propose → Request Changes → dispose → supersede → retarget → propose → approve → export → verify → restart → reread.
+  - Prove durable round trips for current/history partition, lineage, frozen old snapshot, current revision snapshot, hashes, approvals, and audit events. Prove an older binary refuses schema 11 and never writes. Query structured logs by trace id and verify ids/versions/counts plus absence of content bodies and exactly one commit/invalidation per act.
+  - Done when: all registered validation passes, the live flow survives restart/export/verify, older-process refusal is demonstrated, and UI/CLI/history render the same revision-owned premise.
+  - _Depends: 25.2–25.14_
+  - _Requirements: 2.5, 6.1–6.9, 8.11–8.16, 9.8, 10.4, 10.8, 12.1–12.26, 19.1–19.4_
+
+- [x] 26. Agent operability: current-only reads, sections, prose lint, propose coordination, and the approval ledger (ticket command-center#87; amendment approved 2026-08-24; technical design: `docs/designs/ticket87-agent-operability-slice-technical-design.md`)
+  - Every behavior task follows red-green-refactor. Run the registered test command against the single named test file while iterating: `cctl validate run test --wait -- <file>`. Help-entry wiring, skill-block regeneration, and guidance prose are the only test-first exceptions (their contract sweeps already exist).
+  - This slice changes no database state: no table, column, trigger, migration, or `KNOWN_SCHEMA_VERSION` bump. Strict view-schema additions cut over atomically with all producers and consumers; no compatibility overload or fallback read path.
+
+- [x] 26.1 Current-only element reads, `historical_only`, and the explicit revision selector
+  - Start in `src/lib/specs/route-handlers.test.ts` with failing tests: the silent newest-first fallback no longer answers; a historical-only handle returns 404 `historical_only` with handle, element id, last/current revision id and number, and the exact `--revision <n>` recovery instruction; `?revisionNumber=` and `?revisionId=` both select; unknown values keep the existing 404; Q/A short-circuit and `observedRevision` reference state are untouched.
+  - Then in `src/cli/commands/spec/read.contract.test.ts`: the `--revision` flag (digits → number, otherwise id), refusal rendering with the copy-pasteable recovery, and the historical read header naming the revision read.
+  - Done when: no code path can answer an unqualified read from a non-current revision, and the refusal names the last containing revision and recovery in text and JSON.
+  - _Requirements: 6.10, 6.3, 24.1_
+
+- [x] 26.2 `cctl spec section get` and outline section discovery
+  - Start in `src/lib/specs/route-handlers.test.ts` with failing tests for the new `sections/[element]` GET: exact `specSectionViewSchema` shape with literal `handle: null`, non-section id refused naming the element's real kind/handle and the `spec get` recovery, `not_found`, and `historical_only`/`--revision` behavior shared with 26.1. Add failing outline tests replacing the hardcoded `sections: {returned: 0}` disclosure with the bounded `{elementId, role, title, position, elementVersion}` list and its `next` naming the section read.
+  - Then CLI: nested `spec section` dispatch group on the `spec attention` precedent, help entries, named envelope plus `SPEC_READ_ENVELOPE_FIELDS`, offline `read-envelopes` document, depth-complete text rendering, `explainInvalidElementHandle` naming the section command for element-id-shaped input, and route-wiring/session-env classification.
+  - Done when: one command reads one current section with its element version, sections are discoverable from the outline, and every registry/envelope/hint-token contract sweep passes.
+  - _Depends: 26.1_
+  - _Requirements: 6.11, 24.2, 24.15, 24.17_
+
+- [x] 26.3 Prose reference extractor and the `9.6.dangling-handle` prose extension
+  - Start in `src/lib/specs/prose-references.test.ts` with the full failing false-positive boundary matrix: standalone bare and same-slug-qualified tokens (sentence-final, parenthesized, list-separated) flagged; fenced code, inline code, autolinks, raw URLs, and link destinations masked; embedded-word (`PR1`, `R10x`, `T3sting`, `FOO-R3`), version-string (`v1.2`, `R1.2.3`), and leading-zero exclusions; four-space indented code deliberately not masked; foreign-slug tokens recognized and skipped; criterion-before-requirement precedence.
+  - Then in `src/lib/specs/lint.test.ts`: exhaustive per-kind field coverage (section title/body, requirement statement, criterion text/note, decision title/approach/reason/rejected-alternative reasons, task title/instructions; labels excluded), removed-versus-unknown messages, Q/A existence semantics regardless of lifecycle, `(element, field, token)` dedupe, section sources named by element id, and a blocked propose returning the panel findings. Verify import parity through the existing import lint tests.
+  - Implement the masking scanner inside the `markdown-boundary` contract (no renderer import, no new dependency, no banned identifier) and the exhaustive-switch field map.
+  - Done when: the reflection's renumbering case cannot ship through a clean lint, and no boundary case flags.
+  - _Requirements: 9.14, 9.6, 9.10_
+
+- [x] 26.4 `parent_immutable` refusal on ordinary updates
+  - Start in `src/lib/specs/authoring-service.test.ts` (or the focused write-path file) with failing tests: a differing parent refused before any write in both single upsert and batch item paths, including null-versus-non-null both directions; omitted or echoed stored parent legal; create branch unchanged; batch refusal indexed per item; refusal carries element id, handle, both parents, rationale, and the create-and-remove recovery.
+  - Add `parent_immutable` to `refusalCodeSchema` with schema tests; state the rule in the `element-batch` offline schema document; keep `stagedParentElementId` and the parent-less repository update schema as defense in depth.
+  - Done when: a re-parent attempt can no longer return success, and `historical_element_id`'s `parent_changed` reintroduction reason is unchanged.
+  - _Requirements: 2.17, 6.5, 24.4_
+
+- [x] 26.5 Guarded approval-request notifier and typed delivery outcome
+  - Start in `src/lib/specs/review-service.test.ts` (approval-request coverage) with failing tests: a notifier throw after the durable commit yields a successful receipt with `deliveryOutcome: "delivery-uncertain"` and a stable warn log, never a thrown route error; `approvalRequestsClosed` guarded the same way; the idempotent ensure re-fires the notifier from the stable attention id; `request-approval` receipt and CLI rendering carry the typed outcome and reframed recovery help.
+  - Done when: no notifier failure can convert a durably committed request into an operation failure, and replaying the act repairs a lost Needs You row.
+  - _Requirements: 10.13, 10.9, 19.3_
+
+- [x] 26.6 Propose coordinator with per-gate request outcomes
+  - Start in `src/lib/specs/authoring-service.test.ts` propose coverage with failing tests: after a successful propose, one gate-scoped request per pending authoring gate (normally the concluding gate; a cumulative propose covers each pending consulted gate); outcomes `filed`/`already-filed` (the gate-scoped identity is already open at filing time — reuse its stable attention id, open no second row)/`not-needed` (fast-path and absorbed sign-off)/`delivery-uncertain`/`not-filed` (injected filing failure — proposal still succeeds and the receipt names `request-approval`); Request Changes proven end to end through the real request service — it withdraws the reviewed revision and retires its authoring requests, so re-proposing the newly opened draft files a fresh ask under the new revision id and reports `filed` with a new attention id, leaving exactly one open gate-scoped authoring request; the receipt's `next` drops `request-approval` and `actsNext` is `human` when every pending gate filed.
+  - Implement as a post-commit coordinator step in `proposeRevision` with an injected approval-request port wired through the service factory (composition; no internal mocks). Extend `specProposeResultViewSchema` and the CLI propose rendering with per-gate outcome lines; update route and CLI write tests.
+  - Done when: a successful proposal ends with the human notified without a second agent call, and no filing or notification failure fails the proposal.
+  - _Depends: 26.5_
+  - _Requirements: 10.12, 6.9, 24.1_
+
+- [x] 26.7 Two-sided approval ledger in projection, status, and receipts
+  - Start in `src/lib/specs/authoring-review-projection.test.ts` with failing classification tests from the single applicability authority: `carried` (ancestor revision id, fingerprint intact), `current-revision`, `import-settled` (never labelled an approval), `combined-act` (collapsed gate with recorded sign-off/absorbed approval), `pending`; collapsed gates before sign-off report subjects governed by the combined sign-off, never a zero-count or not-applicable ledger; Notify/Off gates report policy admission at gate level.
+  - Then rendering: the shared `projection-text.ts` ledger and `carry rule:` lines in `spec status` (which must finally render import-carried subjects), the propose receipt, `withdraw-proposal`, and Request Changes including its `reviewFeedback` message, with the reopen carry sentence; `pendingBlockLines` carries `importCarriedSubjects`; JSON parity via named fields while `pendingApprovals`/`importCarriedApprovals` keep their existing meaning; `approvalHeld` widened to return the matched row.
+  - Done when: status and every reopen-loop receipt price approvals truthfully from one derivation, and text/JSON agree.
+  - _Depends: 26.6_
+  - _Requirements: 24.19, 24.13, 10.2_
+
+- [x] 26.8 Refusal rationale and the `why:` guidance prefix
+  - Start with failing schema and CLI tests: optional `rationale` on `refusalSchema` round-trips; the CLI renders `why:` between unmet conditions and instruction; `why:` registered in the guidance prefixes with its arch test; rationale populated on both `stage_blocked` branches, `human_act_required`, the withdraw-after-engagement refusal (existing principle sentence moved into the field), and `parent_immutable`; never rendered on success paths.
+  - _Depends: 26.4_
+  - _Requirements: 24.20, 6.5, 22.3_
+
+- [x] 26.9 Guidance, skill, and offline-document updates
+  - Update the native-sdd-authoring skill (and packaged copies through the existing generation path): current-only reads with `--revision` and `spec section get`; the `spec attention` verbs; propose auto-filing with `request-approval` as recovery; the one-line carry mechanism; batch-local element-id cross-referencing; the masked-code escape for literal handle tokens; and the designed-versus-incidental friction taxonomy with its heuristic. Mirror the read and propose changes in `.claude/commands/spec.md`; regenerate cc-cli SKILL.md blocks and update its hand-authored read-disclosure prose; extend the spec help prose tests for the new nodes' disclosure claims.
+  - Done when: the skill-reference drift test, help prose tests, hint-token sweep, and the packaging test that walks the loop from injected skill text alone all pass, and no guidance instructs an agent to park design work, reject an assumption, or run the retired two-step propose sequence.
+  - _Depends: 26.1, 26.2, 26.3, 26.6, 26.7, 26.8_
+  - _Requirements: 24.21, 6.2, 12.25_
+
+- [x] 26.10 Integrated verification and live pass
+  - Run registered changed-scope test, typecheck, seams, lint, and build validations. On a scratch database: author a spec; renumber an element to create a prose dangle and verify lint blocks naming source/field/token; read a section narrowly and round-trip an edit with its element version; attempt a re-parent and read the refusal with `why:`; propose and verify the auto-filed Needs You row, per-gate outcomes, and ledger; withdraw and verify the reopen carry sentence and ledger; force a notifier failure and recover with `request-approval`.
+  - Done when: all registered validation passes and the live flow demonstrates every slice behavior against durable state, not only rendered output.
+  - _Depends: 26.1–26.9_
+  - _Requirements: 2.17, 6.10, 6.11, 9.14, 10.12, 10.13, 24.19–24.21_

@@ -79,6 +79,9 @@ function attentionDetailFixture(): ReturnType<
       ...entry,
       version: { ...entry.version, revisionId: proposedRevision.id },
     })),
+    assumptionCitations: approvedSnapshot.assumptionCitations.map(
+      (citation) => ({ ...citation, revisionId: proposedRevision.id }),
+    ),
   };
   detail.revisions = [...detail.revisions, proposedRevision];
   detail.status.phase = { primary: "in_review", authoringStage: "plan" };
@@ -95,10 +98,18 @@ function attentionDetailFixture(): ReturnType<
       handle: "Q1",
       elementId: null,
       text: "Which retention window applies?",
+      recordVersion: 1,
       status: "open",
       answer: null,
       answeredAt: null,
+      withdrawnAt: null,
       provenance: { kind: "agent", conversationId: "conversation-1" },
+      presentation: {
+        state: "current",
+        attentionActive: true,
+        lastMutation: null,
+        humanCapability: { kind: "answer", allowed: true },
+      },
       createdAt: approvedSnapshot.revision.createdAt,
       updatedAt: approvedSnapshot.revision.createdAt,
     },
@@ -110,9 +121,20 @@ function attentionDetailFixture(): ReturnType<
       handle: "A1",
       elementId: "requirement-1",
       text: "Retention defaults to 30 days.",
+      recordVersion: 1,
       disposition: "proposed",
       disposedAt: null,
+      withdrawnAt: null,
       proposedBy: { kind: "agent", conversationId: "conversation-1" },
+      supersedesHandle: null,
+      supersededByHandle: null,
+      currentDraftCitations: null,
+      presentation: {
+        state: "current",
+        attentionActive: true,
+        lastMutation: null,
+        humanCapability: { kind: "dispose", allowed: true },
+      },
       createdAt: approvedSnapshot.revision.createdAt,
       updatedAt: approvedSnapshot.revision.createdAt,
     },
@@ -146,7 +168,7 @@ describe("SpecDetailViews", () => {
     expect(
       within(
         within(navigation).getByRole("button", { name: "Review" }),
-      ).getByText("3"),
+      ).getByText("1"),
     ).toBeVisible();
     const reviewButton = within(navigation).getByRole("button", {
       name: "Review",
@@ -154,7 +176,7 @@ describe("SpecDetailViews", () => {
     const questionsButton = within(navigation).getByRole("button", {
       name: "Questions & assumptions",
     });
-    expect(reviewButton).toHaveAccessibleDescription("3 items need attention");
+    expect(reviewButton).toHaveAccessibleDescription("1 item needs attention");
     expect(questionsButton).toHaveAccessibleDescription(
       "2 items need attention",
     );

@@ -1,22 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type MouseEvent } from "react";
+import type { MouseEvent } from "react";
 import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react";
 import { HoverCard } from "radix-ui";
-import { Button } from "@/components/ui/Button";
 import type { StatusChipTone } from "@/components/ui/StatusChip";
 import {
   buildSpecReadCommand,
-  buildSpecReferenceXml,
   type SpecElementMentionAttrs,
   type SpecElementRefAttrs,
   type SpecMentionAttrs,
-  type SpecReferenceType,
   type SpecRefAttrs,
 } from "@/lib/prompt-editor/spec-reference-contract";
 import type { SpecPhaseProjection } from "@/lib/specs/phase";
-import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   useSpecElementQuery,
   useSpecSummaryQuery,
@@ -51,8 +47,6 @@ const specReferenceChipClass =
   "border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan hover:border-cyan-dim hover:bg-bg-hover";
 const elementReferenceChipClass =
   "border-border-default bg-bg-raised text-text-secondary hover:border-border-strong hover:bg-bg-hover";
-const logger = createClientLogger("references.spec");
-
 export function specStudioHref(
   projectName: string,
   slug: string,
@@ -636,45 +630,6 @@ function elementMentionToWireAttrs(
   };
 }
 
-export interface CopyReferenceControlProps {
-  referenceType: SpecReferenceType;
-  attrs: SpecMentionAttrs | SpecElementMentionAttrs;
-}
-
-export interface CopyReferenceControlDeps {
-  writeText(text: string): Promise<void>;
-}
-
-export function createCopyReferenceControl(deps: CopyReferenceControlDeps) {
-  return function CopyReferenceControl({
-    referenceType,
-    attrs,
-  }: CopyReferenceControlProps): React.JSX.Element {
-    const [copied, setCopied] = useState(false);
-    const reference = buildSpecReferenceXml(referenceType, { ...attrs });
-    const handleCopy = async () => {
-      setCopied(false);
-      try {
-        await deps.writeText(reference);
-        setCopied(true);
-      } catch {
-        logger.warn("copy_reference.failed", { referenceType });
-      }
-    };
-    return (
-      <Button
-        variant="default"
-        size="sm"
-        touch
-        onClick={() => void handleCopy()}
-        aria-label={copied ? "Reference copied" : "Copy reference"}
-      >
-        {copied ? "Copied" : "Copy reference"}
-      </Button>
-    );
-  };
-}
-
 const productionChips = createSpecRefChips({
   useSpecSummary: useSpecSummaryQuery,
   useSpecElement: useSpecElementQuery,
@@ -685,8 +640,9 @@ export const SpecRefTranscriptChip = productionChips.SpecRefTranscriptChip;
 export const SpecElementRefTranscriptChip =
   productionChips.SpecElementRefTranscriptChip;
 
-export const CopyReferenceControl = createCopyReferenceControl({
-  async writeText(text) {
-    await navigator.clipboard.writeText(text);
-  },
-});
+export {
+  CopyReferenceControl,
+  createCopyReferenceControl,
+  type CopyReferenceControlDeps,
+  type CopyReferenceControlProps,
+} from "./CopyReferenceControl";

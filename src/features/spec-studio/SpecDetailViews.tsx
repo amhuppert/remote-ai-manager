@@ -27,7 +27,9 @@ import SpecDeliveryDeltaPanel from "./SpecDeliveryDeltaPanel";
 import SpecDeliveryPlanReview from "./SpecDeliveryPlanReview";
 import { SpecElementReader } from "./SpecElementReader";
 import SpecHistoryPanel from "./SpecHistoryPanel";
-import SpecQuestionsAssumptionsPanel from "./SpecQuestionsAssumptions";
+import SpecQuestionsAssumptionsPanel, {
+  blockingAssumptionIdsFromLint,
+} from "./SpecQuestionsAssumptions";
 import SpecReviewMode, { reviewAttentionCount } from "./SpecReviewMode";
 
 export type DetailView =
@@ -130,6 +132,7 @@ export default function SpecDetailViews({
   overviewBanner,
   highlightedChangeId = null,
   addressedRevisionId = null,
+  targetHandle = null,
   onReviewComplete,
   children,
 }: {
@@ -148,6 +151,7 @@ export default function SpecDetailViews({
   highlightedChangeId?: string | null;
   /** The proposal a History or lifecycle link addressed (`?revision=`). */
   addressedRevisionId?: string | null;
+  targetHandle?: string | null;
   onReviewComplete?(message: string): void;
   children: ReactNode;
 }): React.JSX.Element {
@@ -161,7 +165,8 @@ export default function SpecDetailViews({
     [evidenceTarget],
   );
   const needsEvidence = view === "evidence" || view === "traceability";
-  const needsLint = view === "lint" || view === "traceability";
+  const needsLint =
+    view === "lint" || view === "traceability" || view === "questions";
   const elementQueries = useQueries({
     queries: criteria.map((criterion) => ({
       ...specQueries.element(
@@ -226,6 +231,11 @@ export default function SpecDetailViews({
           <SpecQuestionsAssumptionsPanel
             detail={detail}
             projectName={projectName}
+            targetHandle={targetHandle}
+            blockingAssumptionIds={blockingAssumptionIdsFromLint(
+              detail.assumptions,
+              lintFindings,
+            )}
           />
         </div>
       )}

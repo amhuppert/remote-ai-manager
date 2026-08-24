@@ -3,7 +3,8 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SpecDetailView } from "@/lib/specs/queries";
+import { emptyApprovalLedger } from "@/lib/specs/approval-ledger";
+import { useSpecDetailQuery, type SpecDetailView } from "@/lib/specs/queries";
 import type { SpecRevisionElement } from "@/lib/specs/schemas";
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
@@ -151,6 +152,7 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
   const currentSnapshot = {
     revision: currentRevision,
     elements: currentElements,
+    assumptionCitations: [],
   };
 
   return {
@@ -264,10 +266,26 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
         handle: "Q1",
         elementId: "requirement-1",
         text: "Which gate owns pinned-scope validation?",
+        recordVersion: 1,
         status: blocked ? "open" : "answered",
         answer: blocked ? null : "The execution-start gate.",
         answeredAt: blocked ? null : NOW,
+        withdrawnAt: null,
         provenance: { kind: "human" },
+        presentation: {
+          state: "current",
+          attentionActive: blocked,
+          lastMutation: null,
+          humanCapability: blocked
+            ? { kind: "answer", allowed: true }
+            : {
+                kind: "answer",
+                allowed: false,
+                code: "terminal",
+                blockingRevisionId: null,
+                instruction: "This question has a terminal answer.",
+              },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -277,10 +295,24 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
         handle: "Q2",
         elementId: null,
         text: "Does the review preserve raw diff access?",
+        recordVersion: 1,
         status: "answered",
         answer: "Yes, as a secondary view.",
         answeredAt: NOW,
+        withdrawnAt: null,
         provenance: { kind: "agent", conversationId: "conversation-1" },
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "answer",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This question has a terminal answer.",
+          },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -292,9 +324,26 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
         handle: "A1",
         elementId: "requirement-1",
         text: "Scope can be reconstructed after a run starts.",
+        recordVersion: 1,
         disposition: blocked ? "rejected" : "confirmed",
         disposedAt: NOW,
+        withdrawnAt: null,
         proposedBy: { kind: "agent", conversationId: "conversation-1" },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "dispose",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This assumption is terminal.",
+          },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -304,9 +353,28 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
         handle: "A2",
         elementId: "requirement-1",
         text: "The gate screen can reuse the pinned scope projection.",
+        recordVersion: 1,
         disposition: blocked ? "proposed" : "confirmed",
         disposedAt: blocked ? null : NOW,
+        withdrawnAt: null,
         proposedBy: { kind: "agent", conversationId: "conversation-1" },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: blocked,
+          lastMutation: null,
+          humanCapability: blocked
+            ? { kind: "dispose", allowed: true }
+            : {
+                kind: "dispose",
+                allowed: false,
+                code: "terminal",
+                blockingRevisionId: null,
+                instruction: "This assumption is terminal.",
+              },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -316,9 +384,26 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
         handle: "A3",
         elementId: null,
         text: "Historical raw diffs use the same formatter.",
+        recordVersion: 1,
         disposition: "deferred",
         disposedAt: NOW,
+        withdrawnAt: null,
         proposedBy: { kind: "human" },
+        supersedesHandle: null,
+        supersededByHandle: null,
+        currentDraftCitations: null,
+        presentation: {
+          state: "current",
+          attentionActive: false,
+          lastMutation: null,
+          humanCapability: {
+            kind: "dispose",
+            allowed: false,
+            code: "terminal",
+            blockingRevisionId: null,
+            instruction: "This assumption is terminal.",
+          },
+        },
         createdAt: NOW,
         updatedAt: NOW,
       },
@@ -334,6 +419,94 @@ function renderReview(blocked = true): void {
       highlightedChangeId={null}
     />,
   );
+}
+
+describe("SpecReviewMode revision premises", () => {
+  it("renders the selected revision citation snapshot instead of mutable current-row text", () => {
+    const detail = reviewDetailFixture(false);
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Review fixture requires a proposal");
+    current.assumptionCitations = [
+      {
+        revisionId: current.revision.id,
+        specId: detail.spec.id,
+        elementId: "requirement-1",
+        assumptionId: "assumption-1",
+        snapshot: {
+          schemaVersion: 1,
+          captureKind: "native",
+          capturedAt: NOW,
+          assumptionId: "assumption-1",
+          number: 1,
+          recordVersion: 1,
+          text: "Pinned premise from revision 2.",
+          elementId: "requirement-1",
+          proposedBy: { kind: "agent", conversationId: "conversation-1" },
+          disposition: "confirmed",
+          disposedAt: NOW,
+          withdrawnAt: null,
+          supersedesAssumptionId: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ];
+    detail.assumptions[0] = {
+      ...detail.assumptions[0]!,
+      text: "Mutable current-row premise.",
+      recordVersion: 2,
+    };
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const premises = screen.getByRole("region", { name: "Revision premises" });
+    expect(
+      within(premises).getByText("Pinned premise from revision 2."),
+    ).toBeVisible();
+    expect(
+      within(premises).queryByText("Mutable current-row premise."),
+    ).toBeNull();
+    expect(within(premises).getByText("A1")).toBeVisible();
+    expect(within(premises).getByText("Cited by R1")).toBeVisible();
+  });
+});
+
+function ReviewDetailQueryHarness(): React.JSX.Element {
+  const detail = useSpecDetailQuery("command-center", "native-sdd").data;
+  if (detail === undefined) return <span>Loading review</span>;
+  return (
+    <SpecReviewMode
+      detail={detail}
+      projectName="command-center"
+      highlightedChangeId={null}
+    />
+  );
+}
+
+function persistedCommentRow(comment: SpecDetailView["comments"][number]) {
+  return {
+    id: comment.id,
+    spec_id: "spec-1",
+    thread_id: comment.threadId,
+    parent_comment_id: comment.parentCommentId,
+    element_id: comment.elementId,
+    anchor_json: JSON.stringify(comment.anchor),
+    revision_id: comment.revisionId,
+    body: comment.body,
+    author_json: JSON.stringify(comment.author),
+    blocking: comment.blocking ? 1 : 0,
+    resolution: comment.resolution,
+    created_at: comment.createdAt,
+    updated_at: comment.updatedAt,
+  };
 }
 
 describe("SpecReviewMode", () => {
@@ -536,6 +709,484 @@ describe("SpecReviewMode", () => {
     expect(screen.getByText(/--- revision-1/)).toBeVisible();
   });
 
+  it("keeps both review comment controls at least 44px tall at every viewport", async () => {
+    const user = userEvent.setup();
+    renderReview();
+
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    const openComposer = within(requirement).getByRole("button", {
+      name: "Comment",
+    });
+    expect(openComposer).toHaveClass("min-h-[44px]");
+
+    await user.click(openComposer);
+
+    const submit = within(requirement).getByRole("button", {
+      name: "Record comment",
+    });
+    expect(submit).toHaveClass("min-h-[44px]", "min-w-[44px]");
+  });
+
+  it("logs a recorded root with the returned thread identity and no comment content", async () => {
+    const detail = reviewDetailFixture(false);
+    const root = detail.comments[0]!;
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/comment",
+      persistedCommentRow({
+        ...root,
+        id: "comment-recorded",
+        threadId: "thread-returned-by-server",
+        body: "Server-normalized body",
+      }),
+    );
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    await user.click(
+      within(requirement).getByRole("button", { name: "Comment" }),
+    );
+    await user.type(
+      within(requirement).getByRole("textbox", { name: "Comment on R1" }),
+      "Sensitive reviewer rationale",
+    );
+    await user.click(
+      within(requirement).getByRole("button", { name: "Record comment" }),
+    );
+
+    await waitFor(() =>
+      expect(info).toHaveBeenCalledWith("spec_studio.comment.root.completed", {
+        module: "spec-studio-comments",
+        specId: detail.spec.id,
+        revisionId: detail.currentRevision!.revision.id,
+        elementId: "requirement-1",
+        threadId: "thread-returned-by-server",
+      }),
+    );
+    info.mockRestore();
+  });
+
+  it("logs a failed root write with a safe error and no comment content", async () => {
+    const detail = reviewDetailFixture(false);
+    api.reply("POST", "/api/specs/command-center/native-sdd/actions/comment", {
+      status: 409,
+      json: { error: "Comment persistence unavailable" },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    await user.click(
+      within(requirement).getByRole("button", { name: "Comment" }),
+    );
+    await user.type(
+      within(requirement).getByRole("textbox", { name: "Comment on R1" }),
+      "Sensitive reviewer rationale",
+    );
+    await user.click(
+      within(requirement).getByRole("button", { name: "Record comment" }),
+    );
+
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith("spec_studio.comment.root.failed", {
+        module: "spec-studio-comments",
+        specId: detail.spec.id,
+        revisionId: detail.currentRevision!.revision.id,
+        elementId: "requirement-1",
+        threadId: expect.any(String),
+        error: "Comment persistence unavailable",
+      }),
+    );
+    warn.mockRestore();
+  });
+
+  it("assembles reply-before-root rows into one attributed actionable thread", () => {
+    const detail = reviewDetailFixture(false);
+    const root = {
+      ...detail.comments[0]!,
+      id: "comment-z-root",
+      blocking: false,
+      resolution: "open" as const,
+    };
+    detail.comments = [
+      {
+        ...root,
+        id: "comment-a-reply",
+        parentCommentId: root.id,
+        body: "The gate now reads the same pinned scope.",
+        author: {
+          kind: "agent",
+          conversationId: "conversation/review-reply",
+          backend: "claude",
+        },
+      },
+      root,
+    ];
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const thread = screen.getByTestId("review-thread-thread-1");
+    const messages = within(thread).getAllByRole("listitem");
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toHaveTextContent("Root");
+    expect(messages[0]).toHaveTextContent(
+      "Confirm the gate screen uses the same scope.",
+    );
+    expect(messages[1]).toHaveTextContent("Reply");
+    expect(messages[1]).toHaveTextContent("Claude agent");
+    expect(within(thread).getAllByText(/Every execution/)).toHaveLength(1);
+    expect(
+      within(thread).getByRole("link", {
+        name: "Open conversation from Claude agent (conversation/review-reply)",
+      }),
+    ).toHaveAttribute("href", "/conversations?c=conversation%2Freview-reply");
+    expect(within(thread).getByRole("button", { name: "Reply" })).toBeVisible();
+    expect(
+      within(thread).getByRole("button", { name: "Resolve" }),
+    ).toBeVisible();
+  });
+
+  it("posts shared Reply and Resolve actions and refreshes readiness from detail", async () => {
+    let detail = reviewDetailFixture(false);
+    detail = {
+      ...detail,
+      comments: detail.comments.map((comment) => ({
+        ...comment,
+        blocking: true,
+        resolution: "open" as const,
+      })),
+    };
+    api.reply("GET", "/api/specs/command-center/native-sdd", () => ({
+      json: detail,
+    }));
+    api.reply(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/reply",
+      (request) => {
+        const body = request.jsonBody as { threadId: string; body: string };
+        const root = detail.comments[0]!;
+        return {
+          json: persistedCommentRow({
+            ...root,
+            id: "comment-reply",
+            threadId: body.threadId,
+            parentCommentId: root.id,
+            body: body.body,
+            author: { kind: "human" },
+          }),
+        };
+      },
+    );
+    api.reply(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/resolve-thread",
+      () => {
+        detail = {
+          ...detail,
+          comments: detail.comments.map((comment) => ({
+            ...comment,
+            resolution: "resolved" as const,
+          })),
+        };
+        return { json: detail.comments.map(persistedCommentRow) };
+      },
+    );
+    const user = userEvent.setup();
+    renderWithQuery(<ReviewDetailQueryHarness />);
+
+    const thread = await screen.findByTestId("review-thread-thread-1");
+    const readiness = screen.getByTestId("review-readiness");
+    expect(within(readiness).getByText("1 blocking thread")).toBeVisible();
+    await user.click(within(thread).getByRole("button", { name: "Reply" }));
+    await user.type(
+      within(thread).getByRole("textbox", {
+        name: "Reply to review thread",
+      }),
+      "The shared scope is confirmed.",
+    );
+    await user.click(
+      within(thread).getByRole("button", { name: "Send reply" }),
+    );
+    await waitFor(() =>
+      expect(
+        api.requestsTo(
+          "POST",
+          "/api/specs/command-center/native-sdd/actions/reply",
+        )[0]?.jsonBody,
+      ).toEqual({
+        threadId: "thread-1",
+        body: "The shared scope is confirmed.",
+      }),
+    );
+
+    await user.click(within(thread).getByRole("button", { name: "Resolve" }));
+    await waitFor(() =>
+      expect(
+        api.requestsTo(
+          "POST",
+          "/api/specs/command-center/native-sdd/actions/resolve-thread",
+        )[0]?.jsonBody,
+      ).toEqual({
+        revisionId: "revision-2",
+        threadId: "thread-1",
+        resolution: "resolved",
+      }),
+    );
+    expect(
+      await within(readiness).findByText("Threads resolved"),
+    ).toBeVisible();
+    expect(
+      within(readiness).getByRole("button", { name: "Sign off revision 2" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps Reply but hides Resolve on an open historical root", () => {
+    const detail = reviewDetailFixture(false);
+    const base = detail.baseRevision;
+    if (base === null) throw new Error("Fixture requires a base revision");
+    base.revision.state = "withdrawn";
+    detail.comments = detail.comments.map((comment) => ({
+      ...comment,
+      revisionId: base.revision.id,
+      revisionNumber: base.revision.number,
+      resolution: "open" as const,
+    }));
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const fallback = screen.getByRole("heading", {
+      name: "Historical & orphaned review threads",
+    }).parentElement!;
+    const thread = within(fallback).getByTestId("review-thread-thread-1");
+    expect(within(thread).getByRole("button", { name: "Reply" })).toBeVisible();
+    expect(
+      within(thread).queryByRole("button", { name: "Resolve" }),
+    ).toBeNull();
+  });
+
+  it("places a criterion thread inside its parent requirement region", () => {
+    const detail = reviewDetailFixture(false);
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    const criterion = current.elements.find(
+      ({ element }) => element.id === "criterion-1",
+    );
+    if (criterion?.version.payload.kind !== "criterion") {
+      throw new Error("Fixture requires a criterion");
+    }
+    const quote = criterion.version.payload.text.slice(0, 18);
+    detail.comments = [
+      {
+        ...detail.comments[0]!,
+        id: "criterion-comment",
+        threadId: "criterion-thread",
+        elementId: criterion.element.id,
+        handle: "R1.1",
+        anchor: {
+          sectionId: "R1.1",
+          headingLabel: "R1.1",
+          line: 1,
+          charStart: 0,
+          charEnd: quote.length,
+          quote,
+          prefix: "",
+          suffix: criterion.version.payload.text.slice(
+            quote.length,
+            quote.length + 32,
+          ),
+          docRevision: current.revision.contentHash,
+        },
+        quote,
+        body: "Keep this criterion measurable.",
+        blocking: false,
+        resolution: "open",
+      },
+    ];
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    const criterionRegion = within(requirement).getByTestId(
+      "review-criterion-criterion-1",
+    );
+    expect(
+      within(criterionRegion).getByTestId("review-thread-criterion-thread"),
+    ).toBeVisible();
+    expect(
+      screen.getAllByTestId("review-thread-criterion-thread"),
+    ).toHaveLength(1);
+  });
+
+  it("promotes a current unchanged commented subject to a review card", () => {
+    const detail = reviewDetailFixture(false);
+    const base = detail.baseRevision;
+    const current = detail.currentRevision;
+    if (base === null || current === null) {
+      throw new Error("Fixture requires both revisions");
+    }
+    const currentRequirement = current.elements.find(
+      ({ element }) => element.id === "requirement-1",
+    );
+    if (currentRequirement === undefined) {
+      throw new Error("Fixture requires a requirement");
+    }
+    base.elements = base.elements.map((entry) =>
+      entry.element.id === "requirement-1"
+        ? {
+            ...currentRequirement,
+            version: {
+              ...currentRequirement.version,
+              revisionId: base.revision.id,
+            },
+          }
+        : entry,
+    );
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Commented unchanged" }),
+    ).toBeVisible();
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    expect(
+      within(requirement).getByRole("button", {
+        name: "Unchanged requirement",
+      }),
+    ).toBeVisible();
+    expect(
+      within(requirement).getByTestId("review-thread-thread-1"),
+    ).toBeVisible();
+  });
+
+  it("co-locates a current section root and falls back historical and removed roots exactly once", () => {
+    const detail = reviewDetailFixture(false);
+    const base = detail.baseRevision;
+    const current = detail.currentRevision;
+    if (base === null || current === null) {
+      throw new Error("Fixture requires both revisions");
+    }
+    const historical = {
+      ...detail.comments[0]!,
+      id: "historical-root",
+      threadId: "historical-thread",
+      revisionId: base.revision.id,
+      revisionNumber: base.revision.number,
+    };
+    const removed = {
+      ...detail.comments[0]!,
+      id: "removed-root",
+      threadId: "removed-thread",
+      elementId: "removed-element",
+      handle: null,
+    };
+    const section: SpecRevisionElement = {
+      element: {
+        id: "section-review-context",
+        specId: detail.spec.id,
+        kind: "section",
+        number: null,
+        parentElementId: null,
+        createdAt: NOW,
+      },
+      version: {
+        revisionId: current.revision.id,
+        elementId: "section-review-context",
+        position: current.elements.length,
+        payload: {
+          kind: "section",
+          role: "context",
+          title: "Review context",
+          body: "Review context remains narrative prose.",
+        },
+        payloadHash: "review-context-hash",
+        elementVersion: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    };
+    current.elements.push(section);
+    const sectionRoot = {
+      ...detail.comments[0]!,
+      id: "section-root",
+      threadId: "section-thread",
+      elementId: section.element.id,
+      handle: null,
+    };
+    detail.comments = [historical, removed, sectionRoot];
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", {
+      name: "Historical & orphaned review threads",
+    });
+    const fallback = heading.closest("section")!;
+    for (const threadId of ["historical-thread", "removed-thread"]) {
+      expect(
+        within(fallback).getAllByTestId(`review-thread-${threadId}`),
+      ).toHaveLength(1);
+      expect(screen.getAllByTestId(`review-thread-${threadId}`)).toHaveLength(
+        1,
+      );
+    }
+    const sectionCard = screen.getByTestId(
+      "review-change-section-review-context",
+    );
+    expect(
+      within(sectionCard).getByTestId("review-thread-section-thread"),
+    ).toBeVisible();
+    expect(screen.getAllByTestId("review-thread-section-thread")).toHaveLength(
+      1,
+    );
+    expect(
+      within(fallback).queryByTestId("review-thread-section-thread"),
+    ).toBeNull();
+  });
+
   it("nests newly appended acceptance criteria under their parent requirement", () => {
     const detail = reviewDetailFixture();
     const current = detail.currentRevision;
@@ -726,11 +1377,14 @@ describe("SpecReviewMode", () => {
       within(requirement).queryByRole("button", { name: "Approve item" }),
     ).not.toBeInTheDocument();
     expect(
+      within(requirement).queryByRole("button", { name: "Comment" }),
+    ).not.toBeInTheDocument();
+    expect(
       within(requirement).queryByText("Covered by sign-off"),
     ).not.toBeInTheDocument();
   });
 
-  it("blocks the UI sign-off affordance when Q&A are the only unresolved items", () => {
+  it("keeps sign-off available when Q&A are the only active attention", () => {
     const detail = reviewDetailFixture(false);
     const question = detail.questions[0];
     const assumption = detail.assumptions.find(
@@ -742,8 +1396,57 @@ describe("SpecReviewMode", () => {
     question.status = "open";
     question.answer = null;
     question.answeredAt = null;
+    question.presentation.attentionActive = true;
+    question.presentation.humanCapability = {
+      kind: "answer",
+      allowed: true,
+    };
     assumption.disposition = "proposed";
     assumption.disposedAt = null;
+    assumption.presentation.attentionActive = true;
+    assumption.presentation.humanCapability = {
+      kind: "dispose",
+      allowed: true,
+    };
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const signOff = within(screen.getByTestId("review-readiness")).getByRole(
+      "button",
+      { name: "Sign off revision 2" },
+    );
+    expect(signOff).toBeEnabled();
+    expect(signOff).toHaveAttribute(
+      "title",
+      "Approve the remaining subjects and freeze this revision",
+    );
+    expect(screen.getByText("2 active attention")).toBeVisible();
+    expect(screen.queryByText(/blocks sign-off/i)).not.toBeInTheDocument();
+    expect(reviewAttentionCount(detail)).toBe(0);
+  });
+
+  it("uses the canonical server lint count as the sign-off authority", () => {
+    const detail = reviewDetailFixture(false);
+    detail.status.draftHealth = {
+      revisionId: "revision-2",
+      total: 1,
+      blocking: 1,
+      counts: [{ severity: "blocks_signoff", count: 1 }],
+      top: [
+        {
+          ruleId: "9.8.rejected-cited-assumption",
+          severity: "blocks_signoff",
+          elementHandle: "R1",
+          message: "A rejected premise remains cited.",
+        },
+      ],
+    };
 
     renderWithQuery(
       <SpecReviewMode
@@ -760,7 +1463,7 @@ describe("SpecReviewMode", () => {
     expect(signOff).toBeDisabled();
     expect(signOff).toHaveAttribute(
       "title",
-      "Sign-off blocked — 1 open question · 1 undisposed assumption",
+      "Sign-off blocked — 1 server lint finding",
     );
   });
 
@@ -1141,6 +1844,8 @@ describe("SpecReviewMode", () => {
           basedOnRevisionId: current.revision.id,
           proposedAt: null,
         },
+        // The reopened draft's approval account travels with the act.
+        approvalLedger: emptyApprovalLedger(),
       },
     );
     const onComplete = vi.fn();
@@ -1196,6 +1901,7 @@ function strandedProposalFixture(): SpecDetailView {
       ...entry,
       version: { ...entry.version, revisionId: forkedPast.id },
     })),
+    assumptionCitations: base.assumptionCitations,
   };
   const revisions = [base.revision, proposal.revision, forkedPast];
   return {
@@ -1261,6 +1967,136 @@ describe("SpecReviewMode stranded proposals", () => {
       }),
     ).toBeVisible();
     expect(within(requirement).getByText("Modified requirement")).toBeVisible();
+  });
+
+  it("places the selected superseded revision's structured threads with their cards and renders fallback threads once", async () => {
+    const detail = strandedAndCurrentProposalFixture();
+    const selected = detail.liveProposals.find(
+      ({ supersededBy }) => supersededBy !== null,
+    );
+    const base = detail.baseRevision;
+    const requirementRoot = detail.comments[0];
+    if (
+      selected === undefined ||
+      base === null ||
+      requirementRoot === undefined
+    ) {
+      throw new Error("Fixture requires a superseded proposal with comments");
+    }
+    const decisionRoot = {
+      ...requirementRoot,
+      id: "selected-decision-root",
+      threadId: "selected-decision-thread",
+      elementId: "decision-1",
+      handle: "D1",
+      body: "Keep the selected proposal's decision context visible.",
+      revisionId: selected.revision.id,
+      revisionNumber: selected.revision.number,
+    };
+    const criterionRoot = {
+      ...requirementRoot,
+      id: "selected-criterion-root",
+      threadId: "selected-criterion-thread",
+      elementId: "criterion-1",
+      handle: "R1.1",
+      body: "Keep the unchanged criterion beside its requirement.",
+      revisionId: selected.revision.id,
+      revisionNumber: selected.revision.number,
+    };
+    const unchangedTaskRoot = {
+      ...requirementRoot,
+      id: "selected-unchanged-task-root",
+      threadId: "selected-unchanged-task-thread",
+      elementId: "task-prerequisite",
+      handle: "T2",
+      body: "Keep this unchanged task visible in the selected proposal.",
+      revisionId: selected.revision.id,
+      revisionNumber: selected.revision.number,
+    };
+    const historicalRoot = {
+      ...requirementRoot,
+      id: "historical-root",
+      threadId: "historical-thread",
+      body: "This root belongs to the proposal's base revision.",
+      revisionId: base.revision.id,
+      revisionNumber: base.revision.number,
+    };
+    const removedRoot = {
+      ...requirementRoot,
+      id: "removed-root",
+      threadId: "removed-thread",
+      elementId: "removed-element",
+      handle: null,
+      body: "This selected-revision root has no remaining element host.",
+      revisionId: selected.revision.id,
+      revisionNumber: selected.revision.number,
+    };
+    detail.comments = [
+      {
+        ...requirementRoot,
+        body: "Keep the selected proposal's requirement context visible.",
+        revisionId: selected.revision.id,
+        revisionNumber: selected.revision.number,
+      },
+      decisionRoot,
+      criterionRoot,
+      unchangedTaskRoot,
+      historicalRoot,
+      removedRoot,
+    ];
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("radio", { name: /Revision 2 — superseded/i }),
+    );
+
+    const superseded = screen.getByTestId("superseded-proposal-review");
+    const expectedCardHosts = [
+      ["requirement-1", ["thread-1", "selected-criterion-thread"]],
+      ["decision-1", ["selected-decision-thread"]],
+      ["task-prerequisite", ["selected-unchanged-task-thread"]],
+    ] as const;
+    for (const [elementId, threadIds] of expectedCardHosts) {
+      const card = within(superseded).getByTestId(
+        `superseded-change-${elementId}`,
+      );
+      for (const threadId of threadIds) {
+        expect(
+          within(card).getByTestId(`review-thread-${threadId}`),
+        ).toBeVisible();
+        expect(screen.getAllByTestId(`review-thread-${threadId}`)).toHaveLength(
+          1,
+        );
+      }
+    }
+    expect(
+      within(superseded).getByRole("heading", { name: "Commented unchanged" }),
+    ).toBeVisible();
+
+    const fallback = within(superseded)
+      .getByRole("heading", {
+        name: "Historical & orphaned review threads",
+      })
+      .closest("section");
+    if (fallback === null) throw new Error("Expected a fallback thread region");
+    for (const threadId of ["historical-thread", "removed-thread"]) {
+      expect(
+        within(fallback).getByTestId(`review-thread-${threadId}`),
+      ).toBeVisible();
+      expect(screen.getAllByTestId(`review-thread-${threadId}`)).toHaveLength(
+        1,
+      );
+    }
+    expect(
+      within(superseded).queryByRole("button", { name: "Comment" }),
+    ).not.toBeInTheDocument();
   });
 
   it("records the dismissal through the production action with the operator's reason", async () => {
@@ -1371,6 +2207,7 @@ function strandedAndCurrentProposalFixture(): SpecDetailView {
       approvedAt: null,
     },
     elements: forkedPast.elements,
+    assumptionCitations: forkedPast.assumptionCitations,
   };
   const revisions = [...stranded.revisions, currentProposal.revision];
   return {
@@ -1431,6 +2268,7 @@ function twoProposalsWithNotesFixture(): SpecDetailView {
       approvedAt: null,
     },
     elements: strandedProposal.snapshot.elements,
+    assumptionCitations: strandedProposal.snapshot.assumptionCitations,
   };
   const revisions = [...stranded.revisions, currentProposal.revision];
   return {

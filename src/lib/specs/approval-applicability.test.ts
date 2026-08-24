@@ -8,7 +8,11 @@ import {
   type ApprovalApplicabilityContext,
   type ApprovalRecord,
 } from "./approval-applicability";
-import { diffRevisions, type RevisionElement } from "./revision-diff";
+import {
+  diffRevisions,
+  type RevisionCitation,
+  type RevisionElement,
+} from "./revision-diff";
 
 const requirementPayload = {
   kind: "requirement" as const,
@@ -56,16 +60,52 @@ const baseRows = (): RevisionElement[] => [
   row("task-1", taskPayload),
 ];
 
+const emptyCitationState = {
+  citationContractVersion: 2 as const,
+  citations: [] as RevisionCitation[],
+};
+
+function premiseCitation(
+  elementId: string,
+  assumptionId = "assumption-1",
+): RevisionCitation {
+  return {
+    elementId,
+    assumptionId,
+    snapshot: {
+      schemaVersion: 1,
+      captureKind: "native",
+      capturedAt: "2026-08-23T10:00:00.000Z",
+      assumptionId,
+      number: 1,
+      recordVersion: 1,
+      text: "The premise remains stable.",
+      elementId,
+      proposedBy: { kind: "agent", conversationId: "conversation-approval" },
+      disposition: "confirmed",
+      disposedAt: "2026-08-23T09:30:00.000Z",
+      withdrawnAt: null,
+      supersedesAssumptionId: null,
+      createdAt: "2026-08-23T09:00:00.000Z",
+      updatedAt: "2026-08-23T09:30:00.000Z",
+    },
+  };
+}
+
 function context(
   overrides: Partial<ApprovalApplicabilityContext> = {},
 ): ApprovalApplicabilityContext {
   const rows = overrides.revisionRows ?? baseRows();
   return {
     revisionId: "revision-2",
+    basedOnRevisionId: "revision-1",
     ancestorRevisionIds: new Set(["revision-1"]),
     revisionRows: rows,
-    rowsForRevision: (revisionId) =>
-      revisionId === "revision-1" ? baseRows() : null,
+    ...emptyCitationState,
+    stateForRevision: (revisionId) =>
+      revisionId === "revision-1"
+        ? { rows: baseRows(), ...emptyCitationState }
+        : null,
     ...overrides,
   };
 }
@@ -81,15 +121,24 @@ const approval = (overrides: Partial<ApprovalRecord> = {}): ApprovalRecord => ({
 describe("subjectFingerprint", () => {
   it("keys a requirement on its own pair plus one pair per criterion", () => {
     expect(
-      subjectFingerprint(baseRows(), {
-        subjectKind: "requirement",
-        elementId: "requirement-1",
-      }),
-    ).toEqual([
-      { elementId: "requirement-1", payloadHash: "requirement-1-hash" },
-      { elementId: "criterion-1", payloadHash: "criterion-1-hash" },
-      { elementId: "criterion-2", payloadHash: "criterion-2-hash" },
-    ]);
+      subjectFingerprint(
+        baseRows(),
+        {
+          subjectKind: "requirement",
+          elementId: "requirement-1",
+        },
+        emptyCitationState,
+      ),
+    ).toMatchObject({
+      elements: [
+        { elementId: "requirement-1", payloadHash: "requirement-1-hash" },
+        { elementId: "criterion-1", payloadHash: "criterion-1-hash" },
+        { elementId: "criterion-2", payloadHash: "criterion-2-hash" },
+      ],
+      citationContractVersion: 2,
+      citationCount: 0,
+      citationSubhash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
   });
 
   it("keys the plan on every task, ordered by element id rather than position", () => {
@@ -100,20 +149,56 @@ describe("subjectFingerprint", () => {
     ];
 
     expect(
-      subjectFingerprint(reordered, { subjectKind: "plan", elementId: null }),
-    ).toEqual([
-      { elementId: "task-1", payloadHash: "task-1-hash" },
-      { elementId: "task-2", payloadHash: "task-2-hash" },
-    ]);
+      subjectFingerprint(
+        reordered,
+        { subjectKind: "plan", elementId: null },
+        emptyCitationState,
+      ),
+    ).toMatchObject({
+      elements: [
+        { elementId: "task-1", payloadHash: "task-1-hash" },
+        { elementId: "task-2", payloadHash: "task-2-hash" },
+      ],
+    });
   });
 
   it("has no fingerprint for a subject the revision does not carry", () => {
     expect(
-      subjectFingerprint(baseRows(), {
-        subjectKind: "decision",
-        elementId: "decision-missing",
-      }),
+      subjectFingerprint(
+        baseRows(),
+        {
+          subjectKind: "decision",
+          elementId: "decision-missing",
+        },
+        emptyCitationState,
+      ),
     ).toBeNull();
+  });
+
+  it("binds requirement-plus-criteria and decision subjects to only their citation subhash", () => {
+    const citations = [
+      premiseCitation("requirement-1", "assumption-requirement"),
+      premiseCitation("criterion-1", "assumption-criterion"),
+      premiseCitation("decision-1", "assumption-decision"),
+      premiseCitation("task-1", "assumption-task"),
+    ];
+    const state = { citationContractVersion: 2 as const, citations };
+    const requirementFingerprint = subjectFingerprint(
+      baseRows(),
+      { subjectKind: "requirement", elementId: "requirement-1" },
+      state,
+    );
+    const decisionFingerprint = subjectFingerprint(
+      baseRows(),
+      { subjectKind: "decision", elementId: "decision-1" },
+      state,
+    );
+
+    expect(requirementFingerprint).toMatchObject({ citationCount: 2 });
+    expect(decisionFingerprint).toMatchObject({ citationCount: 1 });
+    expect(requirementFingerprint?.citationSubhash).not.toBe(
+      decisionFingerprint?.citationSubhash,
+    );
   });
 });
 
@@ -140,9 +225,9 @@ describe("approvalAppliesToRevision", () => {
     expect(
       approvalAppliesToRevision(
         context({
-          rowsForRevision: (revisionId) =>
+          stateForRevision: (revisionId) =>
             revisionId === "revision-1" || revisionId === "revision-sibling"
-              ? baseRows()
+              ? { rows: baseRows(), ...emptyCitationState }
               : null,
         }),
         approval({ revisionId: "revision-sibling" }),
@@ -162,7 +247,7 @@ describe("approvalAppliesToRevision", () => {
   it("refuses when the approved revision's content can no longer be read", () => {
     expect(
       approvalAppliesToRevision(
-        context({ rowsForRevision: () => null }),
+        context({ stateForRevision: () => null }),
         approval(),
       ),
     ).toBe(false);
@@ -230,9 +315,9 @@ describe("approvalAppliesToRevision", () => {
     const applies = createApprovalApplicability(
       context({
         ancestorRevisionIds: new Set(["revision-1", "revision-0"]),
-        rowsForRevision: (revisionId) => {
+        stateForRevision: (revisionId) => {
           reads.push(revisionId);
-          return baseRows();
+          return { rows: baseRows(), ...emptyCitationState };
         },
       }),
     );
@@ -251,6 +336,94 @@ describe("approvalAppliesToRevision", () => {
     expect(manyApprovals.map(applies)).toEqual(manyApprovals.map(() => true));
     expect([...new Set(reads)]).toEqual(["revision-1", "revision-0"]);
     expect(reads).toEqual(["revision-1", "revision-0"]);
+  });
+
+  it("invalidates only the approval subject whose citation set changed", () => {
+    const baseCitation = premiseCitation("requirement-1");
+    const currentCitation = premiseCitation("requirement-1", "assumption-2");
+    const applies = createApprovalApplicability(
+      context({
+        citations: [baseCitation, currentCitation],
+        stateForRevision: (revisionId) =>
+          revisionId === "revision-1"
+            ? {
+                rows: baseRows(),
+                citationContractVersion: 2,
+                citations: [baseCitation],
+              }
+            : null,
+      }),
+    );
+
+    expect(applies(approval())).toBe(false);
+    expect(
+      applies(approval({ subjectKind: "decision", elementId: "decision-1" })),
+    ).toBe(true);
+  });
+
+  it("allows only an empty contract-1 subject across the first contract-2 boundary", () => {
+    const legacyState = {
+      rows: baseRows(),
+      citationContractVersion: 1 as const,
+      citations: [] as RevisionCitation[],
+    };
+    expect(
+      approvalAppliesToRevision(
+        context({
+          stateForRevision: (revisionId) =>
+            revisionId === "revision-1" ? legacyState : null,
+        }),
+        approval(),
+      ),
+    ).toBe(true);
+
+    expect(
+      approvalAppliesToRevision(
+        context({
+          stateForRevision: (revisionId) =>
+            revisionId === "revision-1"
+              ? {
+                  ...legacyState,
+                  citations: [premiseCitation("requirement-1")],
+                }
+              : null,
+        }),
+        approval(),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not carry a contract-1 approval beyond the first contract-2 revision", () => {
+    const states = new Map([
+      [
+        "revision-1",
+        {
+          rows: baseRows(),
+          citationContractVersion: 1 as const,
+          citations: [] as RevisionCitation[],
+        },
+      ],
+      [
+        "revision-2",
+        {
+          rows: baseRows(),
+          citationContractVersion: 2 as const,
+          citations: [] as RevisionCitation[],
+        },
+      ],
+    ]);
+
+    expect(
+      approvalAppliesToRevision(
+        context({
+          revisionId: "revision-3",
+          basedOnRevisionId: "revision-2",
+          ancestorRevisionIds: new Set(["revision-1", "revision-2"]),
+          stateForRevision: (revisionId) => states.get(revisionId) ?? null,
+        }),
+        approval({ revisionId: "revision-1" }),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -343,8 +516,8 @@ describe("fingerprint parity with diffRevisions", () => {
         { subjectKind: "decision" as const, elementId: "decision-1" },
       ]) {
         const carried = sameSubjectFingerprint(
-          subjectFingerprint(baseRows(), subject),
-          subjectFingerprint(draftRows, subject),
+          subjectFingerprint(baseRows(), subject, emptyCitationState),
+          subjectFingerprint(draftRows, subject, emptyCitationState),
         );
         expect({ subject: subject.elementId, carried }).toEqual({
           subject: subject.elementId,
@@ -360,8 +533,8 @@ describe("fingerprint parity with diffRevisions", () => {
 
     expect(
       sameSubjectFingerprint(
-        subjectFingerprint(baseRows(), subject),
-        subjectFingerprint(draftRows, subject),
+        subjectFingerprint(baseRows(), subject, emptyCitationState),
+        subjectFingerprint(draftRows, subject, emptyCitationState),
       ),
     ).toBe(!diffRevisions(baseRows(), draftRows).planStale);
   });

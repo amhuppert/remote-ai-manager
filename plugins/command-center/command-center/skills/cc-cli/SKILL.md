@@ -484,6 +484,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec reply <slug> --thread <threadId> --body <text>`
   - `cctl spec lint <slug>`
   - `cctl spec get <slug>/<handle>`
+  - `cctl spec section get <slug> --id <element-id>`
   - `cctl spec search <slug> <query>`
   - `cctl spec search --all <query>`
   - `cctl spec diff <slug> [--from <revisionId>] [--to <revisionId>] [--baseline governance]`
@@ -501,6 +502,11 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec question <slug> --text <text> [--element <handle>]`
   - `cctl spec answer <slug>/Q2 --answer <text>`
   - `cctl spec assume <slug> --text <text> [--element <handle>]`
+  - `cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n>`
+  - `cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n>`
+  - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
+  - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
+  - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
   - `cctl spec plan open <slug> [--seed-from last]`
   - `cctl spec plan edit <slug> --file <plan.json>`
   - `cctl spec plan propose <slug>`
@@ -530,6 +536,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec get` — read one spec element with approval and evidence state
   - `cctl spec get <slug>/<handle>`
   - `cctl spec get <slug> <handle>`
+- `cctl spec section` — read the prose sections, which carry no element handle
+  - `cctl spec section get <slug> --id <element-id>`
 - `cctl spec search` — search requirement and decision text in one spec or across all
   - `cctl spec search <slug> <query>`
   - `cctl spec search --all <query>`
@@ -576,6 +584,12 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec answer <slug>/Q2 --answer <text>`
 - `cctl spec assume` — propose a visible authoring assumption
   - `cctl spec assume <slug> --text <text> [--element <handle>]`
+- `cctl spec attention` — correct and cite durable question and assumption records
+  - `cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]`
+  - `cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]`
+  - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
+  - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
+  - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
 - `cctl spec plan` — author the delivery plan attempt that becomes the executed graph
   - `cctl spec plan open <slug> [--seed-from last]`
   - `cctl spec plan edit <slug> --file <plan.json>`
@@ -585,7 +599,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec plan get <slug>`
   - `cctl spec plan status <slug>`
   - `cctl spec plan preview <slug> --stage draft|proposed`
-- `cctl spec request-approval` — route a spec gate to the user
+- `cctl spec request-approval` — repair or re-fire a gate's approval request
   - `cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]`
 - `cctl spec start` — launch the approved delivery-plan candidate, exactly as approved
   - `cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]`
@@ -596,6 +610,18 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec abandon` — abandon one execution, or retire the whole spec as a human
   - `cctl spec abandon <slug> --reason <reason>`
   - `cctl spec abandon <slug> --execution <id> --reason <reason>`
+- `cctl spec section get` — read one section by its element id
+  - `cctl spec section get <slug> --id <element-id>`
+- `cctl spec attention edit` — correct an open question or proposed assumption
+  - `cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]`
+- `cctl spec attention withdraw` — retire an obsolete open question or proposed assumption
+  - `cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]`
+- `cctl spec attention supersede` — replace a terminal assumption while preserving lineage
+  - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
+- `cctl spec attention cite` — cite an assumption on one draft element
+  - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
+- `cctl spec attention uncite` — uncite an assumption on one draft element
+  - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
 - `cctl spec plan open` — open a delivery plan attempt against the approved revision
   - `cctl spec plan open <slug> [--seed-from last]`
 - `cctl spec plan edit` — write the whole plan document at the draft revision you read
@@ -644,9 +670,22 @@ up front:
    per-element state, and explicit omission metadata.
 3. `cctl spec get <slug>/<handle>` returns one element in full as line-oriented
    text by default or the named `element` envelope with `--json`.
-4. `cctl spec show <slug> --rendered` writes the canonical current revision as
+4. `cctl spec section get <slug> --id <element-id>` returns one section under
+   its own named `section` payload. Sections are the only content with no
+   handle, so the outline lists them by element id and nothing addresses them
+   as `<slug>/<handle>`; an `--id` that resolves to a handled element is
+   refused and names that element's kind and handle.
+5. `cctl spec show <slug> --rendered` writes the canonical current revision as
    Markdown, while `--full` writes the complete JSON view. Both return a small,
    file-backed artifact manifest instead of embedding the document on stdout.
+
+Both element reads answer from the current revision and never fall back to an
+older one. A handle or section id the current revision no longer carries is
+refused with `historical_only`, whose details name the last revision that held
+it and whose instruction is the exact read to run. `--revision` is the explicit
+selector on either read and takes a revision number or a revision id — the
+value's own shape decides which, so a caller holding either one passes it
+unchanged.
 
 `--json` preserves whichever level was selected. For an artifact read it
 serializes the manifest; it does not put the rendered or full body back into
@@ -659,8 +698,8 @@ Inline summary and outline show envelopes are flattened: `spec` is the spec
 identity, while view data such as `counts`, `requirements`, and `tasks` are
 sibling fields. Artifact show receipts instead carry `storage: "artifact"` and
 `artifact: {path, format, bytes, sha256}`; rendered/full receipts also carry a
-bounded `revision`. Status, lint, and get keep their named payloads under
-`status`, `lint`, and `element`. The get receipt also hoists
+bounded `revision`. Status, lint, get, and section get keep their named payloads
+under `status`, `lint`, `element`, and `section`. The get receipt also hoists
 `elementId`/`kind`/`elementVersion`; use those identity fields instead of
 traversing the durable snapshot row's nested `element` objects.
 

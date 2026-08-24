@@ -148,6 +148,11 @@ describe("cctl session-env inventory (R2.4)", () => {
   it("resolves a leaf entry over its group so a session-only verb is not swallowed", () => {
     expect(classifyCliCommand("spec start")?.support).toBe("session-only");
     expect(classifyCliCommand("spec draft")?.support).toBe("project-supported");
+    // A nested read carries no entry of its own — it does not differ from its
+    // group — so its classification has to come from the group at any depth.
+    expect(classifyCliCommand("spec section get")?.support).toBe(
+      "project-supported",
+    );
     expect(classifyCliCommand("nonexistent")).toBeNull();
   });
 

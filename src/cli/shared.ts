@@ -324,6 +324,12 @@ export interface JsonEnvelope {
    */
   instruction?: string;
   stopInstruction?: string;
+  /**
+   * The one sentence a refusal adds to say its constraint is deliberate.
+   * Written only by {@link failure}: it explains a "no", so no success
+   * envelope has anything for it to explain.
+   */
+  rationale?: string;
   /** Structured validation issues, when the server supplies them (doc 04 §5.1). */
   issues?: RequestIssue[];
   /** Machine-readable error code, when the server supplies one. */
@@ -414,6 +420,8 @@ export interface FailureInput {
   reminders?: string[];
   /** Load-bearing server-authored next step for an operational refusal. */
   instruction?: string;
+  /** Server-authored reason the refused constraint exists (design §11). */
+  rationale?: string;
   /**
    * Structured validation issues + machine-readable code. JSON-envelope only —
    * text mode still renders the human `detail`, so callers pass BOTH (doc 04 §5.1).
@@ -436,13 +444,23 @@ export function failure(input: FailureInput): CliResult {
     ...(input.reminders && input.reminders.length > 0
       ? { reminders: input.reminders }
       : {}),
+    ...(input.rationale ? { rationale: input.rationale } : {}),
     ...(input.instruction ? { instruction: input.instruction } : {}),
     ...(input.hint ? { hint: input.hint } : {}),
   });
-  // Text tier order (doc 04 §5.1): message -> detail/issues -> guidance.
+  // Text tier order (doc 04 §5.1): message -> detail/issues -> guidance. The
+  // rationale sits between them: it explains the conditions just printed, and
+  // a reader given the do-now instruction first never reads back up for the
+  // reason. Composed here rather than in `guidanceLines` so the success seam
+  // has no path to a `why:` line at all.
   const stderrLines = [input.message];
   if (input.detail) stderrLines.push(input.detail);
-  if (!input.json) stderrLines.push(...guidanceLines(envelope, true));
+  if (!input.json) {
+    if (input.rationale) {
+      stderrLines.push(guidanceLine("why", input.rationale));
+    }
+    stderrLines.push(...guidanceLines(envelope, true));
+  }
   return {
     exitCode: input.exitCode,
     stdout: input.json ? `${JSON.stringify(envelope)}\n` : "",
@@ -1123,6 +1141,8 @@ export type CliRequestResult =
       reminders?: string[];
       /** Tier-3 server-authored next step for a refused operation. */
       instruction?: string;
+      /** The refusal's own reason for existing, when the server states one. */
+      rationale?: string;
       /** Code-discriminated structured context for the refusal. */
       details?: CliErrorDetails;
     };
@@ -1194,7 +1214,7 @@ function coerceUnmetConditions(value: unknown): RequestIssue[] | undefined {
   return issues.length > 0 ? issues : undefined;
 }
 
-function coerceInstruction(value: unknown): string | undefined {
+function coerceGuidanceText(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
@@ -1308,7 +1328,10 @@ function classifyErrorBody(
     ? coerceReminders(bodyRecord.reminders)
     : undefined;
   const instruction = bodyRecord
-    ? coerceInstruction(bodyRecord.instruction)
+    ? coerceGuidanceText(bodyRecord.instruction)
+    : undefined;
+  const rationale = bodyRecord
+    ? coerceGuidanceText(bodyRecord.rationale)
     : undefined;
   const details = bodyRecord ? coerceErrorDetails(bodyRecord, code) : undefined;
   logger.debug("cli.error_classified", {
@@ -1326,6 +1349,7 @@ function classifyErrorBody(
     ...(code ? { code } : {}),
     ...(reminders ? { reminders } : {}),
     ...(instruction ? { instruction } : {}),
+    ...(rationale ? { rationale } : {}),
     ...(details ? { details } : {}),
   };
 }
@@ -1479,13 +1503,14 @@ export function structuredErrorFields(
   result: Extract<CliRequestResult, { kind: "error" }>,
 ): Pick<
   FailureInput,
-  "issues" | "code" | "reminders" | "instruction" | "details"
+  "issues" | "code" | "reminders" | "instruction" | "rationale" | "details"
 > {
   return {
     ...(result.issues ? { issues: result.issues } : {}),
     ...(result.code ? { code: result.code } : {}),
     ...(result.reminders ? { reminders: result.reminders } : {}),
     ...(result.instruction ? { instruction: result.instruction } : {}),
+    ...(result.rationale ? { rationale: result.rationale } : {}),
     ...(result.details ? { details: result.details } : {}),
   };
 }
@@ -1516,6 +1541,18 @@ function refusalDetailLines(
           : JSON.stringify(finding);
       return `  findings[${index}]: ${handle} [${rule}/${severity}] ${message}`;
     });
+  }
+
+  // The recovery command names the target revision, but only inside a command
+  // string, and names neither the element nor the revision the read was
+  // refused from. Every field of the refusal is rendered rather than a chosen
+  // subset, so text carries the facts JSON does and a field added to the
+  // refusal cannot reach one mode while silently missing the other.
+  if (result.code === "historical_only" && isRecord(result.details)) {
+    return Object.entries(result.details).map(
+      ([field, value]) =>
+        `  details.${field}: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+    );
   }
 
   if (result.code === "stale_element" && result.details !== undefined) {

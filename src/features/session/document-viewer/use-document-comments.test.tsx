@@ -323,8 +323,8 @@ describe("useDocumentComments", () => {
     // both anchored to the same block (line 5) → one gutter group of count 2
     await waitFor(() => expect(latest?.anchoredGroups).toHaveLength(1));
     expect(latest?.anchoredGroups[0]?.count).toBe(2);
-    // any pending in the block → the group reads pending
-    expect(latest?.anchoredGroups[0]?.status).toBe("pending");
+    // any pending comment in the block keeps the neutral annotation group active
+    expect(latest?.anchoredGroups[0]?.tone).toBe("active");
   });
 
   it("re-anchors comments when the deferred render stamps blocks after mount", async () => {

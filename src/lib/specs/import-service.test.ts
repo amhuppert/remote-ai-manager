@@ -764,14 +764,29 @@ describe("an import records provenance, never approval (R3.2, R7.3, R7.4, R10)",
     );
   });
 
-  it("creates no attention entries and no approval-request notifications (R10.2)", async () => {
+  it("records typed import history without approval-request notifications (R10.2)", async () => {
     const receipt = await expectImported();
 
+    const events = harness.events.findBySpecId(receipt.spec.id);
+    expect(events.map(({ event_type }) => event_type)).toEqual([
+      "spec-review-record-mutated",
+      "spec-review-record-mutated",
+      "spec_imported",
+    ]);
     expect(
-      harness.events
-        .findBySpecId(receipt.spec.id)
-        .map(({ event_type }) => event_type),
-    ).toEqual(["spec_imported"]);
+      events.slice(0, 2).map(({ payload_json }) => JSON.parse(payload_json)),
+    ).toEqual([
+      expect.objectContaining({
+        recordKind: "question",
+        operation: "imported",
+        active: false,
+      }),
+      expect.objectContaining({
+        recordKind: "assumption",
+        operation: "imported",
+        active: false,
+      }),
+    ]);
     expect(harness.events.listOpenApprovalRequests(receipt.spec.id)).toEqual(
       [],
     );

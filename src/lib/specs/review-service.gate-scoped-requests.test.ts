@@ -19,7 +19,12 @@ import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
-import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import {
+  computeSpecElementPayloadHash,
+  computeSpecRevisionCitationHash,
+  computeSpecRevisionContentHashFromCanonical,
+  createSpecsRepo,
+} from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
@@ -40,6 +45,15 @@ const HUMAN = { kind: "human" } as const;
 
 function requirementElementId(number: number): string {
   return `element-requirement-${number}`;
+}
+
+function requirementPayload(number: number) {
+  return {
+    kind: "requirement",
+    statement: `Requirement ${number} states an obligation.`,
+    priority: "must",
+    risk: "low",
+  } as const;
 }
 
 function requirementHandles(): string[] {
@@ -577,6 +591,23 @@ function openRequestIds(rows: readonly SpecNotification[]): string[] {
 }
 
 function seed(db: Db): void {
+  const elements = Array.from({ length: REQUIREMENT_COUNT }, (_, index) => {
+    const number = index + 1;
+    return {
+      elementId: requirementElementId(number),
+      kind: "requirement" as const,
+      number,
+      parentElementId: null,
+      position: number,
+      payload: requirementPayload(number),
+    };
+  });
+  const contentHash = computeSpecRevisionContentHashFromCanonical(
+    "plan",
+    elements,
+  );
+  const citationHash = computeSpecRevisionCitationHash(2, []);
+
   db.prepare(
     `INSERT INTO specs (
        id, project_path, slug, name, gate_policy_json,
@@ -594,15 +625,15 @@ function seed(db: Db): void {
   db.prepare(
     `INSERT INTO spec_revisions (
        id, spec_id, number, state, authoring_stage, based_on_revision_id,
-       content_hash, proposed_at, approved_at, created_at
-     ) VALUES (?, ?, 1, 'proposed', 'plan', NULL, 'hash-1', ?, NULL, ?)`,
-  ).run(REVISION_ID, SPEC_ID, NOW, NOW);
-  for (let number = 1; number <= REQUIREMENT_COUNT; number += 1) {
-    const elementId = requirementElementId(number);
+       content_hash, citation_contract_version, citation_hash,
+       proposed_at, approved_at, created_at
+     ) VALUES (?, ?, 1, 'proposed', 'plan', NULL, ?, 2, ?, ?, NULL, ?)`,
+  ).run(REVISION_ID, SPEC_ID, contentHash, citationHash, NOW, NOW);
+  for (const element of elements) {
     db.prepare(
       `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
        VALUES (?, ?, 'requirement', ?, NULL, ?)`,
-    ).run(elementId, SPEC_ID, number, NOW);
+    ).run(element.elementId, SPEC_ID, element.number, NOW);
     db.prepare(
       `INSERT INTO spec_element_versions (
          revision_id, element_id, position, payload_json, payload_hash,
@@ -610,15 +641,10 @@ function seed(db: Db): void {
        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
     ).run(
       REVISION_ID,
-      elementId,
-      number,
-      JSON.stringify({
-        kind: "requirement",
-        statement: `Requirement ${number} states an obligation.`,
-        priority: "must",
-        risk: "low",
-      }),
-      `payload-hash-${number}`,
+      element.elementId,
+      element.position,
+      JSON.stringify(element.payload),
+      computeSpecElementPayloadHash(element.payload),
       NOW,
       NOW,
     );

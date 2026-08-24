@@ -10,6 +10,7 @@ const jsonColumnSchema = z.string();
 const nullableIdSchema = idSchema.nullable();
 const nullableTimestampSchema = timestampSchema.nullable();
 const sqliteBooleanSchema = z.union([z.literal(0), z.literal(1)]);
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const sectionRoleSchema = z.enum([
   "intent_problem",
@@ -374,6 +375,13 @@ export const refusalCodeSchema = z.enum([
   // choosing a different one: this identity can come back, so the refusal
   // states the retry that brings it back with its number and handle intact.
   "historical_element_id",
+  // An ordinary update that names a parent other than the one the element is
+  // stored under. Distinct from the `parent_changed` reason inside
+  // `historical_element_id`, which judges the parent a REINTRODUCTION comes
+  // back under: this one refuses moving an element the revision already
+  // carries. Neither has a retry — a different parent needs a different
+  // element.
+  "parent_immutable",
   // A write whose committed result would leave a typed element reference
   // pointing at an element the revision does not carry, or carries under
   // another kind. Distinct from `lint_blocked`, which reports the propose-time
@@ -410,6 +418,11 @@ export const refusalCodeSchema = z.enum([
   // candidate is wrong, so the remedy is a retry or an abandon of the run that
   // now exists — never a re-approval.
   "workflow_unavailable",
+  "authoring_agent_required",
+  "stale_attention_record",
+  "stale_citation_set",
+  "attention_state_conflict",
+  "idempotency_conflict",
   "not_found",
   "validation",
 ]);
@@ -421,6 +434,14 @@ export const refusalSchema = z
     unmetConditions: z.array(z.string()),
     findings: z.array(z.unknown()).optional(),
     details: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * One server-authored sentence saying why the constraint exists, for the
+     * refusals whose friction is the product rather than a defect. It asserts
+     * the value ("this is deliberate: X") instead of apologizing, because an
+     * agent told a rule is unfortunate goes looking for the way around it.
+     * Absent on refusals whose unmet condition already carries its own reason.
+     */
+    rationale: z.string().optional(),
     instruction: z.string(),
   })
   .strict();
@@ -443,6 +464,8 @@ export const specReviewEventTypeSchema = z.enum([
   "spec-review-item-approved",
   "spec-review-item-unapproved",
   "spec-review-revision-signed-off",
+  "spec-review-record-mutated",
+  "spec-assumption-citations-mutated",
 ]);
 export type SpecReviewEventType = z.infer<typeof specReviewEventTypeSchema>;
 
@@ -543,6 +566,14 @@ export const specRevisionStateSchema = z.enum([
 ]);
 export type SpecRevisionState = z.infer<typeof specRevisionStateSchema>;
 
+export const specCitationContractVersionSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+]);
+export type SpecCitationContractVersion = z.infer<
+  typeof specCitationContractVersionSchema
+>;
+
 export const specApprovalSubjectKindSchema = z.enum([
   "requirement",
   "decision",
@@ -572,7 +603,11 @@ export type SpecGateAdmissionBasis = z.infer<
   typeof specGateAdmissionBasisSchema
 >;
 
-export const specQuestionStatusSchema = z.enum(["open", "answered"]);
+export const specQuestionStatusSchema = z.enum([
+  "open",
+  "answered",
+  "withdrawn",
+]);
 export type SpecQuestionStatus = z.infer<typeof specQuestionStatusSchema>;
 
 export const specAssumptionDispositionSchema = z.enum([
@@ -580,9 +615,585 @@ export const specAssumptionDispositionSchema = z.enum([
   "confirmed",
   "rejected",
   "deferred",
+  "withdrawn",
 ]);
 export type SpecAssumptionDisposition = z.infer<
   typeof specAssumptionDispositionSchema
+>;
+
+function questionLifecycleIsConsistent(input: {
+  status: SpecQuestionStatus;
+  answer: string | null;
+  answeredAt: string | null;
+  withdrawnAt: string | null;
+}): boolean {
+  if (input.status === "open") {
+    return (
+      input.answer === null &&
+      input.answeredAt === null &&
+      input.withdrawnAt === null
+    );
+  }
+  if (input.status === "answered") {
+    return (
+      input.answer !== null &&
+      input.answer.length > 0 &&
+      input.answeredAt !== null &&
+      input.withdrawnAt === null
+    );
+  }
+  return (
+    input.answer === null &&
+    input.answeredAt === null &&
+    input.withdrawnAt !== null
+  );
+}
+
+function assumptionLifecycleIsConsistent(input: {
+  disposition: SpecAssumptionDisposition;
+  disposedAt: string | null;
+  withdrawnAt: string | null;
+}): boolean {
+  if (input.disposition === "proposed") {
+    return input.disposedAt === null && input.withdrawnAt === null;
+  }
+  if (input.disposition === "withdrawn") {
+    return input.disposedAt === null && input.withdrawnAt !== null;
+  }
+  return input.disposedAt !== null && input.withdrawnAt === null;
+}
+
+export const specAssumptionCitationSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    captureKind: z.enum(["native", "legacy_backfill"]),
+    capturedAt: timestampSchema,
+    assumptionId: idSchema,
+    number: z.number().int().positive(),
+    recordVersion: z.number().int().positive(),
+    text: z.string(),
+    elementId: nullableIdSchema,
+    proposedBy: actorProvenanceSchema,
+    disposition: specAssumptionDispositionSchema,
+    disposedAt: nullableTimestampSchema,
+    withdrawnAt: nullableTimestampSchema,
+    supersedesAssumptionId: nullableIdSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    if (!assumptionLifecycleIsConsistent(snapshot)) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "citation snapshot lifecycle fields must agree with its disposition",
+      });
+    }
+  });
+export type SpecAssumptionCitationSnapshot = z.infer<
+  typeof specAssumptionCitationSnapshotSchema
+>;
+
+export const specReviewRecordOperationSchema = z.enum([
+  "opened",
+  "proposed",
+  "imported",
+  "edited",
+  "answered",
+  "disposed",
+  "withdrawn",
+  "superseded",
+]);
+export type SpecReviewRecordOperation = z.infer<
+  typeof specReviewRecordOperationSchema
+>;
+
+const specQuestionAuditSnapshotSchema = z
+  .object({
+    kind: z.literal("question"),
+    recordId: idSchema,
+    number: z.number().int().positive(),
+    recordVersion: z.number().int().positive(),
+    text: z.string(),
+    elementId: nullableIdSchema,
+    provenance: actorProvenanceSchema,
+    status: specQuestionStatusSchema,
+    answer: z.string().nullable(),
+    answeredAt: nullableTimestampSchema,
+    withdrawnAt: nullableTimestampSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+const specAssumptionAuditSnapshotSchema = z
+  .object({
+    kind: z.literal("assumption"),
+    recordId: idSchema,
+    number: z.number().int().positive(),
+    recordVersion: z.number().int().positive(),
+    text: z.string(),
+    elementId: nullableIdSchema,
+    proposedBy: actorProvenanceSchema,
+    disposition: specAssumptionDispositionSchema,
+    disposedAt: nullableTimestampSchema,
+    withdrawnAt: nullableTimestampSchema,
+    supersedesAssumptionId: nullableIdSchema,
+    supersededByAssumptionId: nullableIdSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const specRecordAuditSnapshotSchema = z
+  .discriminatedUnion("kind", [
+    specQuestionAuditSnapshotSchema,
+    specAssumptionAuditSnapshotSchema,
+  ])
+  .superRefine((snapshot, ctx) => {
+    if (snapshot.kind === "question") {
+      if (!questionLifecycleIsConsistent(snapshot)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "question audit lifecycle fields must agree with status",
+        });
+      }
+      return;
+    }
+
+    if (!assumptionLifecycleIsConsistent(snapshot)) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "assumption audit lifecycle fields must agree with disposition",
+      });
+    }
+  });
+export type SpecRecordAuditSnapshot = z.infer<
+  typeof specRecordAuditSnapshotSchema
+>;
+
+export const specReviewRecordMutatedEventPayloadSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    recordKind: z.enum(["question", "assumption"]),
+    recordId: idSchema,
+    recordNumber: z.number().int().positive(),
+    attentionId: idSchema,
+    operation: specReviewRecordOperationSchema,
+    reason: z.string().min(1).optional(),
+    active: z.boolean(),
+    successorAssumptionId: idSchema.optional(),
+    before: specRecordAuditSnapshotSchema.nullable(),
+    after: specRecordAuditSnapshotSchema,
+  })
+  .strict()
+  .superRefine((event, ctx) => {
+    const creationOperation = ["opened", "proposed", "imported"].includes(
+      event.operation,
+    );
+    if ((event.before === null) !== creationOperation) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "before is null exactly for opened, proposed, and imported records",
+        path: ["before"],
+      });
+    }
+
+    const questionOperation = [
+      "opened",
+      "imported",
+      "edited",
+      "answered",
+      "withdrawn",
+    ].includes(event.operation);
+    const assumptionOperation = [
+      "proposed",
+      "imported",
+      "edited",
+      "disposed",
+      "withdrawn",
+      "superseded",
+    ].includes(event.operation);
+    if (
+      (event.recordKind === "question" && !questionOperation) ||
+      (event.recordKind === "assumption" && !assumptionOperation)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "record mutation operation must match the record kind",
+        path: ["operation"],
+      });
+    }
+
+    const snapshots =
+      event.before === null ? [event.after] : [event.before, event.after];
+    if (
+      snapshots.some(
+        (snapshot) =>
+          snapshot.kind !== event.recordKind ||
+          snapshot.recordId !== event.recordId ||
+          snapshot.number !== event.recordNumber,
+      ) ||
+      event.attentionId !== event.recordId
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "event identity must match every record snapshot",
+      });
+    }
+
+    if (
+      event.before !== null &&
+      event.after.recordVersion !== event.before.recordVersion + 1
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "record mutation events increment recordVersion exactly once",
+        path: ["after", "recordVersion"],
+      });
+    }
+
+    const shouldBeActive =
+      event.operation !== "superseded" &&
+      ((event.after.kind === "question" && event.after.status === "open") ||
+        (event.after.kind === "assumption" &&
+          event.after.disposition === "proposed"));
+    if (event.active !== shouldBeActive) {
+      ctx.addIssue({
+        code: "custom",
+        message: "active must reflect the resulting attention lifecycle",
+        path: ["active"],
+      });
+    }
+
+    const needsReason = ["withdrawn", "superseded"].includes(event.operation);
+    if (needsReason !== (event.reason !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "reason is present exactly for withdrawal and supersession",
+        path: ["reason"],
+      });
+    }
+
+    const needsSuccessor = event.operation === "superseded";
+    if (needsSuccessor !== (event.successorAssumptionId !== undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "successorAssumptionId is present exactly for supersession",
+        path: ["successorAssumptionId"],
+      });
+    }
+  });
+export type SpecReviewRecordMutatedEventPayload = z.infer<
+  typeof specReviewRecordMutatedEventPayloadSchema
+>;
+
+const specCitationAuditEntrySchema = z
+  .object({
+    elementId: idSchema,
+    assumptionId: idSchema,
+    snapshot: specAssumptionCitationSnapshotSchema,
+  })
+  .strict();
+
+const specCitationRefreshAuditEntrySchema = z
+  .object({
+    elementId: idSchema,
+    assumptionId: idSchema,
+    beforeSnapshot: specAssumptionCitationSnapshotSchema,
+    afterSnapshot: specAssumptionCitationSnapshotSchema,
+  })
+  .strict();
+
+export const specAssumptionCitationsMutatedEventPayloadSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    revisionId: idSchema,
+    beforeCitationVersion: z.number().int().positive(),
+    afterCitationVersion: z.number().int().positive(),
+    beforeCitationHash: sha256Schema,
+    afterCitationHash: sha256Schema,
+    added: z.array(specCitationAuditEntrySchema),
+    removed: z.array(specCitationAuditEntrySchema),
+    refreshed: z.array(specCitationRefreshAuditEntrySchema),
+  })
+  .strict()
+  .superRefine((event, ctx) => {
+    if (event.afterCitationVersion !== event.beforeCitationVersion + 1) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "citation mutation events increment citationVersion exactly once",
+        path: ["afterCitationVersion"],
+      });
+    }
+    if (event.beforeCitationHash === event.afterCitationHash) {
+      ctx.addIssue({
+        code: "custom",
+        message: "citation mutation events must change the citation hash",
+        path: ["afterCitationHash"],
+      });
+    }
+    if (
+      event.added.length === 0 &&
+      event.removed.length === 0 &&
+      event.refreshed.length === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "citation mutation events must contain at least one delta",
+      });
+    }
+  });
+export type SpecAssumptionCitationsMutatedEventPayload = z.infer<
+  typeof specAssumptionCitationsMutatedEventPayloadSchema
+>;
+
+const specAttentionAttachmentSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("spec") }).strict(),
+  z
+    .object({
+      kind: z.literal("element"),
+      handle: z.string().min(1),
+    })
+    .strict(),
+]);
+
+const uniqueElementHandlesSchema = z
+  .array(z.string().min(1))
+  .min(1)
+  .superRefine((handles, ctx) => {
+    if (new Set(handles).size !== handles.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "element handles must be unique",
+      });
+    }
+  });
+
+const specCitationIntentSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("preserve") }).strict(),
+  z
+    .object({
+      kind: z.literal("replace"),
+      revisionId: idSchema,
+      elementHandles: uniqueElementHandlesSchema,
+    })
+    .strict(),
+]);
+
+const specQuestionEditPayloadSchema = z
+  .object({
+    kind: z.literal("question"),
+    text: z.string().min(1).optional(),
+    attachment: specAttentionAttachmentSchema.optional(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.text === undefined && payload.attachment === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "a question edit must change text or attachment",
+      });
+    }
+  });
+
+const specAssumptionEditPayloadSchema = z
+  .object({
+    kind: z.literal("assumption"),
+    text: z.string().min(1).optional(),
+    attachment: specAttentionAttachmentSchema.optional(),
+    citationIntent: specCitationIntentSchema.optional(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.text === undefined && payload.attachment === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "an assumption edit must change text or attachment",
+      });
+    }
+    if (
+      payload.attachment !== undefined &&
+      payload.citationIntent === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "an assumption attachment edit must state whether citations are preserved or replaced",
+        path: ["citationIntent"],
+      });
+    }
+  });
+
+export const specAttentionEditPayloadSchema = z.union([
+  specQuestionEditPayloadSchema,
+  specAssumptionEditPayloadSchema,
+]);
+export type SpecAttentionEditPayload = z.infer<
+  typeof specAttentionEditPayloadSchema
+>;
+
+const specSupersessionCitationsSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("clear") }).strict(),
+  z
+    .object({
+      kind: z.literal("replace"),
+      elementHandles: uniqueElementHandlesSchema,
+    })
+    .strict(),
+]);
+
+export const specSupersedeAssumptionPayloadSchema = z
+  .object({
+    operationId: idSchema,
+    reason: z.string().min(1),
+    text: z.string().min(1),
+    attachment: specAttentionAttachmentSchema,
+    citations: specSupersessionCitationsSchema,
+  })
+  .strict();
+export type SpecSupersedeAssumptionPayload = z.infer<
+  typeof specSupersedeAssumptionPayloadSchema
+>;
+
+const specAttentionReceiptOperationSchema = z.enum([
+  "edited",
+  "withdrawn",
+  "superseded",
+  "cited",
+  "uncited",
+  "answered",
+  "disposed",
+]);
+
+export const specAttentionMutationReceiptSchema = z
+  .object({
+    operation: specAttentionReceiptOperationSchema,
+    recordKind: z.enum(["question", "assumption"]),
+    recordId: idSchema,
+    recordHandle: z.string().min(1),
+    previousRecordVersion: z.number().int().positive(),
+    newRecordVersion: z.number().int().positive(),
+    lifecycle: z.union([
+      specQuestionStatusSchema,
+      specAssumptionDispositionSchema,
+    ]),
+    draftRevisionId: nullableIdSchema,
+    previousCitationVersion: z.number().int().positive().nullable(),
+    newCitationVersion: z.number().int().positive().nullable(),
+    citationChanges: z
+      .object({
+        added: z.array(z.string().min(1)),
+        removed: z.array(z.string().min(1)),
+        refreshed: z.array(z.string().min(1)),
+      })
+      .strict(),
+    successor: z
+      .object({ id: idSchema, handle: z.string().min(1) })
+      .strict()
+      .optional(),
+    idempotentReplay: z.boolean(),
+  })
+  .strict()
+  .superRefine((receipt, ctx) => {
+    const recordOnlyCitationAct = ["cited", "uncited"].includes(
+      receipt.operation,
+    );
+    if (
+      !receipt.idempotentReplay &&
+      receipt.newRecordVersion !==
+        receipt.previousRecordVersion + (recordOnlyCitationAct ? 0 : 1)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "record versions must reflect exactly one admitted mutation",
+        path: ["newRecordVersion"],
+      });
+    }
+
+    const hasPreviousCitationVersion = receipt.previousCitationVersion !== null;
+    const hasNewCitationVersion = receipt.newCitationVersion !== null;
+    if (hasPreviousCitationVersion !== hasNewCitationVersion) {
+      ctx.addIssue({
+        code: "custom",
+        message: "citation versions are either both present or both absent",
+      });
+    } else if (
+      !receipt.idempotentReplay &&
+      receipt.previousCitationVersion !== null &&
+      receipt.newCitationVersion !== receipt.previousCitationVersion + 1
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "citation versions must reflect exactly one admitted mutation",
+        path: ["newCitationVersion"],
+      });
+    }
+
+    if (
+      (receipt.operation === "superseded") !==
+      (receipt.successor !== undefined)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "successor is present exactly for supersession",
+        path: ["successor"],
+      });
+    }
+  });
+export type SpecAttentionMutationReceipt = z.infer<
+  typeof specAttentionMutationReceiptSchema
+>;
+
+const specAttentionLastMutationSchema = z
+  .object({
+    operation: specReviewRecordOperationSchema,
+    actor: actorProvenanceSchema,
+    occurredAt: timestampSchema,
+  })
+  .strict();
+
+const specHumanAttentionCapabilitySchema = z.union([
+  z
+    .object({
+      kind: z.enum(["answer", "dispose"]),
+      allowed: z.literal(true),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.enum(["answer", "dispose"]),
+      allowed: z.literal(false),
+      code: z.enum(["terminal", "amendment_required", "read_only"]),
+      blockingRevisionId: nullableIdSchema,
+      instruction: z.string().min(1),
+    })
+    .strict(),
+]);
+
+export const specAttentionRecordPresentationSchema = z
+  .object({
+    state: z.enum(["current", "history"]),
+    attentionActive: z.boolean(),
+    lastMutation: specAttentionLastMutationSchema.nullable(),
+    humanCapability: specHumanAttentionCapabilitySchema.nullable(),
+  })
+  .strict()
+  .superRefine((presentation, ctx) => {
+    if (presentation.state === "history" && presentation.attentionActive) {
+      ctx.addIssue({
+        code: "custom",
+        message: "historical records cannot be active attention",
+        path: ["attentionActive"],
+      });
+    }
+  });
+export type SpecAttentionRecordPresentation = z.infer<
+  typeof specAttentionRecordPresentationSchema
 >;
 
 export const specCommentResolutionSchema = z.enum([
@@ -724,6 +1335,9 @@ export const specRevisionRowSchema = z.object({
   authoring_stage: specAuthoringStageSchema,
   based_on_revision_id: nullableIdSchema,
   content_hash: z.string().nullable(),
+  citation_contract_version: specCitationContractVersionSchema,
+  citation_version: z.number().int().positive(),
+  citation_hash: sha256Schema,
   proposed_at: nullableTimestampSchema,
   approved_at: nullableTimestampSchema,
   /** `externalDeliverySchema`; null for every revision authored here. */
@@ -816,6 +1430,9 @@ export const specRevisionSchema = z
     authoringStage: specAuthoringStageSchema,
     basedOnRevisionId: nullableIdSchema,
     contentHash: z.string().nullable(),
+    citationContractVersion: specCitationContractVersionSchema,
+    citationVersion: z.number().int().positive(),
+    citationHash: sha256Schema,
     proposedAt: nullableTimestampSchema,
     approvedAt: nullableTimestampSchema,
     /**
@@ -880,12 +1497,66 @@ export const specRevisionElementSchema = z
   .strict();
 export type SpecRevisionElement = z.infer<typeof specRevisionElementSchema>;
 
+export const specAssumptionCitationRowSchema = z.object({
+  revision_id: idSchema,
+  spec_id: idSchema,
+  element_id: idSchema,
+  assumption_id: idSchema,
+  assumption_snapshot_json: jsonColumnSchema,
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+export type SpecAssumptionCitationRow = z.infer<
+  typeof specAssumptionCitationRowSchema
+>;
+
+export const specAssumptionCitationSchema = z
+  .object({
+    revisionId: idSchema,
+    specId: idSchema,
+    elementId: idSchema,
+    assumptionId: idSchema,
+    snapshot: specAssumptionCitationSnapshotSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((citation, ctx) => {
+    if (citation.snapshot.assumptionId !== citation.assumptionId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "citation identity must match its assumption snapshot",
+      });
+    }
+  });
+export type SpecAssumptionCitation = z.infer<
+  typeof specAssumptionCitationSchema
+>;
+
 export const specRevisionSnapshotSchema = z
   .object({
     revision: specRevisionSchema,
     elements: z.array(specRevisionElementSchema),
+    assumptionCitations: z.array(specAssumptionCitationSchema),
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    for (let index = 1; index < snapshot.assumptionCitations.length; index++) {
+      const previous = snapshot.assumptionCitations[index - 1];
+      const current = snapshot.assumptionCitations[index];
+      if (previous === undefined || current === undefined) continue;
+      const previousKey = `${previous.elementId}\u0000${previous.assumptionId}`;
+      const currentKey = `${current.elementId}\u0000${current.assumptionId}`;
+      if (previousKey >= currentKey) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "revision assumption citations must be unique and sorted by elementId then assumptionId",
+          path: ["assumptionCitations", index],
+        });
+      }
+    }
+  });
 export type SpecRevisionSnapshot = z.infer<typeof specRevisionSnapshotSchema>;
 
 export const specApprovalRowSchema = z.object({
@@ -913,33 +1584,88 @@ export const specGateAdmissionRowSchema = z.object({
 });
 export type SpecGateAdmissionRow = z.infer<typeof specGateAdmissionRowSchema>;
 
-export const specQuestionRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  number: z.number().int().positive(),
-  element_id: nullableIdSchema,
-  text: z.string(),
-  provenance_json: jsonColumnSchema,
-  status: specQuestionStatusSchema,
-  answer: z.string().nullable(),
-  answered_at: nullableTimestampSchema,
-  created_at: timestampSchema,
-  updated_at: timestampSchema,
-});
+export const specQuestionRowSchema = z
+  .object({
+    id: idSchema,
+    spec_id: idSchema,
+    number: z.number().int().positive(),
+    element_id: nullableIdSchema,
+    text: z.string(),
+    provenance_json: jsonColumnSchema,
+    record_version: z.number().int().positive(),
+    status: specQuestionStatusSchema,
+    answer: z.string().nullable(),
+    answered_at: nullableTimestampSchema,
+    withdrawn_at: nullableTimestampSchema,
+    created_at: timestampSchema,
+    updated_at: timestampSchema,
+  })
+  .superRefine((question, ctx) => {
+    if (
+      !questionLifecycleIsConsistent({
+        status: question.status,
+        answer: question.answer,
+        answeredAt: question.answered_at,
+        withdrawnAt: question.withdrawn_at,
+      })
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "question lifecycle fields must agree with open, answered, or withdrawn status",
+      });
+    }
+  });
 export type SpecQuestionRow = z.infer<typeof specQuestionRowSchema>;
 
-export const specAssumptionRowSchema = z.object({
-  id: idSchema,
-  spec_id: idSchema,
-  number: z.number().int().positive(),
-  element_id: nullableIdSchema,
-  text: z.string(),
-  proposed_by_json: jsonColumnSchema,
-  disposition: specAssumptionDispositionSchema,
-  disposed_at: nullableTimestampSchema,
-  created_at: timestampSchema,
-  updated_at: timestampSchema,
-});
+export const specAssumptionRowSchema = z
+  .object({
+    id: idSchema,
+    spec_id: idSchema,
+    number: z.number().int().positive(),
+    element_id: nullableIdSchema,
+    text: z.string(),
+    proposed_by_json: jsonColumnSchema,
+    record_version: z.number().int().positive(),
+    disposition: specAssumptionDispositionSchema,
+    disposed_at: nullableTimestampSchema,
+    withdrawn_at: nullableTimestampSchema,
+    supersedes_assumption_id: nullableIdSchema,
+    supersession_operation_id: nullableIdSchema,
+    supersession_request_hash: sha256Schema.nullable(),
+    created_at: timestampSchema,
+    updated_at: timestampSchema,
+  })
+  .superRefine((assumption, ctx) => {
+    if (
+      !assumptionLifecycleIsConsistent({
+        disposition: assumption.disposition,
+        disposedAt: assumption.disposed_at,
+        withdrawnAt: assumption.withdrawn_at,
+      })
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "assumption lifecycle fields must agree with proposed, disposed, or withdrawn disposition",
+      });
+    }
+
+    const hasPredecessor = assumption.supersedes_assumption_id !== null;
+    const hasOperation = assumption.supersession_operation_id !== null;
+    const hasRequestHash = assumption.supersession_request_hash !== null;
+    if (
+      hasPredecessor !== hasOperation ||
+      hasOperation !== hasRequestHash ||
+      assumption.id === assumption.supersedes_assumption_id
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "a supersession successor must name a distinct predecessor, operation id, and request hash together",
+      });
+    }
+  });
 export type SpecAssumptionRow = z.infer<typeof specAssumptionRowSchema>;
 
 export const specCommentRowSchema = z.object({

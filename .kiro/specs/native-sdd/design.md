@@ -602,7 +602,7 @@ Verb map (all follow the established contract: progressive-disclosure help regis
 
 - Gate refusals: exit 1 + `code` + `issues` (unmet conditions) + `instruction` (6.5); local validation failures exit 2. Actor provenance from the established env injection: agent + originating conversation on cctl mutations; human acts arrive via UI routes and record a human actor without fabricated agent/conversation (6.7). One handle vocabulary shared with UI/chips/briefs/evidence via `handles.ts` (1.4). No policy-changing verbs (D5), no evidence-attach verb, and no proof-verdict verb — verdicts originate only from execution ingestion and gate-side issuance; no surface records a human verdict (13.4, 13.5).
 - Query output is text by default, and `--json` changes serialization only. The existing `workflow status --json` and `spec status --json` projections remain explicitly recorded migration debt because their structured views still widen beyond bounded text; no new or changed query may copy those exceptions. `show` calls the server-owned bounded outline projection unless the caller explicitly selects summary, rendered, or full. Every show success discriminates `storage`. Summary and outline normally return flattened inline envelopes: `spec` is identity, while their view payload fields are siblings. The CLI measures both text and JSON renderings against a hard 60 KiB stdout budget; if either would reach the limit, it writes the exact inline JSON envelope under `.cc/temp/` and returns `{command, view, storage: "artifact", reason: "stdout_budget_exceeded", artifact:{path, format: "json", bytes, sha256}}`. Rendered/full content is always written under `.cc/temp/` or the caller's `--out` path and returns `{command, view, storage: "artifact", revision, artifact:{path, format, bytes, sha256}}`, with no unbounded spec identity in the receipt. The outline carries exact per-collection `{total, returned, truncated}` disclosure and the next zoom command. `cctl spec schema read-envelopes` is the offline owner of named payload fields and revision-role semantics (24.14–24.17).
-- Snapshot storage keeps one global `(position, elementId)` order, while the one canonical Markdown renderer traverses each root and then its children. Export, pinned lane documents, and `show --rendered` all call that renderer; bundle format version 3 records the resulting byte-level contract (24.12, 24.18).
+- Snapshot storage keeps one global `(position, elementId)` order, using UTF-8 byte order for the element-id tiebreak, while the one canonical Markdown renderer traverses each root and then its children. Export, pinned lane documents, and `show --rendered` all call that renderer; bundle format version 4 records the resulting byte-level contract (24.12, 24.18).
 
 #### ReferenceRegistry + UnifiedPicker
 
@@ -841,12 +841,12 @@ src/app/api/specs/**/route.ts                   # thin re-exports of route-handl
 | 24.7, 24.8, 24.9 | Draft-opening refusal instruction; first-class amendment command; capture-vs-amend help | `stale_stage` branch keyed on `currentRevision === null`; `cctl spec amend` over the open-amendment action; help entries naming each other (SD6, SD7) |
 | 24.10 | Policy authority stated in help | `spec` family help note — policy is human-only Studio data, no CLI verb (SD8, D5) |
 | 24.11 | Search-scope truth with guidance parity | `/spec` expansion + repository guidance from one structured source, parity-checked (SD9) |
-| 24.12 | Documented `position` ordering contract | One global order per revision with element-id tiebreak + deterministic append; nesting from `parentElementId` (SD10) |
+| 24.12 | Documented `position` ordering contract | One global order per revision with a UTF-8-byte element-id tiebreak + deterministic append; nesting from `parentElementId` (SD10) |
 | 24.13 | Gate history as provenance, never asserted satisfaction | `gateStatuses` keeps current-revision `state`; separate spec-wide admission history field (SD-note, PC-lineage) |
 | 24.14 | Text default; JSON preserves disclosure | CctlSpecFamily renderers + help registry contract tests |
 | 24.15, 24.16 | Bounded nested show outline; storage-discriminated file spillover; hard stdout budget; exact omission receipts | `SpecShowOutlineView` route projection + CctlSpecFamily show renderer |
 | 24.17 | Offline envelope and revision-role semantics | `cctl spec schema read-envelopes` generated reference |
-| 24.18 | Parent-then-children canonical rendering | Export renderer shared by export, pinned lane documents, and `show --rendered`; bundle format 3 |
+| 24.18 | Parent-then-children canonical rendering | Export renderer shared by export, pinned lane documents, and `show --rendered`; bundle format 4 |
 | 25.1, 25.2 | Draft stage pinned; new dials prospective | ReviewService `changePolicy` + stage-scoped dial resolution at transition time (PC1, PC2) |
 | 25.3, 25.4 | No retroactive synthesis; no restaging of proposed/approved/withdrawn | PolicyEngine prospective-only rule; revision-state guard (PC3) |
 | 25.5, 25.10 | Remaining stage sequence reported; enriched policy record | `change-policy` response + status projection + policy event payload (PC4) |
@@ -952,7 +952,7 @@ The four contract fields — resulting state, assigned addressing tokens, blocke
 | `spec start` output | Execution id, definition id, `workflow launched: no`, the launching command, and the acting party per the execution-start dial. The `definition_review` park is **reported, never crossed**: no auto-launch, no agent definition-approval route (SD5) |
 | `spec status` output | Phase qualified with execution state and the definition-review wait; gate lines keep their current-revision `state` and gain a **separate** history line carrying prior admissions (revision number, basis, actor) with no satisfaction claim (SD5, R24.13) |
 | Help + guidance | Policy-authority note (per-spec, mutable, human-only, Spec Studio, no CLI verb); `capture` and `amend` naming each other; search described as spec-scoped in both the runtime `/spec` expansion and the repository guidance, pinned by a parity check (SD7–SD9) |
-| Element ordering | `position` is one global order per revision with an element-id tiebreak; nesting derives from `parentElementId`. Writes omitting `position` receive a deterministic append (SD10) |
+| Element ordering | `position` is one global order per revision with a UTF-8-byte element-id tiebreak; nesting derives from `parentElementId`. Writes omitting `position` receive a deterministic append (SD10) |
 
 Gate history is sourced from a new spec-wide admission read on the review repository; the existing `(spec_id, gate, created_at DESC)` index covers it, so no migration is required.
 
@@ -1000,8 +1000,625 @@ Amended 2026-07-26 under the ticket's authoritative scope decisions (F25 — eng
 | Removed route actions | `attach-evidence` and `record-verdict` deleted outright (zero production callers); a POST to either falls to the documented bare 404 `Spec action not found`, pinned by test. `EvidenceService.attachEvidence`/`recordProofVerdict` survive as internal seams for ingestion and gate-side issuance. `verdict_kind = 'human'` stays in the row schema and DDL CHECK as historical value space |
 | Copy | Every refusal/help/guidance string that promised a nonexistent attach-evidence or human-verdict surface now points at remedies that exist: ingested evidence citation for claims, and Spec Studio → Controls → Merge gate → Waive… as the human remedy for an unprovable criterion; the agent guidance and generated command doc state the gate-records/waiver-remedy model |
 | Migration | `0009-narrow-evidence-kinds` (one immediate transaction): strips retired kinds from persisted strategies; where no machine kind remains, appends `validator_verdict` with a trace note in the strategy itself; recomputes payload/content hashes; deletes retired-kind evidence; stales citing verdicts (reason names migration 0009) and reopens citing accepted claims; writes one frozen raw-SQL `spec_events` trace row per touched spec. 0008 is frozen against its historical six-kind vocabulary. **`KNOWN_SCHEMA_VERSION` 1 → 2** with the 0005 barrier pattern — this amends the Migration Strategy section's original "no bump" rule: an older build's wide enum + permissive CHECK would re-insert retired kinds after the one-shot repair. The `spec_evidence` CHECK is narrowed in the floor DDL for fresh databases |
-| Exported bundles | Pre-narrowing bundles fail `spec verify --against` with the existing mismatch message for affected specs (content genuinely changed under an approved migration; remedy is re-export); plain integrity `verify` passes post-migration. Canonical Markdown uses parent-then-children traversal and bundle format version 3 records that byte-level rendering contract. |
+| Exported bundles | Strict format-4 decode rejects affected pre-narrowing bundles locally at the obsolete strategy path before server verification; unaffected format-4 exports still compare exactly, and plain integrity `verify` passes post-migration. Canonical Markdown uses parent-then-children traversal and bundle format version 4 records that byte-level rendering contract. |
 | Ingest stamping (13.7, 13.11 — F24) | Validation-result evidence is stamped at ingest with the lane-commit sha that sealed its tree, by forward correlation over the execution's ordered event stream (see the amended Ingestion bullet). Freshness dispatch: machine evidence with a validated tree keeps tree-identity; with only a commit stamp it evaluates through candidate ancestry (the same standard commit evidence meets); with neither it is stale `missing_commit_state`. The gate's auto-verdict path still demands candidate-citing `merge_validation` evidence — ancestry freshness removes the structural "permanently stale" property, it does not loosen the gate |
 | Delivery approval server path (18.7 — F17/F19) | The delivery gate's approval-missing refusal carries a typed `reason: "approval_required"` discriminator set only by that branch; on it the gate auto-files the durable approval request through ReviewService (best-effort, never blocks the refusal), idempotently per run — execution-scoped request identity canonicalizes to the run's pinned revision — with a retry-safe Needs You notification (rebuilt from the existing attention id on every repeat; the notifier dedupes on it). Delivery-gate semantics and preset dials are unchanged: every preset keeps `delivery: "gate"`; this is reachability, not loosening |
 | Halt presentation | Halt reason `delivery_gate_failed` is retained and extended with optional `refusalCode?: "approval_required"` and `spec?: {specSlug, specName, projectName}` across the merge types, the jobs Zod schema, and the halt-equality projection; the halt card and details dialog render the approval wait as attention (amber) with an `Open the merge gate →` link to `/specs/<project>/<slug>?el=delivery`; status bar and event log stay headline-only |
 | Studio reachability (8.10 — F14/F15/F16/F18/F26) | Controls joins the primary tabbed views; the pending-approvals banner and the executing-phase CTA link to the approving control; `?el=delivery` resolves to the focused merge-gate panel (retrying deep-link contract, cold-load safe); each execution view carries a **required** server-computed `deliveryProjection` (per-criterion `proven_merged \| waived \| delivered_elsewhere \| proof_recorded \| awaiting_proof`, precedence and validity mirroring the gate, waivers loaded for every execution-pinned revision) that the client renders verbatim with the split proof counter |
+
+## Amendment — audit-safe attention records and revision-owned assumption citations (ticket command-center#87)
+
+Requirements approved 2026-08-22. This amendment is the formal design for the
+attention/citation slice specified by
+`docs/designs/ticket87-attention-citation-slice-technical-design.md`. It governs
+where it conflicts with the older global-row citation model above. The comment
+slice and the remaining targeted agent-operability slice are separate delivery
+boundaries.
+
+### Decisions and invariants
+
+1. Creation conversation is provenance, never authorization. Any authenticated
+   authoring agent may correct an unresolved attention record.
+2. Humans alone answer questions and dispose assumptions. Agents alone edit or
+   withdraw unresolved records, supersede disposed assumptions, and author
+   draft citation changes. Every service operation checks actor kind.
+3. Answered questions and human-disposed assumptions are immutable. Correction
+   after disposition appends a successor assumption and preserves the human
+   judgment.
+4. Proposed, approved, and withdrawn revisions, including their citation rows,
+   snapshots, contract/version metadata, and hashes, are immutable.
+5. Stable `Qn` and `An` handles never renumber. Withdrawal and supersession
+   change projection membership, not identity.
+6. Display attachment is not citation authority. Attachment changes require an
+   explicit preserve-or-replace citation intent and never infer retargeting.
+7. Requirements remain the first authoring stage. Q/A is not a design-notes or
+   scratch-design surface, and the existing requirements → design lock stays in
+   force.
+8. Schema 11 is a coordinated breaking cutover. There is no old-shape shim,
+   dual write, fallback inference, mixed-version operation, or old-bundle
+   reader.
+
+### Lifecycle and compare-and-swap
+
+The stored lifecycle enum is authoritative; timestamps are constrained metadata.
+
+```text
+question:   open ──human answer──► answered
+                 └─agent withdraw─► withdrawn
+
+assumption: proposed ──human dispose──► confirmed | rejected | deferred
+                    └─agent withdraw──► withdrawn
+
+disposed assumption ──agent supersede──► new proposed assumption
+```
+
+Question rows require exactly these combinations:
+
+- `open`: no answer, `answered_at`, or `withdrawn_at`;
+- `answered`: non-empty answer plus `answered_at`, no `withdrawn_at`; and
+- `withdrawn`: `withdrawn_at`, no answer or `answered_at`.
+
+Assumption rows require exactly these combinations:
+
+- `proposed`: no `disposed_at` or `withdrawn_at`;
+- `confirmed | rejected | deferred`: `disposed_at`, no `withdrawn_at`; and
+- `withdrawn`: `withdrawn_at`, no `disposed_at`.
+
+Every attention row has `record_version > 0`, starting at 1. A mutation uses a
+guarded update on expected version and legal source lifecycle and increments the
+version exactly once. A zero-row update returns either
+`stale_attention_record` or `attention_state_conflict` from an explicit reread;
+the service does not parse SQLite error text.
+
+Every revision has `citation_version > 0`, starting at 1. A transaction that
+changes any citation triple or refreshes a cited snapshot requires the expected
+version, increments it once, and recomputes the citation hash. A no-op does not
+increment it. Stale citation writers receive `stale_citation_set`.
+
+The common abandoned-spec guard applies to creation, answer, disposition, edit,
+withdrawal, supersession, cite, and uncite. The service checks transport-derived
+`actor.kind`; it never compares the active conversation with creation
+provenance.
+
+### Physical persistence
+
+Migration `0034-native-sdd-attention-citations` rebuilds the authoritative Q/A
+tables and adds revision citation authority.
+
+`spec_questions` retains identity, spec, number, display attachment, text,
+creation provenance, answer fields, and timestamps, and adds:
+
+```text
+record_version  INTEGER NOT NULL DEFAULT 1 CHECK (record_version > 0)
+status          open | answered | withdrawn
+withdrawn_at    TEXT NULL
+```
+
+`spec_assumptions` retains the existing identity and content fields and adds:
+
+```text
+record_version                 INTEGER NOT NULL DEFAULT 1 CHECK (record_version > 0)
+disposition                    proposed | confirmed | rejected | deferred | withdrawn
+withdrawn_at                   TEXT NULL
+supersedes_assumption_id       TEXT NULL
+supersession_operation_id      TEXT NULL
+supersession_request_hash      TEXT NULL
+```
+
+Constraints enforce same-spec predecessor ownership through a composite foreign
+key, `id != supersedes_assumption_id`, one successor per predecessor, one
+non-null operation id per spec, paired operation id/request hash, and operation
+metadata only on successor rows. Service admission permits a predecessor only
+when it is disposed, has no successor, belongs to the same spec, and predates
+the successor; cycles are therefore unrepresentable.
+
+`spec_revisions` adds:
+
+```text
+citation_contract_version  INTEGER NOT NULL CHECK (citation_contract_version IN (1, 2))
+citation_version           INTEGER NOT NULL CHECK (citation_version > 0)
+citation_hash              TEXT NOT NULL
+```
+
+`spec_revision_assumption_citations` has:
+
+```text
+revision_id              TEXT NOT NULL
+spec_id                  TEXT NOT NULL
+element_id               TEXT NOT NULL
+assumption_id            TEXT NOT NULL
+assumption_snapshot_json TEXT NOT NULL
+created_at               TEXT NOT NULL
+updated_at               TEXT NOT NULL
+
+PRIMARY KEY (revision_id, element_id, assumption_id)
+```
+
+Composite foreign keys prove revision/spec and assumption/spec ownership;
+`(revision_id, element_id)` references the revision's element-version set. A
+citation trigger additionally proves the durable element belongs to the same
+spec. Indexes support revision→assumption and assumption→revision reads.
+Database triggers refuse citation insert/update/delete and citation metadata
+changes when the owning revision is not `draft`. Service and repository checks
+remain the typed-refusal layer; triggers are the corruption backstop.
+
+Each citation snapshot strictly parses:
+
+```ts
+{
+  schemaVersion: 1;
+  captureKind: "native" | "legacy_backfill";
+  capturedAt: string;
+  assumptionId: string;
+  number: number;
+  recordVersion: number;
+  text: string;
+  elementId: string | null;
+  proposedBy: ActorProvenance;
+  disposition: "proposed" | "confirmed" | "rejected" | "deferred" | "withdrawn";
+  disposedAt: string | null;
+  withdrawnAt: string | null;
+  supersedesAssumptionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+`supersededBy` is derived from the successor row and deliberately absent from
+the frozen premise snapshot.
+
+### Citation integrity and revision behavior
+
+Canonical citation order is `(elementId, assumptionId)`. The citation hash is:
+
+```ts
+sha256(stableStringify({
+  citationContractVersion,
+  citations: sortedCitations.map(({ elementId, assumptionId, snapshot }) => ({
+    elementId,
+    assumptionId,
+    snapshot,
+  })),
+}));
+```
+
+Revision integrity is the tuple `(content_hash,
+citation_contract_version, citation_hash)`. `content_hash` keeps its existing
+meaning. Proposal, approval, import, export, and verification validate the
+whole tuple.
+
+Revision paths use one central draft-fork/citation primitive:
+
+| Path | Citation rule |
+|---|---|
+| New empty draft | Contract 2, empty set, version 1, deterministic empty hash |
+| Ordinary fork or amendment | Copy base triples and exact snapshots atomically; target contract 2 |
+| Request Changes | Copy the withdrawn proposal's exact citations |
+| Attached assumption created in a draft | Create record and citation in one transaction |
+| Spec-level assumption | Create no citation |
+| Born-approved import | Materialize and verify citations in an unobservable draft inside the import transaction, then finalize before commit |
+| Draft element removal | Remove that element's citations in the same edit receipt |
+| Element reintroduction | Restore no citation implicitly |
+| Proposal | Verify content and citation hashes, then freeze both |
+
+Editing cited assumption text refreshes every current-draft snapshot in the same
+transaction. Withdrawing an assumption removes its current-draft citations in
+the same transaction. If frozen history cites the record, a writable amendment
+must already exist; frozen snapshots never change.
+
+The first human disposition refreshes current-draft citation snapshots under
+citation CAS. A frozen citation with no writable amendment returns
+`amendment_required`. A second terminal act returns
+`attention_state_conflict`.
+
+Proposed, confirmed, and deferred assumptions may gain a citation. Rejected,
+withdrawn, and superseded assumptions may only lose citations or be superseded.
+`cite` and `uncite` require the named revision to be the current draft and prove
+same-spec ownership and subject membership.
+
+Supersession requires predecessor record version, draft citation version, a
+reason, successor text/attachment, exact clear-or-replace citations, and an
+operation id. One transaction creates the successor, removes predecessor draft
+citations, creates successor citations, increments predecessor and citation
+versions, appends both record events plus the citation event, and queues bounded
+invalidation after commit. The canonical request hash covers payload,
+predecessor, and draft. Same operation id plus same hash returns the existing
+successor with `idempotentReplay: true`; different input returns
+`idempotency_conflict`; a different operation against an already-superseded
+predecessor names the successor in `attention_state_conflict`.
+
+### Diff, lint, approval applicability, export, and verification
+
+`SpecRevisionSnapshot` gains sorted `assumptionCitations` plus citation
+contract/version/hash. `toLintSnapshot` consumes only frozen citation rows.
+Rejected cited premises retain their sign-off-blocking finding based on the
+snapshot lifecycle.
+
+Semantic diff emits deterministic citation added, removed, moved (remove plus
+add), snapshot-changed, and contract-boundary entries. It names stable handles
+and before/after lifecycle without consulting the mutable current row. A
+citation-only amendment is never unchanged.
+
+Approval fingerprints gain `citationContractVersion` and a citation subhash for
+the subject's covered elements. Requirement approval includes its nested
+criteria; decision approval includes its own citations; revision sign-off binds
+the full citation hash. Citation add/remove/refresh invalidates affected item
+approvals and sign-off while unrelated items may carry.
+
+Existing frozen revisions become contract 1 (`legacy_element_only`), whose
+backfilled hash is cutover integrity rather than a claim of citation-aware human
+review. Existing drafts and every new revision, including born-approved import,
+use contract 2. Contract-1 element approval carries to the first contract-2
+amendment only when content is unchanged and neither side has citations;
+otherwise it is pending with reason `legacy approval did not fingerprint
+assumption citations`. Revision sign-off never carries. Import settlement
+remains distinct from human approval.
+
+The canonical bundle format is bumped and carries complete versioned Q/A rows,
+sorted revision citation rows and strict snapshots, citation integrity metadata,
+and only the two typed Q/A audit event families in durable event-id order.
+Verification recomputes element payload hashes, content hash, citation hash,
+same-spec relations, revision membership, lifecycle constraints, supersession
+uniqueness, and event payload schemas. Older bundle format is refused.
+
+### Repository and service boundaries
+
+`SpecsRepo.transaction` owns every multi-row transaction. Generic mutation
+upserts are retired in favor of invariant-bearing operations:
+
+```ts
+updateOpenQuestion(input): CasOutcome<SpecQuestionRow>
+updateProposedAssumption(input): CasOutcome<SpecAssumptionRow>
+answerOpenQuestion(input): CasOutcome<SpecQuestionRow>
+disposeProposedAssumption(input): CasOutcome<SpecAssumptionRow>
+insertAssumptionSuccessor(input): IdempotentSupersessionOutcome
+readRevisionCitations(revisionId): SpecAssumptionCitation[]
+replaceAssumptionDraftCitations(input): CitationCasOutcome
+mutateDraftCitation(input): CitationCasOutcome
+```
+
+Repository outcomes distinguish stale version, illegal lifecycle, uniqueness
+conflict, and success. Identity, provenance, creation fields, and terminal human
+results are absent from update inputs.
+
+`ReviewService` exposes `editAttentionRecord`, `withdrawAttentionRecord`,
+`supersedeAssumption`, `citeAssumption`, `unciteAssumption`, plus the existing
+create, answer, and dispose operations with actor, abandoned-spec, record CAS,
+and citation CAS guards. Row mutation, citation mutation, audit append, and
+revision version/hash update commit or roll back together. SSE invalidation
+publishes only after commit.
+
+Typed refusal additions are:
+
+| Code | Recovery |
+|---|---|
+| `authoring_agent_required` | Run from an authenticated authoring conversation |
+| `stale_attention_record` | Re-read the named `Qn`/`An` and reconsider |
+| `stale_citation_set` | Re-read current-draft citations and reconsider |
+| `attention_state_conflict` | Read current lifecycle/lineage and use the named legal capability |
+| `idempotency_conflict` | Retry the original payload or allocate a new operation id |
+
+Existing `amendment_required`, `not_found`, and `validation` keep their meanings.
+Every refusal names the mechanism and exact next command or human act.
+
+### Audit, projections, and operational logging
+
+`spec-review-record-mutated` version 1 is a strict record-kind union carrying
+stable identity, operation (`opened | proposed | imported | edited | answered |
+disposed | withdrawn | superseded`), active flag, required reason where
+applicable, optional successor id, and strict before/after audit snapshots.
+`before` is null only for creation/import. Supersession appends one predecessor
+and one successor event.
+
+`spec-assumption-citations-mutated` version 1 carries revision id, citation
+version/hash before and after, and sorted added/removed/refreshed triples.
+`spec-attention-changed` remains bounded SSE invalidation, not audit truth.
+Pre-cutover records get no fabricated audit events; detail exposes null last
+mutation and History states that typed coverage begins at cutover.
+
+Public projections are explicit:
+
+- current: every row except withdrawn records and superseded predecessors;
+- active attention: current open questions plus current proposed assumptions;
+- record history: withdrawn records plus superseded predecessors.
+
+Answered questions and disposed assumptions remain current facts. Detail,
+handle lookup, History, and export retain all rows. Status, Needs You, and badge
+counts use active attention only. Sign-off consumes the server lint finding and
+never treats active attention as a blanket blocker.
+
+Operational events use the existing `specs.review` and `state-store.specs`
+loggers with stable names. Fields are limited to trace context, ids, operation,
+versions, counts, outcome/refusal code, and duration. Question, assumption,
+answer, and reason bodies never enter operational logs or default receipts.
+
+### Routes and agent surface
+
+Read routes and `cctl spec get <slug>/<Qn|An>` expose record version, lifecycle,
+derived state, creation/latest mutation provenance, lineage, current draft
+identity and citation integrity, exact current-draft triples for assumptions,
+and server-derived human capability.
+
+The agent command family is:
+
+```text
+cctl spec attention edit <slug> <Qn|An> --file <update.json> --if-version <n> [--if-citation-version <n>]
+cctl spec attention withdraw <slug> <Qn|An> --reason-file <reason.md> --if-version <n> [--if-citation-version <n>]
+cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>
+cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>
+cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>
+```
+
+Edit payloads are strict question/assumption unions with at least one mutable
+field. Assumption attachment change requires `citationIntent`; cited text change
+requires citation version. The CLI read-preflights missing tokens, while the
+server remains authoritative. Receipts include handle/id, record version before
+and after, lifecycle, draft revision, citation version before and after,
+added/removed/refreshed subject handles, and idempotent replay status without
+echoing content bodies. Help presents creation first, then correction; it never
+recommends human rejection or premature design.
+
+### Spec Studio attention register
+
+The Questions & Assumptions view is a review register, not an agent authoring
+surface. Desktop renders Questions and Assumptions as parallel current columns;
+`max-md` stacks Questions, Assumptions, then Record history. Current order is
+open-before-answered questions and proposed-before-disposed assumptions, number
+within each bucket. History is newest terminal/supersession event first with
+handle tiebreak. Empty history renders a visible zero label without an empty
+interactive disclosure.
+
+Each `<article id={handle} tabIndex={-1}>` has a real heading, lifecycle
+`StatusChip`, display attachment, optional `Blocks sign-off`,
+`CopyReferenceControl`, feature-local backend-aware actor attribution with
+`<time dateTime>`, optional unique conversation link, separate citation and
+lineage lines, and honest unknown/import provenance. Creation and latest
+mutation attribution remain distinguishable.
+
+Only an open question renders `MultilineInput` plus one versioned Record answer
+act. Only a proposed assumption with allowed `humanCapability` renders the
+existing `RadioGroup` for Confirm/Reject/Defer plus one explicit terminal act.
+Frozen-citation amendment refusal replaces controls with an amber explanation
+and Review link. Terminal and superseded records have no controls.
+
+Mutation Promises own card-local pending/error/success state. Errors use
+`role="alert"` and retain draft input; success uses `role="status"` and restores
+focus to the record. Historical deep links open controlled `Collapsible` before
+the existing focus observer mounts/focuses the target.
+
+Review consumes the selected revision's frozen citation snapshots. History
+consumes typed durable events and gains an Attention records filter. The
+Overview rail removes disposition mutations and remains a read-only status
+summary with its existing Open link. Existing phase stepper and staged-authoring
+lock remain unchanged.
+
+Implementation reuses `Button`, `StatusChip`, `RadioGroup`, `Collapsible`,
+`MultilineInput`, `CopyReferenceControl`, and `CompactMarkdown`; it adds no
+dependency, token, global CSS, or shared primitive. Focused and aggregate
+Storybook stories cover current, disposed, withdrawn, superseded, legacy/import,
+abandoned, pending/failure, history/deep-link, revision-pinned, requirements
+stage, and 390-pixel states. Play tests cover radio keyboard use, multiline
+submission, draft retention, disclosure Enter/Space, deep-link focus, and
+terminal-control absence; every story treats axe findings as errors. Browser
+verification at actual 200% zoom proves no horizontal scroll and 44-by-44 CSS
+pixel targets.
+
+### Migration and cutover
+
+`0034-native-sdd-attention-citations` bumps `KNOWN_SCHEMA_VERSION` 10 → 11.
+Deployment must stop every older Command Center process sharing the database
+before migration and must not restart one afterward; the barrier cannot evict an
+already-open connection.
+
+Within the existing migration/write lock, the migration:
+
+1. publishes the version-11 barrier;
+2. preflights Q/A lifecycle contradictions, provenance, attachments, handles,
+   and timestamps with bounded offending ids and no silent normalization;
+3. rebuilds both authoritative floor DDL tables and migration-time tables with
+   lifecycle and lineage constraints;
+4. adds revision citation metadata, the citation table, and indexes without the
+   frozen-state triggers yet;
+5. backfills record version 1;
+6. materializes the old inferred citations exactly — every attached assumption
+   present in drafts, and the existing proposal-time cutoff for frozen revisions
+   — as `legacy_backfill` snapshots;
+7. assigns contract 1 to frozen revisions and contract 2 to drafts, then writes
+   citation version 1 and hashes without changing content hashes;
+8. verifies every row, relation, lifecycle, content hash, citation hash, and
+   contract assignment;
+9. installs frozen citation-row and metadata triggers, verifies each with a
+   rolled-back refusal probe, and commits the migration ledger entry; and
+10. admits only version-11 processes, followed by a post-open integrity scan.
+
+The migration is idempotent before and after completion. Any preflight or
+verification failure rolls back database mutation and retains a bounded barrier
+diagnostic. Fresh and in-memory databases receive the same schema through the
+authoritative synchronous floor.
+
+### Verification strategy
+
+All behavioral work follows red-green-refactor with one explicit focused test
+file per loop through `cctl validate run test --wait -- <file>`. The acceptance
+matrix spans schema and migration constraints, repository CAS/races,
+service-level authority and rollback, every revision path, semantic diff,
+approval applicability, lint, export/verify, CLI contracts, route projections,
+Spec Studio partition/actions/focus, Storybook play/axe, and live scratch-database
+round trips including restart and old-binary refusal.
+
+## Amendment — agent operability: current-only reads, sections, prose lint, propose coordination, and the approval ledger (ticket command-center#87)
+
+Amendment approved 2026-08-24. This is the formal design for the agent
+operability slice specified by
+`docs/designs/ticket87-agent-operability-slice-technical-design.md`, which is
+authoritative for implementation detail. This amendment is **additive
+application vocabulary only**: no table, column, trigger, backfill, migration,
+or `KNOWN_SCHEMA_VERSION` change. Requirements 2.17, 6.10–6.11, 9.14,
+10.12–10.13, and 24.19–24.21 are the governing acceptance criteria.
+
+### Decisions
+
+1. Ordinary reads are current-only. The read path's silent newest-first
+   historical fallback in `getSpecElementGET` is deleted as an answer path;
+   the scan survives only to name the last containing revision in a refusal.
+2. Sections stay handle-less. The narrow read addresses them by stable element
+   id with an explicit `handle: null`; no section handle grammar is added.
+3. Parentage is stable identity, stated at the refusal surface instead of
+   silently enforced by field-dropping.
+4. Proposal success is never repriced by request-filing or notification
+   problems. Durable request and notification are separate facts with separate
+   typed outcomes.
+5. The approval ledger derives from the one approval-applicability authority
+   (`approvalApplies` + `elementApprovalBasis`); no receipt recomputes carry.
+6. Rationale lives where the wrong inference happens: refusals and receipts
+   first, help second, the skill third, never the happy path.
+
+### Read contract (6.10, 6.11)
+
+`spec get` resolution order stays Q/A short-circuit → explicit revision target
+→ current snapshot. A handle found only historically returns HTTP 404 with the
+route-level read code `historical_only` (the `invalid_handle` precedent — read
+misses are notFound envelopes, not 409 refusal envelopes), details carrying
+`handle`, `elementId`, last/current revision id and number, and an instruction
+naming the exact recovery: `cctl spec get <slug>/<handle> --revision <n>`.
+
+`--revision <n|id>` joins `spec get` and `spec section get`: an all-digits
+value is a revision number (new `?revisionNumber=` query param), anything else
+a revision id (existing `?revisionId=`); unknown values keep the existing 404.
+`observedRevision` reference-state production, Studio pinned reads, and
+`edit-context` are unchanged.
+
+`cctl spec section get <slug> --id <element-id> [--revision <n|id>]` is a new
+GET route (`sections/[element]`) and dedicated `specSectionViewSchema` —
+spec/slug identity, `kind: "section"`, literal `handle: null`, element id,
+role, title, body, element version, position, and the revision block. A
+non-section id is refused naming the element's real kind and handle with the
+`spec get` recovery. The `spec show` outline replaces its hardcoded
+`sections: {returned: 0}` disclosure with a bounded
+`{elementId, role, title, position, elementVersion}` list whose disclosure
+`next` names the section read. `explainInvalidElementHandle` additionally
+names the section command when the supplied value looks like an element id.
+
+### Prose reference lint (9.14)
+
+`9.6.dangling-handle` gains prose findings from a new masking scanner in
+`src/lib/specs/prose-references.ts` — masks fenced code, inline code spans,
+autolinks, raw URLs, and link destinations, then matches bare and
+slug-qualified handle tokens at lexical boundaries with the canonical
+`handles.ts` grammar (criterion before requirement). It renders nothing and
+parses no inline structure, staying inside the `markdown-boundary` contract;
+no new dependency. Scanned fields per kind are an exhaustive switch: section
+title/body, requirement statement, criterion text and validation note,
+decision title/chosenApproach/reason/rejected-alternative reasons, task
+title/instructions (`rejectedAlternatives[].label` is plain text, excluded).
+
+Resolution: current handle or existing Q/A record number (any lifecycle) →
+pass; known-but-absent element handle → removed finding; otherwise unknown
+finding. Same rule id, same `blocks_propose` severity, deduplicated per
+`(element, field, token)`; sections name their element id as the source per
+the existing convention. Same-slug qualified tokens validate as bare; foreign
+slugs are recognized and skipped. The false-positive boundary — sentence-final
+punctuation, embedded-word exclusions (`PR1`, `R10x`, `T3sting`, `FOO-R3`),
+version strings (`v1.2`, `R1.2.3`), URL contexts, and the deliberate
+non-masking of four-space indented code — is pinned by the extractor's test
+matrix, not by a reviewed regex. Import parity is intended: a bundle with
+dangling prose now fails import's lint.
+
+### Parent immutability (2.17)
+
+`refusalCodeSchema` gains `parent_immutable`. Both the single upsert and the
+batch item path refuse, before any write, an update naming a parent different
+from the stored parent (including null against non-null); omitting or echoing
+the stored parent stays legal. Details carry element id, handle, and both
+parents; the instruction names the replacement path (create under the desired
+parent, `cctl spec remove` the old element). `stagedParentElementId` and the
+structurally parent-less repository update schema remain as defense in depth;
+the `historical_element_id` reintroduction reason `parent_changed` is
+unchanged. The `element-batch` offline schema document states the rule.
+
+### Propose coordination and the guarded notifier (10.12, 10.13)
+
+After the propose transaction commits, a coordinator step in the same request
+files one gate-scoped `requestApproval` (no subject) per authoring gate the
+proposal left pending — normally exactly the concluding gate; more only when a
+cumulative propose leaves earlier consulted stages pending. Identity and
+idempotency are the existing durable-event rules
+(`specId, revisionId, gate, scope: "gate"`, retirement events, stable
+attention id). Typed per-gate outcomes on the propose receipt:
+
+```text
+filed | already-filed | not-needed | delivery-uncertain | not-filed
+```
+
+`delivery-uncertain` = durable request committed, notifier threw (Needs You
+row uncertain); `not-filed` = filing failed before durable commit. Neither
+fails the proposal. Inside `requestApproval`, the post-commit notifier call —
+today unguarded at the call site, so a notifier throw converts a committed
+request into a 5xx — is wrapped; `approvalRequestsClosed` gets the same guard;
+the `request-approval` receipt gains the same typed `deliveryOutcome` and its
+help is reframed as the recovery verb. When every pending gate reports
+filed/already-filed, the propose receipt's `next` stops naming
+`request-approval` and `actsNext` is `human`.
+
+### Approval ledger (24.19)
+
+`approvalHeld` widens to return the matched approval row; the projection
+classifies each subject beside the existing pending/import-carried split:
+`carried` (valid ancestor-revision approval, fingerprint intact),
+`current-revision`, `import-settled` (never labelled an approval),
+`combined-act` (collapsed gate with recorded sign-off/absorbed approval), or
+`pending`. Collapsed gates before sign-off report subjects as governed by the
+combined sign-off with sign-off outstanding; Notify/Off gates report their
+policy admission at gate level. Rendering lives in the shared
+`projection-text.ts` helpers — `spec status` (which today prints
+`importCarriedApprovals` nowhere), the propose receipt, `withdraw-proposal`,
+and Request Changes (including its `reviewFeedback` message) — with the
+mechanism line `carry rule: unchanged subject content under the same
+applicable gate` and, on reopen receipts, `approvals on unchanged subjects
+carry into the reopened draft; only edited subjects need re-approval`.
+`pendingBlockLines` stops dropping `importCarriedSubjects`. JSON carries the
+ledger as named fields; existing `pendingApprovals`/`importCarriedApprovals`
+keep their exact meaning.
+
+### Refusal rationale (24.20)
+
+`refusalSchema` gains optional `rationale: string`; the CLI renders it as a
+`why:` line between unmet conditions and instruction, and `why:` joins the
+enumerated guidance prefixes with its arch test. Populated in this slice:
+both `stage_blocked` producer branches (later-stage:
+*requirements settle before design so solution choices cannot shape the
+contract around themselves*; plan-in-evergreen: *delivery plans bind a settled
+design; authoring one earlier would shape the design around its own
+execution*), `human_act_required`, the withdraw-after-engagement refusal
+(its existing principle sentence moves into the typed field), and
+`parent_immutable`. Never rendered on success paths.
+
+### Surfaces and guidance (24.21)
+
+Standard CLI obligations per the registry checklist: help entries with flags
+and related edges, nested `spec section` dispatch group on the `spec
+attention` precedent, named envelopes plus the offline `read-envelopes`
+document, session-env and project-route-wiring classification, regenerated
+cc-cli SKILL.md blocks and its hand-authored read-disclosure prose. The
+native-sdd-authoring skill (and packaged copies) gains: the current-only read
+contract with `--revision` and `spec section get`; the `spec attention` verbs
+(absent since that slice shipped); propose auto-filing with request-approval
+as recovery; the one-line carry mechanism; batch-local element-id
+cross-referencing; the masked-code escape for literal handle tokens; and the
+designed-versus-incidental friction taxonomy. `.claude/commands/spec.md`
+mirrors the read and propose changes.
+
+### Verification strategy
+
+Red-green-refactor per focused file. Coverage spans: route/CLI tests for the
+deleted fallback, `historical_only`, both selector forms, and the section
+read; the extractor's boundary matrix and lint field coverage; parent-refusal
+admission in single and batch paths; coordinator outcome tests including
+notifier-throw, filing-failure, replay, and fast-path/absorbed not-needed;
+ledger classification and rendering tests across status and all three
+receipts; rationale rendering and prefix arch tests; help/skill contract
+sweeps and packaging tests; then changed-scope validation and a live pass —
+scratch spec, renumber-induced prose dangle caught by lint, narrow section
+read, refused re-parent, propose with auto-filed Needs You row, ledger on
+withdraw-and-reopen, and a forced notifier failure recovered by
+`request-approval`.

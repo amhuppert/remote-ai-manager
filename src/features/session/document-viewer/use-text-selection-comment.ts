@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState, type RefObject } from "react";
 import type { CommentAnchor } from "@/lib/document-comments/schemas";
-import { deriveAnchorFromSelection } from "./anchor-dom";
+import { deriveAnchorFromSelection, findCommentBlock } from "./anchor-dom";
 
 /** A pending single-block selection: its derived anchor + viewport rect. */
 export interface SelectionDraft {
   anchor: CommentAnchor;
   /** Selection bounding rect (viewport coordinates) for popover placement. */
   rect: DOMRect;
+  /** Runtime source block used to restore keyboard focus after composition. */
+  block: HTMLElement;
 }
 
 function sameAnchor(a: CommentAnchor, b: CommentAnchor): boolean {
@@ -63,9 +65,16 @@ export function useTextSelectionComment(
         setDraft(null);
         return;
       }
+      const block = findCommentBlock(contentEl, anchor);
+      if (block === null) {
+        setDraft(null);
+        return;
+      }
       const rect = range.getBoundingClientRect();
       setDraft((prev) =>
-        prev && sameAnchor(prev.anchor, anchor) ? prev : { anchor, rect },
+        prev && sameAnchor(prev.anchor, anchor)
+          ? prev
+          : { anchor, rect, block },
       );
     };
 

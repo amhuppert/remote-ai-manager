@@ -18,7 +18,9 @@ import {
   resolvedGateDialSchema,
   specAliasSchema,
   specApprovalRowSchema,
+  specAssumptionCitationSchema,
   specAssumptionDispositionSchema,
+  specAttentionRecordPresentationSchema,
   specAuthoringStageSchema,
   specCommentResolutionSchema,
   specCriterionDispositionRowSchema,
@@ -33,6 +35,8 @@ import {
   specGatePresetSchema,
   specGateSchema,
   specImportedCountsSchema,
+  specAssumptionCitationsMutatedEventPayloadSchema,
+  specReviewRecordMutatedEventPayloadSchema,
   requirementPrioritySchema,
   requirementRiskSchema,
   specProofVerdictRowSchema,
@@ -43,6 +47,7 @@ import {
   specRevisionStateSchema,
   specSchema,
   specWaiverRowSchema,
+  sectionRoleSchema,
 } from "./schemas";
 
 /**
@@ -63,7 +68,7 @@ export type SpecRevisionElementView = z.infer<
 >;
 
 export const specRevisionSnapshotViewSchema = specRevisionSnapshotSchema
-  .extend({ elements: z.array(specRevisionElementViewSchema) })
+  .safeExtend({ elements: z.array(specRevisionElementViewSchema) })
   .strict();
 export type SpecRevisionSnapshotView = z.infer<
   typeof specRevisionSnapshotViewSchema
@@ -162,6 +167,42 @@ const importCarriedApprovalSchema = z
     gate: specGateSchema,
     subject: z.string(),
     elementId: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * Both sides of what the consulted authoring gates ask for: every subject with
+ * the act that settles it, and the counts a surface reads out. `carried` and
+ * `currentRevision` are human approvals; `importSettled` and `combinedAct` are
+ * emphatically not, which is why they are counted apart rather than summed
+ * into an "approved" total on the wire.
+ */
+export const approvalLedgerSchema = z
+  .object({
+    subjects: z.array(
+      z
+        .object({
+          gate: specGateSchema,
+          subject: z.string().min(1),
+          elementId: z.string().min(1).nullable(),
+          classification: z.enum([
+            "carried",
+            "current_revision",
+            "import_settled",
+            "combined_act",
+            "pending",
+          ]),
+        })
+        .strict(),
+    ),
+    satisfied: z.number().int().nonnegative(),
+    carried: z.number().int().nonnegative(),
+    currentRevision: z.number().int().nonnegative(),
+    importSettled: z.number().int().nonnegative(),
+    combinedAct: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    governedBy: z.enum(["per_subject", "combined_sign_off"]),
+    carryRule: z.string().min(1),
   })
   .strict();
 
@@ -385,10 +426,51 @@ export type RemainingAuthoringSequence = z.infer<
 >;
 
 /**
+ * What the propose coordinator did about the gate-scoped ask each consulted
+ * authoring gate owes a human.
+ *
+ * `not-filed` is kept apart from `delivery-uncertain` because only the latter
+ * leaves a durable request behind: folding a filing failure into it would
+ * point a caller at a request that does not exist, and `request-approval`
+ * would then be filing rather than repairing.
+ */
+export const specProposeApprovalRequestOutcomeSchema = z.enum([
+  "filed",
+  "already-filed",
+  "not-needed",
+  "delivery-uncertain",
+  "not-filed",
+]);
+export type SpecProposeApprovalRequestOutcome = z.infer<
+  typeof specProposeApprovalRequestOutcomeSchema
+>;
+
+const specProposeApprovalRequestSchema = z
+  .object({
+    /** Only authoring gates: a propose speaks for no execution-scoped gate. */
+    gate: specAuthoringStageSchema,
+    outcome: specProposeApprovalRequestOutcomeSchema,
+    /**
+     * The durable request's stable attention id: an ask filed while one is
+     * already open under the same (specId, revisionId, gate, scope: 'gate')
+     * reports that open request's id unchanged. Request Changes retires the
+     * reviewed revision's asks and opens a new revision, so the propose that
+     * follows it reports a new id. Null whenever no request exists.
+     */
+    attentionId: z.string().min(1).nullable(),
+  })
+  .strict();
+export type SpecProposeApprovalRequest = z.infer<
+  typeof specProposeApprovalRequestSchema
+>;
+
+/**
  * The propose receipt. `pendingBlock` and `nextAction` are the server's
  * post-transition projection — computed after approval invalidation and after
  * the Notify/Off policy admissions — so a caller renders what still blocks the
  * revision instead of inferring a gate from its authoring stage.
+ * `approvalRequests` is what the server already did about that block, so the
+ * caller never re-files an ask the propose has just filed.
  */
 export const specProposeResultViewSchema = z
   .object({
@@ -397,6 +479,12 @@ export const specProposeResultViewSchema = z
     absorbedSignOff: z.boolean(),
     pendingBlock: authoringPendingBlockSchema.nullable().default(null),
     nextAction: authoringNextActionSchema.nullable().default(null),
+    /**
+     * Required rather than defaulted: an empty default reads as "nothing is
+     * settled", which is the exact misreading the ledger exists to end.
+     */
+    approvalLedger: approvalLedgerSchema,
+    approvalRequests: z.array(specProposeApprovalRequestSchema),
   })
   .strict();
 export type SpecProposeResultView = z.infer<typeof specProposeResultViewSchema>;
@@ -613,6 +701,12 @@ export const specStatusViewSchema = z
      * must subtract these first.
      */
     importCarriedApprovals: z.array(importCarriedApprovalSchema).default([]),
+    /**
+     * The two-sided account of the same subjects. Required rather than
+     * defaulted: an empty default reads as "nothing is settled", which is the
+     * exact misreading the ledger exists to end.
+     */
+    approvalLedger: approvalLedgerSchema,
     /** The gates this revision's transition consults, in gate order. */
     applicableGates: z.array(specGateSchema).default([]),
     revisionSignOff: revisionSignOffSchema.nullable().default(null),
@@ -629,6 +723,8 @@ export const specStatusViewSchema = z
       .object({
         count: z.number().int().positive(),
         blockingCount: z.number().int().nonnegative(),
+        openThreadCount: z.number().int().positive(),
+        openBlockingThreadCount: z.number().int().nonnegative(),
         subjects: z.array(z.string().min(1)),
       })
       .strict()
@@ -663,10 +759,13 @@ export const specQuestionViewSchema = z
     handle: z.string().min(1),
     elementId: z.string().nullable(),
     text: z.string(),
+    recordVersion: z.number().int().positive(),
     status: specQuestionStatusSchema,
     answer: z.string().nullable(),
     answeredAt: z.string().nullable(),
+    withdrawnAt: z.string().nullable(),
     provenance: actorProvenanceSchema.nullable(),
+    presentation: specAttentionRecordPresentationSchema,
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
@@ -680,9 +779,27 @@ export const specAssumptionViewSchema = z
     handle: z.string().min(1),
     elementId: z.string().nullable(),
     text: z.string(),
+    recordVersion: z.number().int().positive(),
     disposition: specAssumptionDispositionSchema,
     disposedAt: z.string().nullable(),
+    withdrawnAt: z.string().nullable(),
     proposedBy: actorProvenanceSchema.nullable(),
+    supersedesHandle: z.string().min(1).nullable(),
+    supersededByHandle: z.string().min(1).nullable(),
+    currentDraftCitations: z
+      .object({
+        revisionId: z.string().min(1),
+        citationVersion: z.number().int().positive(),
+        citationHash: z.string().length(64),
+        citations: z.array(
+          specAssumptionCitationSchema
+            .extend({ elementHandle: z.string().min(1).nullable() })
+            .strict(),
+        ),
+      })
+      .strict()
+      .nullable(),
+    presentation: specAttentionRecordPresentationSchema,
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
@@ -796,6 +913,31 @@ export const specOutlineTaskViewSchema = specOutlineElementIdentitySchema
   .strict();
 
 /**
+ * A section in the outline. It shares no shape with the addressable identity:
+ * sections have no handle, and their title is authored rather than summarized
+ * from a longer body, so a caller can quote it as-is.
+ */
+export const specOutlineSectionViewSchema = z
+  .object({
+    elementId: z.string().min(1),
+    role: sectionRoleSchema,
+    title: z.string(),
+    position: z.number().int().nonnegative(),
+    elementVersion: z.number().int().positive(),
+  })
+  .strict();
+
+/**
+ * The sections disclosure carries its own `next` because the collection's
+ * reveal is a different command from the outline-wide one: sections are read
+ * one at a time by element id, not by re-rendering the whole spec.
+ */
+const specOutlineSectionsDisclosureSchema =
+  specOutlineCollectionDisclosureSchema
+    .extend({ next: z.string().min(1) })
+    .strict();
+
+/**
  * The bounded current-revision read used by agent-facing `spec show`.
  * Requirements own their criteria in this projection even though snapshot
  * storage remains globally ordered. Every omitted collection reports how to
@@ -834,13 +976,14 @@ export const specShowOutlineViewSchema = z
     requirements: z.array(specOutlineRequirementViewSchema),
     decisions: z.array(specOutlineDecisionViewSchema),
     tasks: z.array(specOutlineTaskViewSchema),
+    sections: z.array(specOutlineSectionViewSchema),
     disclosure: z
       .object({
         requirements: specOutlineCollectionDisclosureSchema,
         criteria: specOutlineCollectionDisclosureSchema,
         decisions: specOutlineCollectionDisclosureSchema,
         tasks: specOutlineCollectionDisclosureSchema,
-        sections: specOutlineCollectionDisclosureSchema,
+        sections: specOutlineSectionsDisclosureSchema,
         next: z.string().min(1),
       })
       .strict(),
@@ -936,9 +1079,35 @@ export const specCommentsViewSchema = z
     comments: z.array(specCommentViewSchema),
     openCount: z.number().int().nonnegative(),
     openBlockingCount: z.number().int().nonnegative(),
+    openThreadCount: z.number().int().nonnegative(),
+    openBlockingThreadCount: z.number().int().nonnegative(),
   })
   .strict();
 export type SpecCommentsView = z.infer<typeof specCommentsViewSchema>;
+
+export const specAttentionAuditEventViewSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("record"),
+      eventId: z.number().int().positive(),
+      occurredAt: z.string().min(1),
+      actor: actorProvenanceSchema.nullable(),
+      payload: specReviewRecordMutatedEventPayloadSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("citations"),
+      eventId: z.number().int().positive(),
+      occurredAt: z.string().min(1),
+      actor: actorProvenanceSchema.nullable(),
+      payload: specAssumptionCitationsMutatedEventPayloadSchema,
+    })
+    .strict(),
+]);
+export type SpecAttentionAuditEventView = z.infer<
+  typeof specAttentionAuditEventViewSchema
+>;
 
 export const specDetailViewSchema = z
   .object({
@@ -988,6 +1157,9 @@ export const specDetailViewSchema = z
     linkedTickets: z.array(linkedTicketReadThroughSchema),
     questions: z.array(specQuestionViewSchema).default([]),
     assumptions: z.array(specAssumptionViewSchema).default([]),
+    attentionAuditEvents: z
+      .array(specAttentionAuditEventViewSchema)
+      .default([]),
     /**
      * Null for every spec authored here, and null for an imported spec whose
      * event payload is unreadable — this carries the import's *detail*, not the
@@ -1115,6 +1287,38 @@ export type SpecAssumptionElementView = z.infer<
   typeof specAssumptionElementViewSchema
 >;
 
+/**
+ * The narrow section read. Sections are the only content with no handle
+ * (`elementHandleInSnapshot` refuses to derive one), so `handle` is a literal
+ * null rather than an echoed element id: a consumer cannot mistake this read's
+ * address for something `cctl spec get` would accept. `elementVersion` is
+ * carried because the read-modify-write loop needs it — a section read that
+ * omitted it would leave the next `spec draft` guessing at its CAS token.
+ */
+export const specSectionViewSchema = z
+  .object({
+    specId: z.string().min(1),
+    slug: z.string().min(1),
+    kind: z.literal("section"),
+    handle: z.null(),
+    elementId: z.string().min(1),
+    role: sectionRoleSchema,
+    title: z.string(),
+    body: z.string(),
+    elementVersion: z.number().int().positive(),
+    position: z.number().int().nonnegative(),
+    revision: z
+      .object({
+        id: z.string().min(1),
+        number: z.number().int().positive(),
+        state: specRevisionStateSchema,
+        authoringStage: specAuthoringStageSchema,
+      })
+      .strict(),
+  })
+  .strict();
+export type SpecSectionView = z.infer<typeof specSectionViewSchema>;
+
 // The elements/<handle> endpoint serves R/R.x/D/T revision elements and the
 // revision-independent Q/A records through one address space, so every
 // bare-handle consumer (CLI, chips, deep links) parses this union.
@@ -1133,6 +1337,7 @@ export const specLintViewSchema = z
     findings: z.array(lintFindingSchema),
   })
   .strict();
+export type SpecLintView = z.infer<typeof specLintViewSchema>;
 
 const specSearchResultSchema = z
   .object({
@@ -1168,8 +1373,10 @@ export type CanonicalSpecBundle = z.infer<typeof canonicalSpecBundleSchema>;
 const integrityMismatchSchema = z
   .object({
     revisionId: z.string().min(1),
-    expectedContentHash: z.string(),
+    expectedContentHash: z.string().nullable(),
     actualContentHash: z.string(),
+    expectedCitationHash: z.string().length(64),
+    actualCitationHash: z.string().length(64),
     mismatchedElementIds: z.array(z.string().min(1)),
   })
   .strict();

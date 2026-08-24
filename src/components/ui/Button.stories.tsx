@@ -22,7 +22,7 @@ const variants: ButtonVariant[] = [
   "success",
   "ghost",
 ];
-const sizes: ButtonSize[] = ["md", "sm"];
+const sizes: ButtonSize[] = ["md", "sm", "touch"];
 
 /** Every variant × size — the parity matrix later waves verify against. */
 export const Matrix: Story = {

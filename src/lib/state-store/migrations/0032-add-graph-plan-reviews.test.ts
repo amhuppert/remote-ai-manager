@@ -100,6 +100,6 @@ describe("0032-add-graph-plan-reviews", () => {
         .prepare("SELECT version FROM schema_migrations ORDER BY version")
         .all(),
     ).toEqual(before);
-    expect(KNOWN_SCHEMA_VERSION).toBe(10);
+    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 });

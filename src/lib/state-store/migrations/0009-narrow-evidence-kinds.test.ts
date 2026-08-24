@@ -706,6 +706,7 @@ describe("0009-narrow-evidence-kinds", () => {
       specs: createSpecsRepo(db, createWriteQueue()),
       review: createSpecReviewRepo(db),
       delivery: createSpecDeliveryRepo(db),
+      events: createSpecEventsRepo(db),
       async observeLinkedWorkflow() {
         return { kind: "missing" as const };
       },
