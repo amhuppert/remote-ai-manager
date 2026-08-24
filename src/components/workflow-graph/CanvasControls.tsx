@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { Panel, useReactFlow, useViewport } from "@xyflow/react";
 
 import { cn } from "@/lib/ui/cn";
+import { CANVAS_FIT_VIEW_PADDING } from "@/lib/workflow-graph/lane-band-geometry";
 import { ZoomInGlyph, ZoomOutGlyph } from "./canvas-glyphs";
 
 /**
@@ -32,8 +33,10 @@ export default function CanvasControls(): React.JSX.Element {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
 
+  // The same padding the canvases mount with, so the Fit button reproduces the
+  // initial framing rather than a second opinion about it.
   const handleFit = useCallback(() => {
-    void fitView({ padding: 0.2 });
+    void fitView({ padding: CANVAS_FIT_VIEW_PADDING });
   }, [fitView]);
 
   return (

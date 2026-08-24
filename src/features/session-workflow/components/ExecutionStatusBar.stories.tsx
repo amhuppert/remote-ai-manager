@@ -119,6 +119,50 @@ export const RunningWithWaitingGates: Story = {
   },
 };
 
+/**
+ * Every context has finished and the run is merging lane worktrees into the
+ * session. The bar used to read "No context is running" for this entire window
+ * — true, and a poor description of a run that is actively merging and may be
+ * running validation commands inside those worktrees. It names the merge, and
+ * lists only the lanes the join has not carried yet.
+ */
+export const MergeInFlight: Story = {
+  args: {
+    execution: (() => {
+      const base = createWorkflowExecution({ status: "running" });
+      return {
+        ...base,
+        status: "running" as const,
+        activeContextIds: [],
+        contextStates: Object.fromEntries(
+          Object.entries(base.contextStates).map(([contextId, state]) => [
+            contextId,
+            { ...state, status: "completed" as const, laneId: "delivery" },
+          ]),
+        ),
+        joins: {
+          "join-publish": {
+            joinId: "join-publish",
+            kind: "final_publish" as const,
+            contextId: null,
+            targetLaneId: "__session__",
+            sourceLaneIds: ["delivery", "docs"],
+            mergedSourceLaneIds: ["docs"],
+            validationDebtSourceLaneIds: [],
+            status: "running" as const,
+            errorMessage: null,
+            conflicts: null,
+            conflictGuidance: null,
+            createdAt: "2026-08-24T14:00:00.000Z",
+            updatedAt: "2026-08-24T14:00:00.000Z",
+            completedAt: null,
+          },
+        },
+      };
+    })(),
+  },
+};
+
 export const Paused: Story = {
   args: {
     execution: createWorkflowExecution({ status: "paused" }),

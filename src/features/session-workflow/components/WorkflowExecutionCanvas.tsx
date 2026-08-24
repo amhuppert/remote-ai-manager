@@ -24,6 +24,7 @@ import {
   deriveExecutionLaneBands,
   deriveExecutionPublication,
 } from "@/lib/workflow-graph/lane-bands";
+import { CANVAS_FIT_VIEW_PADDING } from "@/lib/workflow-graph/lane-band-geometry";
 import {
   deriveNodes,
   deriveEdges,
@@ -215,7 +216,7 @@ export default function WorkflowExecutionCanvas({
         onSelectionChange={handleSelectionChange}
         defaultEdgeOptions={{ type: "contextEdge" }}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING }}
         minZoom={0.3}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
