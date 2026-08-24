@@ -56,6 +56,10 @@ const STATUS_EDGE: Record<NodeStatusKey, string> = {
     "[--node-color:var(--cyan)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)]",
   merging:
     "[--node-color:var(--green)] border-[var(--cc-green-a32)] [border-top-color:var(--cc-green-a60)]",
+  // Green, because the work succeeded — but dashed, the card's existing mark for
+  // "waiting on something else", because it has not reached the session yet.
+  "awaiting-merge":
+    "[--node-color:var(--green)] border-dashed border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]",
   completed:
     "[--node-color:var(--green)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)]",
   published:
@@ -88,6 +92,8 @@ const STATUS_PILL: Record<NodeStatusKey, string> = {
   "advisory-response":
     "border-dashed border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a08)] text-cyan",
   merging: "border-[var(--cc-green-a35)] bg-[var(--cc-green-a10)] text-green",
+  "awaiting-merge":
+    "border-dashed border-[var(--cc-green-border)] bg-transparent text-green",
   completed:
     "border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green",
   published:
@@ -121,6 +127,7 @@ const PROGRESS_FILL: Record<NodeStatusKey, string> = {
   validating: "bg-amber",
   "advisory-response": "bg-cyan",
   merging: "bg-green",
+  "awaiting-merge": "bg-green",
   completed: "bg-green",
   published: "bg-green",
   halted: "bg-red",
@@ -193,6 +200,10 @@ function getFooterText(
       return waitState.targetBranch
         ? `Merging → ${waitState.targetBranch}`
         : "Merging";
+    case "awaiting-merge":
+      return waitState.targetLaneName
+        ? `Waiting to merge → ${waitState.targetLaneName}`
+        : "Waiting to merge";
     case "completed":
       return "Completed";
     case "published":
@@ -213,6 +224,7 @@ function getProgressPercent(
   if (mode === "builder" || totalCount === 0) return 0;
   if (
     statusKey === "merging" ||
+    statusKey === "awaiting-merge" ||
     statusKey === "completed" ||
     statusKey === "published"
   ) {

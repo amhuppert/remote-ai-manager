@@ -60,6 +60,9 @@ export interface LaneBandJoin {
   targetLaneId: string;
   sourceLaneIds: readonly string[];
   status: string;
+  /** Per-source progress, for a publish reporting how far through it is. */
+  mergedSourceLaneIds?: readonly string[];
+  conflicts?: { files: readonly string[] } | null;
 }
 
 export interface LaneBandExecutionLane {
@@ -261,10 +264,22 @@ function joinLabels(
  * session", "publication target"); the pill states the relation itself, and
  * there is exactly one of it because a run has exactly one final publish.
  */
+/**
+ * Which of the four things the publish is doing. The view maps this to a tone;
+ * keeping it a domain word rather than a colour is what lets the pill and the
+ * band headers stay in one vocabulary.
+ */
+export type LaneBandPublicationState =
+  | "pending"
+  | "running"
+  | "published"
+  | "failed";
+
 export interface LaneBandPublication {
   readonly sourceLaneNames: string[];
   readonly targetLaneName: string;
-  /** What the publish is waiting on, or what already happened. */
+  readonly state: LaneBandPublicationState;
+  /** What the publish is waiting on, how far it has got, or what happened. */
   readonly condition: string;
   /** The pill's single line — phrased once here, never re-assembled by a view. */
   readonly label: string;
@@ -274,6 +289,50 @@ function laneNameList(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+function publicationState(status: string): LaneBandPublicationState {
+  if (status === "succeeded") return "published";
+  if (status === "running") return "running";
+  if (status === "failed" || status === "conflicts") return "failed";
+  return "pending";
+}
+
+/**
+ * What the pill says after the arrow.
+ *
+ * `pending` is the only state that may name the precondition. Saying "after
+ * every member completes" once the publish is running describes a condition
+ * that has already been met, which reads as work that has not started — the
+ * defect this vocabulary exists to fix.
+ */
+function publicationCondition(
+  state: LaneBandPublicationState,
+  publish: LaneBandJoin,
+): string {
+  switch (state) {
+    case "published":
+      return "published";
+    case "running": {
+      const merged = publish.mergedSourceLaneIds?.length ?? 0;
+      return `${merged} of ${publish.sourceLaneIds.length} lanes merged`;
+    }
+    case "failed": {
+      const files = publish.conflicts?.files.length ?? 0;
+      return files > 0
+        ? `${files} conflicted file${files === 1 ? "" : "s"}`
+        : "merge failed";
+    }
+    case "pending":
+      return "after every member completes";
+  }
+}
+
+const PUBLICATION_PREFIX: Record<LaneBandPublicationState, string> = {
+  pending: "publication",
+  running: "publishing",
+  published: "publication",
+  failed: "publish failed",
+};
 
 export function deriveExecutionPublication(
   execution: LaneBandExecution,
@@ -286,16 +345,15 @@ export function deriveExecutionPublication(
 
   const sourceLaneNames = publish.sourceLaneIds.map(laneDisplayName);
   const targetLaneName = laneDisplayName(publish.targetLaneId);
-  const condition =
-    publish.status === "succeeded"
-      ? "published"
-      : "after every member completes";
+  const state = publicationState(publish.status);
+  const condition = publicationCondition(state, publish);
 
   return {
     sourceLaneNames,
     targetLaneName,
+    state,
     condition,
-    label: `publication: ${laneNameList(sourceLaneNames)} → ${targetLaneName}, ${condition}`,
+    label: `${PUBLICATION_PREFIX[state]}: ${laneNameList(sourceLaneNames)} → ${targetLaneName}, ${condition}`,
   };
 }
 

@@ -421,8 +421,74 @@ describe("deriveExecutionPublication — the E1 publication pill", () => {
     expect(deriveExecutionPublication(fixtureExecution())).toEqual({
       sourceLaneNames: ["delivery"],
       targetLaneName: "session",
+      state: "pending",
       condition: "after every member completes",
       label: "publication: delivery → session, after every member completes",
+    });
+  });
+
+  /**
+   * The reported defect, at the run level: while the publish was actually
+   * running the pill still read "after every member completes" — a precondition
+   * that had already been met, which is indistinguishable from not started.
+   */
+  it("reports lane-by-lane progress while the publish is running", () => {
+    const execution = fixtureExecution({
+      joins: {
+        "join-publish": {
+          kind: "final_publish",
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery", "candidate-rules"],
+          mergedSourceLaneIds: ["candidate-rules"],
+          status: "running",
+        },
+      },
+    });
+
+    expect(deriveExecutionPublication(execution)).toMatchObject({
+      state: "running",
+      condition: "1 of 2 lanes merged",
+      label:
+        "publishing: delivery and candidate-rules → session, 1 of 2 lanes merged",
+    });
+  });
+
+  it("states a failed publish as a failure, with the conflict count it carries", () => {
+    const execution = fixtureExecution({
+      joins: {
+        "join-publish": {
+          kind: "final_publish",
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          status: "conflicts",
+          conflicts: { files: ["src/a.ts", "src/b.ts", "src/c.ts"] },
+        },
+      },
+    });
+
+    expect(deriveExecutionPublication(execution)).toMatchObject({
+      state: "failed",
+      condition: "3 conflicted files",
+      label: "publish failed: delivery → session, 3 conflicted files",
+    });
+  });
+
+  it("states a failure with no recorded conflicts without inventing a count", () => {
+    const execution = fixtureExecution({
+      joins: {
+        "join-publish": {
+          kind: "final_publish",
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          status: "failed",
+        },
+      },
+    });
+
+    expect(deriveExecutionPublication(execution)).toMatchObject({
+      state: "failed",
+      condition: "merge failed",
+      label: "publish failed: delivery → session, merge failed",
     });
   });
 

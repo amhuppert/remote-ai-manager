@@ -22,6 +22,7 @@ export type NodeStatusKey =
   | "validating"
   | "advisory-response"
   | "merging"
+  | "awaiting-merge"
   | "completed"
   | "published"
   | "halted"
@@ -47,6 +48,9 @@ const STATUS_LABEL: Record<NodeStatusKey, string> = {
   validating: "Validating",
   "advisory-response": "Advisory Response",
   merging: "Merging",
+  // Where the work IS, not what it is waiting for: the lane worktree holds it
+  // until a join carries it into the session.
+  "awaiting-merge": "In lane",
   completed: "Completed",
   published: "Published",
   halted: "Halted",
@@ -67,6 +71,7 @@ function statusKeyFor(waitState: ContextWaitState | undefined): NodeStatusKey {
     case "validating":
     case "advisory-response":
     case "merging":
+    case "awaiting-merge":
     case "completed":
     case "published":
     case "halted":
@@ -97,6 +102,7 @@ const STATUS_TONE: Record<NodeStatusKey, StatusChipTone> = {
   validating: "amber",
   "advisory-response": "cyan",
   merging: "green",
+  "awaiting-merge": "green",
   completed: "green",
   published: "green",
   halted: "red",
