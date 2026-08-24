@@ -477,6 +477,11 @@
       "detail": "context_merge:running"
     },
     {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-right",
+      "detail": "merged"
+    },
+    {
       "kind": "graph-workflow-join-status",
       "subject": "loop-job-1",
       "detail": "context_merge:running"
@@ -582,14 +587,29 @@
       "detail": "final_publish:running"
     },
     {
-      "kind": "graph-workflow-join-status",
-      "subject": "loop-job-2",
-      "detail": "final_publish:running"
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-converge",
+      "detail": "merged"
     },
     {
       "kind": "graph-workflow-join-status",
       "subject": "loop-job-2",
       "detail": "final_publish:running"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-left",
+      "detail": "merged"
+    },
+    {
+      "kind": "graph-workflow-join-status",
+      "subject": "loop-job-2",
+      "detail": "final_publish:running"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-root",
+      "detail": "merged"
     },
     {
       "kind": "graph-workflow-join-status",

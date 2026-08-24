@@ -1,4 +1,5 @@
 import { buildInitialContextState } from "@/lib/workflow-graph/execution-state";
+import { openLoopLanes } from "@/lib/workflow-graph/lane-lifecycle";
 import type {
   GraphWorkflowContextSkipReason,
   GraphWorkflowExecution,
@@ -18,6 +19,12 @@ import type {
  * and the persisted lifecycle snapshot (`machineSnapshot`). Every writer in
  * the graph engine routes through this module — the grep assertion in
  * context-transitions.test.ts enforces that no direct write exists elsewhere.
+ *
+ * LANE status rides here too, for the one transition that is not a fact about
+ * the lane on its own: a source lane retires to `merged` in the same write that
+ * records its work against the consuming join, so the lane record and
+ * `mergedSourceLaneIds` can never disagree. Lane CREATION stays with the
+ * scheduler that provisions the worktree.
  *
  * EXECUTION-level status stays hand-rolled in workflow-manager by design
  * (decision D4: the post-RCA design is already single-owner and carries
@@ -318,6 +325,38 @@ export interface ApplyJoinProgressPatch {
   conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"];
 }
 
+/**
+ * Retire a source lane whose work has just landed in a join target.
+ *
+ * `mergedSourceLaneIds` is the moment the lane's commits become the target's,
+ * so the lane record moves in the SAME write: a durable `status` that only ever
+ * said `active` cannot be told apart from a lane still holding unmerged work,
+ * which is what left every read surface reporting a delivered lane as live.
+ *
+ * Two lanes are deliberately spared. A lane an unconcluded loop may still write
+ * another pass to keeps `active` — its body swaps work through an intra-loop
+ * join every pass, and the same freeze-at-intent exception governs
+ * `laneClosure`. And the session lane is the run's delivery target rather than
+ * a lane that gets delivered away; it stays live even when a join reads from
+ * it.
+ */
+function mergeSourceLane(
+  execution: GraphWorkflowExecution,
+  laneId: string | undefined,
+  now: string,
+): GraphWorkflowExecution["executionLanes"] {
+  if (laneId === undefined) return execution.executionLanes;
+  const lane = execution.executionLanes[laneId];
+  if (!lane || lane.kind === "session" || lane.status === "merged") {
+    return execution.executionLanes;
+  }
+  if (openLoopLanes(execution).all.has(laneId)) return execution.executionLanes;
+  return {
+    ...execution.executionLanes,
+    [laneId]: { ...lane, status: "merged", updatedAt: now },
+  };
+}
+
 export function applyJoinProgress(
   execution: GraphWorkflowExecution,
   joinId: string,
@@ -364,6 +403,11 @@ export function applyJoinProgress(
 
   return {
     ...execution,
+    executionLanes: mergeSourceLane(
+      execution,
+      patch.addMergedSourceLaneId,
+      now,
+    ),
     joins: {
       ...execution.joins,
       [joinId]: {
