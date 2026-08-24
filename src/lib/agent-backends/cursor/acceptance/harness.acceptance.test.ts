@@ -7,7 +7,6 @@ import {
   runCursorStaticPreflight,
 } from "../preflight";
 import {
-  CURSOR_SDK_EVIDENCED_HOSTS,
   CURSOR_SDK_PACKAGE,
   CURSOR_SDK_PINNED_VERSION,
   cursorSdkPlatformPackageForHost,
@@ -67,7 +66,7 @@ describe("acceptance harness", () => {
     });
   });
 
-  it("runs on the pinned Linux/Node/SDK/model baseline", async () => {
+  it("runs on the pinned Node/SDK/model baseline", async () => {
     const result = await runCursorStaticPreflight(
       { model: CURSOR_DEFAULT_MODEL },
       {
@@ -81,11 +80,10 @@ describe("acceptance harness", () => {
 
     if (!result.ok) {
       throw new Error(
-        `the acceptance host is not the pinned baseline: ${result.code} — ${result.message}`,
+        `the acceptance runtime is unavailable: ${result.code} — ${result.message}`,
       );
     }
     const host = `${process.platform}-${process.arch}`;
-    expect(Object.keys(CURSOR_SDK_EVIDENCED_HOSTS)).toContain(host);
     expect(result.diagnostics).toMatchObject({
       sdkPackage: CURSOR_SDK_PACKAGE,
       installedSdkVersion: CURSOR_SDK_PINNED_VERSION,

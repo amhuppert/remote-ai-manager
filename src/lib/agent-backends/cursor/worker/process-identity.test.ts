@@ -6,9 +6,9 @@ import {
 } from "./process-identity";
 
 /**
- * Reads the real `/proc` entries these functions exist to read. A fake
- * filesystem would prove only that the parser matches the fake's idea of the
- * format, and the format is exactly what is at stake.
+ * Reads the real operating-system process table these functions exist to read.
+ * A fake source would prove only that the parser matches the fake's idea of
+ * the format, and the format is exactly what is at stake.
  */
 
 describe("process identity", () => {
@@ -19,7 +19,7 @@ describe("process identity", () => {
     expect(readProcessGroupIdSync(process.pid)).toBe(pgid);
   });
 
-  it("reads a stable start time that differs between processes", async () => {
+  it("reads a stable start marker for each live process", async () => {
     const mine = await readProcessStartTicks(process.pid);
     expect(mine).not.toBeNull();
     expect(await readProcessStartTicks(process.pid)).toBe(mine);
@@ -35,7 +35,10 @@ describe("process identity", () => {
       expect(child.pid).toBeDefined();
       const theirs = await readProcessStartTicks(child.pid ?? 0);
       expect(theirs).not.toBeNull();
-      expect(theirs).not.toBe(mine);
+      // Darwin's `lstart` has one-second precision, so different PIDs may have
+      // the same marker. The ownership guard compares repeated reads for one
+      // PID, making stability—not cross-PID uniqueness—the required contract.
+      expect(await readProcessStartTicks(child.pid ?? 0)).toBe(theirs);
     } finally {
       child.kill("SIGKILL");
     }

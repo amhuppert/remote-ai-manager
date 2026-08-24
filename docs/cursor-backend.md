@@ -38,21 +38,24 @@ The Cursor SDK is **pinned exactly**, and preflight fails closed on any other co
 
 | | Required |
 | --- | --- |
-| Host | an evidenced host (table below) |
+| Host | a matching `@cursor/sdk-${platform}-${arch}` package is installed |
 | Node (the process running the worker) | **>= 22.13** |
 | `@cursor/sdk` | **1.0.28** exactly — no range |
 | The host's platform package | **1.0.28**, matching the SDK version |
 
-Support is **per host and earned by evidence**: the capability claims for cancellation, MCP, and image input rest on fixtures captured by the live acceptance matrix, so a host enters this table only with a green `cursor-acceptance` run of its own — the Linux evidence does not carry over to macOS.
+Machine eligibility follows the SDK installation, not an acceptance-evidence allowlist. Command Center derives the platform package from Node's `process.platform` and `process.arch`; for example, Apple Silicon uses `@cursor/sdk-darwin-arm64`. The pinned SDK currently publishes these packages:
 
-| Evidenced host | Platform package |
+| Host | Platform package |
 | --- | --- |
-| Linux x86_64 (`linux-x64`) | `@cursor/sdk-linux-x64` |
+| macOS Apple Silicon (`darwin-arm64`) | `@cursor/sdk-darwin-arm64` |
 | macOS x86_64 (`darwin-x64`) | `@cursor/sdk-darwin-x64` |
+| Linux ARM64 (`linux-arm64`) | `@cursor/sdk-linux-arm64` |
+| Linux x86_64 (`linux-x64`) | `@cursor/sdk-linux-x64` |
+| Windows x86_64 (`win32-x64`) | `@cursor/sdk-win32-x64` |
 
-Before a worker starts, Command Center verifies that the SDK's Node entry points, its lazily-loaded chunks, its declared dependencies, the host's platform package, and that package's executable native assets (ripgrep, the sandbox helper, the tree-sitter bindings, with their execute bits intact) are all present. A missing or mismatched artifact, an unevidenced host, or a Node version below the floor produces a bounded error that names the mismatch — Cursor is simply unavailable on that host, and nothing auto-updates or silently substitutes a different build.
+Before a worker starts, Command Center verifies that the SDK's Node entry points, its lazily-loaded chunks, its declared dependencies, the derived platform package, and that package's executable native assets (ripgrep, the sandbox helper, the tree-sitter bindings, with their execute bits intact) are all present. A missing or mismatched artifact or a Node version below the floor produces a bounded error that names the mismatch — Cursor is simply unavailable on that machine, and nothing auto-updates or silently substitutes a different build.
 
-The pin is not conservatism for its own sake: a different SDK build, platform package, or host would need renewed evidence before the capability claims carry over.
+The SDK and platform-package version pins remain strict so their package layouts and runtime contracts stay aligned.
 
 Deployments that ship Command Center must package these dependencies rather than expect a runtime install.
 
@@ -179,7 +182,7 @@ The authenticated live matrix is a registered validation command:
 cctl validate run cursor-acceptance
 ```
 
-It exercises the real SDK against a real account on the pinned baseline: preflight taxonomy, two-conversation isolation, streaming and file operations, continuation and invalid-reference handling, model selection, inline MCP, generation/shell/MCP cancellation with host process scans, worker lifetime bounds, image input, usage, and a closing credential sweep.
+It exercises the real SDK against a real account on the machine where it runs: preflight taxonomy, two-conversation isolation, streaming and file operations, continuation and invalid-reference handling, model selection, inline MCP, generation/shell/MCP cancellation with host process scans, worker lifetime bounds, image input, usage, and a closing credential sweep. Its evidence is diagnostic and does not admit or deny machines in production.
 
 Without `CURSOR_API_KEY` it exits **78** and reports `verdict=blocked reason=credential_absent` — deliberately neither pass nor fail, so a blocked run can never be mistaken for green evidence. It is not part of any merge gate, because a merge gate must not depend on a credential.
 
@@ -192,7 +195,7 @@ The observed results and the explicit limits of that evidence are recorded in [`
 | Symptom | Cause |
 | --- | --- |
 | Every Cursor turn fails immediately with a credential error | `CURSOR_API_KEY` is absent, empty, or rejected in the **server's** environment. A logged-in Cursor CLI does not count. Restart the server after setting it. |
-| Cursor turns fail with a runtime/platform error | The host is not an evidenced one (Linux x86_64 or macOS x86_64), the worker's Node is below 22.13, or `@cursor/sdk` / the host's platform package at 1.0.28 is missing, mismatched, or incompletely extracted. |
+| Cursor turns fail with a runtime/platform error | The worker's Node is below 22.13, or `@cursor/sdk` / the derived `@cursor/sdk-${platform}-${arch}` package at 1.0.28 is missing, mismatched, or incompletely extracted. |
 | The model selector shows a model in red | The configured model is not in this project's `agentBackends.cursor.supportedModels`. Pick a listed one or add it to `CommandCenter.json`. |
 | A turn is refused before it starts, naming a model | Same cause, arriving from the API — the model was validated before any worker or billable turn. |
 | Cursor is greyed out in a picker | That surface needs the task facet or Collaboration Mode; hover the option for the reason. |

@@ -55,8 +55,8 @@ export function findMarkedPids(marker: string): readonly number[] {
 
 /**
  * Identity of a live process, read back from the OS via `ps` — the one
- * process-identity reader both evidenced hosts share, since darwin has no
- * `/proc`. Null once the process is gone, which is exactly the transition
+ * process-identity reader Linux and Darwin share, since Darwin has no `/proc`.
+ * Null once the process is gone, which is exactly the transition
  * these cases measure.
  */
 export function readMarkedProcess(pid: number): MarkedProcess | null {

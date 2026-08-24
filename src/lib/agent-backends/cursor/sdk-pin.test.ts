@@ -7,8 +7,6 @@ import { describe, expect, it } from "vitest";
 import {
   CURSOR_SDK_DECLARED_DEPENDENCIES,
   CURSOR_SDK_ENTRY_FILES,
-  CURSOR_SDK_EVIDENCED_HOSTS,
-  CURSOR_SDK_EXECUTABLE_ASSETS,
   CURSOR_SDK_LAZY_CHUNK_DIR,
   CURSOR_SDK_LAZY_CHUNK_PATTERN,
   CURSOR_SDK_MIN_LAZY_CHUNKS,
@@ -16,6 +14,7 @@ import {
   CURSOR_SDK_MIN_NODE_MINOR,
   CURSOR_SDK_PACKAGE,
   CURSOR_SDK_PINNED_VERSION,
+  cursorSdkExecutableAssetsForHost,
   cursorSdkPlatformPackageForHost,
 } from "./sdk-pin";
 
@@ -24,8 +23,7 @@ const nodeModules = path.join(repositoryRoot, "node_modules");
 
 /**
  * Package managers install only the platform package that matches the host, so
- * installed-layout checks can speak for this host alone; the pins in
- * package.json are asserted for every evidenced host regardless.
+ * installed-layout checks can speak for this host alone.
  */
 const hostPlatformPackage = cursorSdkPlatformPackageForHost(
   `${process.platform}-${process.arch}`,
@@ -44,6 +42,15 @@ function dependencyRange(manifest: unknown, name: string): string {
   return typeof range === "string" ? range : "";
 }
 
+function optionalDependencyEntries(manifest: unknown): [string, string][] {
+  if (manifest === null || typeof manifest !== "object") return [];
+  const dependencies = Reflect.get(manifest, "optionalDependencies");
+  if (dependencies === null || typeof dependencies !== "object") return [];
+  return Object.entries(dependencies).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string",
+  );
+}
+
 function manifestVersion(manifest: unknown): string {
   if (manifest === null || typeof manifest !== "object") return "";
   const version = Reflect.get(manifest, "version");
@@ -51,24 +58,28 @@ function manifestVersion(manifest: unknown): string {
 }
 
 describe("cursor SDK pin", () => {
-  it("pins the SDK and every evidenced platform package exactly, with no version range", async () => {
+  it("pins the SDK and its published platform packages exactly", async () => {
     const manifest = await readJson(path.join(repositoryRoot, "package.json"));
+    const installedSdk = await readJson(
+      path.join(nodeModules, CURSOR_SDK_PACKAGE, "package.json"),
+    );
 
     expect(dependencyRange(manifest, CURSOR_SDK_PACKAGE)).toBe(
       CURSOR_SDK_PINNED_VERSION,
     );
-    for (const platformPackage of Object.values(CURSOR_SDK_EVIDENCED_HOSTS)) {
-      expect(dependencyRange(manifest, platformPackage)).toBe(
-        CURSOR_SDK_PINNED_VERSION,
-      );
+    const platformPackages = optionalDependencyEntries(installedSdk).filter(
+      ([name]) => name.startsWith("@cursor/sdk-"),
+    );
+    expect(platformPackages.length).toBeGreaterThan(0);
+    for (const [platformPackage, version] of platformPackages) {
+      expect(version).toBe(CURSOR_SDK_PINNED_VERSION);
+      const host = platformPackage.slice("@cursor/sdk-".length);
+      expect(cursorSdkPlatformPackageForHost(host)).toBe(platformPackage);
     }
   });
 
   it("resolves the SDK and this host's platform package at the pinned version", async () => {
-    for (const packageName of [
-      CURSOR_SDK_PACKAGE,
-      ...(hostPlatformPackage === null ? [] : [hostPlatformPackage]),
-    ]) {
+    for (const packageName of [CURSOR_SDK_PACKAGE, hostPlatformPackage]) {
       const installed = await readJson(
         path.join(nodeModules, packageName, "package.json"),
       );
@@ -135,10 +146,11 @@ describe("cursor SDK pin", () => {
   });
 
   it("ships executable platform assets for this host", async () => {
-    if (hostPlatformPackage === null) return;
     const platformRoot = path.join(nodeModules, hostPlatformPackage);
 
-    for (const asset of CURSOR_SDK_EXECUTABLE_ASSETS) {
+    for (const asset of cursorSdkExecutableAssetsForHost(
+      `${process.platform}-${process.arch}`,
+    )) {
       const assetPath = path.join(platformRoot, asset);
       await expect(access(assetPath, constants.X_OK)).resolves.toBeUndefined();
       expect((await stat(assetPath)).size).toBeGreaterThan(0);

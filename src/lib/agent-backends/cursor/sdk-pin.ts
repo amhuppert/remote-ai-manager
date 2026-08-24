@@ -1,10 +1,8 @@
 /**
- * The exact `@cursor/sdk` baseline this adapter is evidenced against (spec D3).
+ * The exact `@cursor/sdk` baseline this adapter runs against (spec D3).
  * Every value here is a pin, not a floor: preflight fails closed rather than
- * accepting a different SDK build, platform package, or host combination,
- * because capability claims (cancellation teardown, MCP, image input) rest on
- * fixtures captured against this exact build. Nothing in the adapter updates
- * these values at runtime.
+ * accepting a different SDK build or platform package. Nothing in the adapter
+ * updates these values at runtime.
  */
 
 export const CURSOR_SDK_PACKAGE = "@cursor/sdk";
@@ -20,26 +18,9 @@ export const CURSOR_SDK_PINNED_VERSION = "1.0.28";
 export const CURSOR_SDK_MIN_NODE_MAJOR = 22;
 export const CURSOR_SDK_MIN_NODE_MINOR = 13;
 
-/**
- * The host combinations with captured acceptance evidence, each mapped to the
- * platform package that carries its native assets. A host outside this map has
- * no captured evidence and no installed platform package, so preflight names
- * the mismatch instead of guessing a platform package id. A new entry is
- * earned by a green `cursor-acceptance` run on that host, never by assuming
- * the Linux evidence carries over.
- */
-export const CURSOR_SDK_EVIDENCED_HOSTS = {
-  "linux-x64": "@cursor/sdk-linux-x64",
-  "darwin-x64": "@cursor/sdk-darwin-x64",
-} as const;
-
-export type CursorSdkEvidencedHost = keyof typeof CURSOR_SDK_EVIDENCED_HOSTS;
-
-/** The platform package evidenced for `host`, or null for an unevidenced host. */
-export function cursorSdkPlatformPackageForHost(host: string): string | null {
-  return Object.hasOwn(CURSOR_SDK_EVIDENCED_HOSTS, host)
-    ? CURSOR_SDK_EVIDENCED_HOSTS[host as CursorSdkEvidencedHost]
-    : null;
+/** The SDK names native packages directly from Node's platform and architecture. */
+export function cursorSdkPlatformPackageForHost(host: string): string {
+  return `@cursor/sdk-${host}`;
 }
 
 /** Normal Node entry points the SDK's `exports` map resolves for require/import. */
@@ -73,9 +54,24 @@ export const CURSOR_SDK_DECLARED_DEPENDENCIES = [
  * and carry the owner-execute bit; an extract that dropped the mode leaves the
  * SDK failing mid-turn.
  */
-export const CURSOR_SDK_EXECUTABLE_ASSETS = [
+const CURSOR_SDK_UNIX_EXECUTABLE_ASSETS = [
   "bin/rg",
   "bin/cursorsandbox",
   "vendor/tree-sitter/binding.node",
   "vendor/tree-sitter-bash/binding.node",
 ] as const;
+
+const CURSOR_SDK_WINDOWS_EXECUTABLE_ASSETS = [
+  "bin/rg.exe",
+  "bin/cursorsandbox.exe",
+  "vendor/tree-sitter/binding.node",
+  "vendor/tree-sitter-bash/binding.node",
+] as const;
+
+export function cursorSdkExecutableAssetsForHost(
+  host: string,
+): readonly string[] {
+  return host.startsWith("win32-")
+    ? CURSOR_SDK_WINDOWS_EXECUTABLE_ASSETS
+    : CURSOR_SDK_UNIX_EXECUTABLE_ASSETS;
+}

@@ -5,8 +5,6 @@ import path from "node:path";
 import {
   CURSOR_SDK_DECLARED_DEPENDENCIES,
   CURSOR_SDK_ENTRY_FILES,
-  CURSOR_SDK_EVIDENCED_HOSTS,
-  CURSOR_SDK_EXECUTABLE_ASSETS,
   CURSOR_SDK_LAZY_CHUNK_DIR,
   CURSOR_SDK_LAZY_CHUNK_PATTERN,
   CURSOR_SDK_MIN_LAZY_CHUNKS,
@@ -14,6 +12,7 @@ import {
   CURSOR_SDK_MIN_NODE_MINOR,
   CURSOR_SDK_PACKAGE,
   CURSOR_SDK_PINNED_VERSION,
+  cursorSdkExecutableAssetsForHost,
   cursorSdkPlatformPackageForHost,
 } from "./sdk-pin";
 
@@ -23,14 +22,12 @@ import {
  * credential through the SDK — only exists where the SDK runs and belongs to
  * the worker startup handshake.
  *
- * Every check fails closed and names the mismatch. Capability claims for this
- * backend (cancellation teardown, MCP, image input) rest on fixtures captured
- * against one exact SDK build on each evidenced host, so an unevidenced
- * combination is a refusal rather than a best-effort attempt.
+ * Every check fails closed and names the mismatch. Machine eligibility follows
+ * the installed SDK platform package rather than an acceptance-evidence
+ * allowlist.
  */
 
 export type CursorPreflightFailureCode =
-  | "host_unsupported"
   | "node_version_unsupported"
   | "sdk_package_missing"
   | "sdk_version_mismatch"
@@ -51,11 +48,9 @@ export interface CursorPreflightDiagnostics {
   sdkPackage: string;
   requiredSdkVersion: string;
   installedSdkVersion: string | null;
-  /** The host's evidenced platform package; null on an unevidenced host. */
-  platformPackage: string | null;
+  platformPackage: string;
   installedPlatformVersion: string | null;
   host: string;
-  evidencedHosts: readonly string[];
   nodeVersion: string | null;
   requiredNodeVersion: string;
   model: string;
@@ -99,10 +94,6 @@ export interface CursorStaticPreflightDeps {
 
 export const CURSOR_REQUIRED_NODE_VERSION = `>=${CURSOR_SDK_MIN_NODE_MAJOR}.${CURSOR_SDK_MIN_NODE_MINOR}`;
 
-const EVIDENCED_HOSTS: readonly string[] = Object.keys(
-  CURSOR_SDK_EVIDENCED_HOSTS,
-);
-
 /** Accepts both `v22.13.0` and `22.13.0`; anything else is unusable. */
 export function parseNodeVersion(
   version: string,
@@ -142,7 +133,6 @@ function diagnosticsFor(
     platformPackage: cursorSdkPlatformPackageForHost(host),
     installedPlatformVersion: probed.platformVersion,
     host,
-    evidencedHosts: EVIDENCED_HOSTS,
     nodeVersion,
     requiredNodeVersion: CURSOR_REQUIRED_NODE_VERSION,
     model,
@@ -167,17 +157,6 @@ export async function runCursorStaticPreflight(
     message,
     diagnostics: diagnosticsFor(input.model, host, nodeVersion, probed),
   });
-
-  // Host first: an unevidenced host has no installed platform package, so
-  // probing packages ahead of it would report a missing package instead of the
-  // cause.
-  if (platformPackage === null) {
-    return fail(
-      "host_unsupported",
-      `Cursor is evidenced only on ${EVIDENCED_HOSTS.join(", ")}; this host is ${host}.`,
-      null,
-    );
-  }
 
   const nodeVersion = await deps.workerNodeVersion();
   if (nodeVersion === null) {
@@ -262,7 +241,7 @@ export async function runCursorStaticPreflight(
     }
   }
 
-  for (const asset of CURSOR_SDK_EXECUTABLE_ASSETS) {
+  for (const asset of cursorSdkExecutableAssetsForHost(host)) {
     if (!(await deps.packages.fileExists(platformPackage, asset))) {
       return fail(
         "native_asset_missing",

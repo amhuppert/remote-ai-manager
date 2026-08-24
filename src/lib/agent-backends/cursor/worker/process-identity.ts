@@ -7,14 +7,14 @@ import { promisify } from "node:util";
  * Process identity beyond the pid (spec D9).
  *
  * A pid alone cannot own a signal: the kernel recycles pids, so a stored pid may
- * name an unrelated process by the time teardown escalates. A per-process start
- * marker makes the identity durable — a recycled pid always reads a later start
- * time — which is what the ownership guard compares before signalling anything.
+ * name an unrelated process by the time teardown escalates. Pairing the pid with
+ * its process start marker gives the ownership guard a durable identity to
+ * compare before signalling anything.
  *
- * One reader per evidenced host: linux reads `/proc/<pid>/stat`; darwin has no
- * `/proc`, so it asks `ps` (whose own source is the kernel's proc table). On
- * any other host every read is null, meaning "identity unverifiable", and
- * every caller treats that as a refusal rather than a fallback.
+ * Linux reads `/proc/<pid>/stat`; darwin has no `/proc`, so it asks `ps`
+ * (whose own source is the kernel's proc table). On any other host every read
+ * is null, meaning "identity unverifiable", and every caller treats that as a
+ * refusal rather than a fallback.
  */
 
 const execFileAsync = promisify(execFile);
@@ -94,8 +94,8 @@ export function readProcessGroupIdSync(pid: number | "self"): number | null {
 /**
  * A per-process start marker: boot-relative start ticks on linux (field 22),
  * the full start timestamp on darwin (`lstart`, stable across reads). Opaque
- * and only ever compared for equality — its units never matter, only that the
- * same process keeps the same value and a recycled pid does not.
+ * and only ever compared for equality on repeated reads of the same pid. Its
+ * units never matter, and markers belonging to different pids need not differ.
  */
 export async function readProcessStartTicks(
   pid: number,

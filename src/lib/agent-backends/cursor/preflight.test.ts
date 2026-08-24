@@ -13,20 +13,21 @@ import {
 import {
   CURSOR_SDK_DECLARED_DEPENDENCIES,
   CURSOR_SDK_ENTRY_FILES,
-  CURSOR_SDK_EVIDENCED_HOSTS,
-  CURSOR_SDK_EXECUTABLE_ASSETS,
   CURSOR_SDK_LAZY_CHUNK_DIR,
   CURSOR_SDK_MIN_LAZY_CHUNKS,
   CURSOR_SDK_PACKAGE,
   CURSOR_SDK_PINNED_VERSION,
+  cursorSdkExecutableAssetsForHost,
+  cursorSdkPlatformPackageForHost,
 } from "./sdk-pin";
 
 const API_KEY = "key_sentinel_do_not_leak";
 const MODEL = "composer-2.5";
 
-const LINUX_PLATFORM_PACKAGE = CURSOR_SDK_EVIDENCED_HOSTS["linux-x64"];
-const DARWIN_PLATFORM_PACKAGE = CURSOR_SDK_EVIDENCED_HOSTS["darwin-x64"];
-const EVIDENCED_HOSTS = Object.keys(CURSOR_SDK_EVIDENCED_HOSTS);
+const LINUX_PLATFORM_PACKAGE = cursorSdkPlatformPackageForHost("linux-x64");
+const DARWIN_PLATFORM_PACKAGE = cursorSdkPlatformPackageForHost("darwin-x64");
+const DARWIN_ARM_PLATFORM_PACKAGE =
+  cursorSdkPlatformPackageForHost("darwin-arm64");
 
 interface FakeInstall {
   versions: Map<string, string>;
@@ -45,6 +46,7 @@ interface FakeInstall {
  */
 function healthyInstall(
   platformPackage: string = LINUX_PLATFORM_PACKAGE,
+  host = "linux-x64",
 ): FakeInstall {
   const versions = new Map<string, string>([
     [CURSOR_SDK_PACKAGE, CURSOR_SDK_PINNED_VERSION],
@@ -59,7 +61,7 @@ function healthyInstall(
     files.add(`${CURSOR_SDK_PACKAGE}:${entry}`);
   }
   const executables = new Set<string>();
-  for (const asset of CURSOR_SDK_EXECUTABLE_ASSETS) {
+  for (const asset of cursorSdkExecutableAssetsForHost(host)) {
     files.add(`${platformPackage}:${asset}`);
     executables.add(`${platformPackage}:${asset}`);
   }
@@ -135,7 +137,6 @@ describe("cursor static preflight", () => {
       platformPackage: LINUX_PLATFORM_PACKAGE,
       installedPlatformVersion: CURSOR_SDK_PINNED_VERSION,
       host: "linux-x64",
-      evidencedHosts: EVIDENCED_HOSTS,
       nodeVersion: "v22.13.0",
       requiredNodeVersion: ">=22.13",
       model: MODEL,
@@ -154,6 +155,41 @@ describe("cursor static preflight", () => {
     expect(result.diagnostics.installedPlatformVersion).toBe(
       CURSOR_SDK_PINNED_VERSION,
     );
+  });
+
+  it("passes on darwin-arm64 when the SDK platform package is installed", async () => {
+    const result = await preflight(
+      healthyInstall(DARWIN_ARM_PLATFORM_PACKAGE),
+      {
+        host: { platform: "darwin", arch: "arm64" },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.host).toBe("darwin-arm64");
+    expect(result.diagnostics.platformPackage).toBe(
+      DARWIN_ARM_PLATFORM_PACKAGE,
+    );
+  });
+
+  it("uses installed platform packages without an evidence allowlist", async () => {
+    const hosts = [
+      { platform: "linux", arch: "arm64" },
+      { platform: "win32", arch: "x64" },
+      { platform: "freebsd", arch: "riscv64" },
+    ];
+
+    for (const host of hosts) {
+      const hostName = `${host.platform}-${host.arch}`;
+      const platformPackage = cursorSdkPlatformPackageForHost(hostName);
+      const result = await preflight(
+        healthyInstall(platformPackage, hostName),
+        { host },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.diagnostics.platformPackage).toBe(platformPackage);
+    }
   });
 
   it("selects the platform package by host, not by what happens to resolve", async () => {
@@ -200,24 +236,18 @@ describe("cursor static preflight", () => {
     expect(result.code).toBe("node_version_unsupported");
   });
 
-  it("fails closed on an unevidenced host, naming every evidenced one", async () => {
-    for (const host of [
-      { platform: "darwin", arch: "arm64" },
-      { platform: "linux", arch: "arm64" },
-      { platform: "win32", arch: "x64" },
-    ]) {
-      const result = await preflight(healthyInstall(), { host });
-      expect(result.ok).toBe(false);
-      if (result.ok) continue;
-      expect(result.code).toBe("host_unsupported");
-      expect(result.message).toContain(`${host.platform}-${host.arch}`);
-      for (const evidenced of EVIDENCED_HOSTS) {
-        expect(result.message).toContain(evidenced);
-      }
-      expect(result.diagnostics.host).toBe(`${host.platform}-${host.arch}`);
-      // An unevidenced host has no platform package to name.
-      expect(result.diagnostics.platformPackage).toBeNull();
-    }
+  it("fails when the current machine's platform package is absent", async () => {
+    const host = { platform: "darwin", arch: "arm64" };
+    const result = await preflight(healthyInstall(), { host });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("platform_package_missing");
+    expect(result.message).toContain(DARWIN_ARM_PLATFORM_PACKAGE);
+    expect(result.diagnostics.host).toBe("darwin-arm64");
+    expect(result.diagnostics.platformPackage).toBe(
+      DARWIN_ARM_PLATFORM_PACKAGE,
+    );
   });
 
   it("fails closed when the SDK package is absent", async () => {
@@ -306,7 +336,7 @@ describe("cursor static preflight", () => {
   });
 
   it("fails closed when a native asset is missing or not executable", async () => {
-    for (const asset of CURSOR_SDK_EXECUTABLE_ASSETS) {
+    for (const asset of cursorSdkExecutableAssetsForHost("linux-x64")) {
       const absent = healthyInstall();
       absent.files.delete(`${LINUX_PLATFORM_PACKAGE}:${asset}`);
       const absentResult = await preflight(absent);
@@ -329,9 +359,7 @@ describe("cursor static preflight", () => {
     }
   });
 
-  it("reports the host mismatch before any package probe runs", async () => {
-    // An unevidenced host has no installed platform package, so probing first
-    // would report a confusing missing-package error instead of the real cause.
+  it("checks the SDK install before the machine's derived platform package", async () => {
     const probed: string[] = [];
     const install = healthyInstall();
     const base = probeFor(install);
@@ -353,7 +381,10 @@ describe("cursor static preflight", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(probed).toStrictEqual([]);
+    expect(probed).toStrictEqual([
+      CURSOR_SDK_PACKAGE,
+      DARWIN_ARM_PLATFORM_PACKAGE,
+    ]);
   });
 
   it("carries diagnostics on every failure without leaking secrets", async () => {
@@ -381,7 +412,6 @@ describe("cursor static preflight against the installed SDK", () => {
   // agree with what is actually installed — the in-memory layout above cannot
   // catch a constant that no longer matches the shipped package.
   it("passes on this host with the real package probe", async () => {
-    const host = `${process.platform}-${process.arch}`;
     const result = await runCursorStaticPreflight(
       { model: MODEL },
       {
@@ -393,12 +423,6 @@ describe("cursor static preflight against the installed SDK", () => {
           Promise.resolve(`v${process.versions.node}`),
       },
     );
-
-    if (!EVIDENCED_HOSTS.includes(host)) {
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.code).toBe("host_unsupported");
-      return;
-    }
 
     if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
     expect(result.diagnostics.installedSdkVersion).toBe(

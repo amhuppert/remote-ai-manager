@@ -564,8 +564,8 @@ export function createCursorWorkerSupervisor(
       return { kind: "already_active", session: existing };
     }
 
-    // Layer 1 before layer 2, and both before any process: a mismatched SDK or
-    // an unsupported host must not reach the point of handling a credential.
+    // Layer 1 before layer 2, and both before any process: an unusable SDK
+    // installation must not reach the point of handling a credential.
     const runtime = await deps.runStaticPreflight({ model: input.model });
     if (!runtime.ok) {
       logger.warn("cursor-worker.runtime_preflight_failed", {
