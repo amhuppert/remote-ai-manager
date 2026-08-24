@@ -1,12 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { readFile, readlink } from "node:fs/promises";
 import { statSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import { ambientCredentialKeys } from "../worker/credential-env";
 import type { CredentialSecret } from "./credential-scan";
-import { readFileTreeSources, scanForCredentials } from "./credential-scan";
+import {
+  readFileTreeSources,
+  readProcessEnvironSource,
+  scanForCredentials,
+} from "./credential-scan";
+import { readProcessCwd } from "./process-scan";
 import {
   resolveAcceptanceEvidenceRoot,
   type AcceptanceEvidenceStore,
@@ -53,10 +57,9 @@ function snapshotParentEnv(): string {
 }
 
 async function readWorkerEnv(pid: number): Promise<Map<string, string>> {
-  const raw = await readFile(`/proc/${pid}/environ`, "utf8");
+  const { records } = await readProcessEnvironSource(pid);
   const entries = new Map<string, string>();
-  for (const record of raw.split("\0")) {
-    if (record.length === 0) continue;
+  for (const record of records) {
     const separator = record.indexOf("=");
     if (separator <= 0) continue;
     entries.set(record.slice(0, separator), record.slice(separator + 1));
@@ -80,8 +83,8 @@ let first: LiveConversation;
 let second: LiveConversation;
 let firstEnv: Map<string, string>;
 let secondEnv: Map<string, string>;
-let firstCwd: string;
-let secondCwd: string;
+let firstCwd: string | null;
+let secondCwd: string | null;
 let parentEnvBefore: string;
 let parentEnvAfter: string;
 
@@ -125,12 +128,12 @@ beforeAll(async () => {
     "both conversations did not attach",
   ).toBe(true);
 
-  [firstEnv, secondEnv, firstCwd, secondCwd] = await Promise.all([
+  [firstEnv, secondEnv] = await Promise.all([
     readWorkerEnv(first.session.pid),
     readWorkerEnv(second.session.pid),
-    readlink(`/proc/${first.session.pid}/cwd`),
-    readlink(`/proc/${second.session.pid}/cwd`),
   ]);
+  firstCwd = readProcessCwd(first.session.pid);
+  secondCwd = readProcessCwd(second.session.pid);
   parentEnvAfter = snapshotParentEnv();
 });
 

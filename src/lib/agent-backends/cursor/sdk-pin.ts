@@ -21,13 +21,26 @@ export const CURSOR_SDK_MIN_NODE_MAJOR = 22;
 export const CURSOR_SDK_MIN_NODE_MINOR = 13;
 
 /**
- * The single tested host combination. An untested platform/arch has no
- * captured evidence and no installed platform package, so preflight names the
- * mismatch instead of guessing a platform package id.
+ * The host combinations with captured acceptance evidence, each mapped to the
+ * platform package that carries its native assets. A host outside this map has
+ * no captured evidence and no installed platform package, so preflight names
+ * the mismatch instead of guessing a platform package id. A new entry is
+ * earned by a green `cursor-acceptance` run on that host, never by assuming
+ * the Linux evidence carries over.
  */
-export const CURSOR_SDK_TESTED_PLATFORM = "linux";
-export const CURSOR_SDK_TESTED_ARCH = "x64";
-export const CURSOR_SDK_PLATFORM_PACKAGE = "@cursor/sdk-linux-x64";
+export const CURSOR_SDK_EVIDENCED_HOSTS = {
+  "linux-x64": "@cursor/sdk-linux-x64",
+  "darwin-x64": "@cursor/sdk-darwin-x64",
+} as const;
+
+export type CursorSdkEvidencedHost = keyof typeof CURSOR_SDK_EVIDENCED_HOSTS;
+
+/** The platform package evidenced for `host`, or null for an unevidenced host. */
+export function cursorSdkPlatformPackageForHost(host: string): string | null {
+  return Object.hasOwn(CURSOR_SDK_EVIDENCED_HOSTS, host)
+    ? CURSOR_SDK_EVIDENCED_HOSTS[host as CursorSdkEvidencedHost]
+    : null;
+}
 
 /** Normal Node entry points the SDK's `exports` map resolves for require/import. */
 export const CURSOR_SDK_ENTRY_FILES = [

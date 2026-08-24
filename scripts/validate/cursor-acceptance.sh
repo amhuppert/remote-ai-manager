@@ -30,6 +30,12 @@ export CC_CURSOR_ACCEPTANCE_ROOT="$ACCEPTANCE_ROOT"
 # which is removed on exit.
 export CC_CONFIG_DIR="$ACCEPTANCE_ROOT/config"
 
+# The vitest setup nests each fork's CC_CONFIG_DIR in a scratch directory it
+# deletes when the test file ends, which would reap every worker log before the
+# final sweep walks the tree. A single log file inside the evidence root keeps
+# the whole logging surface durable — and scanned.
+export CC_LOG_FILE="$ACCEPTANCE_ROOT/logs/acceptance.log"
+
 export NODE_OPTIONS="--max-old-space-size=3072"
 
 # The suite spawns the real worker bundle, so it must be the bundle this tree

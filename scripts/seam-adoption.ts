@@ -882,7 +882,7 @@ export const SEAMS: readonly SeamDefinition[] = [
     reviewedCeiling: 25,
     unit: "const *_JSON_SCHEMA/*_OUTPUT_SCHEMA = { … } declarations + inline object literals flowing into outputSchema / outputFormat.schema",
     corpus:
-      "src/**/*.{ts,tsx} minus tests; excludes the allowlisted fixture modules the `.test.` filename filter misses. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. The allowlist covers only test-support fixture modules — a directory prefix, or a named file where a domain keeps its fixtures locally — so any new hand-written schema literal in production code still fails the ratchet until the reviewed ceiling is intentionally updated.",
+      "src/**/*.{ts,tsx} minus tests/stories (a story's `outputSchema` is inert prop data rendered by a node component, authoring no contract any agent run consumes — prototype fixture code is not the migration population); excludes the allowlisted fixture modules the `.test.` filename filter misses. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. The allowlist covers only test-support fixture modules — a directory prefix, or a named file where a domain keeps its fixtures locally — so any new hand-written schema literal in production code still fails the ratchet until the reviewed ceiling is intentionally updated.",
     allowlist: [
       {
         path: "src/lib/shared/testing/",
@@ -904,6 +904,7 @@ export const SEAMS: readonly SeamDefinition[] = [
       return (
         isTsSource(relPath) &&
         !isTestPath(relPath) &&
+        !isStoriesPath(relPath) &&
         !matchesAllowlist(relPath, this.allowlist)
       );
     },

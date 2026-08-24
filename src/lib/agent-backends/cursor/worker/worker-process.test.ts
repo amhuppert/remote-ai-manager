@@ -1,10 +1,13 @@
 import { execFileSync, fork, spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import {
+  readProcessArgvSource,
+  readProcessEnvironSource,
+} from "../acceptance/credential-scan";
 import {
   createCursorPackageProbe,
   runCursorStaticPreflight,
@@ -520,13 +523,16 @@ describe("cursor worker credential hygiene", () => {
       spawnedGroups.add(pid);
 
       // Read the running process's real argv and environment, the two surfaces
-      // any same-host process could inspect.
-      const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-      const environ = readFileSync(`/proc/${pid}/environ`, "utf8");
+      // any same-host process could inspect. An unreadable process reads as
+      // empty, which would pass the exclusion vacuously — so emptiness fails.
+      const cmdline = await readProcessArgvSource(pid);
+      const environ = await readProcessEnvironSource(pid);
+      expect(cmdline.records.length).toBeGreaterThan(0);
+      expect(environ.records.length).toBeGreaterThan(0);
 
-      expect(cmdline).not.toContain(API_KEY);
-      expect(environ).not.toContain(API_KEY);
-      expect(environ).not.toContain("CURSOR_API_KEY");
+      expect(cmdline.text).not.toContain(API_KEY);
+      expect(environ.text).not.toContain(API_KEY);
+      expect(environ.text).not.toContain("CURSOR_API_KEY");
       // Reaching ready proves the worker did receive and verify the credential,
       // so its absence above is exclusion, not a worker that never got one.
       expect(started.session.pid).toBeGreaterThan(0);
@@ -551,12 +557,12 @@ describe("cursor worker credential hygiene", () => {
             frame.type === "attachResult" && frame.outcome === "attached",
         ),
       ).toBe(true);
-      expect(readFileSync(`/proc/${pid}/environ`, "utf8")).not.toContain(
-        API_KEY,
-      );
-      expect(readFileSync(`/proc/${pid}/cmdline`, "utf8")).not.toContain(
-        API_KEY,
-      );
+      const environAfterAttach = await readProcessEnvironSource(pid);
+      const cmdlineAfterAttach = await readProcessArgvSource(pid);
+      expect(environAfterAttach.records.length).toBeGreaterThan(0);
+      expect(environAfterAttach.text).not.toContain(API_KEY);
+      expect(cmdlineAfterAttach.records.length).toBeGreaterThan(0);
+      expect(cmdlineAfterAttach.text).not.toContain(API_KEY);
       expect(JSON.stringify(frames)).not.toContain(API_KEY);
 
       await started.session.close();

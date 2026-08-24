@@ -7,11 +7,10 @@ import {
   runCursorStaticPreflight,
 } from "../preflight";
 import {
+  CURSOR_SDK_EVIDENCED_HOSTS,
   CURSOR_SDK_PACKAGE,
   CURSOR_SDK_PINNED_VERSION,
-  CURSOR_SDK_PLATFORM_PACKAGE,
-  CURSOR_SDK_TESTED_ARCH,
-  CURSOR_SDK_TESTED_PLATFORM,
+  cursorSdkPlatformPackageForHost,
 } from "../sdk-pin";
 import { loadCursorWorkerSdk } from "../worker/sdk-port";
 import {
@@ -85,12 +84,14 @@ describe("acceptance harness", () => {
         `the acceptance host is not the pinned baseline: ${result.code} — ${result.message}`,
       );
     }
+    const host = `${process.platform}-${process.arch}`;
+    expect(Object.keys(CURSOR_SDK_EVIDENCED_HOSTS)).toContain(host);
     expect(result.diagnostics).toMatchObject({
       sdkPackage: CURSOR_SDK_PACKAGE,
       installedSdkVersion: CURSOR_SDK_PINNED_VERSION,
-      platformPackage: CURSOR_SDK_PLATFORM_PACKAGE,
+      platformPackage: cursorSdkPlatformPackageForHost(host),
       installedPlatformVersion: CURSOR_SDK_PINNED_VERSION,
-      host: `${CURSOR_SDK_TESTED_PLATFORM}-${CURSOR_SDK_TESTED_ARCH}`,
+      host,
       model: CURSOR_DEFAULT_MODEL,
     });
 

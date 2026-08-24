@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   CURSOR_SDK_DECLARED_DEPENDENCIES,
   CURSOR_SDK_ENTRY_FILES,
+  CURSOR_SDK_EVIDENCED_HOSTS,
   CURSOR_SDK_EXECUTABLE_ASSETS,
   CURSOR_SDK_LAZY_CHUNK_DIR,
   CURSOR_SDK_LAZY_CHUNK_PATTERN,
@@ -13,9 +14,7 @@ import {
   CURSOR_SDK_MIN_NODE_MINOR,
   CURSOR_SDK_PACKAGE,
   CURSOR_SDK_PINNED_VERSION,
-  CURSOR_SDK_PLATFORM_PACKAGE,
-  CURSOR_SDK_TESTED_ARCH,
-  CURSOR_SDK_TESTED_PLATFORM,
+  cursorSdkPlatformPackageForHost,
 } from "./sdk-pin";
 
 /**
@@ -26,8 +25,8 @@ import {
  *
  * Every check fails closed and names the mismatch. Capability claims for this
  * backend (cancellation teardown, MCP, image input) rest on fixtures captured
- * against one exact SDK build on one host, so an untested combination is a
- * refusal rather than a best-effort attempt.
+ * against one exact SDK build on each evidenced host, so an unevidenced
+ * combination is a refusal rather than a best-effort attempt.
  */
 
 export type CursorPreflightFailureCode =
@@ -52,10 +51,11 @@ export interface CursorPreflightDiagnostics {
   sdkPackage: string;
   requiredSdkVersion: string;
   installedSdkVersion: string | null;
-  platformPackage: string;
+  /** The host's evidenced platform package; null on an unevidenced host. */
+  platformPackage: string | null;
   installedPlatformVersion: string | null;
   host: string;
-  testedHost: string;
+  evidencedHosts: readonly string[];
   nodeVersion: string | null;
   requiredNodeVersion: string;
   model: string;
@@ -99,7 +99,9 @@ export interface CursorStaticPreflightDeps {
 
 export const CURSOR_REQUIRED_NODE_VERSION = `>=${CURSOR_SDK_MIN_NODE_MAJOR}.${CURSOR_SDK_MIN_NODE_MINOR}`;
 
-const TESTED_HOST = `${CURSOR_SDK_TESTED_PLATFORM}-${CURSOR_SDK_TESTED_ARCH}`;
+const EVIDENCED_HOSTS: readonly string[] = Object.keys(
+  CURSOR_SDK_EVIDENCED_HOSTS,
+);
 
 /** Accepts both `v22.13.0` and `22.13.0`; anything else is unusable. */
 export function parseNodeVersion(
@@ -137,10 +139,10 @@ function diagnosticsFor(
     sdkPackage: CURSOR_SDK_PACKAGE,
     requiredSdkVersion: CURSOR_SDK_PINNED_VERSION,
     installedSdkVersion: probed.sdkVersion,
-    platformPackage: CURSOR_SDK_PLATFORM_PACKAGE,
+    platformPackage: cursorSdkPlatformPackageForHost(host),
     installedPlatformVersion: probed.platformVersion,
     host,
-    testedHost: TESTED_HOST,
+    evidencedHosts: EVIDENCED_HOSTS,
     nodeVersion,
     requiredNodeVersion: CURSOR_REQUIRED_NODE_VERSION,
     model,
@@ -152,6 +154,7 @@ export async function runCursorStaticPreflight(
   deps: CursorStaticPreflightDeps,
 ): Promise<CursorStaticPreflightResult> {
   const host = `${deps.host.platform}-${deps.host.arch}`;
+  const platformPackage = cursorSdkPlatformPackageForHost(host);
   const probed: Probed = { sdkVersion: null, platformVersion: null };
 
   const fail = (
@@ -165,12 +168,13 @@ export async function runCursorStaticPreflight(
     diagnostics: diagnosticsFor(input.model, host, nodeVersion, probed),
   });
 
-  // Host first: an untested host has no installed platform package, so probing
-  // packages ahead of it would report a missing package instead of the cause.
-  if (host !== TESTED_HOST) {
+  // Host first: an unevidenced host has no installed platform package, so
+  // probing packages ahead of it would report a missing package instead of the
+  // cause.
+  if (platformPackage === null) {
     return fail(
       "host_unsupported",
-      `Cursor is evidenced only on ${TESTED_HOST}; this host is ${host}.`,
+      `Cursor is evidenced only on ${EVIDENCED_HOSTS.join(", ")}; this host is ${host}.`,
       null,
     );
   }
@@ -207,20 +211,18 @@ export async function runCursorStaticPreflight(
     );
   }
 
-  probed.platformVersion = await deps.packages.version(
-    CURSOR_SDK_PLATFORM_PACKAGE,
-  );
+  probed.platformVersion = await deps.packages.version(platformPackage);
   if (probed.platformVersion === null) {
     return fail(
       "platform_package_missing",
-      `${CURSOR_SDK_PLATFORM_PACKAGE} is not installed.`,
+      `${platformPackage} is not installed.`,
       nodeVersion,
     );
   }
   if (probed.platformVersion !== CURSOR_SDK_PINNED_VERSION) {
     return fail(
       "platform_package_version_mismatch",
-      `${CURSOR_SDK_PLATFORM_PACKAGE} ${probed.platformVersion} does not match the tested ${CURSOR_SDK_PINNED_VERSION}.`,
+      `${platformPackage} ${probed.platformVersion} does not match the tested ${CURSOR_SDK_PINNED_VERSION}.`,
       nodeVersion,
     );
   }
@@ -261,19 +263,17 @@ export async function runCursorStaticPreflight(
   }
 
   for (const asset of CURSOR_SDK_EXECUTABLE_ASSETS) {
-    if (!(await deps.packages.fileExists(CURSOR_SDK_PLATFORM_PACKAGE, asset))) {
+    if (!(await deps.packages.fileExists(platformPackage, asset))) {
       return fail(
         "native_asset_missing",
-        `${CURSOR_SDK_PLATFORM_PACKAGE} is missing the native asset ${asset}.`,
+        `${platformPackage} is missing the native asset ${asset}.`,
         nodeVersion,
       );
     }
-    if (
-      !(await deps.packages.isExecutable(CURSOR_SDK_PLATFORM_PACKAGE, asset))
-    ) {
+    if (!(await deps.packages.isExecutable(platformPackage, asset))) {
       return fail(
         "native_asset_not_executable",
-        `${CURSOR_SDK_PLATFORM_PACKAGE} asset ${asset} is present but not executable.`,
+        `${platformPackage} asset ${asset} is present but not executable.`,
         nodeVersion,
       );
     }

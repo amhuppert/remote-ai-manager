@@ -1,19 +1,23 @@
+import { execFile, execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { promisify } from "node:util";
 
 /**
  * Process identity beyond the pid (spec D9).
  *
  * A pid alone cannot own a signal: the kernel recycles pids, so a stored pid may
- * name an unrelated process by the time teardown escalates. The boot-time start
- * ticks in `/proc/<pid>/stat` make the identity durable — a recycled pid always
- * reads a later start time — which is what the ownership guard compares before
- * signalling anything.
+ * name an unrelated process by the time teardown escalates. A per-process start
+ * marker makes the identity durable — a recycled pid always reads a later start
+ * time — which is what the ownership guard compares before signalling anything.
  *
- * Linux-only by design: the Cursor preflight already refuses every host outside
- * the tested Linux baseline, so a null here means "identity unverifiable", and
+ * One reader per evidenced host: linux reads `/proc/<pid>/stat`; darwin has no
+ * `/proc`, so it asks `ps` (whose own source is the kernel's proc table). On
+ * any other host every read is null, meaning "identity unverifiable", and
  * every caller treats that as a refusal rather than a fallback.
  */
+
+const execFileAsync = promisify(execFile);
 
 /**
  * `/proc/<pid>/stat` fields are space-separated, except field 2 (`comm`) which
@@ -53,8 +57,31 @@ export function errnoCode(error: unknown): string | null {
   return typeof code === "string" ? code : null;
 }
 
+/**
+ * The pid `ps` should be asked about, or null when the target is not a real,
+ * addressable process — pid 0 names the kernel, which `ps` happily reports but
+ * no ownership check may ever claim.
+ */
+function darwinTargetPid(pid: number | "self"): number | null {
+  const target = pid === "self" ? process.pid : pid;
+  return Number.isInteger(target) && target > 0 ? target : null;
+}
+
 /** The process group this process leads or belongs to; null when unreadable. */
 export function readProcessGroupIdSync(pid: number | "self"): number | null {
+  if (process.platform === "darwin") {
+    const target = darwinTargetPid(pid);
+    if (target === null) return null;
+    try {
+      return parsePositiveInteger(
+        execFileSync("ps", ["-o", "pgid=", "-p", String(target)], {
+          encoding: "utf8",
+        }).trim(),
+      );
+    } catch {
+      return null;
+    }
+  }
   try {
     return parsePositiveInteger(
       fieldAt(readFileSync(`/proc/${pid}/stat`, "utf8"), 5),
@@ -65,13 +92,29 @@ export function readProcessGroupIdSync(pid: number | "self"): number | null {
 }
 
 /**
- * Boot-relative start ticks (field 22). Opaque and only ever compared for
- * equality — its units never matter, only that the same process keeps the same
- * value and a recycled pid does not.
+ * A per-process start marker: boot-relative start ticks on linux (field 22),
+ * the full start timestamp on darwin (`lstart`, stable across reads). Opaque
+ * and only ever compared for equality — its units never matter, only that the
+ * same process keeps the same value and a recycled pid does not.
  */
 export async function readProcessStartTicks(
   pid: number,
 ): Promise<string | null> {
+  if (process.platform === "darwin") {
+    const target = darwinTargetPid(pid);
+    if (target === null) return null;
+    try {
+      const { stdout } = await execFileAsync(
+        "ps",
+        ["-o", "lstart=", "-p", String(target)],
+        { encoding: "utf8" },
+      );
+      const value = stdout.trim();
+      return value.length > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
   try {
     const value = fieldAt(await readFile(`/proc/${pid}/stat`, "utf8"), 22);
     return value !== null && value.length > 0 ? value : null;

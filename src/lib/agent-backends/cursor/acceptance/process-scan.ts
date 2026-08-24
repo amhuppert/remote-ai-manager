@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readlinkSync } from "node:fs";
 
 /**
  * Host process scans for the cancellation and lifetime acceptance cases
@@ -54,19 +54,54 @@ export function findMarkedPids(marker: string): readonly number[] {
 }
 
 /**
- * Identity of a live process, read from `/proc/<pid>/stat`. Null once the
- * process is gone — which is exactly the transition these cases measure.
+ * Identity of a live process, read back from the OS via `ps` — the one
+ * process-identity reader both evidenced hosts share, since darwin has no
+ * `/proc`. Null once the process is gone, which is exactly the transition
+ * these cases measure.
  */
 export function readMarkedProcess(pid: number): MarkedProcess | null {
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    // The comm field can contain spaces and parentheses, so fields are read
-    // after the last ')' rather than by splitting the whole line.
-    const afterComm = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    const ppid = Number.parseInt(afterComm[1] ?? "", 10);
-    const pgid = Number.parseInt(afterComm[2] ?? "", 10);
+    const fields = execFileSync(
+      "ps",
+      ["-o", "ppid=", "-o", "pgid=", "-p", String(pid)],
+      { encoding: "utf8" },
+    )
+      .trim()
+      .split(/\s+/);
+    const ppid = Number.parseInt(fields[0] ?? "", 10);
+    const pgid = Number.parseInt(fields[1] ?? "", 10);
     if (!Number.isInteger(ppid) || !Number.isInteger(pgid)) return null;
     return { pid, ppid, pgid };
+  } catch {
+    // `ps` exits non-zero once the process is gone.
+    return null;
+  }
+}
+
+/**
+ * Working directory of a live process. Null once the process is gone — the
+ * isolation case reads it to prove two workers run where their conversations
+ * say they do.
+ */
+export function readProcessCwd(pid: number): string | null {
+  if (process.platform === "darwin") {
+    // `-Fn` emits machine-readable records; the `n`-prefixed line is the path.
+    try {
+      const output = execFileSync(
+        "lsof",
+        ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+        { encoding: "utf8" },
+      );
+      for (const line of output.split("\n")) {
+        if (line.startsWith("n")) return line.slice(1);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return readlinkSync(`/proc/${pid}/cwd`);
   } catch {
     return null;
   }

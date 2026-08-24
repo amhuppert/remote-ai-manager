@@ -199,7 +199,7 @@ const PREFLIGHT_DIAGNOSTICS = {
   platformPackage: "@cursor/sdk-linux-x64",
   installedPlatformVersion: "1.0.28",
   host: "linux-x64",
-  testedHost: "linux-x64",
+  evidencedHosts: ["linux-x64", "darwin-x64"],
   nodeVersion: "v22.14.0",
   requiredNodeVersion: ">=22.13",
   model: "composer-2.5",

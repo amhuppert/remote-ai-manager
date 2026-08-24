@@ -1,9 +1,27 @@
-import { startVitest } from "vitest/node";
+import { basename } from "node:path";
+import { BaseSequencer, startVitest } from "vitest/node";
 import {
   CURSOR_ACCEPTANCE_BLOCKED_EXIT_CODE,
   formatCursorAcceptanceVerdict,
   resolveCursorAcceptanceGate,
 } from "./cursor-acceptance-gate.mjs";
+
+/**
+ * The closing credential sweep (`final-*`) must run after every live case has
+ * written its fixtures — it walks the evidence tree and fails on an empty
+ * surface. The config's include list already orders `final-*` last, but the
+ * default sequencer reorders files by cached duration from the previous run,
+ * which moved the sweep ahead of the cases it audits. Pinning the rank here
+ * makes the ordering a property of the command, not of the cache.
+ */
+class FinalSweepLastSequencer extends BaseSequencer {
+  async sort(files) {
+    const sorted = await super.sort(files);
+    const rank = (spec) =>
+      basename(spec.moduleId).startsWith("final-") ? 1 : 0;
+    return [...sorted].sort((left, right) => rank(left) - rank(right));
+  }
+}
 
 /**
  * Entry point for the registered `cursor-acceptance` validation command.
@@ -46,4 +64,5 @@ await startVitest("test", [], {
   poolOptions: {
     forks: { maxForks: 1, minForks: 1, singleFork: true },
   },
+  sequence: { sequencer: FinalSweepLastSequencer },
 });

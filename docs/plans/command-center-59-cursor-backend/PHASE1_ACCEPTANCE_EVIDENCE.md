@@ -10,7 +10,12 @@ counts, latencies, pids, event counts — necessarily differ between runs agains
 a live model, so they are illustrative of one run rather than a contract. The
 evidence tree in a worktree reflects that worktree's most recent local run.
 
-## Pinned baseline
+Support is per host: each entry in `CURSOR_SDK_EVIDENCED_HOSTS` is backed by a
+green run of this matrix on that host. Two baselines are recorded below; the
+detailed narrative that follows describes the original Linux run, with the
+macOS section noting where its observations differ.
+
+## Pinned baseline — Linux x86_64
 
 | | |
 | --- | --- |
@@ -19,6 +24,51 @@ evidence tree in a worktree reflects that worktree's most recent local run.
 | `@cursor/sdk` / `@cursor/sdk-linux-x64` | 1.0.28 (exact pin, no range) |
 | Default model | `composer-2.5` |
 | Run | 12 acceptance files, 66 cases, 26 published records, all passing, 146.1 s |
+
+## Second baseline — macOS x86_64 (2026-08-23, ticket #88)
+
+| | |
+| --- | --- |
+| Host | macOS x86_64 (`darwin-x64`, Intel) |
+| Node | v24.16.0 |
+| `@cursor/sdk` / `@cursor/sdk-darwin-x64` | 1.0.28 (exact pin, no range) |
+| Default model | `composer-2.5` |
+| Run | 12 acceptance files, 66 cases, 26 published records, all passing, 187.3 s |
+
+The same matrix, driven through darwin-native process inspection: argv and
+environment reads come from the `KERN_PROCARGS2` sysctl (raw NUL-delimited
+records, exactly what `/proc` supplies on Linux — `ps -E` flattens them and was
+rejected for that reason), process identity and group membership from `ps`, and
+working directories from `lsof`. Key observations from the green run:
+
+- Cancellation: generation settled in 180 ms (bound 10 000 ms); marked shell
+  descendants were dead 58 ms and 56 ms after **native** cancel, each leading
+  its own process group; the long-running inline MCP call settled in 102 ms
+  with the server gone at 69 ms and zero survivors. Cancelled runs reported no
+  usage.
+- Bounded lifetime: a `SIGKILL`ed Command Center server left its worker gone in
+  78 ms with its process group; an idle worker with a 4 s TTL was reaped at
+  4 974 ms.
+- Continuation recalled the prior turn's marker with zero replayed events;
+  random, corrupt, and cross-workspace refs all failed closed with
+  `AgentNotFoundError`.
+- The closing sweep scanned 443 sources including 4 live process-boundary
+  snapshots, checked 21 workspaces for SDK default-state leakage, and found
+  zero credential occurrences — for the Cursor key and for every ambient
+  credential-shaped variable alike.
+
+**Limit specific to this host:** no Cursor CLI (`agent`) is installed, so the
+`preflight-cli-is-not-sdk-auth` case ran in its reduced form — it proved the
+SDK finds no ambient credential in a scrubbed child (`cliState: "absent"`,
+`sdkLoggedIn: false`) but could not re-demonstrate that an *authenticated* CLI
+is ignored. That stronger half remains evidenced by the Linux run only.
+
+Two suite defects surfaced by this run were fixed for every host: worker logs
+now route to a durable `logs/acceptance.log` inside the evidence root (the
+per-fork vitest config directories are deleted per file, which had silently
+removed the log surface from the sweep), and the launcher pins `final-*` files
+last with a custom sequencer (Vitest's duration cache had reordered the closing
+sweep ahead of the cases it audits on any second run).
 
 The baseline is asserted live, not stated: `harness.acceptance.test.ts` runs the
 production static preflight against the real `node_modules` and fails the suite
@@ -309,8 +359,9 @@ spawn boundary applies.
 
 ## Limits of this evidence
 
-- It describes one host, one SDK build, one account, and one run. Preflight
-  fails closed on any other SDK/platform combination rather than extrapolating.
+- Each baseline describes one host, one SDK build, one account, and one run.
+  Preflight fails closed on any SDK/platform combination outside the evidenced
+  set rather than extrapolating.
 - The matrix drives the production supervisor, worker bundle and SDK. Neutral
   conversation-runtime projection, transcript persistence and SSE behaviour are
   proven by the scripted-worker suites, not here.

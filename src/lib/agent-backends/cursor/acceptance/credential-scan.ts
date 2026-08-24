@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 /**
  * The credential-sentinel scan behind the authenticated acceptance suite
@@ -173,6 +176,62 @@ export interface ProcessBoundarySource extends ScanSource {
 }
 
 /**
+ * The records of one darwin `KERN_PROCARGS2` dump, split at the argv/environ
+ * boundary the buffer's own argc declares.
+ */
+export interface DarwinProcargs2 {
+  argv: readonly string[];
+  environ: readonly string[];
+}
+
+/**
+ * Parses the raw `KERN_PROCARGS2` sysctl buffer: an int32 argc, the exec path,
+ * NUL padding, argc NUL-terminated argv records, then the environ records.
+ * This is darwin's only exact source for another process's argv and environment
+ * — `ps -E` flattens the records into one space-joined string, which cannot be
+ * split back into assignments without guessing.
+ *
+ * Null for a buffer that does not carry the declared shape: a truncated dump
+ * must surface as unreadable rather than as a half-parsed environment.
+ */
+export function parseDarwinProcargs2(buffer: Buffer): DarwinProcargs2 | null {
+  if (buffer.length < 4) return null;
+  const argc = buffer.readInt32LE(0);
+  if (argc < 0) return null;
+  let offset = 4;
+
+  const readRecord = (): string | null => {
+    if (offset >= buffer.length) return null;
+    const end = buffer.indexOf(0, offset);
+    if (end === -1) return null;
+    const record = buffer.toString("utf8", offset, end);
+    offset = end + 1;
+    return record;
+  };
+
+  // The exec path comes first; the kernel pads with NULs before argv begins.
+  if (readRecord() === null) return null;
+  while (offset < buffer.length && buffer[offset] === 0) offset += 1;
+
+  const argv: string[] = [];
+  for (let index = 0; index < argc; index += 1) {
+    const token = readRecord();
+    if (token === null) return null;
+    argv.push(token);
+  }
+
+  const environ: string[] = [];
+  let record = readRecord();
+  while (record !== null) {
+    // Trailing padding NULs read as empty records; an environment assignment
+    // is never empty.
+    if (record.length > 0) environ.push(record);
+    record = readRecord();
+  }
+  return { argv, environ };
+}
+
+/**
  * `/proc` entries vanish the instant a process is reaped, and the acceptance
  * suite reads them precisely around teardown. An unreadable process is an empty
  * source rather than an error: a race with an exiting worker must not be
@@ -196,25 +255,58 @@ async function readProcRecords(
   }
 }
 
-async function readProcessBoundary(
+const execFileAsync = promisify(execFile);
+
+/**
+ * The bun-executed sysctl helper next to this module. Executed rather than
+ * imported: `bun:ffi` does not exist in the Node runtime the suite runs under.
+ */
+const DARWIN_PROCARGS_HELPER = fileURLToPath(
+  new URL("./darwin-procargs.mjs", import.meta.url),
+);
+
+/** Unreadable-process semantics match the linux reader: null, not an error. */
+async function readDarwinProcargs(
   pid: number,
-  name: string,
+): Promise<DarwinProcargs2 | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "bun",
+      [DARWIN_PROCARGS_HELPER, String(pid)],
+      { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 },
+    );
+    return parseDarwinProcargs2(stdout);
+  } catch {
+    return null;
+  }
+}
+
+function boundarySource(
+  pid: number,
   label: string,
-): Promise<ProcessBoundarySource> {
-  const records = await readProcRecords(pid, name);
+  records: readonly string[],
+): ProcessBoundarySource {
   return { label: `pid:${pid}/${label}`, text: records.join("\n"), records };
 }
 
 export async function readProcessArgvSource(
   pid: number,
 ): Promise<ProcessBoundarySource> {
-  return readProcessBoundary(pid, "cmdline", "argv");
+  if (process.platform === "darwin") {
+    const parsed = await readDarwinProcargs(pid);
+    return boundarySource(pid, "argv", parsed?.argv ?? []);
+  }
+  return boundarySource(pid, "argv", await readProcRecords(pid, "cmdline"));
 }
 
 export async function readProcessEnvironSource(
   pid: number,
 ): Promise<ProcessBoundarySource> {
-  return readProcessBoundary(pid, "environ", "environ");
+  if (process.platform === "darwin") {
+    const parsed = await readDarwinProcargs(pid);
+    return boundarySource(pid, "environ", parsed?.environ ?? []);
+  }
+  return boundarySource(pid, "environ", await readProcRecords(pid, "environ"));
 }
 
 /**

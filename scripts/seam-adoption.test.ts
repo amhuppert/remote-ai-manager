@@ -872,4 +872,23 @@ describe("seam corpus predicates", () => {
     );
     expect(seam.inCorpus("src/lib/mcp/runtime-apply.test.ts")).toBe(false);
   });
+
+  it("structured-output seam excludes tests, stories, and fixture modules", () => {
+    const seam = byId.get("structured-output-schema-literals")!;
+    expect(seam.inCorpus("src/lib/workflows/collaboration/types.ts")).toBe(
+      true,
+    );
+    expect(seam.inCorpus("src/lib/agent-runs/schemas.test.ts")).toBe(false);
+    // A story passes an `outputSchema` as inert prop data to render a node; it
+    // authors no contract any agent run consumes, so it is prototype fixture
+    // code rather than migration population.
+    expect(
+      seam.inCorpus(
+        "src/components/workflow-graph/ExecutionContextNode.stories.tsx",
+      ),
+    ).toBe(false);
+    expect(seam.inCorpus("src/lib/shared/testing/persistence-fixture.ts")).toBe(
+      false,
+    );
+  });
 });

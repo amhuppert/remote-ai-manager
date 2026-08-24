@@ -38,14 +38,21 @@ The Cursor SDK is **pinned exactly**, and preflight fails closed on any other co
 
 | | Required |
 | --- | --- |
-| Platform | Linux **x86_64** |
-| Node (the process running the worker) | **>= 22.13** (evidence baseline: v22.14.0) |
+| Host | an evidenced host (table below) |
+| Node (the process running the worker) | **>= 22.13** |
 | `@cursor/sdk` | **1.0.28** exactly — no range |
-| `@cursor/sdk-linux-x64` | **1.0.28**, matching the SDK version |
+| The host's platform package | **1.0.28**, matching the SDK version |
 
-Before a worker starts, Command Center verifies that the SDK's Node entry points, its lazily-loaded chunks, its declared dependencies, the matching platform package, and that package's executable native assets (ripgrep, the sandbox helper, the tree-sitter bindings, with their execute bits intact) are all present. A missing or mismatched artifact, an unsupported host, or a Node version below the floor produces a bounded error that names the mismatch — Cursor is simply unavailable on that host, and nothing auto-updates or silently substitutes a different build.
+Support is **per host and earned by evidence**: the capability claims for cancellation, MCP, and image input rest on fixtures captured by the live acceptance matrix, so a host enters this table only with a green `cursor-acceptance` run of its own — the Linux evidence does not carry over to macOS.
 
-The pin is not conservatism for its own sake: Command Center's capability claims for cancellation, MCP, and image input rest on fixtures captured against this exact build, so a different SDK or platform would need renewed evidence before those claims carry over.
+| Evidenced host | Platform package |
+| --- | --- |
+| Linux x86_64 (`linux-x64`) | `@cursor/sdk-linux-x64` |
+| macOS x86_64 (`darwin-x64`) | `@cursor/sdk-darwin-x64` |
+
+Before a worker starts, Command Center verifies that the SDK's Node entry points, its lazily-loaded chunks, its declared dependencies, the host's platform package, and that package's executable native assets (ripgrep, the sandbox helper, the tree-sitter bindings, with their execute bits intact) are all present. A missing or mismatched artifact, an unevidenced host, or a Node version below the floor produces a bounded error that names the mismatch — Cursor is simply unavailable on that host, and nothing auto-updates or silently substitutes a different build.
+
+The pin is not conservatism for its own sake: a different SDK build, platform package, or host would need renewed evidence before the capability claims carry over.
 
 Deployments that ship Command Center must package these dependencies rather than expect a runtime install.
 
@@ -185,7 +192,7 @@ The observed results and the explicit limits of that evidence are recorded in [`
 | Symptom | Cause |
 | --- | --- |
 | Every Cursor turn fails immediately with a credential error | `CURSOR_API_KEY` is absent, empty, or rejected in the **server's** environment. A logged-in Cursor CLI does not count. Restart the server after setting it. |
-| Cursor turns fail with a runtime/platform error | The host is not Linux x86_64, the worker's Node is below 22.13, or `@cursor/sdk` / `@cursor/sdk-linux-x64` 1.0.28 is missing, mismatched, or incompletely extracted. |
+| Cursor turns fail with a runtime/platform error | The host is not an evidenced one (Linux x86_64 or macOS x86_64), the worker's Node is below 22.13, or `@cursor/sdk` / the host's platform package at 1.0.28 is missing, mismatched, or incompletely extracted. |
 | The model selector shows a model in red | The configured model is not in this project's `agentBackends.cursor.supportedModels`. Pick a listed one or add it to `CommandCenter.json`. |
 | A turn is refused before it starts, naming a model | Same cause, arriving from the API — the model was validated before any worker or billable turn. |
 | Cursor is greyed out in a picker | That surface needs the task facet or Collaboration Mode; hover the option for the reason. |

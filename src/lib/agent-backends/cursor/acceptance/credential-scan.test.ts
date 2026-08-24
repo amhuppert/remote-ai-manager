@@ -5,12 +5,30 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   maskSecrets,
+  parseDarwinProcargs2,
   readFileTreeSources,
   readProcessArgvSource,
   readProcessEnvironSource,
   redactBoundaryRecord,
   scanForCredentials,
 } from "./credential-scan";
+
+/** Builds a `KERN_PROCARGS2` buffer the way the darwin kernel lays it out. */
+function procargs2Buffer(input: {
+  argc: number;
+  execPath: string;
+  padding: number;
+  records: readonly string[];
+}): Buffer {
+  const header = Buffer.alloc(4);
+  header.writeInt32LE(input.argc, 0);
+  return Buffer.concat([
+    header,
+    Buffer.from(input.execPath, "utf8"),
+    Buffer.alloc(1 + input.padding),
+    Buffer.from(`${input.records.join("\0")}\0`, "utf8"),
+  ]);
+}
 
 /**
  * The credential-sentinel scan the acceptance harness runs over every boundary
@@ -229,6 +247,61 @@ describe("process boundary sources", () => {
     // teardown into a suite error.
     const source = await readProcessEnvironSource(2 ** 22 - 1);
     expect(source.text).toBe("");
+  });
+});
+
+describe("parseDarwinProcargs2", () => {
+  it("splits argv and environ at the boundary argc declares", () => {
+    const parsed = parseDarwinProcargs2(
+      procargs2Buffer({
+        argc: 3,
+        execPath: "/usr/local/bin/node",
+        padding: 3,
+        records: [
+          "node",
+          "-e",
+          "setTimeout(() => {}, 60000)",
+          "PLAIN=1",
+          "SPACED=a value with spaces and = signs",
+        ],
+      }),
+    );
+
+    expect(parsed).toStrictEqual({
+      argv: ["node", "-e", "setTimeout(() => {}, 60000)"],
+      environ: ["PLAIN=1", "SPACED=a value with spaces and = signs"],
+    });
+  });
+
+  it("handles a dump with no environment records", () => {
+    const parsed = parseDarwinProcargs2(
+      procargs2Buffer({
+        argc: 1,
+        execPath: "/bin/tool",
+        padding: 0,
+        records: ["tool"],
+      }),
+    );
+
+    expect(parsed).toStrictEqual({ argv: ["tool"], environ: [] });
+  });
+
+  it("rejects a buffer that cannot satisfy its own argc", () => {
+    // The kernel withholds the environment of protected processes: the dump
+    // then truncates after argv, or before it. Either must read as unreadable
+    // rather than as an empty-but-trusted environment.
+    expect(
+      parseDarwinProcargs2(
+        procargs2Buffer({
+          argc: 4,
+          execPath: "/bin/tool",
+          padding: 1,
+          records: ["tool"],
+        }),
+      ),
+    ).toBeNull();
+    expect(parseDarwinProcargs2(Buffer.alloc(0))).toBeNull();
+    expect(parseDarwinProcargs2(Buffer.alloc(3))).toBeNull();
   });
 });
 
