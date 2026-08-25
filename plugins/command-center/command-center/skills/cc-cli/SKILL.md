@@ -419,7 +419,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl validate list` — list commands, policy enablement, and current capacity
   - `cctl validate list [--json]`
 - `cctl validate run` — run one registered validation command
-  - `cctl validate run <name> [--scope changed|full] [--wait] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]`
+  - `cctl validate run <name> [--scope changed|full] [--queue-if-busy] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]`
 - `cctl validate status` — inspect active validation or one run
   - `cctl validate status [run-id] [--json]`
 - `cctl validate cancel` — cancel an owned validation run
@@ -717,13 +717,13 @@ List and execute the project's registered validation commands through the server
 
 ```
 cctl validate list [--json]
-cctl validate run <name> [--scope changed|full] [--wait] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]
+cctl validate run <name> [--scope changed|full] [--queue-if-busy] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]
 cctl validate status [run-id] [--json]
 cctl validate cancel <run-id> [--json]
 ```
 
 - `list` shows stable command names, declared costs, descriptions, path-scope support, caller enablement, and current global capacity. It intentionally does not reveal executable paths.
-- `run` submits one registered name and always blocks to a verdict. `--wait` decides only how a busy scheduler answers — join the strict weighted FIFO queue instead of refusing immediately — unlike `agent run --wait` / `workflow run --wait`, where the flag decides whether to block at all. A capacity refusal means systemic capacity or an older waiter currently blocks admission, not that the validation tool failed. A command whose declared cost exceeds the machine limit is invalid configuration and is rejected even with `--wait`.
+- `run` submits one registered name and always blocks to a verdict. `--queue-if-busy` decides only how a busy scheduler answers — join the strict weighted FIFO queue instead of refusing immediately. It does not control whether validation blocks, unlike `agent run --wait` / `workflow run --wait`, where `--wait` decides whether to block at all. A capacity refusal means systemic capacity or an older waiter currently blocks admission, not that the validation tool failed. A command whose declared cost exceeds the machine limit is invalid configuration and is rejected even with `--queue-if-busy`.
 - A pass prints one verdict line — `validation passed: <name> (scope <requested>→<effective>, <n> files, run <id>)` — followed by the tail of the runner output; the full output stays in the `--json` envelope and in `validate status <id>`. A narrowing path that matches nothing still passes and says `0 files matched — vacuous pass, verify the scope path`; `--require-match` turns that into exit `1`. Read the verdict instead of trusting a silent green.
 - `--timeout` bounds only the client wait (default 2h, covering queue time). On expiry the run continues server-side and the failure names `cctl validate status <run-id>`, which recovers the verdict.
 - Values after `--` may only narrow a command registered with path scoping. The server rejects option tokens, absolute paths, traversal, and worktree escapes, so callers cannot override workers, heap, pool, or configuration. Omit `--` entirely for a command that forbids scope arguments.

@@ -209,10 +209,11 @@ const BOOLEAN_FLAG_ARGS = new Set(
  * `booleanArgs` is the set of `--name` arg forms to treat as booleans. It
  * defaults to the global union of every registry-declared boolean flag — the
  * right set for a first "probe" parse that only needs the command path. The
- * authoritative parse passes the COMMAND-SCOPED set
- * (`booleanFlagArgsForCommand`) so a flag can be boolean for one command and
- * value for another (e.g. `workflow get --config` vs `workflow live get
- * --config <id>`, doc 06).
+ * authoritative parse passes the COMMAND-AWARE set
+ * (`booleanFlagArgsForCommand`) so a command-local value declaration overrides
+ * a boolean declaration elsewhere (e.g. `workflow get --config` vs `workflow
+ * live get --config <id>`, doc 06), while undeclared globally-known booleans
+ * remain valueless markers for `checkFlags` to reject clearly.
  */
 export function parseArgv(
   argv: string[],
@@ -249,7 +250,7 @@ export function parseArgv(
     }
     // Valueless boolean flags (they consume no value). They land in `values`
     // as markers so per-command `checkFlags` still rejects them where not
-    // allowed; commands that accept them read `values["wait"] !== undefined`.
+    // allowed; commands read their registered flag name from `values`.
     if (booleanArgs.has(arg)) {
       values[arg.slice(2)] = "true";
       continue;

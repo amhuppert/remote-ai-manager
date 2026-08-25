@@ -295,7 +295,7 @@ export const validationRunResultSchema = z.discriminatedUnion("kind", [
     knownCommands: z.array(z.string()),
   }),
   // Unrunnable configuration, not a temporarily-busy command: rejected even
-  // under --wait, and never clamped.
+  // under --queue-if-busy, and never clamped.
   z.object({
     kind: z.literal("cost_exceeds_limit"),
     name: z.string(),

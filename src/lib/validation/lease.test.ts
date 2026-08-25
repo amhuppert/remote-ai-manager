@@ -100,7 +100,7 @@ function submission(
 
 function submitLeased(
   runId: string,
-  opts: { cost?: number; wait?: boolean } = {},
+  opts: { cost?: number; queueIfBusy?: boolean } = {},
 ): { token: string; expiresAt: string } {
   const lease = manager.issue();
   const decision = scheduler.submit(
@@ -110,7 +110,7 @@ function submitLeased(
       leaseToken: lease.token,
       leaseExpiresAt: lease.expiresAt,
     }),
-    { wait: opts.wait ?? false, limit: LIMIT },
+    { queueIfBusy: opts.queueIfBusy ?? false, limit: LIMIT },
   );
   expect(["admitted", "queued"]).toContain(decision.kind);
   return lease;
@@ -181,7 +181,7 @@ describe("owner-only cancel authorization", () => {
     scheduler.submit(
       submission({ runId: "run-system", source: "smart_merge" }),
       {
-        wait: false,
+        queueIfBusy: false,
         limit: LIMIT,
       },
     );
@@ -208,10 +208,10 @@ describe("expiry sweep", () => {
   it("dequeues an expired waiter without killing anything", async () => {
     // Fill capacity so the leased submission queues.
     scheduler.submit(submission({ runId: "hog", cost: 8 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: LIMIT,
     });
-    submitLeased("run-waiting", { cost: 4, wait: true });
+    submitLeased("run-waiting", { cost: 4, queueIfBusy: true });
     expect(repo.findById("run-waiting")?.status).toBe("queued");
 
     vi.advanceTimersByTime(61_000);
@@ -244,7 +244,7 @@ describe("expiry sweep", () => {
 
   it("group-kills an expired waiter that was admitted while an earlier kill was in flight", async () => {
     submitLeased("run-r", { cost: 8 });
-    submitLeased("run-q", { cost: 8, wait: true });
+    submitLeased("run-q", { cost: 8, queueIfBusy: true });
     vi.advanceTimersByTime(61_000);
 
     // While run-r's group-kill is awaited, its capacity release pumps the
@@ -279,7 +279,7 @@ describe("expiry sweep", () => {
         source: "graph_script_validator",
         cost: 1,
       }),
-      { wait: false, limit: LIMIT },
+      { queueIfBusy: false, limit: LIMIT },
     );
 
     // Well past the ttl: the system-owned run has no lease to expire, and the

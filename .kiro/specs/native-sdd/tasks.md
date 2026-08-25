@@ -489,7 +489,7 @@
   - _Requirements: 8.10, 18.7, 1.5_
 
 - [x] 25. Audit-safe attention records and revision-owned assumption citations (ticket command-center#87; amendment approved 2026-08-23)
-  - Every behavior task follows red-green-refactor. Run the registered test command against the single named test file while iterating: `cctl validate run test --wait -- <file>`. Story scaffolding, type/config wiring, and visual-only adjustments are the only test-first exceptions.
+  - Every behavior task follows red-green-refactor. Run the registered test command against the single named test file while iterating: `cctl validate run test --queue-if-busy -- <file>`. Story scaffolding, type/config wiring, and visual-only adjustments are the only test-first exceptions.
   - The schema-11 cutover is coordinated and breaking. Do not add a compatibility shim, fallback citation inference, dual write, optional old shape, mixed-version path, or old-bundle reader.
 
 - [x] 25.1 Attention, citation, revision-integrity, audit-event, and refusal schemas
@@ -599,7 +599,7 @@
   - _Requirements: 2.5, 6.1–6.9, 8.11–8.16, 9.8, 10.4, 10.8, 12.1–12.26, 19.1–19.4_
 
 - [x] 26. Agent operability: current-only reads, sections, prose lint, propose coordination, and the approval ledger (ticket command-center#87; amendment approved 2026-08-24; technical design: `docs/designs/ticket87-agent-operability-slice-technical-design.md`)
-  - Every behavior task follows red-green-refactor. Run the registered test command against the single named test file while iterating: `cctl validate run test --wait -- <file>`. Help-entry wiring, skill-block regeneration, and guidance prose are the only test-first exceptions (their contract sweeps already exist).
+  - Every behavior task follows red-green-refactor. Run the registered test command against the single named test file while iterating: `cctl validate run test --queue-if-busy -- <file>`. Help-entry wiring, skill-block regeneration, and guidance prose are the only test-first exceptions (their contract sweeps already exist).
   - This slice changes no database state: no table, column, trigger, migration, or `KNOWN_SCHEMA_VERSION` bump. Strict view-schema additions cut over atomically with all producers and consumers; no compatibility overload or fallback read path.
 
 - [x] 26.1 Current-only element reads, `historical_only`, and the explicit revision selector

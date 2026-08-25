@@ -293,7 +293,14 @@ describe("cctl validate run", () => {
     });
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--", "src/example.test.ts"],
+      [
+        "validate",
+        "run",
+        "test",
+        "--queue-if-busy",
+        "--",
+        "src/example.test.ts",
+      ],
       { ...env, CC_VALIDATION_RUN_ID: undefined },
       host,
     );
@@ -305,7 +312,7 @@ describe("cctl validate run", () => {
     expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toEqual({
       commandName: "test",
       scope: "changed",
-      wait: true,
+      queueIfBusy: true,
       scopePaths: ["src/example.test.ts"],
       workflowExecutionId: "exec-1",
       workflowContextId: "api",
@@ -342,7 +349,46 @@ describe("cctl validate run", () => {
     expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toMatchObject({
       commandName: "test",
       scope: "full",
+      queueIfBusy: false,
     });
+  });
+
+  it("uses --queue-if-busy for FIFO admission", async () => {
+    const host = hostWith(() =>
+      json({
+        kind: "not_started",
+        result: {
+          kind: "skipped_by_policy",
+          message: "Skipped by policy.",
+        },
+      }),
+    );
+
+    const result = await runCli(
+      ["validate", "run", "test", "--queue-if-busy"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toMatchObject({
+      commandName: "test",
+      queueIfBusy: true,
+    });
+  });
+
+  it("rejects the retired validation --wait flag before making a request", async () => {
+    const host = hostWith(() => json({}));
+
+    const result = await runCli(
+      ["validate", "run", "test", "--wait"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('unknown flag "--wait"');
+    expect(host.requests).toEqual([]);
   });
 
   it.each([
@@ -392,7 +438,7 @@ describe("cctl validate run", () => {
     expect(result.stderr).toContain('Validation "test" was not started');
     expect(result.stderr).toContain("costs 8");
     expect(result.stderr).toContain("3 of 8");
-    expect(result.stderr).toContain("--wait");
+    expect(result.stderr).toContain("--queue-if-busy");
     expect(result.stderr).toContain("hint:");
   });
 
@@ -494,7 +540,7 @@ describe("cctl validate run", () => {
       }),
     );
     const oversized = await runCli(
-      ["validate", "run", "test", "--wait", "--json"],
+      ["validate", "run", "test", "--queue-if-busy", "--json"],
       env,
       oversizedHost,
     );
@@ -542,7 +588,7 @@ describe("cctl validate run", () => {
     });
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--json"],
+      ["validate", "run", "test", "--queue-if-busy", "--json"],
       env,
       host,
     );
@@ -596,7 +642,7 @@ describe("cctl validate run", () => {
       );
 
       const result = await runCli(
-        ["validate", "run", "test", "--wait", "--json"],
+        ["validate", "run", "test", "--queue-if-busy", "--json"],
         env,
         host,
       );
@@ -696,6 +742,33 @@ describe("cctl validate run", () => {
           message: "forwarded values must be relative worktree paths",
         },
       ],
+    });
+  });
+
+  it("renders an active duplicate as an actionable operation refusal", async () => {
+    const message =
+      'Refused duplicate "test": validation run "vrun-existing" is already running. Wait for it with `cctl validate status vrun-existing`.';
+    const host = hostWith(() =>
+      json(
+        {
+          error: message,
+          code: "validation_duplicate_active",
+          issues: [],
+        },
+        409,
+      ),
+    );
+
+    const result = await runCli(
+      ["validate", "run", "test", "--queue-if-busy", "--json"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: message,
+      code: "validation_duplicate_active",
     });
   });
 });
@@ -1032,7 +1105,15 @@ describe("cctl validate run — the client wait budget", () => {
     const host = neverTerminalHost();
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "3s", "--json"],
+      [
+        "validate",
+        "run",
+        "test",
+        "--queue-if-busy",
+        "--timeout",
+        "3s",
+        "--json",
+      ],
       env,
       host,
     );
@@ -1051,7 +1132,7 @@ describe("cctl validate run — the client wait budget", () => {
 
   it("names the continuation command on stderr in text mode", async () => {
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "2s"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "2s"],
       env,
       neverTerminalHost(),
     );
@@ -1091,7 +1172,7 @@ describe("cctl validate run — the client wait budget", () => {
     });
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "2s"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "2s"],
       env,
       host,
     );
@@ -1106,7 +1187,7 @@ describe("cctl validate run — the client wait budget", () => {
     const host = hostWith(() => json({}));
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "soon"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "soon"],
       env,
       host,
     );
@@ -1121,7 +1202,7 @@ describe("cctl validate run — the client wait budget", () => {
     );
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "10m"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "10m"],
       env,
       host,
     );
@@ -1138,7 +1219,7 @@ describe("cctl validate run — the client wait budget", () => {
     const host = neverTerminalHost();
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "3s"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "3s"],
       env,
       host,
     );
@@ -1174,7 +1255,15 @@ describe("cctl validate run — the client wait budget", () => {
     const host = neverTerminalHost();
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "3s", "--json"],
+      [
+        "validate",
+        "run",
+        "test",
+        "--queue-if-busy",
+        "--timeout",
+        "3s",
+        "--json",
+      ],
       env,
       host,
     );
@@ -1201,7 +1290,7 @@ describe("cctl validate run — the client wait budget", () => {
     host.now = () => now;
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "60s"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "60s"],
       env,
       host,
     );
@@ -1217,7 +1306,7 @@ describe("cctl validate run — the client wait budget", () => {
     });
 
     const result = await runCli(
-      ["validate", "run", "test", "--wait", "--timeout", "60s"],
+      ["validate", "run", "test", "--queue-if-busy", "--timeout", "60s"],
       env,
       host,
     );

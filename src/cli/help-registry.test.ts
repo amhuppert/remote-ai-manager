@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  booleanFlagArgsFrom,
   booleanFlagNames,
   booleanFlagNamesFrom,
   buildHelpRegistry,
@@ -231,6 +232,24 @@ describe("booleanFlagNamesFrom", () => {
   });
 });
 
+describe("booleanFlagArgsFrom", () => {
+  const registry = buildHelpRegistry([
+    entry({
+      path: ["a"],
+      flags: [booleanFlag("wait"), booleanFlag("config")],
+    }),
+    entry({ path: ["b"], flags: [valueFlag("config")] }),
+  ]);
+
+  it("keeps undeclared known booleans valueless for allowlist rejection", () => {
+    expect(booleanFlagArgsFrom(registry, ["b"])).toContain("--wait");
+  });
+
+  it("lets a command-local value flag override a boolean declared elsewhere", () => {
+    expect(booleanFlagArgsFrom(registry, ["b"])).not.toContain("--config");
+  });
+});
+
 describe("booleanFlagNames() over the real registry", () => {
   // The parse-time boolean set (shared.ts `BOOLEAN_FLAG_ARGS`) is derived from
   // this, so it must equal the full set of boolean flags the CLI accepts. A
@@ -255,6 +274,7 @@ describe("booleanFlagNames() over the real registry", () => {
       "outputs",
       "params",
       "park",
+      "queue-if-busy",
       "quiet",
       "rendered",
       "require-match",

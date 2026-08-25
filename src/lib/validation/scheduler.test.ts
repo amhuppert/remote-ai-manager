@@ -75,7 +75,7 @@ function submission(
 describe("weighted FIFO admission", () => {
   it("admits a fail-fast submission that fits into free capacity", () => {
     const decision = scheduler.submit(submission({ cost: 3 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
 
@@ -86,13 +86,13 @@ describe("weighted FIFO admission", () => {
     expect(scheduler.snapshot().inUse).toBe(3);
   });
 
-  it("rejects cost above the limit without creating a ledger row, including wait submissions", () => {
+  it("rejects cost above the limit without creating a ledger row, including queue-enabled submissions", () => {
     const failFast = scheduler.submit(
       submission({ runId: "over-1", cost: 9 }),
-      { wait: false, limit: 8 },
+      { queueIfBusy: false, limit: 8 },
     );
     const waited = scheduler.submit(submission({ runId: "over-2", cost: 9 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
@@ -107,10 +107,10 @@ describe("weighted FIFO admission", () => {
   });
 
   it("refuses a fail-fast submission when raw capacity is insufficient", () => {
-    scheduler.submit(submission({ cost: 6 }), { wait: false, limit: 8 });
+    scheduler.submit(submission({ cost: 6 }), { queueIfBusy: false, limit: 8 });
 
     const decision = scheduler.submit(submission({ cost: 3 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
 
@@ -125,15 +125,15 @@ describe("weighted FIFO admission", () => {
     expect(repo.findQueued()).toHaveLength(0);
   });
 
-  it("queues a wait submission that does not fit and reports its position", () => {
-    scheduler.submit(submission({ cost: 6 }), { wait: false, limit: 8 });
+  it("queues a queue-enabled submission that does not fit and reports its position", () => {
+    scheduler.submit(submission({ cost: 6 }), { queueIfBusy: false, limit: 8 });
 
     const first = scheduler.submit(submission({ cost: 8 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
     const second = scheduler.submit(submission({ cost: 4 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
@@ -145,9 +145,9 @@ describe("weighted FIFO admission", () => {
     expect(second.position).toBe(1);
   });
 
-  it("immediately admits a wait submission when the queue is empty and it fits", () => {
+  it("immediately admits a queue-enabled submission when the queue is empty and it fits", () => {
     const decision = scheduler.submit(submission({ cost: 8 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
     expect(decision.kind).toBe("admitted");
@@ -156,9 +156,9 @@ describe("weighted FIFO admission", () => {
 
 describe("no barging / starvation resistance", () => {
   it("refuses fail-fast requests that fit raw capacity while an older waiter exists", () => {
-    scheduler.submit(submission({ cost: 4 }), { wait: false, limit: 8 });
+    scheduler.submit(submission({ cost: 4 }), { queueIfBusy: false, limit: 8 });
     scheduler.submit(submission({ runId: "big-waiter", cost: 8 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
@@ -166,7 +166,7 @@ describe("no barging / starvation resistance", () => {
     // must never leapfrog the queued cost-8 waiter.
     for (let i = 0; i < 3; i += 1) {
       const decision = scheduler.submit(submission({ cost: 1 }), {
-        wait: false,
+        queueIfBusy: false,
         limit: 8,
       });
       expect(decision.kind).toBe("capacity_unavailable");
@@ -177,18 +177,18 @@ describe("no barging / starvation resistance", () => {
     expect(repo.findQueued()).toHaveLength(1);
   });
 
-  it("queues wait submissions behind an older waiter even when they fit", () => {
+  it("queues queue-enabled submissions behind an older waiter even when they fit", () => {
     scheduler.submit(submission({ runId: "active", cost: 4 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
     scheduler.submit(submission({ runId: "head", cost: 8 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
     const cheap = scheduler.submit(submission({ runId: "cheap", cost: 1 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
     expect(cheap.kind).toBe("queued");
@@ -201,16 +201,16 @@ describe("no barging / starvation resistance", () => {
 
   it("admits from the head while it fits and never skips a large head", () => {
     const first = scheduler.submit(submission({ runId: "active", cost: 4 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
     expect(first.kind).toBe("admitted");
     scheduler.submit(submission({ runId: "big", cost: 8 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
     scheduler.submit(submission({ runId: "small", cost: 1 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
@@ -232,11 +232,11 @@ describe("no barging / starvation resistance", () => {
 
   it("keeps sum of running costs within the limit across interleaved submissions", () => {
     const a = scheduler.submit(submission({ cost: 5 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
     const b = scheduler.submit(submission({ cost: 5 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
@@ -249,15 +249,15 @@ describe("no barging / starvation resistance", () => {
 describe("limit lowering", () => {
   it("leaves active work untouched and retires queued rows newly over the limit as cost_exceeds_limit", () => {
     scheduler.submit(submission({ runId: "active", cost: 8 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
     scheduler.submit(submission({ runId: "waiting-big", cost: 6 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
     scheduler.submit(submission({ runId: "waiting-small", cost: 2 }), {
-      wait: true,
+      queueIfBusy: true,
       limit: 8,
     });
 
@@ -299,7 +299,7 @@ describe("release", () => {
     it(`releases capacity on the ${name} terminal path and guards double release`, () => {
       const decision = scheduler.submit(
         submission({ runId: `run-${name}`, cost: 8 }),
-        { wait: false, limit: 8 },
+        { queueIfBusy: false, limit: 8 },
       );
       expect(decision.kind).toBe("admitted");
       scheduler.markStarted(`run-${name}`, 4242);
@@ -317,7 +317,7 @@ describe("release", () => {
 
   it("releases a spawn-error run (failed with null exit code, never started)", () => {
     scheduler.submit(submission({ runId: "spawn-err", cost: 4 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
 
@@ -339,7 +339,7 @@ describe("release", () => {
 describe("timing accounting", () => {
   it("records submittedAt/startedAt/finishedAt and keeps queueMs and execMs separate", () => {
     scheduler.submit(submission({ runId: "timed", cost: 2 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
 
@@ -364,7 +364,7 @@ describe("timing accounting", () => {
 
   it("guards markStarted against a second call and unknown runs", () => {
     scheduler.submit(submission({ runId: "once", cost: 1 }), {
-      wait: false,
+      queueIfBusy: false,
       limit: 8,
     });
     expect(scheduler.markStarted("once", 1)).not.toBeNull();

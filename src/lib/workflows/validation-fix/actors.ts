@@ -217,7 +217,7 @@ function submissionError(
       );
     case "capacity_unavailable":
       return nonRemediableValidationError(
-        `Validation command "${commandName}" was refused despite system wait mode`,
+        `Validation command "${commandName}" was refused despite the system always-queue policy`,
       );
     case "skipped_by_policy":
       return nonRemediableValidationError(

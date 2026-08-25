@@ -697,7 +697,7 @@ kind of approved-document drift the staged process exists to price.
 ## 14. Red-green-refactor plan
 
 Each loop runs the registered test command against one explicit test file
-(`cctl validate run test --wait -- <file>`); changed-scope, typecheck, seams,
+(`cctl validate run test --queue-if-busy -- <file>`); changed-scope, typecheck, seams,
 and build run at checkpoints.
 
 ### Phase 0 — Formal Native SDD amendment

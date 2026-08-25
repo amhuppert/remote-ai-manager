@@ -50,9 +50,9 @@ export const validateHelpEntries: CommandHelpEntry[] = [
     path: ["validate", "run"],
     summary: "run one registered validation command",
     description:
-      "Submit one logical command through ValidationService. Scope defaults to changed; a command without native changed support falls back to full. Every submission blocks to a verdict — --wait decides only how a busy scheduler answers, joining the strict FIFO queue instead of refusing immediately, unlike `agent run --wait` and `workflow run --wait` which decide whether to block at all. Values after `--` are changed-run narrowing paths, never tool options. A pass prints one verdict line naming the command, the resolved scope, the matched-file count when the server resolved one, and the run id, then the tail of the runner output; the same facts are fields on the --json envelope. A path after `--` that matches nothing still passes and says `0 files matched`, so read the verdict line rather than trusting a silent green. --timeout bounds only this client wait; on expiry the run continues server-side and the failure names the status command that recovers its verdict.",
+      "Submit one logical command through ValidationService. Scope defaults to changed; a command without native changed support falls back to full. Every submission blocks to a verdict. --queue-if-busy changes only admission when capacity is unavailable: join the strict FIFO queue instead of refusing immediately. By contrast, `agent run --wait` and `workflow run --wait` decide whether those commands block at all. An identical validation already active for this conversation and mutable worktree is refused with its existing run id; inspect that run instead of submitting concurrent duplicate evidence. Values after `--` are changed-run narrowing paths, never tool options. A pass prints one verdict line naming the command, the resolved scope, the matched-file count when the server resolved one, and the run id, then the tail of the runner output; the same facts are fields on the --json envelope. A path after `--` that matches nothing still passes and says `0 files matched`, so read the verdict line rather than trusting a silent green. --timeout bounds only this client's observation; on expiry the run continues server-side and the failure names the status command that recovers its verdict.",
     usage: [
-      "cctl validate run <name> [--scope changed|full] [--wait] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]",
+      "cctl validate run <name> [--scope changed|full] [--queue-if-busy] [--timeout <dur>] [--require-match] [--json] [-- <validated paths>]",
     ],
     flags: [
       {
@@ -63,16 +63,17 @@ export const validateHelpEntries: CommandHelpEntry[] = [
           "request affected-work or full validation (default: changed)",
       },
       {
-        name: "wait",
+        name: "queue-if-busy",
         kind: "boolean",
-        description: "queue behind older work instead of refusing when busy",
+        description:
+          "join the FIFO queue instead of refusing when capacity is busy",
       },
       {
         name: "timeout",
         kind: "value",
         valuePlaceholder: "<dur>",
         description:
-          "client wait budget including queue time (e.g. 45m, 90s; default 2h)",
+          "client observation budget including queue time (e.g. 45m, 90s; default 2h)",
       },
       {
         name: "require-match",
@@ -83,12 +84,13 @@ export const validateHelpEntries: CommandHelpEntry[] = [
     ],
     examples: [
       {
-        invocation: "cctl validate run test --wait -- src/lib/example.test.ts",
+        invocation:
+          "cctl validate run test --queue-if-busy -- src/lib/example.test.ts",
         explanation:
           "queue a focused test run; the server rejects option tokens and paths escaping the target worktree",
       },
       {
-        invocation: "cctl validate run test --scope full --wait",
+        invocation: "cctl validate run test --scope full --queue-if-busy",
         explanation:
           "run the full variant of the same logical test command; full scope reserves the command's full weight under the same shared timeout",
       },

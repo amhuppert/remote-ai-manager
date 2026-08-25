@@ -144,7 +144,7 @@ export interface ValidationSubmitRequest {
   commandName: string;
   scope?: ValidationScope;
   scopePaths?: string[];
-  wait?: boolean;
+  queueIfBusy?: boolean;
   caller: ValidationCallerRef;
   /**
    * CC_VALIDATION_RUN_ID observed in the submitter's environment: a
@@ -196,6 +196,7 @@ export interface ValidationSystemSubmitRequest {
 export type ValidationSubmitInvalidReason =
   | "identity_unresolved"
   | "nested_invocation"
+  | "duplicate_active"
   | "path_args_forbidden"
   | "path_args_rejected"
   | "path_args_require_changed"
@@ -288,9 +289,9 @@ export interface ValidationService {
   budget(): Promise<ValidationBudgetResponse>;
   /**
    * Lease-exempt, always-queueing submission for system-owned gates (script
-   * validator, lane merge, Smart Merge, Smart Commit). Waiting for capacity
-   * is orchestration state — the caller blocks on `waitForCompletion`, and a
-   * queued wait must never surface as a failure.
+   * validator, lane merge, Smart Merge, Smart Commit). Queueing for capacity
+   * is orchestration state — the caller blocks on `waitForCompletion`, and
+   * queued work must never surface as a failure.
    */
   submitSystem(
     request: ValidationSystemSubmitRequest,
@@ -408,6 +409,13 @@ export function createValidationService(
   const spawnsInFlight = new Map<string, Promise<void>>();
   const pendingSpawnCancels = new Map<string, "cancelled" | "interrupted">();
   /**
+   * Exact active agent submissions, scoped to one conversation and mutable
+   * worktree. A second client cannot safely share the first client's private
+   * lease, so duplicates are refused and pointed at the existing run.
+   */
+  const activeAgentRunsByKey = new Map<string, string>();
+  const activeAgentKeysByRun = new Map<string, string>();
+  /**
    * Runs this service instance admitted or queued itself. Rows outside this
    * set — chiefly non-terminal rows retained after a FAILED recovery, whose
    * process groups this process cannot verify or kill — must never be
@@ -522,6 +530,11 @@ export function createValidationService(
     result: ValidationRunResult,
     phase: ValidationRunEventPhase,
   ): void {
+    const activeAgentKey = activeAgentKeysByRun.get(runId);
+    if (activeAgentKey !== undefined) {
+      activeAgentKeysByRun.delete(runId);
+      activeAgentRunsByKey.delete(activeAgentKey);
+    }
     recordResult(runId, result);
     const row = deps.repo.findById(runId);
     if (!row) return;
@@ -885,7 +898,7 @@ export function createValidationService(
       source: request.source,
       project: request.caller.projectPath,
       conversation: meta.conversationId,
-      wait: request.wait ?? false,
+      queueIfBusy: request.queueIfBusy ?? false,
       requestedScope,
       effectiveScope,
       scopedPathCount: scopePaths.length,
@@ -896,12 +909,14 @@ export function createValidationService(
       reason: ValidationSubmitInvalidReason,
       message: string,
       outcome?: string,
+      fields: Record<string, unknown> = {},
     ): ValidationSubmission => {
       logger.warn("validation.run_rejected", {
         name: request.commandName,
         source: request.source,
         project: request.caller.projectPath,
         reason: outcome ?? reason,
+        ...fields,
       });
       publishPhase("rejected", {
         ...meta,
@@ -993,8 +1008,40 @@ export function createValidationService(
       }
     }
 
+    // Resolve every async preflight dependency before claiming the active
+    // key. From the lookup through scheduler submission there is no await, so
+    // concurrent requests cannot both observe the key as free.
     const global = await deps.config.readGlobal();
     lastKnownLimit = global.concurrencyLimit;
+    const conversationId = request.caller.conversationId ?? null;
+    const activeAgentKey =
+      request.source === "agent_cli" && conversationId !== null
+        ? JSON.stringify([
+            request.caller.projectPath,
+            resolved.worktreePath,
+            conversationId,
+            request.commandName,
+            execution.effectiveScope,
+            [...new Set(execution.scopePaths)].sort(),
+          ])
+        : null;
+    if (activeAgentKey !== null) {
+      const existingRunId = activeAgentRunsByKey.get(activeAgentKey);
+      if (existingRunId !== undefined) {
+        const existing = deps.repo.findById(existingRunId);
+        if (existing?.status === "queued" || existing?.status === "running") {
+          return rejected(
+            "duplicate_active",
+            `Refused duplicate "${request.commandName}": validation run "${existingRunId}" is already ${existing.status} for this conversation, worktree, scope, and paths. This is deliberate: concurrent validations read the same mutable worktree and can produce nondeterministic evidence. Wait for it with \`cctl validate status ${existingRunId}\` or cancel it before retrying.`,
+            "duplicate_active",
+            { existingRunId, existingStatus: existing.status },
+          );
+        }
+        activeAgentRunsByKey.delete(activeAgentKey);
+        activeAgentKeysByRun.delete(existingRunId);
+      }
+    }
+
     const runId = ids.runId();
     const nonce = ids.nonce();
     const lease: ValidationLease | null =
@@ -1064,7 +1111,7 @@ export function createValidationService(
       );
     }
     const decision = deps.scheduler.submit(submission, {
-      wait: request.wait ?? false,
+      queueIfBusy: request.queueIfBusy ?? false,
       limit: global.concurrencyLimit,
     });
     switch (decision.kind) {
@@ -1110,6 +1157,10 @@ export function createValidationService(
       }
       case "queued": {
         locallyOwned.add(runId);
+        if (activeAgentKey !== null) {
+          activeAgentRunsByKey.set(activeAgentKey, runId);
+          activeAgentKeysByRun.set(runId, activeAgentKey);
+        }
         preparedSpawns.set(runId, spawnParams);
         if (filesMatched !== null) scopeMatches.set(runId, filesMatched);
         publishPhase("queued", { ...meta, effectiveScope, runId });
@@ -1125,6 +1176,10 @@ export function createValidationService(
       }
       case "admitted": {
         locallyOwned.add(runId);
+        if (activeAgentKey !== null) {
+          activeAgentRunsByKey.set(activeAgentKey, runId);
+          activeAgentKeysByRun.set(runId, activeAgentKey);
+        }
         preparedSpawns.set(runId, spawnParams);
         if (filesMatched !== null) scopeMatches.set(runId, filesMatched);
         await spawnAdmitted(decision.record);
@@ -1270,7 +1325,7 @@ export function createValidationService(
       source: request.source,
       project: request.projectPath,
       conversation: meta.conversationId,
-      wait: true,
+      queueIfBusy: true,
       requestedScope: request.scope,
       effectiveScope,
       scopedPathCount: 0,
@@ -1391,7 +1446,7 @@ export function createValidationService(
       return unavailableAtAdmission;
     }
     const decision = deps.scheduler.submit(submission, {
-      wait: true,
+      queueIfBusy: true,
       limit: global.concurrencyLimit,
     });
     if (decision.kind === "cost_exceeds_limit") {

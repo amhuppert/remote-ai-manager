@@ -28,7 +28,7 @@ export const validationSubmitBodySchema = z
     commandName: z.string().trim().min(1),
     scope: validationScopeSchema.default("changed"),
     scopePaths: z.array(z.string()).optional(),
-    wait: z.boolean().optional(),
+    queueIfBusy: z.boolean().optional(),
     /**
      * CC_VALIDATION_RUN_ID observed in the submitter's environment; the
      * server rejects nested invocations (a registered command would hold

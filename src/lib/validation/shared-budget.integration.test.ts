@@ -222,7 +222,7 @@ describe("ValidationService shared global budget", () => {
       const oversizedFailFast = await service.submit({
         source: "agent_cli",
         commandName: "oversized",
-        wait: false,
+        queueIfBusy: false,
         caller: {
           projectPath: "/projects/app",
           sessionName: "session-1",
@@ -241,7 +241,7 @@ describe("ValidationService shared global budget", () => {
       const oversizedWait = await service.submit({
         source: "agent_cli",
         commandName: "oversized",
-        wait: true,
+        queueIfBusy: true,
         caller: {
           projectPath: "/projects/app",
           sessionName: "session-1",
@@ -281,7 +281,7 @@ describe("ValidationService shared global budget", () => {
       const busyFailFast = await service.submit({
         source: "agent_cli",
         commandName: "heavy",
-        wait: false,
+        queueIfBusy: false,
         caller: {
           projectPath: "/projects/other",
           sessionName: "session-2",
@@ -304,7 +304,7 @@ describe("ValidationService shared global budget", () => {
       const waitingCli = await service.submit({
         source: "agent_cli",
         commandName: "heavy",
-        wait: true,
+        queueIfBusy: true,
         caller: {
           projectPath: "/projects/other",
           sessionName: "session-2",
@@ -669,7 +669,7 @@ describe("ValidationService shared global budget", () => {
         source: "agent_cli",
         commandName: "test",
         scopePaths: ["src/a.test.ts"],
-        wait: true,
+        queueIfBusy: true,
         caller: {
           projectPath: "/projects/app",
           sessionName: "session-1",
@@ -685,7 +685,7 @@ describe("ValidationService shared global budget", () => {
         source: "agent_cli",
         commandName: "test",
         scope: "full",
-        wait: true,
+        queueIfBusy: true,
         caller: {
           projectPath: "/projects/app",
           sessionName: "session-1",

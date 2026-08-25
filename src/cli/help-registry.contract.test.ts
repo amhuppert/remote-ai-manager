@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { runCli, type CliHost } from "./core";
 import {
   allHelpEntries,
+  booleanFlagArgsForCommand,
   childEntriesOf,
   isGroup,
   renderHelpText,
@@ -209,16 +210,15 @@ describe("help registry contract", () => {
   });
 
   it("no single entry declares a flag name as both boolean and value", () => {
-    // The parse-time boolean-flag set is COMMAND-SCOPED (parseArgv +
+    // Boolean classification is COMMAND-AWARE (parseArgv +
     // booleanFlagArgsForCommand, shared.ts / help-registry.ts): the authoritative
-    // parse resolves the command path first, then uses THAT command's own boolean
-    // flags. So a flag name may legitimately be `boolean` for one command and
-    // `value` for another (e.g. `workflow get --config` boolean section selector
-    // vs `workflow live get --config <ctx>` value, doc 06) — the cross-command
-    // difference is intentional and sound because each command resolves to exactly
-    // one entry (longest-prefix). What is NOT sound is a single entry declaring the
-    // same flag name with two kinds, which would parse ambiguously for THAT
-    // command; assert per-entry singularity.
+    // parse resolves the command path first, then lets that command's value flags
+    // override boolean declarations elsewhere. So a flag name may legitimately
+    // be `boolean` for one command and `value` for another (e.g. `workflow get
+    // --config` boolean section selector vs `workflow live get --config <ctx>`
+    // value, doc 06). What is NOT sound is a single entry declaring the same flag
+    // name with two kinds, which would parse ambiguously for THAT command; assert
+    // per-entry singularity.
     const conflicts: string[] = [];
     for (const entry of ENTRIES) {
       const kindsByFlag = new Map<string, Set<FlagSpec["kind"]>>();
@@ -248,6 +248,15 @@ describe("help registry contract", () => {
     );
     expect(get?.flags.find((f) => f.name === "config")?.kind).toBe("boolean");
     expect(liveGet?.flags.find((f) => f.name === "config")?.kind).toBe("value");
+  });
+
+  it("keeps undeclared global booleans valueless for command allowlist rejection", () => {
+    expect(booleanFlagArgsForCommand(["validate", "run", "test"])).toContain(
+      "--wait",
+    );
+    expect(
+      booleanFlagArgsForCommand(["workflow", "live", "get"]),
+    ).not.toContain("--config");
   });
 
   it("declares --conversation on 'fixture prompt' (read with command-specific meaning)", () => {

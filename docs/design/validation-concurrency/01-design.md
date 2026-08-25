@@ -102,7 +102,7 @@ sum(cost of every running validation command) <= validation.concurrencyLimit
 
 At a limit of 8: one cost-8 test suite, or two cost-4 builds, or eight cost-1 checks, may run concurrently. The seeded default is **8** per your confirmation. It is a prominent global setting — it cannot be inferred from CPU count, because memory pressure rather than CPU saturation is the failure mode.
 
-**Oversized commands are rejected, not clamped** (your answer (b)). A command whose cost exceeds the limit is unrunnable configuration, not a temporarily-busy command: it fails with `validation_cost_exceeds_limit`, naming both numbers, **including under `--wait`**. This keeps the limit a hard capacity guarantee rather than a soft anti-pile-up heuristic. Three consequences follow:
+**Oversized commands are rejected, not clamped** (your answer (b)). A command whose cost exceeds the limit is unrunnable configuration, not a temporarily-busy command: it fails with `validation_cost_exceeds_limit`, naming both numbers, **including under `--queue-if-busy`**. This keeps the limit a hard capacity guarantee rather than a soft anti-pile-up heuristic. Three consequences follow:
 
 - The error is caught at **preflight** — workflow create/replace/start/live-edit and CLI invocation — so it surfaces as a configuration problem before an execution is underway, not as a mid-run halt.
 - The remedy is stated in the error: register a lower-worker profile, reduce the command's worker cap and its honest cost together, or raise the machine limit.
@@ -129,6 +129,7 @@ Further semantics:
 - **Queue time never consumes the execution timeout**; the timeout starts at process spawn.
 - **Policy-disabled no-ops resolve before admission** — they consume no capacity and no queue position, and spawn nothing.
 - **Nested wrapper calls are rejected** via `CC_VALIDATION_RUN_ID`: a registered command invoking `cctl validate run` would hold capacity while waiting for capacity.
+- **Identical active agent submissions are rejected per conversation and worktree.** The refusal names the existing run because concurrent commands would read the same mutable tree, produce nondeterministic evidence, and cannot safely share the submitter's private lease.
 - **Capacity waiting is orchestration state, not validation failure.** It must never open a remediation task, consume a graph validation iteration, trip a circuit breaker, or render to an agent as an error.
 - Reservations release on **every** terminal path: pass, fail, timeout, cancellation, spawn error, shutdown.
 
@@ -147,20 +148,22 @@ This ledger is operational state for ownership and recovery first; terminal rows
 
 ```
 cctl validate list
-cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]
+cctl validate run <name> [--scope changed|full] [--queue-if-busy] [--json] [-- <validated paths>]
 cctl validate status [run-id]
 cctl validate cancel <run-id>
 ```
 
 `list` shows names, costs, descriptions, whether each command is enabled for the caller's current role and context, and current global capacity. It deliberately **does not print the underlying executable** — showing the raw tool invocation would hand agents a copy-paste path around the wrapper.
 
-`run` is fail-fast by default and synchronous from the agent's perspective once admitted.
+`run` always blocks until a terminal verdict after admission. Admission fails fast by default;
+`--queue-if-busy` instead joins the strict FIFO queue when immediate capacity is unavailable.
 
 | Outcome | Exit | Behavior |
 |---|---|---|
 | Passed | 0 | Script output (already AI-optimized by the wrapper) |
 | Validation failed | 1 | Failure output; `code: validation_failed` |
-| Refused for capacity | 1 | Snapshot + instruction to re-run with `--wait`; `code: capacity_unavailable` |
+| Identical run already active | 1 | Existing run ID + status/cancel remedy; `code: validation_duplicate_active` |
+| Refused for capacity | 1 | Snapshot + instruction to re-run with `--queue-if-busy`; `code: capacity_unavailable` |
 | Cost exceeds limit | 1 | `code: validation_cost_exceeds_limit`, names both values and the remedy |
 | **Disabled by policy** | **0** | Pure no-op, nothing spawned, no capacity consumed |
 | Unknown command / bad invocation | 2 | Lists registered names |
@@ -170,12 +173,12 @@ A refusal reads:
 
 ```
 Validation "test" was not started: it costs 8, but 3 of 8 capacity units are in use.
-Run `cctl validate run test --wait` to queue it.
+Run `cctl validate run test --queue-if-busy` to join the FIFO queue.
 ```
 
 When an **older waiter** rather than raw free capacity is what blocks admission, the message says so and reports queue depth — otherwise the agent would see free capacity and conclude the tool is broken.
 
-Tier discipline: a capacity refusal is a **hint** (retrying with `--wait` is genuinely optional). A policy-disabled result is an **instruction** (the agent must not retry or bypass). The underlying tool's exit code belongs in the JSON payload and never redefines `cctl`'s own stable process contract. All flags, examples, exit behavior, and machine codes originate in the CLI help registry and flow into the generated `cc-cli` reference, so parser behavior and agent documentation cannot drift.
+Tier discipline: a capacity refusal is a **hint** (retrying with `--queue-if-busy` is genuinely optional). A policy-disabled result is an **instruction** (the agent must not retry or bypass). The underlying tool's exit code belongs in the JSON payload and never redefines `cctl`'s own stable process contract. All flags, examples, exit behavior, and machine codes originate in the CLI help registry and flow into the generated `cc-cli` reference, so parser behavior and agent documentation cannot drift.
 
 ---
 
@@ -328,7 +331,7 @@ Storage and query:
 - **Terminal ledger rows are retained**, not deleted. The ledger already writes these timestamps for crash recovery, so durable accounting costs nothing extra to collect. This deliberately amends the round-1 "operational state only" scope guard: the concrete consumer that decision was waiting for now exists (this requirement). Rows are one-per-run and tiny; no pruning in v1. The table's repository and round-trip contract obligations cover the timing fields like any other persisted field.
 - The `validation.run_completed` **structured log event** carries the same fields (`queueMs`, `execMs`, outcome, `requestedScope`, `effectiveScope`, `scopedPathCount`, source, project), so the existing DuckDB-over-logs performance-analysis path works immediately, alongside direct SQL over the ledger.
 - **No history UI in v1**, but list and status expose native/fallback support and requested/effective scope without executable paths. The data also answers per project × command execution-time distributions by effective scope, queue-wait distributions, outcome mix, and agent wall-clock spent on validation.
-- Fast-follow enabled by the data (not v1 scope): `cctl validate list` can annotate typical durations ("test: ~4m in this project") through the existing best-effort dynamic help-context garnish, giving agents a real basis for choosing fail-fast, `--wait`, or doing other work first.
+- Fast-follow enabled by the data (not v1 scope): `cctl validate list` can annotate typical durations ("test: ~4m in this project") through the existing best-effort dynamic help-context garnish, giving agents a real basis for choosing fail-fast admission, FIFO admission with `--queue-if-busy`, or doing other work first.
 
 ---
 
@@ -352,7 +355,7 @@ Unit and contract coverage, using injected scheduler/runner dependencies and rea
 - Smart Merge auto-fix and tree-state behavior with aggregate command identity;
 - an architecture assertion that graph and merge modules cannot import the low-level runner.
 
-**Live acceptance.** With the limit set to 4, start commands from two different projects/sessions. A cost-3 command runs; a second cost-3 command fails fast, then queues with `--wait` and starts only after the first releases. A cost-1 command behind that waiter must not leapfrog. Recorded active cost never exceeds 4 throughout. A disabled `format` returns its instruction with no process created. A cost-5 command is rejected outright, including with `--wait`. The same scenario runs through the agent CLI, a graph script validator, and Smart Merge to prove none has a bypass. Finally, kill the server mid-run and confirm recovery terminates the orphaned group before reopening admission.
+**Live acceptance.** With the limit set to 4, start commands from two different projects/sessions. A cost-3 command runs; a second cost-3 command fails fast, then queues with `--queue-if-busy` and starts only after the first releases. A cost-1 command behind that waiter must not leapfrog. Recorded active cost never exceeds 4 throughout. A disabled `format` returns its instruction with no process created. A cost-5 command is rejected outright, including with `--queue-if-busy`. The same scenario runs through the agent CLI, a graph script validator, and Smart Merge to prove none has a bypass. Finally, kill the server mid-run and confirm recovery terminates the orphaned group before reopening admission.
 
 ---
 

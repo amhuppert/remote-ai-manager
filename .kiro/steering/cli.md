@@ -177,11 +177,12 @@ through `withForensics`. **Every `onTimeout` names the continuation command that
 recovers the still-running job** (`workflow wait`'s cursor-carrying receipt is the reference
 implementation); the budget bounds the client wait only, never the server-side run.
 
-`--wait` means two different things and is deliberately not renamed. On `validate run` the command
-always blocks to a verdict and `--wait` chooses queue admission over a fail-fast refusal; on `agent
-run` and `workflow run` it chooses whether to block at all. Each leaf's help states its own
-contract — that is where the split is documented, and a rename would break the ecosystem's muscle
-memory for a naming issue with no recorded failure.
+`validate run` always blocks to a verdict. Its `--queue-if-busy` flag changes only admission:
+without it a busy scheduler refuses immediately; with it the submission joins the strict FIFO
+queue. `agent run --wait` and `workflow run --wait` retain `--wait` because those flags decide
+whether the client blocks at all. Ticket `remote-ai-manager#12` recorded duplicate validation
+commands caused by the former naming collision, providing the observed failure that earned this
+breaking rename.
 
 **Build parity has exactly one exemption, and it is a property of the TARGET, not of the
 verb.** Every command addresses the single CC instance that owns the caller's session, so the gate's

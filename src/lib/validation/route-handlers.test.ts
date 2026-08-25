@@ -187,7 +187,7 @@ describe("validation route composition", () => {
         method: "POST",
         body: JSON.stringify({
           commandName: "test",
-          wait: true,
+          queueIfBusy: true,
           scopePaths: ["src/example.test.ts"],
           workflowExecutionId: "exec-1",
           workflowContextId: "api",
@@ -207,7 +207,7 @@ describe("validation route composition", () => {
         source: "agent_cli",
         commandName: "test",
         scope: "changed",
-        wait: true,
+        queueIfBusy: true,
         scopePaths: ["src/example.test.ts"],
         nestedValidationRunId: null,
         caller: {
@@ -221,6 +221,30 @@ describe("validation route composition", () => {
         },
       },
     ]);
+  });
+
+  it("rejects the retired wait request field before service submission", async () => {
+    const fake = serviceFake();
+    const handlers = createSessionValidationHandlers({
+      auth: auth(),
+      service: fake.service,
+      resolveProjectPath: async () => PROJECT_PATH,
+      getSession: async () => ({ conversations: [conversation()] }),
+    });
+
+    const response = await handlers.POST(
+      new Request("http://cc.test/validation", {
+        method: "POST",
+        body: JSON.stringify({ commandName: "test", wait: true }),
+      }),
+      context(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "validation_invalid_request",
+    });
+    expect(fake.submissions).toEqual([]);
   });
 
   it("uses the project conversation adapter for list without inventing a session", async () => {
@@ -307,6 +331,39 @@ describe("validation route composition", () => {
     });
   });
 
+  it("maps an active duplicate to an actionable HTTP 409", async () => {
+    const message =
+      'Refused duplicate "test": validation run "vrun-1" is already running. Wait for it with `cctl validate status vrun-1`.';
+    const fake = serviceFake({
+      submit: async () => ({
+        kind: "invalid",
+        reason: "duplicate_active",
+        message,
+      }),
+    });
+    const handlers = createSessionValidationHandlers({
+      auth: auth(),
+      service: fake.service,
+      resolveProjectPath: async () => PROJECT_PATH,
+      getSession: async () => ({ conversations: [conversation()] }),
+    });
+
+    const response = await handlers.POST(
+      new Request("http://cc.test/validation", {
+        method: "POST",
+        body: JSON.stringify({ commandName: "test" }),
+      }),
+      context(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: message,
+      code: "validation_duplicate_active",
+      issues: [],
+    });
+  });
+
   it("maps cancel authorization failures to stable error codes", async () => {
     const fake = serviceFake({
       cancel: async () => ({ authorization: "not_owner" }),
@@ -369,8 +426,8 @@ describe("validation route composition", () => {
 });
 
 // ============================================================
-// Status long-poll: the server holds the request until the run
-// moves, so `cctl validate --wait` stops polling every second.
+// Status long-poll: the server holds the request until the run moves, so a
+// blocking `cctl validate run` does not poll every second.
 // ============================================================
 
 type PolledStatus = ReturnType<ValidationService["poll"]>;

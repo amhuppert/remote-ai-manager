@@ -230,7 +230,7 @@ export function buildValidationCommandsSection(
   }
   lines.push(
     scriptGateLine(selections.scriptGate),
-    "If a run is refused for capacity, continue other work and retry later, or re-run with `--wait` to queue for a slot.",
+    "If a run is refused for capacity, continue other work and retry later, or re-run with `--queue-if-busy` to join the FIFO queue.",
   );
   return lines.join("\n");
 }

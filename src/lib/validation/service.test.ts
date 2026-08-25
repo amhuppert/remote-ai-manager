@@ -441,7 +441,7 @@ describe("submission lifecycle", () => {
       request({
         commandName: "test",
         scopePaths: ["src/a.test.ts"],
-        wait: false,
+        queueIfBusy: false,
       }),
     );
 
@@ -539,10 +539,50 @@ describe("submission lifecycle", () => {
     });
   });
 
+  it("refuses an identical active agent validation and allows retry after completion", async () => {
+    const first = await service.submit(
+      request({ commandName: "test", scope: "full", queueIfBusy: true }),
+    );
+    expect(first).toMatchObject({
+      kind: "accepted",
+      runId: "run-1",
+      status: "running",
+    });
+
+    const duplicate = await service.submit(
+      request({ commandName: "test", scope: "full", queueIfBusy: true }),
+    );
+
+    expect(duplicate).toEqual({
+      kind: "invalid",
+      reason: "duplicate_active",
+      message:
+        'Refused duplicate "test": validation run "run-1" is already running for this conversation, worktree, scope, and paths. This is deliberate: concurrent validations read the same mutable worktree and can produce nondeterministic evidence. Wait for it with `cctl validate status run-1` or cancel it before retrying.',
+    });
+    expect(runner.spawns).toHaveLength(1);
+    expect(repo.findRunning()).toHaveLength(1);
+    expect(repo.findQueued()).toHaveLength(0);
+
+    runner.runs
+      .get("run-1")
+      ?.complete({ kind: "exited", exitCode: 0, output: "clean" });
+    await flush();
+
+    const retry = await service.submit(
+      request({ commandName: "test", scope: "full", queueIfBusy: true }),
+    );
+    expect(retry).toMatchObject({
+      kind: "accepted",
+      runId: "run-2",
+      status: "running",
+    });
+    expect(runner.spawns).toHaveLength(2);
+  });
+
   it("queues behind running work and pumps the waiter after release", async () => {
-    await service.submit(request({ commandName: "test", wait: false }));
+    await service.submit(request({ commandName: "test", queueIfBusy: false }));
     const queued = await service.submit(
-      request({ commandName: "typecheck", wait: true }),
+      request({ commandName: "typecheck", queueIfBusy: true }),
     );
 
     expect(queued.kind).toBe("accepted");
@@ -572,7 +612,7 @@ describe("submission lifecycle", () => {
     });
     await service.submit(request({ commandName: "test" }));
     const queued = await service.submit(
-      request({ commandName: "typecheck", wait: true }),
+      request({ commandName: "typecheck", queueIfBusy: true }),
     );
     expect(queued).toMatchObject({
       kind: "accepted",
@@ -641,7 +681,7 @@ describe("submission lifecycle", () => {
       },
     });
     const over = await overService.submit(
-      request({ commandName: "test", wait: true }),
+      request({ commandName: "test", queueIfBusy: true }),
     );
     expect(over.kind).toBe("not_started");
     if (over.kind !== "not_started") return;
@@ -1050,11 +1090,17 @@ describe("durable timing by validation source", () => {
       logger: captured,
     });
 
-    const running = await service.submit(request({ commandName: "test" }));
+    const running = await service.submit(
+      request({ commandName: "test", scopePaths: ["src/a.test.ts"] }),
+    );
     expect(running.kind).toBe("accepted");
     if (running.kind !== "accepted") return;
     const queued = await service.submit(
-      request({ commandName: "test", wait: true }),
+      request({
+        commandName: "test",
+        scopePaths: ["src/b.test.ts"],
+        queueIfBusy: true,
+      }),
     );
     expect(queued).toMatchObject({ kind: "accepted", status: "queued" });
     if (queued.kind !== "accepted") return;
@@ -1083,7 +1129,7 @@ describe("durable timing by validation source", () => {
       execMs: null,
       requestedScope: "changed",
       effectiveScope: "changed",
-      scopedPathCount: 0,
+      scopedPathCount: 1,
     });
     expect(
       captured.entries.find(
@@ -1109,7 +1155,7 @@ describe("durable timing by validation source", () => {
         timedOut: false,
         requestedScope: "changed",
         effectiveScope: "changed",
-        scopedPathCount: 0,
+        scopedPathCount: 1,
         limit: 4,
       },
     });
@@ -1117,7 +1163,7 @@ describe("durable timing by validation source", () => {
 });
 
 describe("system submissions with explicit targets", () => {
-  it("rejects an oversized system command even though system submissions always wait", async () => {
+  it("rejects an oversized system command even though system submissions always queue", async () => {
     service = buildService({ concurrencyLimit: 4 });
 
     const submission = await service.submitSystem({
@@ -1149,7 +1195,7 @@ describe("system submissions with explicit targets", () => {
 
   it("queues graph lane merges as lease-exempt work and durably records timing", async () => {
     const occupying = await service.submit(
-      request({ commandName: "test", wait: false }),
+      request({ commandName: "test", queueIfBusy: false }),
     );
     expect(occupying.kind).toBe("accepted");
 
@@ -1801,7 +1847,7 @@ describe("graceful shutdown", () => {
     const shutdown = service.shutdown();
     await flush();
     const [agentSubmission, systemSubmission] = await Promise.all([
-      service.submit(request({ commandName: "format", wait: true })),
+      service.submit(request({ commandName: "format", queueIfBusy: true })),
       service.submitSystem(
         systemRequest({
           command: { kind: "registered", name: "format" },
@@ -1842,7 +1888,7 @@ describe("graceful shutdown", () => {
     });
 
     const submissionPromise = service.submit(
-      request({ commandName: "format", wait: true }),
+      request({ commandName: "format", queueIfBusy: true }),
     );
     await flush();
     expect(configReadStarted).toBe(true);
@@ -1935,7 +1981,7 @@ describe("graceful shutdown", () => {
     expect(running.kind).toBe("accepted");
     if (running.kind !== "accepted") return;
     const queued = await service.submit(
-      request({ commandName: "format", wait: true }),
+      request({ commandName: "format", queueIfBusy: true }),
     );
     expect(queued).toMatchObject({ kind: "accepted", status: "queued" });
 
@@ -1960,7 +2006,7 @@ describe("graceful shutdown", () => {
     const running = await service.submit(request({ commandName: "test" }));
     if (running.kind !== "accepted") return;
     const queued = await service.submit(
-      request({ commandName: "typecheck", wait: true }),
+      request({ commandName: "typecheck", queueIfBusy: true }),
     );
     if (queued.kind !== "accepted") return;
 
@@ -1979,7 +2025,7 @@ describe("global budget read", () => {
     // `test` costs 8 against a limit of 8, so the second submission queues.
     const running = await service.submit(request({ commandName: "test" }));
     const queued = await service.submit(
-      request({ commandName: "typecheck", wait: true }),
+      request({ commandName: "typecheck", queueIfBusy: true }),
     );
     await flush();
     if (running.kind !== "accepted" || queued.kind !== "accepted") {

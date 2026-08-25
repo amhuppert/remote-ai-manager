@@ -972,7 +972,7 @@ Implementation follows red-green-refactor. Each loop runs the registered test
 command against one explicit test file:
 
 ```text
-cctl validate run test --wait -- path/to/file.test.ts
+cctl validate run test --queue-if-busy -- path/to/file.test.ts
 ```
 
 Wider changed-scope runs occur only at checkpoints.

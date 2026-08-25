@@ -16,7 +16,7 @@
 2. Smallest implementation that passes.
 3. Refactor with tests green.
 
-Run loop tests scoped to the single test file being iterated on (`cctl validate run test --wait -- <test-file>`), never a directory path. Changed-scope runs are strategic checkpoints, not part of the loop.
+Run loop tests scoped to the single test file being iterated on (`cctl validate run test --queue-if-busy -- <test-file>`), never a directory path. Changed-scope runs are strategic checkpoints, not part of the loop.
 
 Bug fixes: failing repro test first, fix second — always.
 

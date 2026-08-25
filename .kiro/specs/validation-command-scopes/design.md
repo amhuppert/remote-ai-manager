@@ -193,15 +193,15 @@ Executable path containment and permission checks remain where they are today an
 ### CLI
 
 ```text
-cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]
+cctl validate run <name> [--scope changed|full] [--queue-if-busy] [--json] [-- <validated paths>]
 ```
 
 Examples:
 
 ```text
-cctl validate run test --wait
-cctl validate run test --scope full --wait
-cctl validate run test --scope changed --wait -- src/lib/example.test.ts
+cctl validate run test --queue-if-busy
+cctl validate run test --scope full --queue-if-busy
+cctl validate run test --scope changed --queue-if-busy -- src/lib/example.test.ts
 ```
 
 The typed help registry owns the `scope` value flag, usage, examples, and description. Parser allowlists continue to derive from that registry. The CLI rejects an invalid scope and `--scope full` plus passthrough paths locally before making a request; the server repeats semantic validation as the trust boundary. Generated `cc-cli` skill reference is rebuilt from the registry.
@@ -359,11 +359,11 @@ Historical reports are not rewritten.
 ### Validation sequence after implementation
 
 1. Targeted unit tests for schemas, resolver, CLI, service, runner, repo, migration, wrappers, and instruction docs.
-2. `cctl validate run format --scope changed --wait`.
-3. `cctl validate run lint --scope changed --wait`.
-4. `cctl validate run typecheck --scope changed --wait` and verify effective full fallback.
-5. `cctl validate run test --scope changed --wait`.
-6. `cctl validate run test --scope full --wait`.
+2. `cctl validate run format --scope changed --queue-if-busy`.
+3. `cctl validate run lint --scope changed --queue-if-busy`.
+4. `cctl validate run typecheck --scope changed --queue-if-busy` and verify effective full fallback.
+5. `cctl validate run test --scope changed --queue-if-busy`.
+6. `cctl validate run test --scope full --queue-if-busy`.
 
 All validation uses registered logical commands after the new config is in place.
 

@@ -1439,7 +1439,7 @@ authoritative synchronous floor.
 ### Verification strategy
 
 All behavioral work follows red-green-refactor with one explicit focused test
-file per loop through `cctl validate run test --wait -- <file>`. The acceptance
+file per loop through `cctl validate run test --queue-if-busy -- <file>`. The acceptance
 matrix spans schema and migration constraints, repository CAS/races,
 service-level authority and rollback, every revision path, semantic diff,
 approval applicability, lint, export/verify, CLI contracts, route projections,

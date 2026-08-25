@@ -366,6 +366,8 @@ describe("TDD_INSTRUCTIONS", () => {
   it("scopes TDD-loop test runs to a single test file path, never a directory", () => {
     expect(TDD_INSTRUCTIONS).toMatch(/single test file/i);
     expect(TDD_INSTRUCTIONS).toMatch(/never a directory/i);
+    expect(TDD_INSTRUCTIONS).toContain("--queue-if-busy");
+    expect(TDD_INSTRUCTIONS).not.toMatch(/cctl validate run[^`]*--wait/u);
   });
 
   it("permits changed-scope runs only strategically, outside the TDD loop", () => {

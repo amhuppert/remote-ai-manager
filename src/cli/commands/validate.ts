@@ -6,6 +6,7 @@ import {
   validationSubmitResponseSchema,
   VALIDATION_LEASE_HEADER,
   VALIDATION_POLL_MAX_WAIT_MS,
+  type ValidationSubmitBody,
   type ValidationListCommand,
   type ValidationListResponse,
   type ValidationPollResponse,
@@ -62,10 +63,10 @@ const LONG_POLL_GRACE_MS = 2_000;
 /**
  * The client wait budget. It bounds a wait that can no longer end — not a run
  * that is simply long: registered command timeouts already reach an hour, and a
- * `--wait` submission queues behind every older waiter before its own clock
- * starts. A budget near those durations would abandon waits that succeed today,
- * so the default sits well above them and `--timeout` is how a caller who wants
- * a tighter one asks for it.
+ * `--queue-if-busy` can queue behind every older waiter before the run's own
+ * clock starts. A budget near those durations would abandon observations that
+ * succeed today, so the default sits well above them and `--timeout` is how a
+ * caller who wants a tighter one asks for it.
  */
 const DEFAULT_WAIT_BUDGET_MS = 2 * 60 * 60 * 1_000;
 const DEFAULT_WAIT_TIMEOUT_LABEL = "2h";
@@ -275,7 +276,7 @@ function capacityFailure(
     {
       exitCode: EXIT_OPERATION_FAILED,
       message,
-      hint: `run 'cctl validate run ${commandName} --wait' to queue it`,
+      hint: `run 'cctl validate run ${commandName} --queue-if-busy' to queue it`,
       code: "capacity_unavailable",
       json,
     },
@@ -798,7 +799,7 @@ async function runValidateRun(
 
   const resolved = await resolveContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const wait = values["wait"] !== undefined;
+  const queueIfBusy = values["queue-if-busy"] !== undefined;
   const response = await cliRequest(host, {
     server: resolved.context.server,
     token: resolved.context.token,
@@ -808,7 +809,7 @@ async function runValidateRun(
     body: {
       commandName,
       scope: requestedScope,
-      wait,
+      queueIfBusy,
       ...(passthrough.length > 0 ? { scopePaths: passthrough } : {}),
       ...(env["CC_VALIDATION_RUN_ID"]
         ? { nestedValidationRunId: env["CC_VALIDATION_RUN_ID"] }
@@ -816,7 +817,7 @@ async function runValidateRun(
       ...(workflowExecutionId && workflowContextId
         ? { workflowExecutionId, workflowContextId }
         : {}),
-    },
+    } satisfies ValidationSubmitBody,
   });
   if (response.kind !== "ok") {
     return failureFromRequestNotFoundAsUsage(response, flags.json);

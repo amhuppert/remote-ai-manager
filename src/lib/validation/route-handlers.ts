@@ -95,6 +95,7 @@ function invalidServiceResult(
   const statuses: Record<ValidationSubmitInvalidReason, number> = {
     identity_unresolved: 403,
     nested_invocation: 400,
+    duplicate_active: 409,
     path_args_forbidden: 400,
     path_args_rejected: 400,
     path_args_require_changed: 400,
@@ -202,7 +203,9 @@ function createValidationHandlers(
       ...(parsed.data.scopePaths === undefined
         ? {}
         : { scopePaths: parsed.data.scopePaths }),
-      ...(parsed.data.wait === undefined ? {} : { wait: parsed.data.wait }),
+      ...(parsed.data.queueIfBusy === undefined
+        ? {}
+        : { queueIfBusy: parsed.data.queueIfBusy }),
       nestedValidationRunId: parsed.data.nestedValidationRunId ?? null,
       caller: {
         ...resolved.value.caller,

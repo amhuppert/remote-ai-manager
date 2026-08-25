@@ -4,6 +4,7 @@ import {
   validationActiveRunSchema,
   validationListCommandSchema,
   validationPollQuerySchema,
+  validationSubmitBodySchema,
 } from "./api-schemas";
 import { DEFAULT_LEASE_TTL_MS } from "./lease";
 
@@ -15,6 +16,23 @@ const baseListCommand = {
   timeoutMs: 600_000,
   enabled: true,
 };
+
+describe("validationSubmitBodySchema", () => {
+  it("accepts queueIfBusy and rejects the retired wait field", () => {
+    expect(
+      validationSubmitBodySchema.parse({
+        commandName: "test",
+        queueIfBusy: true,
+      }),
+    ).toMatchObject({ queueIfBusy: true });
+    expect(
+      validationSubmitBodySchema.safeParse({
+        commandName: "test",
+        wait: true,
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("validationListCommandSchema", () => {
   it("parses a scalar registration cost", () => {

@@ -336,7 +336,7 @@ Every fix lands with its failing test first. The load-bearing ones:
 5. **Lifecycle**: resolver timeout arms and classifies as retryable infra (fake timers); abort endpoint drives the machine to `failed` and releases the session lock; stale recovery stops the actor and persists/broadcasts (fake actor handle); land-after-restart resolves from the persisted row (round-trip through the repo, per the durability testing rule).
 6. **Publish**: `update-ref` failure with an unmoved ref returns `publish-failed` (not `cas-lost`); dirty-under-lock re-check yields `ready-to-land`; both prepare paths return `up-to-date` on an already-merged branch, the machine completes without publishing a commit, and session finalization runs iff `finalizeSessionOnPublish` (user merge finalizes; graph lane merge does not).
 
-Validation gates: `cctl validate run test --wait`, `cctl validate run typecheck --wait` (seam ratchet — the machine and git-layer changes touch canonical boundaries), `cctl validate run lint --wait`.
+Validation gates: `cctl validate run test --queue-if-busy`, `cctl validate run typecheck --queue-if-busy` (seam ratchet — the machine and git-layer changes touch canonical boundaries), `cctl validate run lint --queue-if-busy`.
 
 ## Phasing
 

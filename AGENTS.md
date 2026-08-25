@@ -14,13 +14,13 @@ Run commands from the assigned session worktree root.
 bun install
 bun run dev
 cctl validate list
-cctl validate run test --wait
-cctl validate run test --wait -- scripts/instruction-docs.test.ts
-cctl validate run test --scope full --wait
-cctl validate run typecheck --wait
-cctl validate run seams --wait
-cctl validate run build --wait
-cctl validate run lint --wait
+cctl validate run test --queue-if-busy
+cctl validate run test --queue-if-busy -- src/cli/commands/validate.test.ts
+cctl validate run test --scope full --queue-if-busy
+cctl validate run typecheck --queue-if-busy
+cctl validate run seams --queue-if-busy
+cctl validate run build --queue-if-busy
+cctl validate run lint --queue-if-busy
 ```
 
 `test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch; pass `--scope full` when the claim is that the whole branch passes. A changed-scope run passes when zero files match, so a mistyped path after `--` still exits 0 — read the verdict line, which names the matched-file count and says `0 files matched — vacuous pass` when there were none, or pass `--require-match` to make it exit 1.
@@ -52,7 +52,7 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 
 ## Development process
 
-- Use red-green-refactor TDD: add a failing behavior-level test, confirm it fails for the right reason (the assertion, not an import error or broken setup — scaffold the minimal skeleton first when needed), implement the minimum fix, refactor with tests green, then run proportionate regression checks. Skip test-first only where there is no behavior to pin — pure scaffolding, type/config changes, mechanical renames or wiring, throwaway spikes, visual-only UI tweaks — and say so; bug fixes always start from a failing reproduction test. In the TDD loop, scope the test command to the single test file you are iterating on (`cctl validate run test --wait -- <test-file>`) — a file path, never a directory path. Changed-scope runs are not part of the TDD loop; use them strategically at checkpoints.
+- Use red-green-refactor TDD: add a failing behavior-level test, confirm it fails for the right reason (the assertion, not an import error or broken setup — scaffold the minimal skeleton first when needed), implement the minimum fix, refactor with tests green, then run proportionate regression checks. Skip test-first only where there is no behavior to pin — pure scaffolding, type/config changes, mechanical renames or wiring, throwaway spikes, visual-only UI tweaks — and say so; bug fixes always start from a failing reproduction test. In the TDD loop, scope the test command to the single test file you are iterating on (`cctl validate run test --queue-if-busy -- <test-file>`) — a file path, never a directory path. Changed-scope runs are not part of the TDD loop; use them strategically at checkpoints.
 - For work governed by `.kiro/specs/`, preserve the Requirements → Design → Tasks → Implementation approvals. Check the active spec before implementation and write spec artifacts in the language declared by its `spec.json`.
 - Prefer small, focused changes. When a request is an audit or diagnosis, report findings without mutating external state or implementing an unrequested fix.
 

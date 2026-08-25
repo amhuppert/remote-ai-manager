@@ -234,14 +234,14 @@ Migrations and what each one fixes by construction:
 | `dev ensure` | timeout failure carries the last-known status + `recentOutput` and hints `cctl dev list` via `forensics` |
 | `fixture prompt --wait` | the `error` outcome carries `transcriptPath`/`dbPath` (already computed at `fixture.ts:537`) like the success path does |
 
-**`--wait` naming collision — documented, not renamed.** On `validate run`, `--wait`
-means "join the admission queue" (blocking to a verdict is unconditional); on
-`agent run`/`workflow run` it toggles blocking. Renaming validate's flag (`--queue`)
-would break `AGENTS.md`, steering, lane instructions, and every agent's muscle memory
-across the ecosystem for a low-severity naming issue. Decision: keep both spellings'
-semantics, make each leaf's help state its contract explicitly, and let M4 unify the
-machinery underneath. This is a deliberate declined-rename; revisit only if it produces
-observed failures (earned-guidance admission rule).
+**Validation queue admission uses `--queue-if-busy`.** `validate run` always blocks to
+a verdict; this flag only opts a busy submission into the strict FIFO admission queue.
+`agent run --wait` and `workflow run --wait` retain `--wait` because those flags toggle
+blocking. Ticket `remote-ai-manager#12` recorded agents launching duplicate validation
+commands after misreading the shared spelling, satisfying the earned-guidance rule with
+an observed failure. The CLI registry, generated skill block, `AGENTS.md`, steering, and
+lane instructions cut over together; the old validation spelling is not retained as an
+alias.
 
 ## 6. M5 — Registry-derived dispatch everywhere
 
@@ -369,8 +369,9 @@ the registry contract suite.
 
 1. **Reads still hard-fail on build skew** (only mutations gain the pre-execution
    server refusal). Alternative: warn-and-proceed on reads.
-2. **`validate run --wait` is not renamed**; the semantic split with `agent/workflow
-   run --wait` is documented per-leaf instead (§5).
+2. **Validation queue admission is `--queue-if-busy`**; `validate run` always blocks
+   to a verdict, while `agent/workflow run --wait` still decides whether to block (§5).
+   The cutover is intentionally breaking; there is no validation `--wait` alias.
 3. **Vacuous green stays exit 0** with loud disclosure + opt-in `--require-match`
    (§9). Alternative: exit 1 by default — stricter, but changes merge-gate semantics.
 4. **Client-authored reminders become legal** via one enumerated, evidence-carrying

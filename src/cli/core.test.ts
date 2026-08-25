@@ -288,6 +288,16 @@ describe("usage errors", () => {
     expect(result.stderr).toContain("--frob");
   });
 
+  it("rejects a known boolean flag on commands that do not declare it", async () => {
+    const result = await runCli(
+      ["version", "--queue-if-busy"],
+      baseEnv,
+      makeHost(),
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('unknown flag "--queue-if-busy"');
+  });
+
   it("exits 2 when a value flag is missing its value", async () => {
     const result = await runCli(["doctor", "--token"], baseEnv, makeHost());
     expect(result.exitCode).toBe(2);

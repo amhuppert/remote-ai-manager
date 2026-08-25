@@ -60,7 +60,7 @@ Step 2 below covers driving agent *turns*. For state only a server-side service 
 
 `cctl fixture` is the one command family that works from **any** `cctl` binary — it addresses two instances by design, so it states no build stamp and the build-parity gate does not apply. You do not need a special binary for it.
 
-Caveat worth knowing before you design the scenario: **`cctl validate run` always blocks to a verdict** — its `--wait` chooses queue-admission over a fail-fast refusal, not whether to block. To get overlapping runs, the agent must background them within a single bash call.
+Caveat worth knowing before you design the scenario: **`cctl validate run` always blocks to a verdict** — `--queue-if-busy` chooses queue admission over a fail-fast refusal; it does not control whether the command blocks. To get overlapping runs, the agent must background them within a single bash call.
 
 ## Core principles (read first)
 

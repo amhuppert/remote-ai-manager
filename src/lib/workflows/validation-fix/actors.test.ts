@@ -219,7 +219,7 @@ describe("performMergeValidation", () => {
     expect(harness.submissions[0]?.source).toBe("smart_commit");
   });
 
-  it("submits an explicit graph lane selection as system-owned wait work", async () => {
+  it("submits an explicit graph lane selection as system-owned queued work", async () => {
     const harness = createDepsHarness();
 
     await performMergeValidation(

@@ -367,7 +367,7 @@ describe("buildValidationCommandsSection", () => {
       "Script gate for this context (runs separately when the context completes): typecheck, test.",
     );
     expect(section).toContain(
-      "If a run is refused for capacity, continue other work and retry later, or re-run with `--wait` to queue for a slot.",
+      "If a run is refused for capacity, continue other work and retry later, or re-run with `--queue-if-busy` to join the FIFO queue.",
     );
   });
 
@@ -452,7 +452,7 @@ describe("buildValidationCommandsSection", () => {
     );
     expect(section).toContain("could not be read");
     expect(section).toContain(
-      "If a run is refused for capacity, continue other work and retry later, or re-run with `--wait` to queue for a slot.",
+      "If a run is refused for capacity, continue other work and retry later, or re-run with `--queue-if-busy` to join the FIFO queue.",
     );
   });
 

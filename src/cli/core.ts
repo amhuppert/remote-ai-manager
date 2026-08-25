@@ -33,6 +33,7 @@ import {
   EXIT_USAGE,
   USAGE,
   ccTempPayloadAdvisory,
+  checkFlags,
   failure,
   parseArgv,
   render,
@@ -187,7 +188,12 @@ async function resolveHelp(
   return registryHelpResult(entry, json, contextBlocks);
 }
 
-function runVersion(flags: GlobalFlags): CliResult {
+function runVersion(
+  flags: GlobalFlags,
+  values: Record<string, string>,
+): CliResult {
+  const invalidFlags = checkFlags(values, "version", flags.json);
+  if (invalidFlags) return invalidFlags;
   const cliBuild = formatBuildStamp(BUILD_INFO);
   return {
     exitCode: EXIT_OK,
@@ -205,12 +211,12 @@ export async function runCli(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  // Two-pass parse (doc 06): the boolean-flag set is command-scoped, but the
+  // Two-pass parse (doc 06): boolean classification is command-aware, but the
   // command is only known after parsing. A first "probe" parse with the global
   // boolean union yields the command path (leading positionals — command tokens
   // never follow a flag, so ambiguous flag kinds cannot corrupt them); the
-  // authoritative parse then uses that command's own boolean set so a flag can
-  // be boolean for one command and value for another (e.g. `--config`).
+  // authoritative parse then lets that command's value flags override boolean
+  // declarations elsewhere while retaining unknown booleans for checkFlags.
   const probe = parseArgv(argv);
   const parsed =
     probe.kind === "error"
@@ -292,7 +298,7 @@ async function dispatchCli(
       logs: (rest) => runLogs(rest, flags, values, env, host),
       doctor: () => runDoctor(flags, values, env, host),
       "exit-codes": async () => runExitCodes(flags, values),
-      version: async () => runVersion(flags),
+      version: async () => runVersion(flags, values),
     },
   });
 }

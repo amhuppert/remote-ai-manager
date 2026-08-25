@@ -78,7 +78,7 @@ export interface ValidationSchedulerDeps {
 export interface ValidationScheduler {
   submit(
     submission: ValidationRunSubmission,
-    opts: { wait: boolean; limit: number },
+    opts: { queueIfBusy: boolean; limit: number },
   ): ValidationAdmissionDecision;
   /**
    * Record process spawn on an admitted run: stamps `startedAt`, derives
@@ -137,7 +137,7 @@ export function createValidationScheduler(
   }
 
   return {
-    submit(submission, { wait, limit }) {
+    submit(submission, { queueIfBusy, limit }) {
       return transact("validation.scheduler.submit", () => {
         if (submission.cost > limit) {
           return {
@@ -170,7 +170,7 @@ export function createValidationScheduler(
           };
         }
 
-        if (!wait) {
+        if (!queueIfBusy) {
           logger.info("validation.scheduler.refused", {
             runId: submission.runId,
             name: submission.commandName,
