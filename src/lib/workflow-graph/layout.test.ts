@@ -61,19 +61,51 @@ function bandContentTop(index: number): number {
 const COLUMN_PITCH = DEFAULT_NODE_WIDTH + LAYOUT_COLUMN_GAP;
 
 describe("workflow-graph layout", () => {
-  it("stacks one band per lane, dependency-first, with every member at the band's first column", () => {
+  it("steps each band's chain right of its cross-band dependency", () => {
     const layout = generateWorkflowLayout(createWorkflowDefinition());
 
-    // plan → implement → verify are three single-member lanes, so each opens
-    // its own band and every member sits at the same first column.
+    // plan → implement → verify are three single-member lanes: each opens its
+    // own band, and each member sits one column right of the dependency it
+    // waits on in the band above — the flow reads left to right even though
+    // the chain crosses bands.
     expect(layout.contextPositions).toEqual({
       "context-plan": { x: LANE_BAND_CONTENT_OFFSET_X, y: bandContentTop(0) },
       "context-implement": {
-        x: LANE_BAND_CONTENT_OFFSET_X,
+        x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH,
         y: bandContentTop(1),
       },
-      "context-verify": { x: LANE_BAND_CONTENT_OFFSET_X, y: bandContentTop(2) },
+      "context-verify": {
+        x: LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH * 2,
+        y: bandContentTop(2),
+      },
     });
+  });
+
+  it("keeps a context right of a dependency that lives between its band mates", () => {
+    // Lane `delivery` holds both ends of the chain; `review` holds the middle.
+    // The review band's only member is depth 1, so a per-band column rank
+    // would open it at column 0 — directly below `context-plan`, left of the
+    // flow it depends on.
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "delivery",
+        "context-implement": "review",
+        "context-verify": "delivery",
+      },
+      [
+        edge("context-plan", "context-implement"),
+        edge("context-implement", "context-verify"),
+      ],
+    );
+
+    const layout = generateWorkflowLayout(definition);
+
+    expect(layout.contextPositions["context-implement"]?.x).toBe(
+      LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH,
+    );
+    expect(layout.contextPositions["context-verify"]?.x).toBe(
+      LANE_BAND_CONTENT_OFFSET_X + COLUMN_PITCH * 2,
+    );
   });
 
   it("flows a band's members left to right by dependency depth", () => {
@@ -153,11 +185,18 @@ describe("workflow-graph layout", () => {
   });
 
   it("aligns columns across bands using the widest card in each column", () => {
-    const definition = definitionWithLanes({
-      "context-plan": "plan",
-      "context-implement": "delivery",
-      "context-verify": "delivery",
-    });
+    // Two roots share depth 0 across two bands; `context-verify` waits on both.
+    const definition = definitionWithLanes(
+      {
+        "context-plan": "plan",
+        "context-implement": "delivery",
+        "context-verify": "delivery",
+      },
+      [
+        edge("context-plan", "context-verify"),
+        edge("context-implement", "context-verify"),
+      ],
+    );
     const dims: NodeDimensions = new Map([
       ["context-plan", { width: 400, height: 200 }],
       ["context-implement", { width: 264, height: 200 }],

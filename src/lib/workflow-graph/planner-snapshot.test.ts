@@ -301,7 +301,7 @@ describe("planner workflow generation — fixture snapshot", () => {
         "layout": {
           "contextPositions": {
             "context-implement": {
-              "x": 196,
+              "x": 560,
               "y": 278,
             },
             "context-plan": {

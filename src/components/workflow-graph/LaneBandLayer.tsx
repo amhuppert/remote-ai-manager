@@ -20,6 +20,7 @@ import {
 import type {
   LaneBand,
   LaneBandPublication,
+  LaneBandPublicationState,
   LaneBandState,
 } from "@/lib/workflow-graph/lane-bands";
 import {
@@ -95,6 +96,14 @@ const STATUS_TONE: Record<string, StatusChipTone> = {
   merged: "green",
   halted: "red",
   pending: "neutral",
+};
+
+/** The publication pill's tone. Cyan while merging — it is work in flight. */
+const PUBLICATION_TONE: Record<LaneBandPublicationState, StatusChipTone> = {
+  pending: "neutral",
+  running: "cyan",
+  published: "green",
+  failed: "red",
 };
 
 /**
@@ -340,7 +349,8 @@ function PublicationPill({
       <StatusChip
         role="note"
         data-testid="lane-band-publication"
-        tone="neutral"
+        data-publication-state={publication.state}
+        tone={PUBLICATION_TONE[publication.state]}
         icon={<MergeIcon />}
       >
         {publication.label}

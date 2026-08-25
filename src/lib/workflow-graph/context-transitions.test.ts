@@ -15,11 +15,16 @@ import {
   transitionContextStatus,
 } from "./context-transitions";
 import { createWorkflowExecution } from "./test-fixtures";
+import { executionFor, workerJudgeDefinition } from "./loop-test-fixtures";
+import { SESSION_LANE_ID } from "./lane-identity";
 import type { RouteEdgeEvaluation } from "./route-projection";
 import {
   graphWorkflowContextSkipReasonSchema,
+  graphWorkflowLoopStateSchema,
   type GraphWorkflowContextSkipReason,
+  type GraphWorkflowExecution,
   type GraphWorkflowExecutionJoinState,
+  type GraphWorkflowExecutionLaneState,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 
@@ -33,6 +38,25 @@ const ALL_STATUSES: GraphWorkflowContextStatus[] = [
   "awaiting_user_input",
   "skipped",
 ];
+
+function buildLane(
+  laneId: string,
+  overrides: Partial<GraphWorkflowExecutionLaneState> = {},
+): GraphWorkflowExecutionLaneState {
+  return {
+    laneId,
+    kind: "worktree",
+    status: "active",
+    worktreePath: `/repo/.worktrees/session-1.${laneId}`,
+    branchName: `csm/session-1-${laneId}`,
+    includedContextIds: [],
+    lastCommittingContextId: null,
+    commitSnapshots: [],
+    createdAt: "2026-07-12T00:00:00.000Z",
+    updatedAt: "2026-07-12T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 function buildJoin(
   overrides: Partial<GraphWorkflowExecutionJoinState> = {},
@@ -551,6 +575,143 @@ describe("join transition owners (moved from lane-join)", () => {
     );
 
     expect(unchanged.joins["join-1"]!.status).toBe("running");
+  });
+});
+
+describe("lane status follows the join ledger", () => {
+  const MERGE_AT = "2026-07-12T12:00:00.000Z";
+
+  function laneExecution(): GraphWorkflowExecution {
+    return createWorkflowExecution({
+      joins: { "join-1": buildJoin({ status: "running" }) },
+      executionLanes: {
+        "lane-a": buildLane("lane-a"),
+        "lane-b": buildLane("lane-b"),
+        "lane-c": buildLane("lane-c"),
+      },
+    });
+  }
+
+  it("marks a source lane merged once its work lands in the join target", () => {
+    const next = applyJoinProgress(laneExecution(), "join-1", MERGE_AT, {
+      status: "running",
+      addMergedSourceLaneId: "lane-b",
+    });
+
+    expect(next.executionLanes["lane-b"]!.status).toBe("merged");
+    expect(next.executionLanes["lane-b"]!.updatedAt).toBe(MERGE_AT);
+  });
+
+  it("leaves the join target lane active — it is receiving work, not delivering it", () => {
+    const next = applyJoinProgress(laneExecution(), "join-1", MERGE_AT, {
+      status: "running",
+      addMergedSourceLaneId: "lane-b",
+    });
+
+    expect(next.executionLanes["lane-a"]!.status).toBe("active");
+  });
+
+  it("leaves lanes the patch does not name untouched", () => {
+    const before = laneExecution();
+    const next = applyJoinProgress(before, "join-1", MERGE_AT, {
+      status: "running",
+      addMergedSourceLaneId: "lane-b",
+    });
+
+    expect(next.executionLanes["lane-c"]).toEqual(
+      before.executionLanes["lane-c"],
+    );
+  });
+
+  it("leaves the session lane active — it is delivered INTO, never delivered away", () => {
+    const execution = createWorkflowExecution({
+      joins: {
+        "join-1": buildJoin({
+          targetLaneId: "lane-a",
+          sourceLaneIds: [SESSION_LANE_ID, "lane-a"],
+          status: "running",
+        }),
+      },
+      executionLanes: {
+        [SESSION_LANE_ID]: buildLane(SESSION_LANE_ID, { kind: "session" }),
+        "lane-a": buildLane("lane-a"),
+      },
+    });
+
+    const next = applyJoinProgress(execution, "join-1", MERGE_AT, {
+      status: "running",
+      addMergedSourceLaneId: SESSION_LANE_ID,
+    });
+
+    expect(next.executionLanes[SESSION_LANE_ID]!.status).toBe("active");
+  });
+
+  it("leaves an already-merged lane's updatedAt alone on a replayed patch", () => {
+    const execution = createWorkflowExecution({
+      joins: { "join-1": buildJoin({ status: "running" }) },
+      executionLanes: {
+        "lane-b": buildLane("lane-b", { status: "merged" }),
+      },
+    });
+
+    const next = applyJoinProgress(execution, "join-1", MERGE_AT, {
+      status: "running",
+      addMergedSourceLaneId: "lane-b",
+    });
+
+    expect(next.executionLanes["lane-b"]).toEqual(
+      execution.executionLanes["lane-b"],
+    );
+  });
+
+  it("leaves a lane an open loop may write another pass to", () => {
+    // Freeze-at-intent applies from loop CONCLUSION onward (lane-lifecycle): a
+    // body's lanes swap work through an intra-loop join on every pass, so
+    // stamping one merged mid-loop would report the lane closed while the next
+    // pass is still writing to it.
+    const definition = workerJudgeDefinition();
+    const execution = executionFor({
+      ...definition,
+      loopGroups: definition.loopGroups?.map((group) => ({
+        ...group,
+        template: {
+          ...group.template,
+          contexts: group.template.contexts.map((context) => ({
+            ...context,
+            placement: { lane: "refine-lane", mode: "full" as const },
+          })),
+        },
+      })),
+    });
+    const looping: GraphWorkflowExecution = {
+      ...execution,
+      joins: {
+        "join-1": buildJoin({
+          targetLaneId: "downstream",
+          sourceLaneIds: ["refine-lane", "downstream"],
+          status: "running",
+        }),
+      },
+      executionLanes: {
+        "refine-lane": buildLane("refine-lane"),
+        downstream: buildLane("downstream"),
+      },
+      loopStates: {
+        refine: graphWorkflowLoopStateSchema.parse({
+          loopGroupId: "refine",
+          activation: "running",
+          passCount: 1,
+        }),
+      },
+    };
+
+    const next = applyJoinProgress(looping, "join-1", MERGE_AT, {
+      status: "running",
+      addMergedSourceLaneId: "refine-lane",
+    });
+
+    expect(next.executionLanes["refine-lane"]!.status).toBe("active");
+    expect(next.joins["join-1"]!.mergedSourceLaneIds).toEqual(["refine-lane"]);
   });
 });
 

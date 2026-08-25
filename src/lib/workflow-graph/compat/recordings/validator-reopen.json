@@ -377,9 +377,19 @@
       "detail": "final_publish:running"
     },
     {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-build",
+      "detail": "merged"
+    },
+    {
       "kind": "graph-workflow-join-status",
       "subject": "loop-job-1",
       "detail": "final_publish:running"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-plan",
+      "detail": "merged"
     },
     {
       "kind": "graph-workflow-join-status",

@@ -199,6 +199,156 @@ describe("deriveExecutionStatusSummary", () => {
 
     expect(summaryText(execution)).toBe("No context is running");
   });
+
+  /**
+   * The merge window the bar was blind to. Every context has finished, so the
+   * old sentence read "No context is running" — true, and a poor description of
+   * a run that is actively merging lane worktrees and may be running validation
+   * commands inside them.
+   */
+  it("names the lane merge in flight instead of reporting nothing running", () => {
+    const base = parallelLaneExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      activeContextIds: [],
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": contextState(base, "context-plan", {
+          status: "completed",
+          laneId: "delivery",
+        }),
+        "context-implement": contextState(base, "context-implement", {
+          status: "completed",
+          laneId: "delivery",
+        }),
+      },
+      joins: {
+        "join-publish": {
+          joinId: "join-publish",
+          kind: "final_publish",
+          contextId: null,
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery", "docs"],
+          mergedSourceLaneIds: ["docs"],
+          validationDebtSourceLaneIds: [],
+          status: "running",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+          completedAt: null,
+        },
+      },
+    };
+
+    expect(summaryText(execution)).toBe("Merging delivery → session");
+  });
+
+  it("emphasizes the lane names in the merge sentence", () => {
+    const base = parallelLaneExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      activeContextIds: [],
+      joins: {
+        "join-publish": {
+          joinId: "join-publish",
+          kind: "final_publish",
+          contextId: null,
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          mergedSourceLaneIds: [],
+          validationDebtSourceLaneIds: [],
+          status: "running",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+          completedAt: null,
+        },
+      },
+    };
+
+    expect(
+      deriveExecutionStatusSummary(execution)
+        .filter((part) => part.emphasis)
+        .map((part) => part.text),
+    ).toEqual(["delivery", "session"]);
+  });
+
+  /**
+   * A running context outranks the merge: the merge is background work, and the
+   * bar's first duty is naming what an agent is doing right now.
+   */
+  it("keeps reporting the running context when a merge runs beside it", () => {
+    const base = parallelLaneExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      activeContextIds: ["context-plan"],
+      contextStates: {
+        ...base.contextStates,
+        "context-implement": contextState(base, "context-implement", {
+          status: "completed",
+          laneId: "delivery",
+        }),
+      },
+      joins: {
+        "join-merge": {
+          joinId: "join-merge",
+          kind: "context_merge",
+          contextId: null,
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          mergedSourceLaneIds: [],
+          validationDebtSourceLaneIds: [],
+          status: "running",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+          completedAt: null,
+        },
+      },
+    };
+
+    expect(summaryText(execution)).toBe(
+      "Lane delivery · context-plan running · task Inspect code",
+    );
+  });
+
+  /**
+   * Every source lane already merged: the join is finalizing rather than
+   * carrying any particular lane, so naming one would be wrong.
+   */
+  it("drops the source list once the join has merged every lane", () => {
+    const base = parallelLaneExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      activeContextIds: [],
+      joins: {
+        "join-publish": {
+          joinId: "join-publish",
+          kind: "final_publish",
+          contextId: null,
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          mergedSourceLaneIds: ["delivery"],
+          validationDebtSourceLaneIds: [],
+          status: "running",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+          completedAt: null,
+        },
+      },
+    };
+
+    expect(summaryText(execution)).toBe("Publishing → session");
+  });
 });
 
 describe("countExecutionGates", () => {

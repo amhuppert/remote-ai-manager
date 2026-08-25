@@ -24,6 +24,24 @@ export const LANE_BAND_MIN_HEIGHT = 132;
 /** Vertical gutter between two stacked bands. */
 export const LANE_BAND_GAP = 12;
 
+/**
+ * Fit-to-view padding for both canvases.
+ *
+ * `fitView` frames the NODES, but every band's header column sits
+ * {@link LANE_BAND_CONTENT_OFFSET_X} to the LEFT of the leftmost node. A
+ * proportional padding is only wide enough to clear it when the graph is wide
+ * enough to make the fit width-constrained; a compact graph fits on height
+ * instead, leaves less horizontal slack than the header needs, and the lane
+ * names are cut off by the viewport edge. Pinning the left side in pixels is
+ * what makes the fit frame the band rather than just the cards.
+ */
+export const CANVAS_FIT_VIEW_PADDING = {
+  top: "10%",
+  right: "10%",
+  bottom: "10%",
+  left: `${LANE_BAND_CONTENT_OFFSET_X + LANE_BAND_PADDING_X}px`,
+} as const;
+
 export interface LaneBandNodeBox {
   id: string;
   x: number;

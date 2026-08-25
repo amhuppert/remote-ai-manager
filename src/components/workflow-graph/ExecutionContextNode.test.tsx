@@ -212,6 +212,50 @@ describe("ExecutionContextNode — advisory response phase (R6.3)", () => {
   });
 });
 
+describe("ExecutionContextNode — delivery states", () => {
+  /**
+   * The reported defect: a context whose work is finished and certified but
+   * still sitting in its lane worktree was indistinguishable from one whose
+   * work had reached the session. The card has to name the difference and say
+   * where the work is going.
+   */
+  it("says where work still in its lane is headed", () => {
+    renderNode(
+      makeData({
+        waitState: { kind: "awaiting-merge", targetLaneName: "session" },
+      }),
+    );
+
+    expect(screen.getByText("In lane")).toBeInTheDocument();
+    expect(
+      screen.getByText("Waiting to merge → session"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Completed")).toBeNull();
+  });
+
+  it("falls back to a bare statement when no join claims the lane", () => {
+    renderNode(
+      makeData({
+        waitState: { kind: "awaiting-merge", targetLaneName: null },
+      }),
+    );
+
+    expect(screen.getByText("Waiting to merge")).toBeInTheDocument();
+  });
+
+  it("distinguishes a lane merge in flight from one still owed", () => {
+    renderNode(
+      makeData({
+        waitState: { kind: "merging", targetBranch: "csm/session-1" },
+      }),
+    );
+
+    expect(screen.getByText("Merging")).toBeInTheDocument();
+    expect(screen.getByText("Merging → csm/session-1")).toBeInTheDocument();
+    expect(screen.queryByText("In lane")).toBeNull();
+  });
+});
+
 describe("ExecutionContextNode — selection", () => {
   /**
    * The connection ports recolour on selection through

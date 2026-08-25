@@ -1,6 +1,7 @@
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
+import { laneDisplayName } from "@/lib/workflow-graph/lane-bands";
 import { awaitsDefinitionApproval } from "@/lib/workflow-graph/lifecycle-classifier";
 import { deriveExecutionGates } from "./inspector/gates-model";
 
@@ -38,6 +39,40 @@ function nameList(values: string[]): ExecutionSummaryPart[] {
   });
 }
 
+/**
+ * The sentence for a run whose remaining work is a lane merge, or null when no
+ * join is in flight.
+ *
+ * Only lanes the join has NOT recorded in `mergedSourceLaneIds` are named: a
+ * multi-source join merges one lane at a time, so listing a finished one would
+ * report work that is already done. Once every source has landed the join is
+ * finalizing rather than carrying a particular lane, and the sentence drops the
+ * source list instead of naming one arbitrarily.
+ */
+function mergeSummary(
+  execution: GraphWorkflowExecution,
+): ExecutionSummaryPart[] | null {
+  const inFlight = Object.values(execution.joins ?? {}).find(
+    (join) => join.status === "running",
+  );
+  if (!inFlight) return null;
+
+  const targetName = laneDisplayName(inFlight.targetLaneId);
+  const pendingSources = inFlight.sourceLaneIds
+    .filter((laneId) => !inFlight.mergedSourceLaneIds.includes(laneId))
+    .map(laneDisplayName);
+
+  if (pendingSources.length === 0) {
+    return [plain("Publishing → "), name(targetName)];
+  }
+  return [
+    plain("Merging "),
+    ...nameList(pendingSources),
+    plain(" → "),
+    name(targetName),
+  ];
+}
+
 export function deriveExecutionStatusSummary(
   execution: GraphWorkflowExecution,
 ): ExecutionSummaryPart[] {
@@ -68,7 +103,10 @@ export function deriveExecutionStatusSummary(
     }
   }
   if (running.length === 0 && awaiting.length === 0) {
-    return [plain("No context is running")];
+    // Not idle: a join in flight IS the work. Reporting "no context is running"
+    // through a merge that may also be running validation commands inside the
+    // lane worktrees describes a stalled run rather than a busy one.
+    return mergeSummary(execution) ?? [plain("No context is running")];
   }
 
   const activeLaneIds = deriveExecutionLaneActivities(execution)
