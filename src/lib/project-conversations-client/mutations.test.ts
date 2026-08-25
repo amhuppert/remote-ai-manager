@@ -1898,6 +1898,31 @@ describe("useSendProjectPrompt: full stream event set (R4.5)", () => {
     expect(result.current.errorFor(key)).toBeNull();
   });
 
+  it("coalesces Cursor text deltas in the project conversation stream", async () => {
+    seedList({
+      ...okConversation,
+      id: "c1",
+      agentBackend: "cursor",
+    });
+    const stream = scriptedStream();
+    serveStreams(stream);
+    const { result } = renderSender();
+
+    const submission = startTurn(() => result.current, {
+      target: conversationTurnKey("c1"),
+      text: "go",
+      backend: "cursor",
+    });
+    await stream.push(textFrame("partial "));
+    await stream.push(textFrame("answer"));
+    await stream.push(DONE_FRAME);
+    await act(async () => {
+      await submission.settled;
+    });
+
+    expect(assistantTextFor("c1")).toEqual(["partial answer"]);
+  });
+
   it("surfaces a streamed error on the originating conversation without touching its pending question", async () => {
     seedList({ ...okConversation, id: "c1" });
     const stream = scriptedStream();

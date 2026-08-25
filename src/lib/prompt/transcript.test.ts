@@ -35,7 +35,10 @@ import {
   _resetTranscriptDepsForTesting,
   type TranscriptEntry,
 } from "./transcript";
-import { messageAppendedEventSchema } from "@/lib/conversations/schemas";
+import {
+  messageAppendedEventSchema,
+  type MessageContentBlock,
+} from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -747,6 +750,57 @@ describe("readConversationMessagesWithSeq", () => {
 
     const result = await readConversationMessagesWithSeq(filePath);
     expect(result.map((m) => m.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("coalesces persisted Cursor deltas without crossing tool boundaries", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "cursor-content-deltas.jsonl",
+    );
+    const cursorEntry = (eventIndex: number, content: MessageContentBlock[]) =>
+      JSON.stringify({
+        id: `cursor:conv-1:run-1:${eventIndex}`,
+        type: "assistant",
+        role: "assistant",
+        content,
+      });
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "test" }],
+      }),
+      cursorEntry(0, [{ type: "thinking", text: "The user sent " }]),
+      cursorEntry(1, [{ type: "thinking", text: "a test." }]),
+      cursorEntry(2, [{ type: "text", text: "Checking " }]),
+      cursorEntry(3, [{ type: "text", text: "the workspace." }]),
+      cursorEntry(4, [
+        {
+          type: "tool_use",
+          id: "call-1",
+          name: "shell",
+          input: { command: "pwd" },
+        },
+      ]),
+      cursorEntry(5, [{ type: "text", text: "Ready " }]),
+      cursorEntry(6, [{ type: "text", text: "for work." }]),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+
+    expect(result[1]?.content).toEqual([
+      { type: "thinking", text: "The user sent a test." },
+      { type: "text", text: "Checking the workspace." },
+      {
+        type: "tool_use",
+        id: "call-1",
+        name: "shell",
+        input: { command: "pwd" },
+      },
+      { type: "text", text: "Ready for work." },
+    ]);
   });
 
   it("uses the last contributing line index for merged consecutive entries", async () => {

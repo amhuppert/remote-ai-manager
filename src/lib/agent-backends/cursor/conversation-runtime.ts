@@ -16,6 +16,7 @@ import type { ConversationTokenUsage } from "../schemas";
 import { appendStructuredOutputInstruction } from "../structured-output-prompt";
 import type { FsWritePolicy } from "../task";
 import { CURSOR_BACKEND_ID } from "./backend-id";
+import { appendCursorContentDelta } from "./content-deltas";
 import { mayForceExpire } from "./continuity";
 import {
   createCursorFailureClassifier,
@@ -113,6 +114,7 @@ interface ActiveTurn {
   settlement: Deferred<TurnOutcome>;
   settled: boolean;
   contentBlocks: MessageContentBlock[];
+  contentDeltaCount: number;
   /**
    * The LAST assistant text of the turn — Cursor's canonical final response.
    * Reported separately because neutral callers that do not get it fall back
@@ -307,6 +309,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       settlement: deferred<TurnOutcome>(),
       settled: false,
       contentBlocks: [],
+      contentDeltaCount: 0,
       finalText: null,
       usage: null,
       stallTimer: null,
@@ -760,8 +763,12 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // before any block derived from it reaches a consumer.
     this.emit({ type: "transcript_entry", entry: projection.entry });
     for (const block of projection.blocks) {
-      turn.contentBlocks.push(block);
-      if (block.type === "text") turn.finalText = block.text;
+      turn.contentDeltaCount += 1;
+      appendCursorContentDelta(turn.contentBlocks, block);
+      if (block.type === "text") {
+        const latest = turn.contentBlocks.at(-1);
+        turn.finalText = latest?.type === "text" ? latest.text : block.text;
+      }
       this.emit({ type: "content", block });
     }
   }
@@ -890,6 +897,14 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     outcome: TurnOutcome,
     startedAt: number,
   ): ConversationBackendTurnResult {
+    if (turn.contentDeltaCount !== turn.contentBlocks.length) {
+      logger.debug("cursor-runtime.content_deltas_coalesced", {
+        conversationId: this.conversationId,
+        runId: turn.runId,
+        deltaCount: turn.contentDeltaCount,
+        contentBlockCount: turn.contentBlocks.length,
+      });
+    }
     if (outcome.kind === "failed") {
       return this.failureResult(
         outcome.error,

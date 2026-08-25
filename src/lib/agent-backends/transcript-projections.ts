@@ -8,6 +8,10 @@ import {
   projectCursorStoredToolResultBlocks,
   projectCursorUsageFrame,
 } from "./cursor/transcript-projections";
+import {
+  coalesceCursorContentDeltas,
+  isCursorTranscriptEntryId,
+} from "./cursor/content-deltas";
 
 /**
  * Neutral projections over persisted transcript frames. Conversation JSONL
@@ -45,6 +49,39 @@ export interface TranscriptUsageProjection {
   cumulativeCostUsd: number | null;
   /** API turns reported by this frame; null when the backend omits it. */
   numTurns: number | null;
+}
+
+interface TranscriptContentPart {
+  entryId: string | null;
+  content: MessageContentBlock[];
+}
+
+/**
+ * Fold backend-native streaming fragments while retaining ordinary transcript
+ * block boundaries. Cursor entry ids distinguish its persisted SDK deltas from
+ * ordinary transcript blocks.
+ */
+export function projectTranscriptContent(
+  parts: readonly TranscriptContentPart[],
+): MessageContentBlock[] {
+  const content: MessageContentBlock[] = [];
+  let pendingCursor: MessageContentBlock[] = [];
+
+  const flushCursor = (): void => {
+    content.push(...coalesceCursorContentDeltas(pendingCursor));
+    pendingCursor = [];
+  };
+
+  for (const part of parts) {
+    if (isCursorTranscriptEntryId(part.entryId)) {
+      pendingCursor.push(...part.content);
+      continue;
+    }
+    flushCursor();
+    content.push(...part.content);
+  }
+  flushCursor();
+  return content;
 }
 
 type ToolResultProjector = (

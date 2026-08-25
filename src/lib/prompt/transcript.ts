@@ -14,7 +14,10 @@ import type {
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
 import { getConfigDirPath } from "@/lib/config/loader";
-import { projectStoredToolResultBlocks } from "@/lib/agent-backends/transcript-projections";
+import {
+  projectStoredToolResultBlocks,
+  projectTranscriptContent,
+} from "@/lib/agent-backends/transcript-projections";
 import { resolveImageRefs } from "@/lib/images/transcript-images";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
@@ -1191,7 +1194,7 @@ async function readConversationMessagesWithSeqImpl(
     (unit) => {
       // A unit's content is the concatenation of its parts (the first part
       // already carries the parsed command block when the unit is a command).
-      const content = unit.parts.flatMap((part) => part.content);
+      const content = projectTranscriptContent(unit.parts);
       const lastPart = unit.parts[unit.parts.length - 1]!;
       const meta =
         unit.role === "user"

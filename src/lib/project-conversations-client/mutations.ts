@@ -7,6 +7,8 @@ import {
 import { mutationFetch } from "@/lib/api/fetcher";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import { consumePromptStream } from "@/lib/prompt/stream-transport";
+import { appendCursorContentDelta } from "@/lib/agent-backends/cursor/content-deltas";
+import { CURSOR_BACKEND_ID } from "@/lib/agent-backends/cursor/backend-id";
 import {
   publicConversationStateSchema,
   type AnswerQuestionRequest,
@@ -1080,7 +1082,11 @@ export function useSendProjectPrompt(
               }
               break;
             case "content": {
-              streamBlocks.push(event.block);
+              if (input.backend === CURSOR_BACKEND_ID) {
+                appendCursorContentDelta(streamBlocks, event.block);
+              } else {
+                streamBlocks.push(event.block);
+              }
               // Streamed output belongs to the turn that asked for it, so it is
               // mirrored onto that turn's current key rather than onto whichever
               // tab is active.

@@ -22,6 +22,8 @@ import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { QueueEnqueueResponse } from "@/lib/prompt/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { appendCursorContentDelta } from "@/lib/agent-backends/cursor/content-deltas";
+import { CURSOR_BACKEND_ID } from "@/lib/agent-backends/cursor/backend-id";
 /**
  * Hook that coordinates prompt submission with:
  * - Zustand store (optimistic UI state)
@@ -201,7 +203,11 @@ export function useSendPrompt(
         await consumePromptStream(res.body, (event) => {
           switch (event.type) {
             case "content":
-              streamBlocks.push(event.block);
+              if (backend === CURSOR_BACKEND_ID) {
+                appendCursorContentDelta(streamBlocks, event.block);
+              } else {
+                streamBlocks.push(event.block);
+              }
               receiveStreamContent(
                 conversationId,
                 displayContent,

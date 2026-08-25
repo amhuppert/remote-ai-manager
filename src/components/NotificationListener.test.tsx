@@ -647,6 +647,54 @@ describe("NotificationListener", () => {
     });
   });
 
+  it("coalesces Cursor deltas while appending to the live message cache", async () => {
+    const client = makeClient();
+    const key = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(key, [
+      {
+        id: "cursor:conv-1:run-1:0",
+        role: "assistant",
+        content: [{ type: "thinking", text: "Checking " }],
+        timestamp: null,
+        seq: 1,
+      },
+    ]);
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 2,
+      message: {
+        id: "cursor:conv-1:run-1:1",
+        role: "assistant",
+        content: [{ type: "thinking", text: "the workspace" }],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<
+        Array<{
+          content: Array<{ type: string; text?: string }>;
+          seq: number;
+        }>
+      >(key);
+      expect(cached).toHaveLength(1);
+      expect(cached?.[0]?.content).toEqual([
+        { type: "thinking", text: "Checking the workspace" },
+      ]);
+      expect(cached?.[0]?.seq).toBe(2);
+    });
+  });
+
   it("uses the latest explicit settings when merging user appends and preserves them across metadata-less appends", async () => {
     const client = makeClient();
     const key = conversationKeys.messages("proj", "sess", "conv-1");

@@ -30,7 +30,12 @@ import type {
   ConversationBackgroundActivity,
   ConversationState,
   PublicConversationState,
+  TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import {
+  coalesceCursorContentDeltas,
+  isCursorTranscriptEntryId,
+} from "@/lib/agent-backends/cursor/content-deltas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { renamedInActive } from "@/lib/conversations/mutations";
 import { isTerminalQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
@@ -92,11 +97,7 @@ export function invalidateProjectConversationActivity(
 function appendMessageToQuery(
   queryClient: QueryClient,
   queryKey: QueryKey,
-  entry: Record<string, unknown> & {
-    role: unknown;
-    content: unknown[];
-    seq: number;
-  },
+  entry: TranscriptMessage & { seq: number },
 ): void {
   queryClient.setQueryData(queryKey, (prev: unknown) => {
     // Only the messages fetch may CREATE a cache entry; appends only patch an
@@ -122,13 +123,16 @@ function appendMessageToQuery(
         last as object,
         entry,
       ]);
+      const previous = last as TranscriptMessage & { seq: number };
+      const content =
+        isCursorTranscriptEntryId(previous.id) &&
+        isCursorTranscriptEntryId(entry.id)
+          ? coalesceCursorContentDeltas([...previous.content, ...entry.content])
+          : [...previous.content, ...entry.content];
       const merged = {
-        ...(last as object),
+        ...previous,
         ...(agentSettings ?? {}),
-        content: [
-          ...(last as { content: unknown[] }).content,
-          ...entry.content,
-        ],
+        content,
         seq: entry.seq,
       };
       return [...prev.slice(0, lastIdx), merged];

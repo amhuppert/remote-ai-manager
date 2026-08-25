@@ -42,6 +42,14 @@ describe("validation gate composition", () => {
     expect(script).not.toMatch(/seams:check/);
   });
 
+  it("pins enough Node heap for the full-project typecheck", () => {
+    const script = read("scripts/validate/typecheck.sh");
+    expect(script).toMatch(/readonly TYPECHECK_HEAP_MB=8192/);
+    expect(script).toMatch(
+      /export NODE_OPTIONS="--max-old-space-size=\$\{TYPECHECK_HEAP_MB\}"/,
+    );
+  });
+
   it("keeps typecheck, seams, and test on every merge gate", () => {
     const gates = {
       preMerge: registration.preMerge,

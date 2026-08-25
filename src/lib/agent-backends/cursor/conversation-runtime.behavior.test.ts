@@ -269,9 +269,10 @@ describe("exactly-once event identity", () => {
       },
     });
 
-    await harness.send();
+    const result = await harness.send();
     const lines = await harness.transcriptLines();
     expect(lines.filter((line) => line.role === "assistant")).toHaveLength(2);
+    expect(result.contentBlocks).toEqual([{ type: "text", text: "samesame" }]);
   });
 });
 

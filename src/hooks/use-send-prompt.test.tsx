@@ -74,6 +74,46 @@ afterEach(() => {
 });
 
 describe("useSendPrompt — send()", () => {
+  it("coalesces Cursor text and thinking deltas without crossing tool boundaries", async () => {
+    const sse =
+      'event: content\ndata: {"type":"thinking","text":"The user sent "}\n\n' +
+      'event: content\ndata: {"type":"thinking","text":"a test."}\n\n' +
+      'event: content\ndata: {"type":"text","text":"Checking "}\n\n' +
+      'event: content\ndata: {"type":"text","text":"the workspace."}\n\n' +
+      'event: content\ndata: {"type":"tool_use","id":"call-1","name":"shell","input":{"command":"pwd"}}\n\n' +
+      'event: content\ndata: {"type":"text","text":"Ready "}\n\n' +
+      'event: content\ndata: {"type":"text","text":"for work."}\n\n' +
+      "event: done\ndata: {}\n\n";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(sse, { status: 200 }),
+    );
+
+    const { result } = renderQueueHook();
+
+    await act(async () => {
+      await result.current.send(
+        "test",
+        0,
+        "composer-2.5",
+        undefined,
+        undefined,
+        "cursor",
+      );
+    });
+
+    expect(inFlight().optimisticMessages[1]?.content).toEqual([
+      { type: "thinking", text: "The user sent a test." },
+      { type: "text", text: "Checking the workspace." },
+      {
+        type: "tool_use",
+        id: "call-1",
+        name: "shell",
+        input: { command: "pwd" },
+      },
+      { type: "text", text: "Ready for work." },
+    ]);
+  });
+
   it("stamps Codex fast mode on the request and optimistic turn", async () => {
     const sse =
       'event: content\ndata: {"type":"text","text":"partial answer"}\n\n' +
