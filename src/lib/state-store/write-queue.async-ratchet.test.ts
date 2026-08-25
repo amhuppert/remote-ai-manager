@@ -66,7 +66,11 @@ const ASYNC_ENTRY = "withWriteQueue";
 // state-store queue across global-config file I/O — it now fences inside the
 // scoped-config file store's own serialized write lock (Design 3, sibling of the
 // patchProject/Session/Conversation migration).
-const BASELINE = 55;
+// 55 → 54: the spec draft-citation writes (`replaceAssumptionDraftCitations`,
+// `mutateDraftCitation`) adopted `withWriteQueueSync` — both wrap a synchronous
+// `db.transaction(...).immediate(...)`, like their `recordExternalDelivery`
+// sibling, so nothing awaits inside the critical section.
+const BASELINE = 54;
 
 function collectSourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

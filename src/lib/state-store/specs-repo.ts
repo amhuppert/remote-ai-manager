@@ -3067,9 +3067,9 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           replacementCount: validated.replacements.length,
         },
         () =>
-          writeQueue.withWriteQueue(
+          writeQueue.withWriteQueueSync(
             "specs.replaceAssumptionDraftCitations",
-            async () => replaceAssumptionDraftCitationsTx.immediate(validated),
+            () => replaceAssumptionDraftCitationsTx.immediate(validated),
           ),
       );
     },
@@ -3088,7 +3088,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           expectedCitationVersion: validated.expectedCitationVersion,
         },
         () =>
-          writeQueue.withWriteQueue("specs.mutateDraftCitation", async () =>
+          writeQueue.withWriteQueueSync("specs.mutateDraftCitation", () =>
             mutateDraftCitationTx.immediate(validated),
           ),
       );
