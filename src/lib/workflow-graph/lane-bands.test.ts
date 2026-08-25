@@ -10,6 +10,7 @@ import {
   createWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
+import { applyJoinProgress } from "./context-transitions";
 
 /**
  * The canonical bundle fixture (README §3.2), reduced to the fields the band
@@ -341,6 +342,78 @@ describe("deriveExecutionLaneBands", () => {
       membershipLabel: "1 member",
     });
   });
+
+  // The band fixtures above hand-write `status: "merged"`, so they cannot catch
+  // an engine that never produces it. This one starts from the real transition
+  // owner: a lane whose work the join runner has just landed must read as
+  // merged on the canvas, not as the live lane it was a moment earlier.
+  it("shows a lane the join runner merged as merged, not active", () => {
+    const execution = createWorkflowExecution({
+      joins: {
+        "join-1": {
+          joinId: "join-1",
+          kind: "context_merge",
+          contextId: "context-implement",
+          targetLaneId: "delivery",
+          sourceLaneIds: ["plan"],
+          mergedSourceLaneIds: [],
+          validationDebtSourceLaneIds: [],
+          status: "running",
+          errorMessage: null,
+          conflicts: null,
+          conflictGuidance: null,
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+          completedAt: null,
+        },
+      },
+      executionLanes: {
+        plan: {
+          laneId: "plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: ".worktrees/checkout-v2.plan",
+          branchName: "csm/checkout-v2.plan",
+          includedContextIds: ["ctx_plan"],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+        },
+        delivery: {
+          laneId: "delivery",
+          kind: "worktree",
+          status: "active",
+          worktreePath: ".worktrees/checkout-v2.delivery",
+          branchName: "csm/checkout-v2.delivery",
+          includedContextIds: ["ctx_checkout"],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-07-12T00:00:00.000Z",
+          updatedAt: "2026-07-12T00:00:00.000Z",
+        },
+      },
+    });
+
+    const afterMerge = applyJoinProgress(
+      execution,
+      "join-1",
+      "2026-07-12T12:00:00.000Z",
+      { status: "running", addMergedSourceLaneId: "plan" },
+    );
+    const bands = deriveExecutionLaneBands({
+      ...afterMerge,
+      workingDefinition: fixtureDefinition(),
+    });
+
+    expect(bands.find((band) => band.laneName === "plan")).toMatchObject({
+      state: "merged",
+      runtime: { status: "merged" },
+    });
+    expect(
+      bands.find((band) => band.laneName === "delivery")?.state,
+    ).toBe("active");
+  });
 });
 
 describe("deriveExecutionPublication — the E1 publication pill", () => {
@@ -348,8 +421,74 @@ describe("deriveExecutionPublication — the E1 publication pill", () => {
     expect(deriveExecutionPublication(fixtureExecution())).toEqual({
       sourceLaneNames: ["delivery"],
       targetLaneName: "session",
+      state: "pending",
       condition: "after every member completes",
       label: "publication: delivery → session, after every member completes",
+    });
+  });
+
+  /**
+   * The reported defect, at the run level: while the publish was actually
+   * running the pill still read "after every member completes" — a precondition
+   * that had already been met, which is indistinguishable from not started.
+   */
+  it("reports lane-by-lane progress while the publish is running", () => {
+    const execution = fixtureExecution({
+      joins: {
+        "join-publish": {
+          kind: "final_publish",
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery", "candidate-rules"],
+          mergedSourceLaneIds: ["candidate-rules"],
+          status: "running",
+        },
+      },
+    });
+
+    expect(deriveExecutionPublication(execution)).toMatchObject({
+      state: "running",
+      condition: "1 of 2 lanes merged",
+      label:
+        "publishing: delivery and candidate-rules → session, 1 of 2 lanes merged",
+    });
+  });
+
+  it("states a failed publish as a failure, with the conflict count it carries", () => {
+    const execution = fixtureExecution({
+      joins: {
+        "join-publish": {
+          kind: "final_publish",
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          status: "conflicts",
+          conflicts: { files: ["src/a.ts", "src/b.ts", "src/c.ts"] },
+        },
+      },
+    });
+
+    expect(deriveExecutionPublication(execution)).toMatchObject({
+      state: "failed",
+      condition: "3 conflicted files",
+      label: "publish failed: delivery → session, 3 conflicted files",
+    });
+  });
+
+  it("states a failure with no recorded conflicts without inventing a count", () => {
+    const execution = fixtureExecution({
+      joins: {
+        "join-publish": {
+          kind: "final_publish",
+          targetLaneId: "__session__",
+          sourceLaneIds: ["delivery"],
+          status: "failed",
+        },
+      },
+    });
+
+    expect(deriveExecutionPublication(execution)).toMatchObject({
+      state: "failed",
+      condition: "merge failed",
+      label: "publish failed: delivery → session, merge failed",
     });
   });
 

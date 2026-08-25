@@ -6,6 +6,7 @@ import {
   contextNodeGrade,
   contextNodeNotice,
   contextNodeStatus,
+  contextNodeStatusTone,
   ownedPathsText,
 } from "./node-presentation";
 import type { ExecutionContextNodeData } from "./derive-graph";
@@ -80,6 +81,21 @@ describe("contextNodeStatus", () => {
         live: false,
       },
     );
+  });
+
+  /**
+   * The state that separates "finished" from "delivered". It takes the green
+   * family because the work succeeded, and the neutral pill would read as the
+   * not-started state this exists to stop the canvas implying.
+   */
+  it("names the waiting-to-merge state after where the work is sitting", () => {
+    expect(
+      contextNodeStatus("execution", {
+        kind: "awaiting-merge",
+        targetLaneName: "session",
+      }),
+    ).toMatchObject({ key: "awaiting-merge", label: "In lane", live: false });
+    expect(contextNodeStatusTone("awaiting-merge")).toBe("green");
   });
 
   it("pulses only while a context is running", () => {

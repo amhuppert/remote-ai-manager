@@ -574,6 +574,14 @@ describe("deriveContextWaitState", () => {
           laneId: "lane-delivery",
         }),
       },
+      executionLanes: {
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "merged",
+          includedContextIds: ["ctx-1"],
+        }),
+        __session__: makeLane({ laneId: "__session__", kind: "session" }),
+      },
       joins: {
         "join-publish": makeJoin({
           joinId: "join-publish",
@@ -613,6 +621,18 @@ describe("deriveContextWaitState", () => {
           laneId: "lane-plan",
         }),
       },
+      executionLanes: {
+        "lane-plan": makeLane({
+          laneId: "lane-plan",
+          status: "merged",
+          includedContextIds: ["ctx-1"],
+        }),
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "merged",
+        }),
+        __session__: makeLane({ laneId: "__session__", kind: "session" }),
+      },
       joins: {
         "join-merge": makeJoin({
           joinId: "join-merge",
@@ -645,7 +665,7 @@ describe("deriveContextWaitState", () => {
    * publish the whole upstream. The publish landed `lane-delivery`, but the
    * merge that would have carried `lane-plan` into it never succeeded.
    */
-  it("reports completed when the chain to the session is broken by an unfinished join", () => {
+  it("reports awaiting-merge when the chain to the session is broken by an unfinished join", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": makeContextState({
@@ -656,6 +676,15 @@ describe("deriveContextWaitState", () => {
           mergeStatus: "merged-success",
           laneId: "lane-plan",
         }),
+      },
+      executionLanes: {
+        "lane-plan": makeLane({
+          laneId: "lane-plan",
+          status: "active",
+          includedContextIds: ["ctx-1"],
+        }),
+        "lane-delivery": makeLane({ laneId: "lane-delivery" }),
+        __session__: makeLane({ laneId: "__session__", kind: "session" }),
       },
       joins: {
         "join-merge": makeJoin({
@@ -681,15 +710,19 @@ describe("deriveContextWaitState", () => {
       execution,
     });
 
-    expect(result).toEqual({ kind: "completed" });
+    expect(result).toEqual({
+      kind: "awaiting-merge",
+      targetLaneName: "lane-delivery",
+    });
   });
 
   /**
    * The defect this pins: a lane-local merge only proves the context landed
    * among its band mates. Saying "published" here would tell an operator the
-   * work reached the session worktree while the run still owes a final publish.
+   * work reached the session worktree while the run still owes a final publish
+   * — and saying "completed" hides that a merge is still owed at all.
    */
-  it("reports completed, not published, while a final publish is still owed", () => {
+  it("reports awaiting-merge, not published, while a final publish is still owed", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": makeContextState({
@@ -700,6 +733,14 @@ describe("deriveContextWaitState", () => {
           mergeStatus: "merged-success",
           laneId: "lane-delivery",
         }),
+      },
+      executionLanes: {
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "active",
+          includedContextIds: ["ctx-1"],
+        }),
+        __session__: makeLane({ laneId: "__session__", kind: "session" }),
       },
       joins: {
         "join-publish": makeJoin({
@@ -718,10 +759,18 @@ describe("deriveContextWaitState", () => {
       execution,
     });
 
-    expect(result).toEqual({ kind: "completed" });
+    expect(result).toEqual({
+      kind: "awaiting-merge",
+      targetLaneName: "session",
+    });
   });
 
-  it("reports completed for a lane merge that no final publish covers", () => {
+  /**
+   * A lane no join will ever consume: the work is committed and will sit in the
+   * lane worktree indefinitely. There is no target to name, but the node must
+   * still not claim the work reached the session.
+   */
+  it("reports awaiting-merge with no target for a lane no join covers", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": makeContextState({
@@ -732,6 +781,14 @@ describe("deriveContextWaitState", () => {
           mergeStatus: "merged-success",
           laneId: "lane-delivery",
         }),
+      },
+      executionLanes: {
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "active",
+          includedContextIds: ["ctx-1"],
+        }),
+        __session__: makeLane({ laneId: "__session__", kind: "session" }),
       },
       joins: {
         "join-other": makeJoin({
@@ -750,7 +807,157 @@ describe("deriveContextWaitState", () => {
       execution,
     });
 
+    expect(result).toEqual({ kind: "awaiting-merge", targetLaneName: null });
+  });
+
+  /**
+   * A read-only member writes nothing, so completion IS its settled state —
+   * there is no merge for it to be waiting on. Without this, every reviewer and
+   * judge in a run would sit on "waiting to merge" forever.
+   */
+  it("reports completed for a read-only member, which has nothing to merge", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "not-applicable",
+          laneId: "lane-delivery",
+        }),
+      },
+      executionLanes: {
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "active",
+          includedContextIds: ["ctx-1"],
+        }),
+      },
+      joins: {
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "pending",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition({
+        executionContexts: [
+          {
+            id: "ctx-1",
+            title: "Review",
+            acceptanceCriteria: "the work is reviewed",
+            placement: { lane: "lane-delivery", mode: "readOnly" },
+          },
+        ],
+      }) as WorkflowSemanticDefinition,
+      execution,
+    });
+
     expect(result).toEqual({ kind: "completed" });
+  });
+
+  /**
+   * The window the canvas was blind to: the join runner is merging this
+   * context's lane right now. A lane already in `mergedSourceLaneIds` is NOT
+   * the one in flight — a multi-source join merges them one at a time.
+   */
+  it("reports merging while a running join is landing the context's lane", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-delivery",
+          branchName: "csm/session-1-delivery",
+        }),
+      },
+      executionLanes: {
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "active",
+          includedContextIds: ["ctx-1"],
+        }),
+        __session__: makeLane({
+          laneId: "__session__",
+          kind: "session",
+          branchName: "csm/session-1",
+        }),
+      },
+      joins: {
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "running",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({
+      kind: "merging",
+      targetBranch: "csm/session-1",
+    });
+  });
+
+  it("does not report merging for a lane the running join has already merged", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          isolation: "worktree",
+          mergeStatus: "merged-success",
+          laneId: "lane-delivery",
+        }),
+      },
+      executionLanes: {
+        "lane-delivery": makeLane({
+          laneId: "lane-delivery",
+          status: "merged",
+          includedContextIds: ["ctx-1"],
+        }),
+        __session__: makeLane({ laneId: "__session__", kind: "session" }),
+      },
+      joins: {
+        "join-publish": makeJoin({
+          joinId: "join-publish",
+          kind: "final_publish",
+          sourceLaneIds: ["lane-delivery", "lane-docs"],
+          mergedSourceLaneIds: ["lane-delivery"],
+          targetLaneId: "__session__",
+          status: "running",
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({
+      kind: "awaiting-merge",
+      targetLaneName: "session",
+    });
   });
 
   it("reports halted regardless of upstream state", () => {

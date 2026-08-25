@@ -21,8 +21,12 @@ export type NodeDimensions = Map<string, { width: number; height: number }>;
 /** The context card's authored width (`Context Node.dc.html`). */
 export const DEFAULT_NODE_WIDTH = 264;
 export const DEFAULT_NODE_HEIGHT = 200;
-/** Column pitch inside a band is one card plus this gap (design B1: 294). */
-export const LAYOUT_COLUMN_GAP = 30;
+/**
+ * Column pitch is one card plus this gap. Wider than the design bundle's 30
+ * (B1: 294 pitch) because a cross-band edge spends the gap on its horizontal
+ * run: at 30 an edge dropping a band reads as a vertical line.
+ */
+export const LAYOUT_COLUMN_GAP = 100;
 /** Vertical gutter between two band mates sharing a column. */
 export const LAYOUT_ROW_GAP = 40;
 
@@ -30,14 +34,17 @@ export const LAYOUT_ROW_GAP = 40;
  * Band-aware automatic layout.
  *
  * Lanes are the primary axis: each lane gets a horizontal band, bands stack in
- * dependency-first order, and a band's members flow left to right by dependency
- * depth. Members that share a depth share a column and stack inside the band
- * rather than widening it, so a band's width tracks the length of its
- * dependency chain and never the size of a parallel fan-out.
+ * dependency-first order, and members flow left to right by dependency depth.
+ * Members that share a depth share a column and stack inside the band rather
+ * than widening it, so a band's width tracks the length of its dependency
+ * chain and never the size of a parallel fan-out.
  *
- * Columns are indexed per band but sized globally, which is what keeps the
- * first member of every band on one vertical line (design B1/E1) instead of
- * letting one wide card in one lane shift the others.
+ * Columns are indexed by GLOBAL depth and sized globally, so a context always
+ * sits strictly right of every context it depends on — wherever their bands
+ * stack. That is the axis the canvas promises: x is dependency order, y is
+ * lane membership, and an edge can only ever point rightward. A band whose
+ * chain starts deep therefore opens deep, and the empty run before its first
+ * member is the wait it depicts.
  *
  * The band ordering and membership come from {@link deriveDefinitionLaneBands}
  * — the same model the band layer renders — so the generated geometry and the
@@ -58,18 +65,14 @@ export function generateWorkflowLayout(
   const nodeHeight = (contextId: string): number =>
     nodeDimensions?.get(contextId)?.height ?? DEFAULT_NODE_HEIGHT;
 
-  // Column index per context: the rank of its depth among the depths present
-  // in ITS band, so a band whose chain starts deep still opens at column 0.
+  // Column index per context: its global dependency depth. Depth is the
+  // longest path from a root, so an edge's target is always at least one
+  // column right of its source — the invariant that keeps every edge pointing
+  // rightward across bands.
   const columnOfContext = new Map<string, number>();
   for (const band of bands) {
-    const bandDepths = [
-      ...new Set(band.memberContextIds.map((id) => depths.get(id) ?? 0)),
-    ].sort((a, b) => a - b);
     for (const contextId of band.memberContextIds) {
-      columnOfContext.set(
-        contextId,
-        bandDepths.indexOf(depths.get(contextId) ?? 0),
-      );
+      columnOfContext.set(contextId, depths.get(contextId) ?? 0);
     }
   }
 

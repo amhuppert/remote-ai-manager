@@ -1,14 +1,15 @@
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
+  GraphWorkflowExecutionJoinState,
 } from "@/lib/workflow-graph/schemas";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
 import {
   isContextOutputCommittedToLane,
-  reachableLanesFrom,
+  isUpstreamVisibleToLane,
 } from "@/lib/workflow-graph/lane-readiness";
-import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
+import { laneDisplayName } from "@/lib/workflow-graph/lane-bands";
 import type {
   CascadeWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
@@ -40,6 +41,13 @@ export type ContextWaitState =
   | { kind: "awaiting-approval" }
   | { kind: "awaiting-user-input" }
   | { kind: "merging"; targetBranch: string | null }
+  /**
+   * Committed to its lane and certified, waiting for the lane merge that will
+   * carry it into the session worktree. Distinct from `completed` because the
+   * work is not where the operator will look for it yet, and from `published`
+   * because the merge has not run.
+   */
+  | { kind: "awaiting-merge"; targetLaneName: string | null }
   | { kind: "completed" }
   | { kind: "halted" }
   | { kind: "published" }
@@ -71,14 +79,7 @@ export function deriveContextWaitState(input: {
   }
 
   if (ctxState.status === "completed") {
-    if (
-      ctxState.isolation === "worktree" &&
-      ctxState.mergeStatus === "merged-success" &&
-      hasReachedSessionWorktree(execution, ctxState)
-    ) {
-      return { kind: "published" };
-    }
-    return { kind: "completed" };
+    return settledWaitState(contextId, definition, execution, ctxState);
   }
 
   if (ctxState.status === "running") {
@@ -140,33 +141,94 @@ export function deriveContextWaitState(input: {
 }
 
 /**
- * Whether this context's work has reached the session worktree. Called only
- * for a completed, worktree-isolated context whose merge succeeded, so both
- * branches answer the narrower question: did that merge land in the session?
+ * How far a COMPLETED context's work has travelled toward the session worktree:
+ * still in its lane, mid-merge, or landed.
  *
- * A LANE-BEARING context publishes by REACHABILITY to the session lane through
- * succeeded joins — not by its own merge into its lane, which only proves it
- * landed among its band mates while the run may still owe the publish. And not
- * by "a final_publish names my lane" either: final-publish planning drops every
- * lane a succeeded `context_merge` already consumed, so in a fan-in topology
- * the publish lists only the join target and every context upstream of a join
- * would stall on completed forever.
+ * "Landed" is `isUpstreamVisibleToLane(…, null, …)` — the same predicate
+ * `authored-context-outcome` calls `write_result_integrated` and the scheduler
+ * uses to gate dependents. Reading it here rather than re-deriving reachability
+ * is what keeps the canvas from holding a second opinion about whether work
+ * arrived: a lane reachable from the session proves the LANE merged, but only
+ * the composed predicate also proves this context ever committed to it.
  *
- * A LANELESS context is the legacy per-context worktree shape, which predates
- * lanes: its squash-merge landed the work directly in the session worktree, so
- * there is no lane to reach the session from and no join that will ever name
- * it. `isContextOutputCommittedToLane` is where that shape is defined, and
- * deferring to it keeps this from drifting into a second opinion about which
- * historical states count as landed.
+ * Two grades never reach the ladder at all, because neither owes a merge: a
+ * read-only member writes nothing, and a session-isolation context already
+ * wrote into the session worktree. Both are settled the moment they complete,
+ * and reporting them as waiting-to-merge would invent a debt.
  */
-function hasReachedSessionWorktree(
+function settledWaitState(
+  contextId: string,
+  definition: WaitStateDefinition,
   execution: GraphWorkflowExecution,
   ctxState: GraphWorkflowExecutionContextState,
-): boolean {
-  if (ctxState.laneId === null) {
-    return isContextOutputCommittedToLane(ctxState, execution);
+): ContextWaitState {
+  const placementMode = definition.executionContexts.find(
+    (context) => context.id === contextId,
+  )?.placement?.mode;
+  if (placementMode === "readOnly") return { kind: "completed" };
+  if (ctxState.laneId === null && ctxState.isolation === "session") {
+    return { kind: "completed" };
   }
-  return reachableLanesFrom(ctxState.laneId, execution).has(SESSION_LANE_ID);
+
+  // Not committed anywhere yet — including a landing that failed. The work is
+  // finished but nowhere a consumer can see it, which is what `completed`
+  // already meant.
+  if (!isContextOutputCommittedToLane(ctxState, execution)) {
+    return { kind: "completed" };
+  }
+
+  const inFlight = laneMergeInFlight(ctxState.laneId, execution);
+  if (inFlight) {
+    return {
+      kind: "merging",
+      targetBranch:
+        execution.executionLanes?.[inFlight.targetLaneId]?.branchName ??
+        ctxState.branchName,
+    };
+  }
+
+  if (isUpstreamVisibleToLane(contextId, null, execution)) {
+    return { kind: "published" };
+  }
+
+  return {
+    kind: "awaiting-merge",
+    targetLaneName: pendingMergeTargetName(ctxState.laneId, execution),
+  };
+}
+
+/**
+ * The join currently carrying this lane into its target, or null.
+ *
+ * A lane already in `mergedSourceLaneIds` is NOT the one in flight: a
+ * multi-source join merges its sources one at a time, so the ledger is what
+ * distinguishes the lane being merged right now from the ones already done.
+ */
+function laneMergeInFlight(
+  laneId: string | null,
+  execution: GraphWorkflowExecution,
+): GraphWorkflowExecutionJoinState | null {
+  if (laneId === null) return null;
+  return (
+    Object.values(execution.joins ?? {}).find(
+      (join) =>
+        join.status === "running" &&
+        join.sourceLaneIds.includes(laneId) &&
+        !join.mergedSourceLaneIds.includes(laneId),
+    ) ?? null
+  );
+}
+
+/** The lane a still-owed join will deliver this lane into, named for display. */
+function pendingMergeTargetName(
+  laneId: string | null,
+  execution: GraphWorkflowExecution,
+): string | null {
+  if (laneId === null) return null;
+  const owed = Object.values(execution.joins ?? {}).find(
+    (join) => join.status !== "succeeded" && join.sourceLaneIds.includes(laneId),
+  );
+  return owed ? laneDisplayName(owed.targetLaneId) : null;
 }
 
 function getUnmetDependencyIds(
