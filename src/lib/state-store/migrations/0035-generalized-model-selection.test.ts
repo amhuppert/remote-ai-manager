@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -22,6 +23,7 @@ vi.mock("@/lib/logging", () => ({
 
 import type BetterSqlite3 from "better-sqlite3";
 import { schemaCompatibilityBarrierPath } from "../schema-compatibility";
+import { stableStringify } from "../serialization";
 import { _createTestDbAtPath } from "../state-db";
 import {
   GENERALIZED_MODEL_SELECTION_SCHEMA_VERSION,
@@ -449,6 +451,33 @@ function legacyDeliveryPlanDocument(input: {
   };
 }
 
+/**
+ * The frozen candidate envelope a snapshot row actually stores: the plan
+ * document is nested under `document`, and `candidate_hash` signs the whole
+ * envelope's canonical bytes.
+ */
+function legacyCandidateRecord(input: {
+  specId: string;
+  attemptId: string;
+  candidateId: string;
+  pinnedRevisionId: string;
+}): Record<string, unknown> {
+  return {
+    protocol: "native-sdd-delivery-candidate/v2",
+    schemaVersion: 2,
+    specId: input.specId,
+    attemptId: input.attemptId,
+    candidateId: input.candidateId,
+    pinnedRevisionId: input.pinnedRevisionId,
+    draftRevision: 1,
+    document: legacyDeliveryPlanDocument({ holder: "snapshot" }),
+  };
+}
+
+function candidateHashOfBytes(candidateBytes: string): string {
+  return `sha256:${createHash("sha256").update(candidateBytes).digest("hex")}`;
+}
+
 function seedDeliveryPlanDocuments(
   db: Db,
   projectPath: string,
@@ -459,10 +488,15 @@ function seedDeliveryPlanDocuments(
   archivedSnapshotId: string;
   terminalLaunchAttemptId: string;
   terminalLaunchSnapshotId: string;
+  seededCandidateHashes: Record<string, string>;
+  approvedAttemptId: string;
+  parkedAttemptId: string;
+  launchedAttemptId: string;
 } {
   const timestamp = "2026-08-02T00:00:00.000Z";
   const specId = "spec-model-selection-migration";
   const revisionId = "revision-model-selection-migration";
+  const actor = '{"kind":"agent","conversationId":"migration-test"}';
   db.prepare(
     `INSERT INTO specs (
        id, project_path, slug, name, gate_policy_json, created_at, updated_at
@@ -485,8 +519,9 @@ function seedDeliveryPlanDocuments(
   const insertAttempt = db.prepare(
     `INSERT INTO spec_delivery_plan_attempts (
        id, spec_id, pinned_revision_id, status, draft_revision, content_json,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+       proposed_snapshot_id, approval_json, prelaunch_json, created_at,
+       updated_at
+     ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
   );
   const insertSnapshot = db.prepare(
     `INSERT INTO spec_delivery_plan_snapshots (
@@ -494,11 +529,43 @@ function seedDeliveryPlanDocuments(
        content_json, pinned_revision_id, proposed_at, proposed_by_json
      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`,
   );
+  const seededCandidateHashes: Record<string, string> = {};
+  const seedSnapshot = (input: {
+    snapshotId: string;
+    attemptId: string;
+    candidateId: string;
+  }): string => {
+    const candidateBytes = stableStringify(
+      legacyCandidateRecord({
+        specId,
+        attemptId: input.attemptId,
+        candidateId: input.candidateId,
+        pinnedRevisionId: revisionId,
+      }),
+    );
+    const candidateHash = candidateHashOfBytes(candidateBytes);
+    seededCandidateHashes[input.snapshotId] = candidateHash;
+    insertSnapshot.run(
+      input.snapshotId,
+      input.attemptId,
+      input.candidateId,
+      candidateHash,
+      candidateBytes,
+      revisionId,
+      timestamp,
+      actor,
+    );
+    return candidateHash;
+  };
+
   const liveAttemptIds: string[] = [];
   const liveSnapshotIds: string[] = [];
+  // Every live status carries its frozen snapshot, and the statuses that bind
+  // a candidate carry the binding a re-signed snapshot has to keep coherent.
   for (const status of LIVE_DELIVERY_PLAN_STATUSES) {
     const attemptId = `attempt-${status}`;
     const snapshotId = `snapshot-${status}`;
+    const candidateId = `candidate-${status}`;
     liveAttemptIds.push(attemptId);
     liveSnapshotIds.push(snapshotId);
     insertAttempt.run(
@@ -507,18 +574,39 @@ function seedDeliveryPlanDocuments(
       revisionId,
       status,
       JSON.stringify(legacyDeliveryPlanDocument({ holder: "attempt" })),
+      null,
+      null,
+      null,
       timestamp,
       timestamp,
     );
-    insertSnapshot.run(
-      snapshotId,
+    const candidateHash = seedSnapshot({ snapshotId, attemptId, candidateId });
+    const binds = status === "approved" || status === "launched";
+    db.prepare(
+      `UPDATE spec_delivery_plan_attempts
+       SET proposed_snapshot_id = ?, approval_json = ?, prelaunch_json = ?
+       WHERE id = ?`,
+    ).run(
+      status === "draft" ? null : snapshotId,
+      binds
+        ? stableStringify({
+            candidateId,
+            candidateHash,
+            snapshotId,
+            approvedAt: timestamp,
+            approvedBy: JSON.parse(actor) as unknown,
+          })
+        : null,
+      status === "parked"
+        ? stableStringify({
+            parkedAt: timestamp,
+            parkedBy: JSON.parse(actor) as unknown,
+            reason: null,
+            candidate: { candidateId, candidateHash },
+            approvedAtPark: false,
+          })
+        : null,
       attemptId,
-      `candidate-${status}`,
-      `hash-${status}`,
-      JSON.stringify(legacyDeliveryPlanDocument({ holder: "snapshot" })),
-      revisionId,
-      timestamp,
-      '{"kind":"agent","conversationId":"migration-test"}',
     );
   }
 
@@ -530,19 +618,17 @@ function seedDeliveryPlanDocuments(
     revisionId,
     "abandoned",
     JSON.stringify(legacyDeliveryPlanDocument({ holder: "attempt" })),
-    timestamp,
-    timestamp,
-  );
-  insertSnapshot.run(
     archivedSnapshotId,
-    archivedAttemptId,
-    "candidate-abandoned",
-    "hash-abandoned",
-    JSON.stringify(legacyDeliveryPlanDocument({ holder: "snapshot" })),
-    revisionId,
+    null,
+    null,
     timestamp,
-    '{"kind":"agent","conversationId":"migration-test"}',
+    timestamp,
   );
+  seedSnapshot({
+    snapshotId: archivedSnapshotId,
+    attemptId: archivedAttemptId,
+    candidateId: "candidate-abandoned",
+  });
 
   const terminalExecutionId = "execution-delivered-archive";
   db.prepare(
@@ -573,16 +659,11 @@ function seedDeliveryPlanDocuments(
     timestamp,
     timestamp,
   );
-  insertSnapshot.run(
-    terminalLaunchSnapshotId,
-    terminalLaunchAttemptId,
-    "candidate-launched-delivered",
-    "hash-launched-delivered",
-    JSON.stringify(legacyDeliveryPlanDocument({ holder: "snapshot" })),
-    revisionId,
-    timestamp,
-    '{"kind":"agent","conversationId":"migration-test"}',
-  );
+  seedSnapshot({
+    snapshotId: terminalLaunchSnapshotId,
+    attemptId: terminalLaunchAttemptId,
+    candidateId: "candidate-launched-delivered",
+  });
 
   return {
     liveAttemptIds,
@@ -591,6 +672,10 @@ function seedDeliveryPlanDocuments(
     archivedSnapshotId,
     terminalLaunchAttemptId,
     terminalLaunchSnapshotId,
+    seededCandidateHashes,
+    approvedAttemptId: "attempt-approved",
+    parkedAttemptId: "attempt-parked",
+    launchedAttemptId: "attempt-launched",
   };
 }
 
@@ -1681,36 +1766,114 @@ describe("0035 generalized model selection cutover", () => {
     for (const snapshotId of seeded.liveSnapshotIds) {
       const row = world.db
         .prepare(
-          "SELECT content_json FROM spec_delivery_plan_snapshots WHERE id = ?",
+          `SELECT content_json, candidate_hash, candidate_id
+           FROM spec_delivery_plan_snapshots WHERE id = ?`,
         )
-        .get(snapshotId) as { content_json: string };
-      const document = JSON.parse(row.content_json) as {
-        launch: {
-          definition: {
-            executionContexts: Array<{
-              implementer: Record<string, unknown>;
-              outputSchema: { examples: unknown[] };
-            }>;
-          };
-        };
-        binding: { opaqueProviderPayload: unknown };
+        .get(snapshotId) as {
+        content_json: string;
+        candidate_hash: string;
+        candidate_id: string;
       };
-      expect(
-        document.launch.definition.executionContexts[0]?.implementer,
-      ).toEqual({
+      const record = JSON.parse(row.content_json) as {
+        protocol: string;
+        specId: string;
+        attemptId: string;
+        candidateId: string;
+        pinnedRevisionId: string;
+        draftRevision: number;
+        document: {
+          launch: {
+            definition: {
+              executionContexts: Array<{
+                implementer: Record<string, unknown>;
+                outputSchema: { examples: unknown[] };
+              }>;
+            };
+          };
+          binding: { opaqueProviderPayload: unknown };
+        };
+      };
+      // The envelope around the migrated document is carried verbatim.
+      expect(record.protocol).toBe("native-sdd-delivery-candidate/v2");
+      expect(record.candidateId).toBe(row.candidate_id);
+      expect(record.draftRevision).toBe(1);
+      const definition = record.document.launch.definition;
+      expect(definition.executionContexts[0]?.implementer).toEqual({
         backend: "claude",
         modelSelection: {
           modelId: "sonnet",
           parameters: { effort: "medium" },
         },
       });
-      expect(
-        document.launch.definition.executionContexts[0]?.outputSchema.examples,
-      ).toEqual([opaqueProviderPayload]);
-      expect(document.binding.opaqueProviderPayload).toEqual(
+      expect(definition.executionContexts[0]?.outputSchema.examples).toEqual([
+        opaqueProviderPayload,
+      ]);
+      expect(record.document.binding.opaqueProviderPayload).toEqual(
         opaqueProviderPayload,
       );
+      // Re-expressed bytes are re-signed, so the launch-time integrity check
+      // still hashes the stored bytes to the stored candidate hash.
+      expect(row.candidate_hash).toBe(candidateHashOfBytes(row.content_json));
+      expect(row.candidate_hash).not.toBe(
+        seeded.seededCandidateHashes[snapshotId],
+      );
+      expect(row.content_json).toBe(
+        stableStringify(JSON.parse(row.content_json)),
+      );
     }
+    // Every stored binding of the old hash moves with it: an approval or a
+    // prelaunch hold left on the pre-migration hash would silently refuse the
+    // launch it already authorized.
+    for (const attemptId of [
+      seeded.approvedAttemptId,
+      seeded.launchedAttemptId,
+    ]) {
+      const attempt = world.db
+        .prepare(
+          `SELECT approval_json, proposed_snapshot_id
+           FROM spec_delivery_plan_attempts WHERE id = ?`,
+        )
+        .get(attemptId) as {
+        approval_json: string;
+        proposed_snapshot_id: string;
+      };
+      const approval = JSON.parse(attempt.approval_json) as {
+        candidateId: string;
+        candidateHash: string;
+        snapshotId: string;
+      };
+      const snapshot = world.db
+        .prepare(
+          "SELECT candidate_hash FROM spec_delivery_plan_snapshots WHERE id = ?",
+        )
+        .get(attempt.proposed_snapshot_id) as { candidate_hash: string };
+      expect(approval.candidateHash).toBe(snapshot.candidate_hash);
+      expect(approval.snapshotId).toBe(attempt.proposed_snapshot_id);
+    }
+    const parked = world.db
+      .prepare(
+        `SELECT prelaunch_json, proposed_snapshot_id
+         FROM spec_delivery_plan_attempts WHERE id = ?`,
+      )
+      .get(seeded.parkedAttemptId) as {
+      prelaunch_json: string;
+      proposed_snapshot_id: string;
+    };
+    expect(
+      (
+        JSON.parse(parked.prelaunch_json) as {
+          candidate: { candidateHash: string };
+        }
+      ).candidate.candidateHash,
+    ).toBe(
+      (
+        world.db
+          .prepare(
+            "SELECT candidate_hash FROM spec_delivery_plan_snapshots WHERE id = ?",
+          )
+          .get(parked.proposed_snapshot_id) as { candidate_hash: string }
+      ).candidate_hash,
+    );
     expect(
       (
         world.db
@@ -1747,6 +1910,22 @@ describe("0035 generalized model selection cutover", () => {
           .get(seeded.terminalLaunchSnapshotId) as { content_json: string }
       ).content_json,
     ).toBe(archivedBefore.terminalLaunchSnapshot);
+    // Archived candidates are never re-signed: their frozen bytes and the hash
+    // over them both stand exactly as proposed.
+    for (const snapshotId of [
+      seeded.archivedSnapshotId,
+      seeded.terminalLaunchSnapshotId,
+    ]) {
+      expect(
+        (
+          world.db
+            .prepare(
+              "SELECT candidate_hash FROM spec_delivery_plan_snapshots WHERE id = ?",
+            )
+            .get(snapshotId) as { candidate_hash: string }
+        ).candidate_hash,
+      ).toBe(seeded.seededCandidateHashes[snapshotId]);
+    }
 
     const liveRowsAfterFirstRun = world.db
       .prepare(
@@ -1977,16 +2156,24 @@ describe("0035 generalized model selection cutover", () => {
   it("refuses an unconvertible live holder at its durable location without preflight or migration writes", async () => {
     const world = makeWorld();
     seedDeliveryPlanDocuments(world.db, world.projectPath);
-    const unconvertible = legacyDeliveryPlanDocument({
-      holder: "snapshot",
-      model: "unknown-claude-model",
-    });
+    const unconvertible = {
+      ...legacyCandidateRecord({
+        specId: "spec-model-selection-migration",
+        attemptId: "attempt-proposed",
+        candidateId: "candidate-proposed",
+        pinnedRevisionId: "revision-model-selection-migration",
+      }),
+      document: legacyDeliveryPlanDocument({
+        holder: "snapshot",
+        model: "unknown-claude-model",
+      }),
+    };
     world.db
       .prepare(
         `UPDATE spec_delivery_plan_snapshots SET content_json = ?
          WHERE id = 'snapshot-proposed'`,
       )
-      .run(JSON.stringify(unconvertible));
+      .run(stableStringify(unconvertible));
     const databaseBefore = world.db.serialize();
     const configBefore = readFileSync(
       path.join(world.configDir, "config.json"),
@@ -2000,14 +2187,14 @@ describe("0035 generalized model selection cutover", () => {
       }),
     ).rejects.toMatchObject({
       holder:
-        "spec_delivery_plan_snapshots.id=snapshot-proposed.content_json.launch.definition.executionContexts[0].implementer",
+        "spec_delivery_plan_snapshots.id=snapshot-proposed.content_json.document.launch.definition.executionContexts[0].implementer",
       reasonCode: "unknown_model",
     });
     expect(world.db.serialize()).toEqual(databaseBefore);
 
     await expect(runMigration(world)).rejects.toMatchObject({
       holder:
-        "spec_delivery_plan_snapshots.id=snapshot-proposed.content_json.launch.definition.executionContexts[0].implementer",
+        "spec_delivery_plan_snapshots.id=snapshot-proposed.content_json.document.launch.definition.executionContexts[0].implementer",
       reasonCode: "unknown_model",
     });
     expect(world.db.serialize()).toEqual(databaseBefore);

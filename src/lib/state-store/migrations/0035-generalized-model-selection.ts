@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   enforceCurrentSchemaCompatibility,
   publishSchemaCompatibilityBarrier,
 } from "../schema-compatibility";
+import { stableStringify } from "../serialization";
 import {
   FROZEN_CURSOR_MODEL_SNAPSHOT,
   FROZEN_CURSOR_MODEL_VARIANT_PARAMETER_KEYS,
@@ -1658,6 +1660,77 @@ const LIVE_DELIVERY_PLAN_STATUS_SQL = `(
   )
 )`;
 
+/**
+ * The candidate identity a snapshot's frozen bytes are signed with, frozen
+ * here rather than imported: the launch-time integrity check hashes the stored
+ * bytes, so re-expressed bytes have to be re-signed with the algorithm that
+ * was in force when they were proposed.
+ */
+function frozenCandidateHash(candidateBytes: string): string {
+  return `sha256:${createHash("sha256").update(candidateBytes).digest("hex")}`;
+}
+
+/**
+ * Every stored binding of a re-signed candidate's old hash. An approval or a
+ * prelaunch hold left on the pre-migration hash names a candidate whose bytes
+ * no longer hash to it, and the plan it already authorized would refuse to
+ * launch.
+ */
+function planCandidateHashRebindings(
+  db: MigrationContext["db"],
+  input: {
+    readonly attemptId: string;
+    readonly candidateId: string;
+    readonly previousHash: string;
+    readonly nextHash: string;
+  },
+): DatabaseMutation[] {
+  const columns = (["approval_json", "prelaunch_json"] as const).filter(
+    (column) => tableHasColumn(db, "spec_delivery_plan_attempts", column),
+  );
+  if (columns.length === 0) return [];
+  const attempt = db
+    .prepare(
+      `SELECT rowid AS rowid, ${columns.join(", ")}
+       FROM spec_delivery_plan_attempts WHERE id = ?`,
+    )
+    .get(input.attemptId) as
+    | ({ rowid: number } & Record<string, string | null>)
+    | undefined;
+  if (attempt === undefined) return [];
+
+  const mutations: DatabaseMutation[] = [];
+  for (const column of columns) {
+    const before = attempt[column];
+    if (before === null || before === undefined) continue;
+    const holder = `spec_delivery_plan_attempts.id=${input.attemptId}.${column}`;
+    const binding = parseJson(before, holder);
+    if (!isRecord(binding)) continue;
+    // An approval binds the identity directly; a prelaunch hold nests it.
+    const identity = column === "approval_json" ? binding : binding.candidate;
+    if (
+      !isRecord(identity) ||
+      identity.candidateId !== input.candidateId ||
+      identity.candidateHash !== input.previousHash
+    ) {
+      continue;
+    }
+    const nextIdentity = { ...identity, candidateHash: input.nextHash };
+    mutations.push({
+      table: "spec_delivery_plan_attempts",
+      column,
+      rowid: attempt.rowid,
+      before,
+      after: stableStringify(
+        column === "approval_json"
+          ? nextIdentity
+          : { ...binding, candidate: nextIdentity },
+      ),
+    });
+  }
+  return mutations;
+}
+
 function planDeliveryPlanDocuments(
   db: MigrationContext["db"],
 ): DatabaseMutation[] {
@@ -1683,6 +1756,9 @@ function planDeliveryPlanDocuments(
   const snapshotRows = db
     .prepare(
       `SELECT snapshots.rowid AS rowid, snapshots.id AS id,
+              snapshots.attempt_id AS attemptId,
+              snapshots.candidate_id AS candidateId,
+              snapshots.candidate_hash AS candidateHash,
               snapshots.content_json AS value
        FROM spec_delivery_plan_snapshots AS snapshots
        JOIN spec_delivery_plan_attempts AS attempts
@@ -1692,35 +1768,86 @@ function planDeliveryPlanDocuments(
        WHERE ${LIVE_DELIVERY_PLAN_STATUS_SQL}
        ORDER BY snapshots.id`,
     )
-    .all() as Array<{ rowid: number; id: string; value: string }>;
+    .all() as Array<{
+    rowid: number;
+    id: string;
+    attemptId: string;
+    candidateId: string | null;
+    candidateHash: string | null;
+    value: string;
+  }>;
 
-  const planRows = (
-    table: "spec_delivery_plan_attempts" | "spec_delivery_plan_snapshots",
-    rows: readonly { rowid: number; id: string; value: string }[],
-  ): DatabaseMutation[] => {
-    const mutations: DatabaseMutation[] = [];
-    for (const row of rows) {
-      const holder = `${table}.id=${row.id}.content_json`;
-      const transformed = transformDeliveryPlanDocument(
-        parseJson(row.value, holder),
+  const mutations: DatabaseMutation[] = [];
+  // An attempt's `content_json` is the authored draft document itself.
+  for (const row of attemptRows) {
+    const holder = `spec_delivery_plan_attempts.id=${row.id}.content_json`;
+    const transformed = transformDeliveryPlanDocument(
+      parseJson(row.value, holder),
+      holder,
+    );
+    if (!transformed.changed) continue;
+    mutations.push({
+      table: "spec_delivery_plan_attempts",
+      column: "content_json",
+      rowid: row.rowid,
+      before: row.value,
+      after: JSON.stringify(transformed.value),
+    });
+  }
+
+  // A snapshot's `content_json` is the frozen candidate record; the plan
+  // document it signs is nested under `document`.
+  for (const row of snapshotRows) {
+    const holder = `spec_delivery_plan_snapshots.id=${row.id}.content_json`;
+    const record = parseJson(row.value, holder);
+    if (!isRecord(record) || !isRecord(record.document)) {
+      throw new GeneralizedModelSelectionMigrationError(
         holder,
+        "invalid_json",
+        "a live delivery-plan snapshot must contain a candidate record with a document object.",
       );
-      if (!transformed.changed) continue;
-      mutations.push({
-        table,
-        column: "content_json",
-        rowid: row.rowid,
-        before: row.value,
-        after: JSON.stringify(transformed.value),
-      });
     }
-    return mutations;
-  };
+    const transformed = transformDeliveryPlanDocument(
+      record.document,
+      `${holder}.document`,
+    );
+    if (!transformed.changed) continue;
+    // Canonical bytes, because the stored bytes are what the hash covers.
+    const after = stableStringify({ ...record, document: transformed.value });
+    mutations.push({
+      table: "spec_delivery_plan_snapshots",
+      column: "content_json",
+      rowid: row.rowid,
+      before: row.value,
+      after,
+    });
+    const nextHash = frozenCandidateHash(after);
+    if (
+      row.candidateHash === null ||
+      row.candidateId === null ||
+      row.candidateHash === nextHash ||
+      !tableHasColumn(db, "spec_delivery_plan_snapshots", "candidate_hash")
+    ) {
+      continue;
+    }
+    mutations.push({
+      table: "spec_delivery_plan_snapshots",
+      column: "candidate_hash",
+      rowid: row.rowid,
+      before: row.candidateHash,
+      after: nextHash,
+    });
+    mutations.push(
+      ...planCandidateHashRebindings(db, {
+        attemptId: row.attemptId,
+        candidateId: row.candidateId,
+        previousHash: row.candidateHash,
+        nextHash,
+      }),
+    );
+  }
 
-  return [
-    ...planRows("spec_delivery_plan_attempts", attemptRows),
-    ...planRows("spec_delivery_plan_snapshots", snapshotRows),
-  ];
+  return mutations;
 }
 
 function transcriptBackends(
@@ -1937,10 +2064,16 @@ async function buildMigrationPlan(
         workflowCount +
         database.filter(
           (entry) =>
-            entry.table === "sessions" ||
-            entry.table === "spec_delivery_plan_attempts" ||
-            entry.table === "spec_delivery_plan_snapshots" ||
-            entry.table === "graph_workflow_executions",
+            // Documents migrated, not columns written: the candidate hash and
+            // the bindings that move with it are bookkeeping on a document
+            // this count already reports.
+            entry.column !== "candidate_hash" &&
+            entry.column !== "approval_json" &&
+            entry.column !== "prelaunch_json" &&
+            (entry.table === "sessions" ||
+              entry.table === "spec_delivery_plan_attempts" ||
+              entry.table === "spec_delivery_plan_snapshots" ||
+              entry.table === "graph_workflow_executions"),
         ).length,
       contextArtifactCount:
         contextArtifacts.kind === "none" ? 0 : contextArtifacts.rows.length,
