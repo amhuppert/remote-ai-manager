@@ -82,6 +82,22 @@ export interface LiveOutlineHeader {
   charterAmendmentCount: number;
   /** Plan-repair rounds run so far (docs/design/cc-cli/08); 0 for pre-D1 rows. */
   planRepairRoundCount: number;
+  /**
+   * The round whose repair agent has not reported yet, or null.
+   *
+   * The count alone cannot answer the question a reader of a HALTED run has:
+   * a repair mid-turn and one that gave up long ago present identically —
+   * same status, same halt reason, same count — and they call for opposite
+   * actions. `startedAt` is included because the turn is bounded, so how long
+   * the round has been open is what says whether the agent can still be there;
+   * `conversationId` is the transcript that settles the question outright.
+   */
+  openPlanRepairRound: {
+    seq: number;
+    contextId: string;
+    startedAt: string;
+    conversationId: string | null;
+  } | null;
 }
 
 export interface LiveOutlineAgentSummary {
@@ -418,7 +434,26 @@ function buildHeader(execution: GraphWorkflowExecution): LiveOutlineHeader {
     ...(editable ? {} : { notEditableReason: editability.reason }),
     charterAmendmentCount: execution.charterAmendments.length,
     planRepairRoundCount: execution.planRepairRounds.length,
+    openPlanRepairRound: openPlanRepairRound(execution),
   };
+}
+
+function openPlanRepairRound(
+  execution: GraphWorkflowExecution,
+): LiveOutlineHeader["openPlanRepairRound"] {
+  // Appended before the agent's turn and settled after it, so an unsettled
+  // round IS the turn. The log is append-only; the latest one wins.
+  const open = execution.planRepairRounds.findLast(
+    (round) => round.settledAt === null,
+  );
+  return open === undefined
+    ? null
+    : {
+        seq: open.seq,
+        contextId: open.contextId,
+        startedAt: open.startedAt,
+        conversationId: open.conversationId,
+      };
 }
 
 /**

@@ -334,9 +334,24 @@ only; never structural graph ops, validators, gates, `mutability`,
 shared live-edit core with server-derived `source: "plan-repair"` and resume
 through the normalize → resume → kick trio. Attempt accounting is the
 append-only `execution.planRepairRounds` log (appended before the agent runs;
-never reset by resume) with a hard per-execution backstop of 5 rounds. Every
-round conclusion emits a `graph-workflow-plan-repair` event (+ outcome push via
-the `planRepair` trigger).
+never reset by resume) with a hard per-execution backstop of 5 rounds. A round
+emits a `graph-workflow-plan-repair` event twice — once as it OPENS
+(`outcome: "started"`, no push) and once at its conclusion (+ outcome push via
+the `planRepair` trigger). The opening event is what makes the repair visible:
+the append changes no status, no active context and no halt reason, so without
+it nothing leaves the server for the length of a minutes-long agent turn and
+every UI reports an inert halt.
+
+An unsettled round IS the turn, and three surfaces read it rather than
+re-deciding what `halted` means: the live outline header
+(`openPlanRepairRound`, which `cctl workflow live get` prints in place of the
+round count), the CLI halt block (`repair: round N in flight`), and
+`components/workflow-graph/derive-plan-repair-activity.ts`, the UI's single
+owner of "is an agent working this halt?". The round is filed WITH its
+conversation id (`__plan_repair__:<executionId>:<contextId>:<seq>`) rather than
+learning it at settle time, so the transcript can be opened mid-turn — that
+handle is the only way to check the claim, and `isWorkflowConversationLive`
+calls it live for exactly as long as the round is open.
 
 `plan_defect` is the one entry here that is not retry exhaustion: nothing was
 retried, because the reviewed context has no task that could remedy what was

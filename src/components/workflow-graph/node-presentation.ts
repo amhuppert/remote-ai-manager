@@ -223,7 +223,7 @@ export function backendIsCodexToned(backend: AgentBackendId): boolean {
 }
 
 export interface NodeNotice {
-  tone: "amber" | "red";
+  tone: "amber" | "red" | "cyan";
   text: string;
 }
 
@@ -241,10 +241,19 @@ export function contextNodeNotice(input: {
   if (!waitState) return null;
 
   if (waitState.kind === "halted") {
-    return {
-      tone: "red",
-      text: "Halted — open the context for the recorded reason.",
-    };
+    // Cyan is the working tone everywhere else on the card, and that is the
+    // point: a halt with an agent on it is not a halt the operator has to
+    // answer, and the red notice would send them to act on one that is
+    // already being repaired.
+    return waitState.repairInFlight
+      ? {
+          tone: "cyan",
+          text: "Halted — a repair agent is working on it. The run resumes on its own if the repair lands.",
+        }
+      : {
+          tone: "red",
+          text: "Halted — open the context for the recorded reason.",
+        };
   }
 
   // Concurrency explained where it bites: several owning members share a lane

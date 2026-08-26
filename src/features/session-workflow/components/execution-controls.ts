@@ -69,6 +69,13 @@ export interface ExecutionControlInput {
    * whether the run may be resumed.
    */
   readonly resumeBlockedReason: string | null;
+  /**
+   * Whether a plan-repair round is open on the standing halt. It withholds
+   * nothing — the operator may always take the run back — but it turns Resume
+   * into a confirmed act: a halt reads identically whether or not an agent is
+   * working it, and resuming withdraws that round with its diagnosis unwritten.
+   */
+  readonly repairInFlight: boolean;
 }
 
 const PAUSE: ExecutionControlDescriptor = {
@@ -87,6 +94,13 @@ const RESUME: ExecutionControlDescriptor = {
   variant: "primary",
   confirm: null,
   blockedReason: null,
+};
+
+const RESUME_DURING_REPAIR: ExecutionControlConfirm = {
+  title: "Resume while a repair agent is working?",
+  message:
+    "A repair agent is diagnosing this halt right now, and resumes by itself if its repair lands. Resuming now withdraws that round — its diagnosis is never written.",
+  confirmLabel: "Resume anyway",
 };
 
 const ABORT: ExecutionControlDescriptor = {
@@ -158,7 +172,7 @@ export function resolveExecutionControls(
     return [];
   }
 
-  const resume =
+  const offered =
     input.resumeBlockedReason === null
       ? RESUME
       : {
@@ -166,6 +180,9 @@ export function resolveExecutionControls(
           idleLabel: `Resume — ${input.resumeBlockedReason}`,
           blockedReason: input.resumeBlockedReason,
         };
+  const resume = input.repairInFlight
+    ? { ...offered, confirm: RESUME_DURING_REPAIR }
+    : offered;
 
   switch (input.status) {
     case "pending":

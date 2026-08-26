@@ -10,6 +10,7 @@ import {
 } from "react";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
 import { deriveOutputSchemaHaltEvidenceByContext } from "@/components/workflow-graph/derive-output-schema-halt";
+import { derivePlanRepairActivity } from "@/components/workflow-graph/derive-plan-repair-activity";
 import {
   deriveContextLoopDisplay,
   deriveContextProvenanceDisplay,
@@ -259,6 +260,15 @@ export default function ContextDetail({
       }),
     [execution, contextHaltReason, history.validationEvents],
   );
+  // Scoped to THIS context: the run-level activity names the context its round
+  // is filed against, and a repair working some other halt is not this
+  // context's answer.
+  const planRepairActivity = useMemo(() => {
+    const activity = derivePlanRepairActivity(execution);
+    return activity.rounds.some((round) => round.contextId === contextId)
+      ? activity
+      : null;
+  }, [execution, contextId]);
   // The cohort as configured NOW: the engine reads a seat's authority the same
   // way, so a live authority edit moves every badge on this tab with it — the
   // live round's rows and the rows of every round already in the history.
@@ -402,6 +412,7 @@ export default function ContextDetail({
               <ContextHaltCard
                 primary={contextHaltReason}
                 outputSchemaEvidence={outputSchemaHaltEvidence}
+                planRepairActivity={planRepairActivity}
                 // Already inside the refusing context, so selection is settled
                 // and only the destination is left to honour — the same typed
                 // one the canvas and the status dialog send, which lands on the

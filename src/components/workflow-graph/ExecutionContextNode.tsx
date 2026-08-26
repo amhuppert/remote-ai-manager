@@ -139,6 +139,9 @@ const PROGRESS_FILL: Record<NodeStatusKey, string> = {
 const NOTICE_TONE = {
   amber: "border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] text-amber",
   red: "border-[var(--cc-red-a25)] bg-[var(--cc-red-a10)] text-red",
+  // The working tone: a halt an agent is repairing, told apart from one that
+  // is waiting on the operator.
+  cyan: "border-[var(--cc-cyan-a25)] bg-[var(--cc-cyan-a08)] text-cyan",
 } as const;
 
 const AUTHORITY_PILL = {
@@ -209,7 +212,7 @@ function getFooterText(
     case "published":
       return "Published to session";
     case "halted":
-      return "Halted";
+      return waitState.repairInFlight ? "Repair agent working" : "Halted";
     case "skipped":
       return "Branch not taken";
   }

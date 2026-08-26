@@ -1071,6 +1071,53 @@ describe("projectLiveOutline — charter selector (doc 07)", () => {
     expect(result.charter.markdown).toContain("applies to: impl");
   });
 
+  /**
+   * A count cannot answer the question an agent inspecting a halted run
+   * actually has. `status=halted, plan-repair ×1` reads identically whether a
+   * repair agent is mid-turn or gave up an hour ago, and the two call for
+   * opposite actions.
+   */
+  it("names the open plan-repair round in the outline header", () => {
+    const openRound = {
+      seq: 1,
+      contextId: "impl",
+      haltType: "circuit_breaker" as const,
+      loopGroupId: null,
+      startedAt: "2026-08-25T12:04:00.000Z",
+      settledAt: null,
+      outcome: null,
+      planningDefect: null,
+      diagnosis: null,
+      operationCount: 0,
+      resumed: false,
+      conversationId: "__plan_repair__:execution-1:impl:1",
+    };
+
+    const working = outlineOf({
+      ...buildExecution(),
+      planRepairRounds: [openRound],
+    });
+    expect(working.header.openPlanRepairRound).toEqual({
+      seq: 1,
+      contextId: "impl",
+      startedAt: "2026-08-25T12:04:00.000Z",
+      conversationId: "__plan_repair__:execution-1:impl:1",
+    });
+
+    const settled = outlineOf({
+      ...buildExecution(),
+      planRepairRounds: [
+        {
+          ...openRound,
+          settledAt: "2026-08-25T12:09:00.000Z",
+          outcome: "declined",
+        },
+      ],
+    });
+    expect(settled.header.openPlanRepairRound).toBeNull();
+    expect(settled.header.planRepairRoundCount).toBe(1);
+  });
+
   it("counts amendments in the outline header", () => {
     const pristine = projectLiveOutline(buildExecution(), { kind: "outline" });
     expect(pristine.ok).toBe(true);

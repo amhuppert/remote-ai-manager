@@ -550,7 +550,7 @@ export const Halted: Story = {
         cleanupStatus: "not-applicable",
         lastMergeError: null,
       },
-      waitState: { kind: "halted" },
+      waitState: { kind: "halted", repairInFlight: false },
     },
   },
 };
@@ -1291,7 +1291,7 @@ const GALLERY: [GalleryEntry, ...GalleryEntry[]] = [
       laneState: "active",
       configOverrides: ["implementer model"],
       contextState: contextState("halted", { completedTaskCount: 3 }),
-      waitState: { kind: "halted" },
+      waitState: { kind: "halted", repairInFlight: false },
     },
   },
   {

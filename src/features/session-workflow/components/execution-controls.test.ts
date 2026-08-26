@@ -39,6 +39,7 @@ function input(
     canAbandon: true,
     canDecideDefinition: true,
     resumeBlockedReason: null,
+    repairInFlight: false,
     ...overrides,
   };
 }
@@ -265,5 +266,46 @@ describe("resolveExecutionControls — labels and confirmation", () => {
     );
 
     expect(pause?.confirm).toBeNull();
+  });
+});
+
+describe("resolveExecutionControls — a resume that would cut a repair short", () => {
+  it("asks first when a repair agent's round is open on the halt", () => {
+    const resume = resolveExecutionControls(
+      input({
+        status: "halted",
+        haltReason: resumableHalt,
+        repairInFlight: true,
+      }),
+    ).find((control) => control.kind === "resume");
+
+    // Not blocked — the operator may always take the run back. Confirmed,
+    // because the halt reads the same whether or not an agent is on it, and
+    // resuming withdraws that round with its diagnosis unwritten.
+    expect(resume?.blockedReason).toBeNull();
+    expect(resume?.confirm?.message).toMatch(/repair agent/i);
+  });
+
+  it("keeps Resume immediate when nothing is working the halt", () => {
+    const resume = resolveExecutionControls(
+      input({ status: "halted", haltReason: resumableHalt }),
+    ).find((control) => control.kind === "resume");
+
+    expect(resume?.confirm).toBeNull();
+  });
+
+  it("still withholds a blocked resume while a repair round is open", () => {
+    const resume = resolveExecutionControls(
+      input({
+        status: "halted",
+        haltReason: resumableHalt,
+        repairInFlight: true,
+        resumeBlockedReason: "blocked until the contract is accepted",
+      }),
+    ).find((control) => control.kind === "resume");
+
+    expect(resume?.blockedReason).toBe(
+      "blocked until the contract is accepted",
+    );
   });
 });

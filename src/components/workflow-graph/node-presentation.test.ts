@@ -110,9 +110,10 @@ describe("contextNodeStatus", () => {
 
   it("labels the design's remaining states", () => {
     expect(contextNodeStatus("execution", undefined).label).toBe("Pending");
-    expect(contextNodeStatus("execution", { kind: "halted" }).label).toBe(
-      "Halted",
-    );
+    expect(
+      contextNodeStatus("execution", { kind: "halted", repairInFlight: false })
+        .label,
+    ).toBe("Halted");
     expect(
       contextNodeStatus("execution", { kind: "awaiting-approval" }).label,
     ).toBe("Awaiting approval");
@@ -276,11 +277,25 @@ describe("contextNodeNotice", () => {
     expect(
       contextNodeNotice({
         placement: { lane: "delivery", mode: "full" },
-        waitState: { kind: "halted" },
+        waitState: { kind: "halted", repairInFlight: false },
       }),
     ).toEqual({
       tone: "red",
       text: "Halted — open the context for the recorded reason.",
+    });
+  });
+
+  it("says a repair agent is on the halt while its round is open", () => {
+    // Same halted card, opposite reading: red-and-inert would tell the operator
+    // to go act on a halt an agent is already rewriting the plan for.
+    expect(
+      contextNodeNotice({
+        placement: { lane: "delivery", mode: "full" },
+        waitState: { kind: "halted", repairInFlight: true },
+      }),
+    ).toEqual({
+      tone: "cyan",
+      text: "Halted — a repair agent is working on it. The run resumes on its own if the repair lands.",
     });
   });
 

@@ -107,6 +107,16 @@ const headerSchema = z
     charterAmendmentCount: z.number().default(0),
     // Absent on outlines from pre-D1 servers; render as "no repair rounds".
     planRepairRoundCount: z.number().default(0),
+    // The round whose agent has not reported yet. Absent on outlines from a
+    // server that predates it, which reads the same as "nothing is running".
+    openPlanRepairRound: z
+      .object({
+        seq: z.number(),
+        contextId: z.string(),
+        startedAt: z.string(),
+        conversationId: z.string().nullish(),
+      })
+      .nullish(),
   })
   .loose();
 
@@ -260,10 +270,15 @@ function headerLine(header: LiveOutlineData["header"]): string {
     header.charterAmendmentCount > 0
       ? `  charter amended ×${header.charterAmendmentCount}`
       : "";
+  // A round still open is the live fact; the count is the history. Said in
+  // that order because a halted run reads the same in both cases, and only
+  // this clause distinguishes an agent mid-turn from a run waiting on a human.
   const repaired =
-    header.planRepairRoundCount > 0
-      ? `  plan-repair ×${header.planRepairRoundCount}`
-      : "";
+    header.openPlanRepairRound != null
+      ? `  plan-repair round ${header.openPlanRepairRound.seq} working ${header.openPlanRepairRound.contextId} (since ${header.openPlanRepairRound.startedAt})`
+      : header.planRepairRoundCount > 0
+        ? `  plan-repair ×${header.planRepairRoundCount}`
+        : "";
   const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${header.seedDefinitionId}@${header.seedDefinitionRevision}${amended}${repaired}`;
   if (header.editable) return base;
   const reason = header.notEditableReason ?? "not editable";

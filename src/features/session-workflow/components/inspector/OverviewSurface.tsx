@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { cn } from "@/lib/ui/cn";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
 import { deriveOutputSchemaHaltEvidenceByContext } from "@/components/workflow-graph/derive-output-schema-halt";
+import { derivePlanRepairActivity } from "@/components/workflow-graph/derive-plan-repair-activity";
 import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -359,6 +360,11 @@ export default function OverviewSurface({
     [execution, events],
   );
 
+  const planRepairActivity = useMemo(
+    () => derivePlanRepairActivity(execution),
+    [execution],
+  );
+
   const screenTitle =
     summary.rows.find((row) => row.id === screen)?.label ?? "";
 
@@ -426,6 +432,7 @@ export default function OverviewSurface({
                 primary={execution.haltReason}
                 secondary={execution.secondaryHaltReasons}
                 outputSchemaEvidence={outputSchemaHaltEvidence}
+                planRepairActivity={planRepairActivity}
                 {...(onEditSchema !== undefined ? { onEditSchema } : {})}
               />
             )}

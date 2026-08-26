@@ -465,13 +465,18 @@ function normalizeEvent(
       const dot: EventDotKind =
         event.outcome === "repaired"
           ? "pass"
-          : event.outcome === "superseded"
+          : event.outcome === "superseded" || event.outcome === "started"
             ? "retry"
             : "fail";
       const suffix =
         event.outcome === "repaired"
           ? `${event.operationCount} op(s)${event.resumed ? ", resumed" : ""}`
-          : event.outcome;
+          : event.outcome === "started"
+            ? // Nothing has been decided yet — the row's whole content is that
+              // an agent took the halt, which is the fact the log is otherwise
+              // silent about for the length of the turn.
+              "agent working"
+            : event.outcome;
       return {
         key,
         occurredAt,

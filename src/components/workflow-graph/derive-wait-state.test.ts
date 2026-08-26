@@ -977,7 +977,45 @@ describe("deriveContextWaitState", () => {
       execution,
     });
 
-    expect(result).toEqual({ kind: "halted" });
+    expect(result).toEqual({ kind: "halted", repairInFlight: false });
+  });
+
+  it("marks a halted context whose plan-repair round is still open", () => {
+    const definition = makeDefinition({
+      edges: [{ id: "e1", sourceContextId: "ctx-a", targetContextId: "ctx-b" }],
+    });
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-a": makeContextState({ contextId: "ctx-a", status: "running" }),
+        "ctx-b": makeContextState({ contextId: "ctx-b", status: "halted" }),
+      },
+      planRepairRounds: [
+        {
+          seq: 1,
+          contextId: "ctx-b",
+          haltType: "circuit_breaker",
+          loopGroupId: null,
+          // Within the open-round trust window on the real clock: a fixed
+          // past timestamp reads as a round whose agent is long gone.
+          startedAt: new Date(Date.now() - 60_000).toISOString(),
+          settledAt: null,
+          outcome: null,
+          planningDefect: null,
+          diagnosis: null,
+          operationCount: 0,
+          resumed: false,
+          conversationId: null,
+        },
+      ],
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-b",
+      definition,
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "halted", repairInFlight: true });
   });
 });
 

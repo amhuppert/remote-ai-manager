@@ -14,6 +14,10 @@ import {
   deriveOutputSchemaHaltEvidenceByContext,
   outputSchemaEvidenceForReason,
 } from "@/components/workflow-graph/derive-output-schema-halt";
+import {
+  derivePlanRepairActivity,
+  planRepairStatement,
+} from "@/components/workflow-graph/derive-plan-repair-activity";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import {
   CheckIcon,
@@ -87,6 +91,15 @@ interface ExecutionStatusBarProps {
    */
   onOpenLaneWorktree?: (contextId: string) => void;
   onEditOwnership?: (contextId: string) => void;
+  /**
+   * Opens the transcript of the plan-repair round working the halt, offered on
+   * the details dialog. The chip beside this bar claims an agent is working;
+   * this is how that claim is checked.
+   */
+  onViewRepairConversation?: (
+    conversationId: string,
+    contextId: string,
+  ) => void;
   onPause: () => void;
   onResume: (conflictGuidance?: ConflictDecisionInput[]) => void;
   onAbort: () => void;
@@ -136,6 +149,7 @@ export default function ExecutionStatusBar({
   onEditSchema,
   onOpenLaneWorktree,
   onEditOwnership,
+  onViewRepairConversation,
   onPause,
   onResume,
   onAbort,
@@ -191,6 +205,20 @@ export default function ExecutionStatusBar({
     [haltReason, secondaryHaltReasons, outputSchemaEvidence],
   );
 
+  // Halted is a lifecycle state, not an answer to "is anything happening?" —
+  // the plan-repair supervisor works a halt for as long as its agent turn
+  // runs, and the run reads `halted` throughout. The chip below is that
+  // missing answer, and it is stated in both directions: a halt nobody is
+  // working is exactly as important to see as one under repair.
+  const repairActivity = useMemo(
+    () => derivePlanRepairActivity(execution),
+    [execution],
+  );
+  const repairStatement = useMemo(
+    () => planRepairStatement(repairActivity),
+    [repairActivity],
+  );
+
   const controls = useMemo(
     () =>
       resolveExecutionControls({
@@ -203,6 +231,7 @@ export default function ExecutionStatusBar({
         canDecideDefinition:
           onApproveDefinition !== undefined && onRejectDefinition !== undefined,
         resumeBlockedReason,
+        repairInFlight: repairActivity.openRound !== null,
       }),
     [
       execution.status,
@@ -214,6 +243,7 @@ export default function ExecutionStatusBar({
       onApproveDefinition,
       onRejectDefinition,
       resumeBlockedReason,
+      repairActivity,
     ],
   );
 
@@ -304,6 +334,28 @@ export default function ExecutionStatusBar({
       {execution.status}
     </span>
   );
+
+  const repairChip =
+    execution.status === "halted" ? (
+      <StatusChip
+        data-testid="execution-repair-chip"
+        tone={repairStatement.working ? "cyan" : "neutral"}
+        title={repairStatement.sentence}
+        layoutClassName="shrink-0"
+        {...(repairStatement.working
+          ? {
+              icon: (
+                <span
+                  aria-hidden="true"
+                  className="h-[6px] w-[6px] shrink-0 [animation:pulse-dot_2.4s_ease-in-out_infinite] rounded-full bg-cyan shadow-[0_0_8px_var(--color-cyan-glow)] motion-reduce:[animation:none]"
+                />
+              ),
+            }
+          : {})}
+      >
+        {repairStatement.label}
+      </StatusChip>
+    ) : null;
 
   function renderControl(
     control: ExecutionControlDescriptor,
@@ -415,6 +467,10 @@ export default function ExecutionStatusBar({
           isMutating={isMutating}
           isResuming={pendingAction === "resume"}
           outputSchemaEvidence={outputSchemaEvidence}
+          planRepairActivity={repairActivity}
+          {...(onViewRepairConversation !== undefined
+            ? { onViewRepairConversation }
+            : {})}
           joinConflict={deriveJoinConflictSummary(execution, haltReason)}
           {...(allowActions && onEditSchema !== undefined
             ? { onEditSchema }
@@ -480,8 +536,14 @@ export default function ExecutionStatusBar({
             </div>
           ))}
 
-        {(haltRow !== null || approvalErrorRow !== null) && (
-          <div className="flex flex-col gap-xs px-md pb-2">
+        {(haltRow !== null ||
+          approvalErrorRow !== null ||
+          repairChip !== null) && (
+          // The repair claim gets its own line rather than a third element in
+          // the header strip: at a phone width the header already carries the
+          // state, the run and its one control.
+          <div className="flex flex-col items-start gap-xs px-md pb-2">
+            {repairChip}
             {haltRow}
             {approvalErrorRow}
           </div>
@@ -524,6 +586,7 @@ export default function ExecutionStatusBar({
   return (
     <div className="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2 max-768:flex-wrap max-768:gap-sm">
       {stateChip}
+      {repairChip}
 
       {haltRow ?? (
         <p

@@ -310,6 +310,42 @@ describe("cctl workflow live (dispatch + aliases)", () => {
 });
 
 describe("cctl workflow live get", () => {
+  /**
+   * A halted run says nothing about whether a repair agent is on it: the status
+   * and the round COUNT read identically mid-turn and an hour after the agent
+   * gave up. The header names the open round for that reason.
+   */
+  it("names the working plan-repair round in the header", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ...OUTLINE_BODY,
+        outline: {
+          ...OUTLINE_BODY.outline,
+          header: {
+            ...OUTLINE_BODY.outline.header,
+            status: "halted",
+            planRepairRoundCount: 1,
+            openPlanRepairRound: {
+              seq: 1,
+              contextId: "impl",
+              startedAt: "2026-08-25T12:04:00.000Z",
+              conversationId: "__plan_repair__:exec-7:impl:1",
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "plan-repair round 1 working impl (since 2026-08-25T12:04:00.000Z)",
+    );
+    // The history count would be the wrong answer to "is anything running?".
+    expect(result.stdout).not.toContain("plan-repair ×1");
+  });
+
   it("renders the text outline (header, contexts, tasks, config)", async () => {
     const host = makeHost(() => jsonResponse(OUTLINE_BODY));
     const result = await runCli(["workflow", "live", "get"], baseEnv, host);

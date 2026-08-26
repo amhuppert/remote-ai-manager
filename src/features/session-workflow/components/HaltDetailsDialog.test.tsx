@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
+import type { PlanRepairActivity } from "@/components/workflow-graph/derive-plan-repair-activity";
 import HaltDetailsDialog from "./HaltDetailsDialog";
 
 const approvalHalt: GraphWorkflowHaltReason = {
@@ -389,5 +390,145 @@ describe("HaltDetailsDialog — join recovery under a blocked resume", () => {
     await user.keyboard("{Meta>}{Enter}{/Meta}");
 
     expect(onResume).not.toHaveBeenCalled();
+  });
+});
+
+describe("HaltDetailsDialog plan-repair activity", () => {
+  const breakerHalt: GraphWorkflowHaltReason = {
+    type: "circuit_breaker",
+    contextId: "context-plan",
+    condition: "retry_exhaustion",
+    failureCount: 3,
+    summary: null,
+  };
+
+  const round = {
+    seq: 1,
+    contextId: "context-plan",
+    haltType: "circuit_breaker" as const,
+    loopGroupId: null,
+    startedAt: "2026-08-25T12:04:00.000Z",
+    settledAt: null,
+    outcome: null,
+    planningDefect: null,
+    diagnosis: null,
+    operationCount: 0,
+    resumed: false,
+    conversationId: null,
+  };
+
+  function renderWithActivity(activity: PlanRepairActivity) {
+    return render(
+      <HaltDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        primary={breakerHalt}
+        conflictAnalysis={null}
+        canResume
+        onResume={() => undefined}
+        isMutating={false}
+        isResuming={false}
+        planRepairActivity={activity}
+      />,
+    );
+  }
+
+  it("offers the open round's transcript, so the claim can be checked", async () => {
+    const user = userEvent.setup();
+    const onViewRepairConversation = vi.fn();
+    render(
+      <HaltDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        primary={breakerHalt}
+        conflictAnalysis={null}
+        canResume
+        onResume={() => undefined}
+        isMutating={false}
+        isResuming={false}
+        planRepairActivity={{
+          kind: "working",
+          openRound: { ...round, conversationId: "__plan_repair__:e:c:1" },
+          rounds: [{ ...round, conversationId: "__plan_repair__:e:c:1" }],
+        }}
+        onViewRepairConversation={onViewRepairConversation}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /watch the repair agent/i }),
+    );
+
+    expect(onViewRepairConversation).toHaveBeenCalledWith(
+      "__plan_repair__:e:c:1",
+      "context-plan",
+    );
+  });
+
+  it("offers no transcript for a round that has already settled", () => {
+    render(
+      <HaltDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        primary={breakerHalt}
+        conflictAnalysis={null}
+        canResume
+        onResume={() => undefined}
+        isMutating={false}
+        isResuming={false}
+        planRepairActivity={{
+          kind: "stopped",
+          openRound: null,
+          rounds: [
+            {
+              ...round,
+              settledAt: "2026-08-25T12:08:00.000Z",
+              outcome: "declined",
+              conversationId: "__plan_repair__:e:c:1",
+            },
+          ],
+        }}
+        onViewRepairConversation={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /watch the repair agent/i }),
+    ).toBeNull();
+  });
+
+  it("names the open round as live work, and warns that resuming supersedes it", () => {
+    renderWithActivity({
+      kind: "working",
+      openRound: round,
+      rounds: [round],
+    });
+
+    const section = screen.getByTestId("halt-repair-activity");
+    expect(section).toHaveTextContent(/repair agent is working on/i);
+    expect(section).toHaveTextContent(/supersedes/i);
+  });
+
+  it("states that nobody is working, and what each settled round decided", () => {
+    const settled = {
+      ...round,
+      settledAt: "2026-08-25T12:08:00.000Z",
+      outcome: "declined" as const,
+      diagnosis: "the contract is sound; the work is what keeps failing",
+    };
+    renderWithActivity({ kind: "stopped", openRound: null, rounds: [settled] });
+
+    const section = screen.getByTestId("halt-repair-activity");
+    expect(section).toHaveTextContent(/No agent is working on this halt/i);
+    expect(section).toHaveTextContent(
+      "the contract is sound; the work is what keeps failing",
+    );
+    expect(section).not.toHaveTextContent(/supersedes/i);
+  });
+
+  it("stays silent about repair on a halt no round has ever answered", () => {
+    renderWithActivity({ kind: "stopped", openRound: null, rounds: [] });
+
+    expect(screen.queryByTestId("halt-repair-activity")).toBeNull();
   });
 });

@@ -505,6 +505,117 @@ describe("ExecutionStatusBar halt display", () => {
   });
 });
 
+describe("ExecutionStatusBar repair activity", () => {
+  const breakerHalt: GraphWorkflowHaltReason = {
+    type: "circuit_breaker",
+    contextId: "context-plan",
+    condition: "retry_exhaustion",
+    failureCount: 3,
+    summary: null,
+  };
+
+  const openRound = {
+    seq: 1,
+    contextId: "context-plan",
+    haltType: "circuit_breaker" as const,
+    loopGroupId: null,
+    // Relative to the real clock: an open round is only believed while its
+    // agent's turn budget could still be running, so a fixed past timestamp
+    // would read as an orphaned round rather than a live one.
+    startedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+    settledAt: null,
+    outcome: null,
+    planningDefect: null,
+    diagnosis: null,
+    operationCount: 0,
+    resumed: false,
+    conversationId: null,
+  };
+
+  it("says a repair agent is working while its round is open", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({
+          haltReason: breakerHalt,
+          planRepairRounds: [openRound],
+        })}
+      />,
+    );
+
+    const chip = screen.getByTestId("execution-repair-chip");
+    expect(chip).toHaveTextContent("repair agent working");
+    // The halt headline still stands — the run IS halted; what the chip adds
+    // is that something is acting on it.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Circuit breaker tripped in context-plan",
+    );
+  });
+
+  it("says no agent is working once the round has settled", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({
+          haltReason: breakerHalt,
+          planRepairRounds: [
+            {
+              ...openRound,
+              settledAt: "2026-08-25T12:08:00.000Z",
+              outcome: "declined",
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("execution-repair-chip")).toHaveTextContent(
+      "no agent working",
+    );
+  });
+
+  it("says no agent is working on a halt repair never ran for", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ haltReason: resumableHalt })}
+      />,
+    );
+
+    expect(screen.getByTestId("execution-repair-chip")).toHaveTextContent(
+      "no agent working",
+    );
+  });
+
+  it("makes no liveness claim on a run that is not halted", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+      />,
+    );
+
+    expect(screen.queryByTestId("execution-repair-chip")).toBeNull();
+  });
+
+  it("carries the same claim in the mobile header", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        isMobile
+        execution={makeExecution({
+          haltReason: breakerHalt,
+          planRepairRounds: [openRound],
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("execution-repair-chip")).toHaveTextContent(
+      "repair agent working",
+    );
+  });
+});
+
 describe("ExecutionStatusBar output-schema halt (R3.2)", () => {
   const haltReason: GraphWorkflowHaltReason = {
     type: "circuit_breaker",
