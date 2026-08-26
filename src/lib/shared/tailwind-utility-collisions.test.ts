@@ -88,6 +88,7 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}ConversationProfileChip.tsx`,
   `${path.sep}features${path.sep}projects-index${path.sep}ProjectsIndexPage.tsx`,
   `${path.sep}components${path.sep}ConfirmDialog.tsx`,
+  `${path.sep}components${path.sep}ModelSelectionMetadata.tsx`,
   `${path.sep}components${path.sep}ModelSelector.tsx`,
   `${path.sep}components${path.sep}ReasoningLevelSelector.tsx`,
   // SessionDiffViewer reproduces the session.css/conversation.css diff/commit

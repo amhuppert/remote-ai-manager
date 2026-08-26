@@ -3,7 +3,10 @@ import {
   createProjectConversationRouteHandlers,
   type ProjectConversationRouteDeps,
 } from "./route-handlers";
-import { BackendMismatchError } from "@/lib/prompt/sdk-driver";
+import {
+  BackendMismatchError,
+  ModelSelectionValidationError,
+} from "@/lib/prompt/sdk-driver";
 import { ProjectCollaborationUnsupportedError } from "./prompt-entry";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -289,11 +292,11 @@ describe("project conversation route handlers", () => {
     expect(forwarded).toEqual(["req-42", undefined]);
   });
 
-  it("forwards Codex speed through both project prompt routes", async () => {
-    const forwarded: Array<boolean | undefined> = [];
+  it("forwards complete model selections through both project prompt routes", async () => {
+    const forwarded: Array<unknown> = [];
     const h = harness({
       executeProjectPromptStream: async (input) => {
-        forwarded.push(input.codexFastMode);
+        forwarded.push(input.modelSelection);
         return {
           conversationId: input.conversationId ?? "new-1",
           contextTokens: null,
@@ -308,7 +311,10 @@ describe("project conversation route handlers", () => {
         jsonRequest({
           prompt: "first",
           backend: "codex",
-          codexFastMode: true,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "true", reasoning: "high" },
+          },
         }),
         ctx({ name: "demo" }),
       ),
@@ -323,13 +329,25 @@ describe("project conversation route handlers", () => {
         jsonRequest({
           prompt: "next",
           backend: "codex",
-          codexFastMode: false,
+          modelSelection: {
+            modelId: "gpt-5.5",
+            parameters: { fast: "false", reasoning: "xhigh" },
+          },
         }),
         ctx({ name: "demo", conversationId: "c1" }),
       ),
     );
 
-    expect(forwarded).toEqual([true, false]);
+    expect(forwarded).toEqual([
+      {
+        modelId: "gpt-5.4",
+        parameters: { fast: "true", reasoning: "high" },
+      },
+      {
+        modelId: "gpt-5.5",
+        parameters: { fast: "false", reasoning: "xhigh" },
+      },
+    ]);
   });
 
   it("firstPromptPOST decides every non-OK answer before running the prompt, so a rejection creates no conversation", async () => {
@@ -389,6 +407,31 @@ describe("project conversation route handlers", () => {
     );
     const text = await readStream(res);
     expect(text).toContain('"code":"BACKEND_MISMATCH"');
+  });
+
+  it("promptPOST preserves stable model-selection diagnostics in the SSE frame", async () => {
+    const h = harness({
+      executeProjectPromptStream: async () => {
+        throw new ModelSelectionValidationError({
+          code: "unsupported_combination",
+          message: "The requested parameter combination is unsupported.",
+          modelId: "claude-opus-5",
+          parameterId: "thinking",
+        });
+      },
+    });
+    h.store.set("c1", makeConv({ id: "c1", promptCount: 1 }));
+
+    const res = await h.handlers.promptPOST(
+      jsonRequest({ prompt: "think" }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+
+    const text = await readStream(res);
+    expect(text).toContain('"code":"unsupported_combination"');
+    expect(text).toContain('"modelId":"claude-opus-5"');
+    expect(text).toContain('"parameterId":"thinking"');
+    expect(text).not.toContain("VALIDATION_ERROR");
   });
 
   // The boundary's `/collab` refusal has to reach the client as an explicit,

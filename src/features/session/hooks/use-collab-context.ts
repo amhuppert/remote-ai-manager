@@ -160,9 +160,9 @@ export function useCollabContext({
       : asCollaborationAgent(activeConversation.agentBackend);
   // Agent Two's draft seeds lazily so the default tracks the conversation's
   // backend: the suggested backend is the opposite of Agent One's (an explicit
-  // same-backend choice is fine), and model/effort/fastMode seed from the
-  // global per-backend selection defaults so what the row shows is what the
-  // start request sends.
+  // same-backend choice is fine), and its complete model selection seeds from
+  // the global per-backend defaults so what the row shows is what the start
+  // request sends.
   const effectiveCollabConfig = useMemo(() => {
     const agentTwo =
       collabConfigDraft.agentTwo ??

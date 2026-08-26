@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { listBackendCatalogEntries } from "./catalog";
+import { backendModelCatalogSchema } from "./schemas";
 import {
   buildProjectModelOptions,
-  projectModelOptionsResponseSchema,
   type ProjectModelOptionsDeps,
 } from "./project-model-options";
+import { projectModelOptionsResponseSchema } from "./project-model-options-schema";
 
 const PROJECT = "/work/tree";
 
@@ -126,6 +127,131 @@ describe("project-scoped model options", () => {
     );
     expect(response.backends.map((b) => b.backend)).toEqual(
       listBackendCatalogEntries().map((e) => e.id),
+    );
+  });
+
+  it("serves the descriptor's complete effective catalog and atomic default", async () => {
+    const cursorEntry = listBackendCatalogEntries().find(
+      ({ id }) => id === "cursor",
+    )!;
+    const modelCatalog = backendModelCatalogSchema.parse({
+      backend: "cursor",
+      defaultModelId: "composer-2.5",
+      models: [
+        {
+          id: "composer-2.5",
+          label: "Composer 2.5",
+          aliases: ["composer"],
+          parameters: [],
+          variants: [
+            {
+              selection: { modelId: "composer-2.5", parameters: {} },
+              label: "Composer 2.5",
+              isDefault: true,
+            },
+          ],
+        },
+      ],
+      provenance: { source: "test" },
+    });
+
+    const response = await buildProjectModelOptions(PROJECT, {
+      entries: () => [cursorEntry],
+      resolver: () => undefined,
+      catalogFacet: () => ({ getCatalog: async () => modelCatalog }),
+      configuredSelection: async () => ({
+        modelId: "composer",
+        parameters: {},
+      }),
+    });
+
+    expect(response.backends[0]).toEqual(
+      expect.objectContaining({
+        backend: "cursor",
+        modelCatalog,
+        defaultSelection: {
+          modelId: "composer-2.5",
+          parameters: {},
+        },
+        diagnostics: [],
+      }),
+    );
+  });
+
+  it("keeps an effective catalog recoverable when the configured selection is excluded", async () => {
+    const cursorEntry = listBackendCatalogEntries().find(
+      ({ id }) => id === "cursor",
+    )!;
+    const modelCatalog = backendModelCatalogSchema.parse({
+      backend: "cursor",
+      defaultModelId: "composer-2",
+      models: [
+        {
+          id: "composer-2",
+          label: "Composer 2",
+          aliases: [],
+          parameters: [],
+          variants: [
+            {
+              selection: { modelId: "composer-2", parameters: {} },
+              label: "Composer 2",
+              isDefault: true,
+            },
+          ],
+        },
+      ],
+      provenance: {
+        source: "Cursor.models.list",
+        generatedAt: "2026-08-25T18:55:11.561Z",
+        sdkVersion: "1.0.28",
+      },
+    });
+
+    const response = await buildProjectModelOptions(PROJECT, {
+      entries: () => [cursorEntry],
+      resolver: () => undefined,
+      catalogFacet: () => ({ getCatalog: async () => modelCatalog }),
+      configuredSelection: async () => ({
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      }),
+    });
+
+    expect(response.backends[0]).toEqual(
+      expect.objectContaining({
+        modelCatalog,
+        models: [expect.objectContaining({ id: "composer-2" })],
+        defaultModelId: null,
+        defaultSelection: null,
+        diagnostics: [],
+      }),
+    );
+  });
+
+  it("blocks the backend with a bounded diagnostic when its catalog fails", async () => {
+    const cursorEntry = listBackendCatalogEntries().find(
+      ({ id }) => id === "cursor",
+    )!;
+    const response = await buildProjectModelOptions(PROJECT, {
+      entries: () => [cursorEntry],
+      resolver: () => undefined,
+      catalogFacet: () => ({
+        getCatalog: async () => {
+          throw Object.assign(new Error("snapshot unavailable"), {
+            code: "catalog_unavailable",
+          });
+        },
+      }),
+    });
+
+    expect(response.backends[0]).toEqual(
+      expect.objectContaining({
+        models: [],
+        defaultModelId: null,
+        modelCatalog: null,
+        defaultSelection: null,
+        diagnostics: [expect.objectContaining({ code: "catalog_unavailable" })],
+      }),
     );
   });
 });

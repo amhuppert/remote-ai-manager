@@ -6,6 +6,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowValidationRound,
 } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import { makeProfileSnapshot } from "@/lib/workflow-graph/test-fixtures";
@@ -252,8 +253,10 @@ function makeExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
@@ -274,8 +277,10 @@ function makeExecution(
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: true },
               },
@@ -297,8 +302,10 @@ function makeExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },
@@ -321,8 +328,10 @@ function makeExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "haiku",
-              reasoningEffort: "low",
+              modelSelection: {
+                modelId: "haiku",
+                parameters: {},
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },
@@ -912,6 +921,28 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
   },
 };
 
+function agentForCohortStrategy(
+  strategy: "conversation" | "task",
+): GraphWorkflowAgentConfig {
+  if (strategy === "task") {
+    return {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
+    };
+  }
+
+  return {
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
+  };
+}
+
 function makeCohortExecution({
   round,
   status,
@@ -945,18 +976,7 @@ function makeCohortExecution({
               }),
               strategy: seat.strategy,
               authority: "blocking" as const,
-              agent:
-                seat.strategy === "task"
-                  ? {
-                      backend: "codex" as const,
-                      model: "gpt-5.6-sol" as const,
-                      reasoningEffort: "medium" as const,
-                    }
-                  : {
-                      backend: "claude" as const,
-                      model: "sonnet" as const,
-                      reasoningEffort: "medium" as const,
-                    },
+              agent: agentForCohortStrategy(seat.strategy),
               continuity: { enabled: true },
             })),
           },

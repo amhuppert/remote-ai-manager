@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createConfigReader, resolveConfigDir } from "./loader";
+import {
+  createConfigReader,
+  materializeGlobalConfig,
+  resolveConfigDir,
+} from "./loader";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 const tempDirs: string[] = [];
@@ -124,41 +128,132 @@ describe("createConfigReader", () => {
     expect(config.defaultAgentBackend).toBe("claude");
     expect(config.agentBackends).toEqual({
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 3_600_000,
       },
       codex: {
-        fastMode: false,
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
         timeoutMs: null,
       },
-      // The evidence-backed Cursor default, with no fastMode, pricing, or
-      // credential field to materialize (spec D10).
       cursor: {
-        model: "composer-2.5",
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
         timeoutMs: null,
       },
     });
   });
 
-  it("reads the Codex fast mode default from disk", async () => {
+  it("reads a complete Codex model selection from disk", async () => {
     const configDir = await createTempConfigDir();
+    const modelSelection = {
+      modelId: "gpt-5.4",
+      parameters: { fast: "true", reasoning: "high" },
+    };
     await writeFile(
       path.join(configDir, "config.json"),
-      JSON.stringify({ agentBackends: { codex: { fastMode: true } } }),
+      JSON.stringify({ agentBackends: { codex: { modelSelection } } }),
       "utf-8",
     );
 
     const reader = createConfigReader(configDir);
 
     await expect(reader.readConfig()).resolves.toMatchObject({
-      agentBackends: { codex: { fastMode: true } },
+      agentBackends: { codex: { modelSelection } },
     });
     await expect(reader.readRawConfig()).resolves.toMatchObject({
-      agentBackends: { codex: { fastMode: true } },
+      agentBackends: { codex: { modelSelection } },
     });
+  });
+
+  it("admits a custom Codex model only when it is the configured Codex profile", () => {
+    const configuredSelection = {
+      modelId: "company-codex-model",
+      parameters: { reasoning: "high", fast: "false" },
+    };
+
+    expect(() =>
+      materializeGlobalConfig({
+        agentBackends: { codex: { modelSelection: configuredSelection } },
+        conversationNaming: {
+          enabled: true,
+          backend: "codex",
+          modelSelection: {
+            modelId: "request-supplied-model",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+          timeoutMs: null,
+        },
+      }),
+    ).toThrow(/request-supplied-model.*not present/i);
+
+    expect(
+      materializeGlobalConfig({
+        agentBackends: { codex: { modelSelection: configuredSelection } },
+        conversationNaming: {
+          enabled: true,
+          backend: "codex",
+          modelSelection: configuredSelection,
+          timeoutMs: null,
+        },
+      }).conversationNaming?.modelSelection,
+    ).toEqual(configuredSelection);
+  });
+
+  it("canonicalizes model aliases throughout the materialized config", () => {
+    const aliasSelection = {
+      modelId: "composer-latest",
+      parameters: { fast: "true" },
+    };
+
+    const config = materializeGlobalConfig({
+      agentBackends: { cursor: { modelSelection: aliasSelection } },
+      conversationNaming: {
+        enabled: true,
+        backend: "cursor",
+        modelSelection: aliasSelection,
+        timeoutMs: null,
+      },
+    });
+
+    expect(config.agentBackends.cursor.modelSelection.modelId).toBe(
+      "composer-2.5",
+    );
+    expect(config.conversationNaming?.modelSelection.modelId).toBe(
+      "composer-2.5",
+    );
+  });
+
+  it("canonicalizes aliases at both config persistence boundaries", async () => {
+    const configDir = await createTempConfigDir();
+    const reader = createConfigReader(configDir);
+    const aliasSelection = {
+      modelId: "composer-latest",
+      parameters: { fast: "true" },
+    };
+
+    await reader.writeRawConfig({
+      agentBackends: { cursor: { modelSelection: aliasSelection } },
+    });
+    expect(
+      JSON.parse(await readFile(path.join(configDir, "config.json"), "utf-8"))
+        .agentBackends.cursor.modelSelection.modelId,
+    ).toBe("composer-2.5");
+
+    const config = await reader.readConfig();
+    config.agentBackends.cursor.modelSelection = aliasSelection;
+    await reader.writeConfig(config);
+    expect(
+      JSON.parse(await readFile(path.join(configDir, "config.json"), "utf-8"))
+        .agentBackends.cursor.modelSelection.modelId,
+    ).toBe("composer-2.5");
   });
 
   it("reads agentBackends.codex.pricing rate overrides from disk", async () => {
@@ -235,11 +330,17 @@ describe("createConfigReader", () => {
     expect(config.agentBackends.claude.stallTimeoutMs).toBe(900_000);
   });
 
-  it("does not inherit an effort when the selected Claude model has none", async () => {
+  it("does not merge default parameters into an explicit model selection", async () => {
     const configDir = await createTempConfigDir();
     await writeFile(
       path.join(configDir, "config.json"),
-      JSON.stringify({ agentBackends: { claude: { model: "haiku" } } }),
+      JSON.stringify({
+        agentBackends: {
+          claude: {
+            modelSelection: { modelId: "haiku", parameters: {} },
+          },
+        },
+      }),
       "utf-8",
     );
 
@@ -247,16 +348,98 @@ describe("createConfigReader", () => {
     const config = await reader.readConfig();
 
     expect(config.agentBackends.claude).toEqual({
-      model: "haiku",
+      modelSelection: { modelId: "haiku", parameters: {} },
       timeoutMs: 3_600_000,
     });
+  });
+
+  it("refuses a structurally valid backend selection that is not a complete catalog variant", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        agentBackends: {
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: {},
+            },
+          },
+        },
+      }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+
+    await expect(reader.readConfig()).rejects.toThrow(
+      /Parameter "fast" is required/,
+    );
+  });
+
+  it.each([
+    [
+      "compaction",
+      {
+        compaction: {
+          backend: "cursor",
+          conversationModelSelection: {
+            modelId: "composer-2.5",
+            parameters: {},
+          },
+          messageModelSelection: {
+            modelId: "composer-2.5",
+            parameters: {},
+          },
+        },
+      },
+    ],
+    [
+      "conversation naming",
+      {
+        conversationNaming: {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: {} },
+        },
+      },
+    ],
+    [
+      "workflow defaults",
+      {
+        workflowDefaults: {
+          implementer: {
+            ...SEEDED_WORKFLOW_DEFAULTS.implementer,
+            agent: {
+              backend: "claude",
+              modelSelection: { modelId: "opus", parameters: {} },
+            },
+          },
+        },
+      },
+    ],
+  ])("refuses an invalid %s model selection", async (_label, rawConfig) => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify(rawConfig),
+      "utf-8",
+    );
+
+    await expect(createConfigReader(configDir).readConfig()).rejects.toThrow(
+      /Parameter ("fast"|"effort") is required/,
+    );
   });
 
   it("preserves sparse backend fields when reading raw config", async () => {
     const configDir = await createTempConfigDir();
     const rawConfig = {
       agentBackends: {
-        claude: { model: "sonnet" },
+        claude: {
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
+        },
         codex: { timeoutMs: null },
       },
     };

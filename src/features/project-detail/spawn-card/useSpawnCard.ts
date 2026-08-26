@@ -10,12 +10,10 @@ import {
   type SpawnProposal,
   type SpawnResult,
 } from "@/lib/chat-spawning/schemas";
-import {
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
-} from "@/lib/agent-backends/catalog";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
@@ -35,14 +33,8 @@ export interface EditableSession {
   mode: SpawnMode;
   initialPrompt: string;
   images?: ImagePayload[];
-  /**
-   * Backend model + reasoning effort for the spawned session's first turn.
-   * Always held (defaulted from the agent's backend) so the controls bind
-   * cleanly, but only submitted for a single-backend agent — the `dual` race
-   * omits both and runs each participant at its backend default (toSpawnProposal).
-   */
-  model: string;
-  reasoningEffort: EffortLevel;
+  /** The complete first-turn model variant; absent for the composite dual race. */
+  modelSelection: BackendModelSelection | null;
   included: boolean;
 }
 
@@ -52,50 +44,41 @@ export type EditableField =
   | "target"
   | "agent"
   | "mode"
-  | "initialPrompt"
-  | "model"
-  | "reasoningEffort";
+  | "initialPrompt";
 
 /**
  * The concrete backend a single-backend agent runs on; `null` for the `dual`
- * race — two backends, so there is no single valid model/effort set. The card
- * hides the model + reasoning controls (and omits both on submit) when null.
+ * race — two backends, so there is no single valid model selection. The card
+ * hides the model controls and omits the selection on submit when null.
  */
 export function backendForAgent(agent: SpawnAgent): AgentBackendId | null {
   // `dual` is the only non-backend member of `SpawnAgent` (it is derived from
   // the canonical backend enum plus that one literal), so excluding it leaves a
   // registered backend. Naming the backends here instead would silently hide
-  // the model and effort controls for every backend registered afterwards.
+  // the model controls for every backend registered afterwards.
   return agent === "dual" ? null : agent;
 }
 
-/** A sensible default effort for a backend+model: prefer "high", else the highest supported. */
-function defaultEffortForModel(
-  backend: AgentBackendId,
-  model: string,
-  preferred: EffortLevel = "high",
-): EffortLevel {
-  const levels = getEffortLevelsForBackend(backend, model);
-  if (levels.includes(preferred)) return preferred;
-  if (levels.includes("high")) return "high";
-  return levels[levels.length - 1] ?? "high";
+function cloneSelection(
+  selection: BackendModelSelection,
+): BackendModelSelection {
+  return {
+    modelId: selection.modelId,
+    parameters: { ...selection.parameters },
+  };
 }
 
-/** Configured model + effort for an agent (dual borrows Claude's held-but-unsubmitted values). */
-function modelEffortDefaults(
+/** Configured complete selection for an agent; dual has no single selection. */
+function modelSelectionDefault(
   agent: SpawnAgent,
   backendDefaults?: BackendSelectionDefaultsById,
-): {
-  model: string;
-  reasoningEffort: EffortLevel;
-} {
-  const backend = backendForAgent(agent) ?? "claude";
+): BackendModelSelection | null {
+  const backend = backendForAgent(agent);
+  if (backend === null) return null;
   const configured = backendDefaults?.[backend];
-  const model = configured?.modelId ?? getDefaultModelForBackend(backend);
-  return {
-    model,
-    reasoningEffort: defaultEffortForModel(backend, model, configured?.effort),
-  };
+  if (configured !== undefined) return cloneSelection(configured);
+  const catalog = getConfiguredBackendModelCatalog(backend);
+  return defaultSelectionForModel(catalog, catalog.defaultModelId);
 }
 
 /** Project a validated proposal into editable rows (pure). All included by default. */
@@ -104,7 +87,10 @@ export function toEditableSessions(
   backendDefaults?: BackendSelectionDefaultsById,
 ): EditableSession[] {
   return proposal.sessions.map((s) => {
-    const defaults = modelEffortDefaults(s.agent, backendDefaults);
+    const modelSelection =
+      s.modelSelection === undefined
+        ? modelSelectionDefault(s.agent, backendDefaults)
+        : cloneSelection(s.modelSelection);
     return {
       name: s.name,
       target: s.target,
@@ -112,14 +98,13 @@ export function toEditableSessions(
       mode: s.mode,
       initialPrompt: s.initialPrompt ?? "",
       images: s.images ?? [],
-      model: s.model ?? defaults.model,
-      reasoningEffort: s.reasoningEffort ?? defaults.reasoningEffort,
+      modelSelection,
       included: true,
     };
   });
 }
 
-/** Reset model + effort to the new agent's backend defaults (storage kept as-is for dual). */
+/** Reset the complete selection to the new agent's backend default. */
 function applyAgentChange(
   s: EditableSession,
   value: string,
@@ -127,31 +112,16 @@ function applyAgentChange(
 ): EditableSession {
   const parsed = spawnAgentSchema.safeParse(value);
   const agent = parsed.success ? parsed.data : s.agent;
-  const backend = backendForAgent(agent);
-  if (backend === null) return { ...s, agent };
-  const defaults = modelEffortDefaults(agent, backendDefaults);
   return {
     ...s,
     agent,
-    model: defaults.model,
-    reasoningEffort: defaults.reasoningEffort,
+    modelSelection: modelSelectionDefault(agent, backendDefaults),
   };
-}
-
-/** Adopt a new model, clamping the effort to the levels that model supports. */
-function applyModelChange(s: EditableSession, model: string): EditableSession {
-  const backend = backendForAgent(s.agent) ?? "claude";
-  const levels = getEffortLevelsForBackend(backend, model);
-  const reasoningEffort = levels.includes(s.reasoningEffort)
-    ? s.reasoningEffort
-    : defaultEffortForModel(backend, model);
-  return { ...s, model, reasoningEffort };
 }
 
 /**
  * Apply a single-field edit at an index, returning a new list (pure). An agent
- * change resets model + effort to the new backend's defaults; a model change
- * clamps the effort to that model's supported levels.
+ * change resets the complete model selection to the new backend's default.
  */
 export function updateEditableSession(
   sessions: EditableSession[],
@@ -163,9 +133,21 @@ export function updateEditableSession(
   return sessions.map((s, i) => {
     if (i !== index) return s;
     if (field === "agent") return applyAgentChange(s, value, backendDefaults);
-    if (field === "model") return applyModelChange(s, value);
     return { ...s, [field]: value };
   });
+}
+
+/** Replace one row's model selection as a single indivisible value. */
+export function setSessionModelSelection(
+  sessions: EditableSession[],
+  index: number,
+  modelSelection: BackendModelSelection,
+): EditableSession[] {
+  return sessions.map((session, currentIndex) =>
+    currentIndex === index
+      ? { ...session, modelSelection: cloneSelection(modelSelection) }
+      : session,
+  );
 }
 
 /** Toggle whether the session at `index` will be created (pure). */
@@ -219,9 +201,9 @@ export function applyPromptDocument(
  * Map edited rows back to a submit-ready proposal (pure). Only included
  * sessions are emitted. Trims text; an empty `initialPrompt` becomes absent (the
  * optional schema field); an empty `target` falls back to "main" (the schema
- * default). No branch is emitted — the server derives it from the name. Model is
- * emitted only for a single-backend agent (the `dual` race omits it); effort is
- * emitted only when the selected model actually supports reasoning levels.
+ * default). No branch is emitted — the server derives it from the name. The
+ * complete model selection is emitted only for a single-backend agent; the
+ * `dual` race runs both participants at their backend defaults.
  */
 export function toSpawnProposal(sessions: EditableSession[]): SpawnProposal {
   return {
@@ -230,11 +212,6 @@ export function toSpawnProposal(sessions: EditableSession[]): SpawnProposal {
       .map((s): ProposedSession => {
         const initialPrompt = s.initialPrompt.trim();
         const backend = backendForAgent(s.agent);
-        const emitsEffort =
-          backend !== null &&
-          getEffortLevelsForBackend(backend, s.model).includes(
-            s.reasoningEffort,
-          );
         return {
           name: s.name.trim(),
           target: s.target.trim() || "main",
@@ -242,8 +219,9 @@ export function toSpawnProposal(sessions: EditableSession[]): SpawnProposal {
           mode: s.mode,
           ...(initialPrompt.length > 0 ? { initialPrompt } : {}),
           ...(s.images && s.images.length > 0 ? { images: s.images } : {}),
-          ...(backend !== null ? { model: s.model } : {}),
-          ...(emitsEffort ? { reasoningEffort: s.reasoningEffort } : {}),
+          ...(backend !== null && s.modelSelection !== null
+            ? { modelSelection: cloneSelection(s.modelSelection) }
+            : {}),
         };
       }),
   };
@@ -280,6 +258,7 @@ export interface UseSpawnCardResult {
   toggleEditing: () => void;
   draft: EditableSession[];
   updateField: (index: number, field: EditableField, value: string) => void;
+  setModelSelection(index: number, modelSelection: BackendModelSelection): void;
   setIncluded: (index: number, included: boolean) => void;
   setImages: (index: number, images: ImagePayload[]) => void;
   setPromptDocument(index: number, document: SerializedPromptDoc): void;
@@ -322,6 +301,13 @@ export function useSpawnCard(input: UseSpawnCardInput): UseSpawnCardResult {
   const setIncluded = useCallback((index: number, included: boolean) => {
     setDraft((prev) => setSessionIncluded(prev, index, included));
   }, []);
+
+  const setModelSelection = useCallback(
+    (index: number, modelSelection: BackendModelSelection) => {
+      setDraft((prev) => setSessionModelSelection(prev, index, modelSelection));
+    },
+    [],
+  );
 
   const setImages = useCallback((index: number, images: ImagePayload[]) => {
     setDraft((prev) => setSessionImages(prev, index, images));
@@ -368,6 +354,7 @@ export function useSpawnCard(input: UseSpawnCardInput): UseSpawnCardResult {
     toggleEditing,
     draft,
     updateField,
+    setModelSelection,
     setIncluded,
     setImages,
     setPromptDocument,

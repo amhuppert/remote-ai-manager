@@ -44,6 +44,7 @@ import { createSessionsRepo } from "../sessions-repo";
 import { _createTestDbAtPath } from "../state-db";
 import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
 import { scriptValidatorCommands } from "./0013-script-validator-commands";
+import { generalizedModelSelection } from "./0035-generalized-model-selection";
 
 type Db = InstanceType<typeof BetterSqlite3>;
 
@@ -372,16 +373,17 @@ function runCutover(world: LegacyWorld): Promise<string[]> {
 /**
  * The assignment cutover and the script-validator command cutover were authored
  * on two branches and both rewrite `workflowDefaults`. Startup runs them in
- * registry order, and only the pair leaves `config.json` in a shape the loader
- * accepts: this migration carries `scriptValidator` across untouched, and `0013`
- * maps its retired `enabled` flag onto the command selection. Tests that assert
- * loadability run the pair; tests whose subject is THIS migration's own
- * behaviour still run it alone.
+ * registry order. This migration carries `scriptValidator` across untouched,
+ * `0013` maps its retired `enabled` flag onto command selection, and `0035`
+ * converts the resulting provider tuple into the atomic selection required by
+ * the current loader. Tests that assert current loadability run that chain;
+ * tests whose subject is THIS migration's own behaviour still run it alone.
  */
 function runConfigCutoverChain(world: LegacyWorld): Promise<string[]> {
   return runMigrations({ db: world.db, configDir: world.configDir }, [
     workflowAgentAssignments,
     scriptValidatorCommands,
+    generalizedModelSelection,
   ]);
 }
 
@@ -450,7 +452,13 @@ describe("0011-workflow-agent-assignments", () => {
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
-        agent: { backend: "claude", model: "opus", reasoningEffort: "max" },
+        agent: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "max" },
+          },
+        },
       },
       contextValidator: {
         enabled: true,
@@ -463,8 +471,10 @@ describe("0011-workflow-agent-assignments", () => {
               backend: "codex",
               // config.json declares no codex model/effort, so the effective
               // values the resolver computes are materialized.
-              model: "gpt-5.4",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "high", fast: "false" },
+              },
             },
             continuity: { enabled: true, contextLimitTokens: 90_000 },
           },
@@ -498,10 +508,12 @@ describe("0011-workflow-agent-assignments", () => {
         ?.assignments[0]?.agent,
     ).toEqual({
       backend: "codex",
-      model: "gpt-5.4",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       // Clamped against the trimmed model, which is the one the levels table
       // and the pre-cutover transport both saw.
-      reasoningEffort: "high",
     });
   });
 
@@ -646,14 +658,12 @@ describe("0011-workflow-agent-assignments", () => {
   );
 
   /**
-   * The migration's frozen chain is only honest if it agrees with the loader it
-   * was copied from. `agentBackends` is not a cutover surface, so the live
-   * config chain IS the pre-cutover chain for these profiles: running each
-   * fixture through it proves the refusals above are the loader's own verdicts
-   * and not this migration's invention.
+   * The current loader owns no inbound compatibility parser. Every provider
+   * tuple must pass through the required model-selection migration before the
+   * config can be read, including profiles the older schema already rejected.
    */
   it.each(unloadableCodexProfiles)(
-    "agrees with the config loader, which cannot load $name",
+    "requires migration before the current loader can read $name",
     ({ codex }) => {
       const config = legacyConfigJson();
       (config.agentBackends as Record<string, unknown>).codex = codex;
@@ -669,48 +679,54 @@ describe("0011-workflow-agent-assignments", () => {
   );
 
   /**
-   * The same parity in the other direction, and R3.1's "materialized to the
-   * resolver's effective values" read literally: what the loader computes for a
-   * profile the migration accepts is exactly what it writes into an assignment
-   * — or, for the off-catalog model, exactly what it refuses to replace.
+   * The required selection cutover preserves the effective values computed by
+   * this frozen migration. The current loader must accept their exact atomic
+   * representation, including a configured custom Codex model.
    */
   it.each([
     {
       name: "an omitted model and effort",
-      codex: { fastMode: false, timeoutMs: null },
-      effective: { model: "gpt-5.4", reasoningEffort: "high" },
+      effective: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
     },
     {
       name: "a whitespace-padded model",
-      codex: { model: "  gpt-5.4  ", fastMode: false, timeoutMs: null },
-      effective: { model: "gpt-5.4", reasoningEffort: "high" },
+      effective: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
     },
     {
       name: "an off-catalog model",
-      codex: {
-        model: "gpt-5.7-preview",
-        reasoningEffort: "xhigh",
-        fastMode: false,
-        timeoutMs: null,
+      effective: {
+        modelId: "gpt-5.7-preview",
+        parameters: { reasoning: "xhigh", fast: "false" },
       },
-      effective: { model: "gpt-5.7-preview", reasoningEffort: "xhigh" },
     },
   ])(
-    "materializes the effective runtime the config loader computes for $name",
-    ({ codex, effective }) => {
+    "accepts the atomic frozen effective runtime for $name",
+    ({ effective }) => {
       const config = legacyConfigJson();
-      (config.agentBackends as Record<string, unknown>).codex = codex;
       const backendsOnly = { ...config };
       delete backendsOnly.workflowDefaults;
+      backendsOnly.agentBackends = {
+        claude: {
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+          timeoutMs: 3_600_000,
+        },
+        codex: { modelSelection: effective, timeoutMs: null },
+      };
 
       const loaded = materializeGlobalConfig(
         rawGlobalConfigSchema.parse(backendsOnly),
       );
 
-      expect({
-        model: loaded.agentBackends.codex.model,
-        reasoningEffort: loaded.agentBackends.codex.reasoningEffort,
-      }).toEqual(effective);
+      expect(loaded.agentBackends.codex.modelSelection).toEqual(effective);
     },
   );
 
@@ -803,8 +819,10 @@ describe("0011-workflow-agent-assignments", () => {
         ?.assignments[0]?.agent,
     ).toEqual({
       backend: "codex",
-      model: "gpt-5.5",
-      reasoningEffort: "low",
+      modelSelection: {
+        modelId: "gpt-5.5",
+        parameters: { reasoning: "low", fast: "false" },
+      },
     });
   });
 
@@ -877,7 +895,7 @@ describe("0011-workflow-agent-assignments", () => {
   it("migrates definition documents in BOTH scope tiers, including disabled cohorts", async () => {
     const world = seedLegacyWorld();
 
-    await runCutover(world);
+    await runConfigCutoverChain(world);
 
     for (const [scopeKey, workflowId] of [
       [GLOBAL_SCOPE_KEY, "wf-global"],
@@ -892,8 +910,10 @@ describe("0011-workflow-agent-assignments", () => {
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "codex",
-          model: "gpt-5.5",
-          reasoningEffort: "xhigh",
+          modelSelection: {
+            modelId: "gpt-5.5",
+            parameters: { reasoning: "xhigh", fast: "false" },
+          },
         },
       });
       // enabled:false keeps its dormant assignment (R2 losslessness).
@@ -909,8 +929,10 @@ describe("0011-workflow-agent-assignments", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: false },
           },
@@ -922,7 +944,13 @@ describe("0011-workflow-agent-assignments", () => {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
         // A pre-`backend` implementer materializes the Claude backend it ran on.
-        agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+        agent: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "low" },
+          },
+        },
       });
       expect(used.contextValidator).toEqual({
         enabled: true,
@@ -935,8 +963,10 @@ describe("0011-workflow-agent-assignments", () => {
             // Explicit legacy values are copied VERBATIM, never re-derived.
             agent: {
               backend: "codex",
-              model: "gpt-5.6-sol",
-              reasoningEffort: "ultra",
+              modelSelection: {
+                modelId: "gpt-5.6-sol",
+                parameters: { reasoning: "ultra", fast: "false" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -955,7 +985,7 @@ describe("0011-workflow-agent-assignments", () => {
   it("aborts a running execution with the migration-cutover reason and archives a still-decodable record", async () => {
     const world = seedLegacyWorld();
 
-    await runCutover(world);
+    await runConfigCutoverChain(world);
 
     const row = archivedRow(world.db, SESSION_NAME, "exec-running");
     expect(row.status).toBe("aborted");
@@ -1041,11 +1071,19 @@ describe("0011-workflow-agent-assignments", () => {
         "utf-8",
       ),
     ).toBe("{not valid json");
-    expect(
-      assertDefinitionRecordSupported(
-        readDefinition(world.configDir, GLOBAL_SCOPE_KEY, "wf-global"),
-      ).definition.workflowConfig.implementer?.profile,
-    ).toEqual({ tier: "builtin", id: "general-implementer" });
+    const migrated = readDefinition(
+      world.configDir,
+      GLOBAL_SCOPE_KEY,
+      "wf-global",
+    ) as {
+      definition: {
+        workflowConfig: { implementer?: { profile?: unknown } };
+      };
+    };
+    expect(migrated.definition.workflowConfig.implementer?.profile).toEqual({
+      tier: "builtin",
+      id: "general-implementer",
+    });
   });
 
   it("quarantines an unreadable execution row into history and still empties the active table", async () => {

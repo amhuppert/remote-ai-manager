@@ -250,8 +250,7 @@ export function createTestFakeBackend(
       get isTurnActive() {
         return overrides.runtimeIsTurnActive === true || hangingTurnActive;
       },
-      modelId: input.modelId,
-      reasoningEffort: input.reasoningEffort,
+      modelSelection: input.modelSelection,
       outputFormat: input.outputFormat,
       alignmentVersion: null,
 
@@ -260,7 +259,7 @@ export function createTestFakeBackend(
       ): Promise<ConversationBackendTurnResult> {
         record("runtime.sendTurn", {
           promptText: turnInput.promptText,
-          modelId: turnInput.modelId,
+          modelSelection: turnInput.modelSelection,
           autonomous: turnInput.autonomous,
         });
         if (turnInput.promptText === TESTFAKE_HANGING_PROMPT) {
@@ -353,7 +352,7 @@ export function createTestFakeBackend(
       record("factory.createRuntime", {
         conversationId: input.conversationId,
         persistedRef: input.persistedRef,
-        modelId: input.modelId,
+        modelSelection: input.modelSelection,
         capabilities: input.tooling.capabilities ?? null,
       });
       return createScriptedRuntime(input);
@@ -540,6 +539,55 @@ export function createTestFakeBackend(
   const descriptor: AgentBackendDescriptor = {
     id: TESTFAKE_BACKEND_ID,
     metadata,
+    modelCatalog: {
+      getCatalog: async () => ({
+        backend: TESTFAKE_BACKEND_ID,
+        defaultModelId: metadata.defaultModelId,
+        models: metadata.models.map((model) => {
+          const defaultEffort = model.effortLevels.includes("high")
+            ? "high"
+            : model.effortLevels[model.effortLevels.length - 1];
+          return {
+            id: model.id,
+            label: model.label,
+            description: model.description,
+            aliases: [],
+            parameters:
+              model.effortLevels.length === 0
+                ? []
+                : [
+                    {
+                      id: "effort",
+                      label: "Effort",
+                      values: model.effortLevels.map((value) => ({
+                        value,
+                        label: value,
+                      })),
+                      prominence: "primary" as const,
+                    },
+                  ],
+            variants:
+              model.effortLevels.length === 0
+                ? [
+                    {
+                      selection: { modelId: model.id, parameters: {} },
+                      label: model.label,
+                      isDefault: true,
+                    },
+                  ]
+                : model.effortLevels.map((effort) => ({
+                    selection: {
+                      modelId: model.id,
+                      parameters: { effort },
+                    },
+                    label: effort,
+                    isDefault: effort === defaultEffort,
+                  })),
+          };
+        }),
+        provenance: { source: "testfake" },
+      }),
+    },
     conversation: {
       factory,
       continuity,

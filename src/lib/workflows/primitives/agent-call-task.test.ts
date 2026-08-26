@@ -5,8 +5,15 @@ import type {
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
-import { dispatchTaskRun } from "./agent-call-task";
-import type { BackendCapabilityView } from "./agent-call-vocabulary";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import {
+  dispatchTaskRun as dispatchTaskRunPrimitive,
+  type DispatchTaskRunDeps,
+} from "./agent-call-task";
+import type {
+  AgentCallRequest,
+  BackendCapabilityView,
+} from "./agent-call-vocabulary";
 
 const CODEX_VIEW: BackendCapabilityView = {
   backend: "codex",
@@ -25,6 +32,34 @@ const CLAUDE_TASK_VIEW: BackendCapabilityView = {
   contextMetricsAvailable: true,
   nativeMidTurnAskUser: true,
 };
+
+const CODEX_SELECTION: BackendModelSelection = {
+  modelId: "gpt-5.2",
+  parameters: { reasoning: "high", fast: "false" },
+};
+
+const CLAUDE_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "high" },
+};
+
+type TestDispatchTaskRunDeps = Omit<DispatchTaskRunDeps, "modelSelection"> & {
+  modelSelection?: BackendModelSelection;
+};
+
+function dispatchTaskRun(
+  request: AgentCallRequest,
+  deps: TestDispatchTaskRunDeps,
+) {
+  return dispatchTaskRunPrimitive(request, {
+    ...deps,
+    modelSelection:
+      deps.modelSelection ??
+      (deps.capabilityView.backend === "claude"
+        ? CLAUDE_SELECTION
+        : CODEX_SELECTION),
+  });
+}
 
 interface StubTaskRunnerOpts {
   result?: Partial<AgentTaskResult>;
@@ -194,7 +229,7 @@ describe("dispatchTaskRun", () => {
     expect(capturedInput.value?.fsWritePolicy).toBeUndefined();
   });
 
-  it("forwards an explicit Codex fast-mode choice to the task runner", async () => {
+  it("forwards one complete atomic model selection to the task runner", async () => {
     const { runner, capturedInput } = makeStubRunner("codex");
 
     await dispatchTaskRun(
@@ -203,11 +238,11 @@ describe("dispatchTaskRun", () => {
         runner,
         capabilityView: CODEX_VIEW,
         workingDirectory: "/tmp/wt",
-        codexFastMode: false,
+        modelSelection: CODEX_SELECTION,
       },
     );
 
-    expect(capturedInput.value?.codexFastMode).toBe(false);
+    expect(capturedInput.value?.modelSelection).toEqual(CODEX_SELECTION);
   });
 
   it("applies workflow tooling onto the task request as portable MCP tooling", async () => {

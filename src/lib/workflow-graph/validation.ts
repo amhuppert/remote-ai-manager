@@ -1,9 +1,11 @@
 import {
-  getEffortLevelsForBackend,
   getFsWriteRestrictionForBackend,
+  getStaticBackendModelCatalog,
 } from "@/lib/agent-backends/catalog";
+import { validateModelSelection } from "@/lib/agent-backends/model-selection";
 import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
@@ -40,6 +42,10 @@ import {
 import { validatePrerequisites } from "./prerequisite-validation";
 import { activeDependencySourceIds, routeVerdict } from "./route-projection";
 import { projectExecutionRoutes } from "./execution-routes";
+import {
+  collectResolvedWorkflowModelSelectionSites,
+  type WorkflowModelSelectionRole,
+} from "./model-selection-admission";
 
 type ValidatableDefinition =
   | WorkflowSemanticDefinition
@@ -555,22 +561,50 @@ export function validateResolvedWorkflow(
     ...validateCohortWriteRestriction(resolved.executionContexts, deps),
   ];
 
-  for (const [contextIndex, context] of resolved.executionContexts.entries()) {
-    const { agent } = context.implementer;
-    const supported = getEffortLevelsForBackend(agent.backend, agent.model);
-    if (!supported.includes(agent.reasoningEffort)) {
-      errors.push({
-        code: "implementer-effort-unsupported",
-        message: `Context "${context.id}" implementer assignment "${context.implementer.id}" uses reasoning effort "${agent.reasoningEffort}", which is not supported by ${agent.backend} model "${agent.model}"`,
-        contextId: context.id,
-        field: `executionContexts.${contextIndex}.implementer.agent.reasoningEffort`,
-      });
-    }
-
-    errors.push(...validateResolvedCohortEffort(context, contextIndex));
+  for (const site of collectResolvedWorkflowModelSelectionSites(resolved)) {
+    const validation = validateModelSelection(
+      getStaticBackendModelCatalog(
+        site.backend,
+        deps.configuredModelSelectionFor?.(site.backend),
+      ),
+      site.modelSelection,
+    );
+    if (validation.valid) continue;
+    errors.push({
+      code: resolvedSelectionErrorCode(site.role),
+      message: `${resolvedSelectionUseSite(site)} has an invalid ${site.backend} model selection: ${validation.issues.map(({ message }) => message).join(" ")}`,
+      ...(site.contextId === undefined ? {} : { contextId: site.contextId }),
+      field: site.path,
+    });
   }
 
   return resultFromErrors(errors);
+}
+
+function resolvedSelectionErrorCode(role: WorkflowModelSelectionRole): string {
+  switch (role) {
+    case "implementer":
+      return "implementer-model-selection-invalid";
+    case "validator":
+      return "validator-model-selection-invalid";
+    case "plan-repair":
+      return "plan-repair-model-selection-invalid";
+    case "collaboration":
+      return "collaboration-model-selection-invalid";
+  }
+}
+
+function resolvedSelectionUseSite(site: {
+  role: WorkflowModelSelectionRole;
+  contextId?: string;
+  assignmentId?: string;
+}): string {
+  const context =
+    site.contextId === undefined ? "Workflow" : `Context "${site.contextId}"`;
+  if (site.assignmentId !== undefined) {
+    return `${context} ${site.role} assignment "${site.assignmentId}"`;
+  }
+  return `${context} ${site.role} agent`;
 }
 
 /**
@@ -581,6 +615,9 @@ export function validateResolvedWorkflow(
  */
 export interface BackendCapabilityDeps {
   fsWriteRestrictionFor?(backend: AgentBackendId): FsWriteRestrictionSupport;
+  configuredModelSelectionFor?(
+    backend: AgentBackendId,
+  ): BackendModelSelection | undefined;
 }
 
 /** The cohort shape every tier — global-seeded, workflow, context — exposes. */
@@ -610,8 +647,9 @@ interface WriteRestrictionCheckableContext {
  *
  * Implementer assignments are deliberately untouched: they are write-capable by
  * design, so the envelope has nothing to say about them. A disabled cohort is
- * skipped for the same reason the effort check skips it — dormant configuration,
- * not a run — and enabling one re-enters this check through the live-edit path.
+ * skipped because it is dormant configuration, not a run; model-selection
+ * admission still validates it so enabling the cohort cannot expose a latent
+ * invalid selection.
  */
 function validateCohortWriteRestriction(
   contexts: readonly WriteRestrictionCheckableContext[],
@@ -673,39 +711,6 @@ function checkCohortWriteRestriction(
       ...(site.contextId === undefined ? {} : { contextId: site.contextId }),
       field: `${site.fieldPath}.assignments.${index}.agent.backend`,
     });
-  }
-  return errors;
-}
-
-/**
- * Check every validator assignment's reasoning effort against its own model —
- * the validator half of the frontier's resolved-config check (doc 06). Each
- * assignment carries a concrete per-backend runtime, so the check is per
- * assignment and the error addresses the offending entry by index rather than
- * blaming the context as a whole.
- *
- * A disabled cohort is skipped: its assignments are dormant configuration, not
- * a run that could fail.
- */
-function validateResolvedCohortEffort(
-  context: ResolvedWorkflowSemanticDefinition["executionContexts"][number],
-  contextIndex: number,
-): WorkflowGraphValidationError[] {
-  const cohort = context.contextValidator;
-  if (!cohort.enabled) return [];
-
-  const errors: WorkflowGraphValidationError[] = [];
-  for (const [index, assignment] of cohort.assignments.entries()) {
-    const { backend, model, reasoningEffort } = assignment.agent;
-    const supported = getEffortLevelsForBackend(backend, model);
-    if (!supported.includes(reasoningEffort)) {
-      errors.push({
-        code: "validator-effort-unsupported",
-        message: `Context "${context.id}" validator assignment "${assignment.id}" uses reasoning effort "${reasoningEffort}", which is not supported by ${backend} model "${model}"`,
-        contextId: context.id,
-        field: `executionContexts.${contextIndex}.contextValidator.assignments.${index}.agent.reasoningEffort`,
-      });
-    }
   }
   return errors;
 }

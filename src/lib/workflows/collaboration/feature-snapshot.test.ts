@@ -23,8 +23,10 @@ function buildResolvedConfig(): Record<string, unknown> {
     secondAgent: {
       value: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
       source: "global",
     },

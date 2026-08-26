@@ -2,8 +2,8 @@
 
 import type { ApprovalScopedChanges } from "@/components/ApprovalGatePanel";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { useGraphWorkflowApprovalSnapshotQuery } from "@/lib/workflows/queries";
-import type { GraphWorkflowApprovalSnapshotResponse } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowApprovalSnapshotResponse } from "@/lib/workflow-graph/approval-snapshot-schemas";
+import { useGraphWorkflowApprovalSnapshotQuery } from "@/lib/workflows/approval-snapshot-query";
 
 /**
  * Map the approval API's answer onto what the panel renders. Every kind is an

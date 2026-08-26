@@ -54,6 +54,23 @@ const ENTRIES = allHelpEntries();
 const KEYS = new Set(ENTRIES.map((entry) => pathKey(entry.path)));
 
 describe("help registry contract", () => {
+  it("teaches the atomic model selection accepted by agent run", () => {
+    const entry = ENTRIES.find(
+      (candidate) => pathKey(candidate.path) === "agent run",
+    );
+    expect(entry, "agent run: missing help entry").toBeDefined();
+
+    const guidance = [
+      entry?.description,
+      ...(entry?.flags ?? []).map((flag) => flag.description),
+      ...(entry?.examples ?? []).map((example) => example.explanation),
+    ].join(" ");
+
+    expect(guidance).toContain("modelSelection");
+    expect(guidance).not.toContain("reasoning_effort");
+    expect(guidance).not.toMatch(/optional fields:\s*model\b/i);
+  });
+
   it("redirects retired evergreen plan authoring to the delivery-plan family", () => {
     for (const command of [
       "spec draft",

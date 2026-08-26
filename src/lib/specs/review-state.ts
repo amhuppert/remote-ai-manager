@@ -4,11 +4,7 @@ import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecsRepoTransaction } from "@/lib/state-store/specs-repo";
 
-import {
-  bareElementHandleSchema,
-  formatBareElementHandle,
-  type BareElementHandle,
-} from "./handles";
+import { formatBareElementHandle } from "./handles";
 import type { Spec, SpecAssumptionRow, SpecRevisionSnapshot } from "./schemas";
 import type {
   RevisionSnapshot as LintRevisionSnapshot,
@@ -20,61 +16,18 @@ import {
   type ApprovalApplicability,
 } from "./approval-applicability";
 import { importBaselineRevisionId } from "./import-baseline";
-import type {
-  RevisionCitation as DiffRevisionCitation,
-  RevisionCitationDiffContext,
-  RevisionElement as DiffRevisionElement,
-} from "./revision-diff";
+import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
+import { toDiffCitations, toDiffRows } from "./revision-diff-projections";
+import { elementHandleInSnapshot } from "./revision-handles";
+
+export {
+  toCitationDiffContext,
+  toDiffCitations,
+  toDiffRows,
+} from "./revision-diff-projections";
+export { elementHandleInSnapshot } from "./revision-handles";
 import { ancestorIds, nearestApprovedAncestor } from "./revision-lineage";
 import type { SignOffReviewSnapshot } from "./transitions";
-
-/**
- * Renders through the handle module's formatter, so a number the grammar does
- * not admit yields no handle rather than a string the handle parser rejects.
- */
-function bareHandle(handle: BareElementHandle): string | null {
-  const parsed = bareElementHandleSchema.safeParse(handle);
-  return parsed.success ? formatBareElementHandle(parsed.data) : null;
-}
-
-/**
- * The one derivation of an element's handle from a revision snapshot — which
- * element gets which number. Returns null when the element has no addressable
- * handle: sections, and rows whose own number (or whose parent requirement's
- * number) was never allocated. Such elements are addressed by their element id
- * instead.
- */
-export function elementHandleInSnapshot(
-  snapshot: SpecRevisionSnapshot,
-  elementId: string,
-): string | null {
-  const row = snapshot.elements.find(({ element }) => element.id === elementId);
-  if (row === undefined) return null;
-  const { element } = row;
-  if (element.kind === "section" || element.number === null) return null;
-  if (element.kind === "criterion") {
-    const parent = snapshot.elements.find(
-      ({ element: candidate }) => candidate.id === element.parentElementId,
-    )?.element;
-    return parent === undefined || parent.number === null
-      ? null
-      : bareHandle({
-          kind: "criterion",
-          requirementNumber: parent.number,
-          criterionNumber: element.number,
-        });
-  }
-  if (element.kind === "requirement") {
-    return bareHandle({
-      kind: "requirement",
-      requirementNumber: element.number,
-    });
-  }
-  if (element.kind === "decision") {
-    return bareHandle({ kind: "decision", number: element.number });
-  }
-  return bareHandle({ kind: "task", number: element.number });
-}
 
 function elementHandle(
   snapshot: SpecRevisionSnapshot,
@@ -173,43 +126,6 @@ export function toLintAssumptionRecords(
   return [...assumptions.values()].sort((left, right) =>
     left.handle.localeCompare(right.handle, undefined, { numeric: true }),
   );
-}
-
-export function toDiffRows(
-  snapshot: SpecRevisionSnapshot,
-): DiffRevisionElement[] {
-  return snapshot.elements.map(({ element, version }) => ({
-    elementId: element.id,
-    parentElementId: element.parentElementId,
-    payloadHash: version.payloadHash,
-    payload: version.payload,
-  }));
-}
-
-export function toDiffCitations(
-  snapshot: SpecRevisionSnapshot,
-): DiffRevisionCitation[] {
-  return snapshot.assumptionCitations.map(
-    ({ elementId, assumptionId, snapshot: assumptionSnapshot }) => ({
-      elementId,
-      assumptionId,
-      snapshot: assumptionSnapshot,
-    }),
-  );
-}
-
-export function toCitationDiffContext(
-  base: SpecRevisionSnapshot | null,
-  draft: SpecRevisionSnapshot,
-): RevisionCitationDiffContext {
-  return {
-    baseCitationContractVersion:
-      base?.revision.citationContractVersion ??
-      draft.revision.citationContractVersion,
-    draftCitationContractVersion: draft.revision.citationContractVersion,
-    baseCitations: base === null ? [] : toDiffCitations(base),
-    draftCitations: toDiffCitations(draft),
-  };
 }
 
 /**

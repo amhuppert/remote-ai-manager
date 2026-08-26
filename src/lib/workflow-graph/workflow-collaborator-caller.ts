@@ -177,8 +177,7 @@ export function createWorkflowCollaboratorCaller(
   // Resolved per-field config from `resolveCollaborationConfigWithProvenance`
   // configures agent_two only; agent_one runs on the opposite backend without
   // explicit overrides so the underlying task runner uses its defaults.
-  const agentTwoModelId = agentTwoConfig.model;
-  const agentTwoReasoningEffort = agentTwoConfig.reasoningEffort;
+  const agentTwoModelSelection = agentTwoConfig.modelSelection;
   const now = input.now ?? (() => new Date().toISOString());
 
   let lanesInitialized = false;
@@ -227,8 +226,7 @@ export function createWorkflowCollaboratorCaller(
       systemInstructions: args.systemInstructions,
       outputSchema: args.built.outputSchema,
       laneRef,
-      ...(isAgentTwoCall ? { modelId: agentTwoModelId } : {}),
-      ...(isAgentTwoCall ? { reasoningEffort: agentTwoReasoningEffort } : {}),
+      ...(isAgentTwoCall ? { modelSelection: agentTwoModelSelection } : {}),
     };
     logger.info("workflow-collab.call.invoking", {
       backend: args.backend,

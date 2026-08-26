@@ -449,7 +449,10 @@ async function createExecutionFromSeed(
     projectPath: assignmentSeeding.projectPath,
   });
 
-  const resolvedValidation = validateResolvedWorkflow(resolvedDefinition);
+  const resolvedValidation = validateResolvedWorkflow(resolvedDefinition, {
+    configuredModelSelectionFor: (backend) =>
+      global.agentBackends?.[backend]?.modelSelection,
+  });
   if (!resolvedValidation.ok) {
     throw new GraphWorkflowValidationError(
       resolvedValidation.errors,

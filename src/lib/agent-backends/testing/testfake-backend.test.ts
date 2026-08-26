@@ -8,6 +8,7 @@
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { describe, expect, it } from "vitest";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "../schemas";
 import type {
   ConversationBackendCreateInput,
   ConversationBackendEvent,
@@ -35,6 +36,11 @@ import {
   TESTFAKE_TURN_TEXT,
 } from "./testfake-backend";
 
+const TESTFAKE_MODEL_SELECTION = {
+  modelId: "fake-1",
+  parameters: {},
+} satisfies BackendModelSelection;
+
 function makeCreateInput(): ConversationBackendCreateInput {
   return {
     conversationId: "conv-testfake",
@@ -47,6 +53,7 @@ function makeCreateInput(): ConversationBackendCreateInput {
     ),
     worktreePath: "/projects/fake/.worktrees/fake-session",
     persistedRef: null,
+    modelSelection: TESTFAKE_MODEL_SELECTION,
     sessionInstructions: [],
     tooling: {},
   };
@@ -76,6 +83,7 @@ describe("createTestFakeBackend conversation runtime", () => {
       promptText: "hello",
       imageRefs: [],
       sessionInstructions: [],
+      modelSelection: TESTFAKE_MODEL_SELECTION,
       autonomous: false,
       signal: new AbortController().signal,
       onEvent: (event) => {
@@ -114,6 +122,10 @@ describe("createTestFakeBackend conversation runtime", () => {
       backend: TESTFAKE_BACKEND_ID,
       ref: TESTFAKE_CONVERSATION_REF,
     });
+    expect(runtime.modelSelection).toEqual(TESTFAKE_MODEL_SELECTION);
+    expect(
+      fake.calls.find((call) => call.op === "runtime.sendTurn")?.input,
+    ).toMatchObject({ modelSelection: TESTFAKE_MODEL_SELECTION });
     expect(result.contentBlocks).toEqual([
       { type: "text", text: TESTFAKE_TURN_TEXT },
     ]);
@@ -134,6 +146,7 @@ describe("createTestFakeBackend conversation runtime", () => {
       promptText: "hello",
       imageRefs: [],
       sessionInstructions: [],
+      modelSelection: TESTFAKE_MODEL_SELECTION,
       autonomous: false,
       signal: new AbortController().signal,
       onEvent: () => {},
@@ -245,6 +258,7 @@ describe("createTestFakeBackend task runner", () => {
     const result = await fake.descriptor.tasks!.runner.run({
       workingDirectory: "/tmp",
       prompt: "do it",
+      modelSelection: TESTFAKE_MODEL_SELECTION,
       timeoutMs: 0,
       autonomous: true,
     });

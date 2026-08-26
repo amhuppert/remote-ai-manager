@@ -402,9 +402,27 @@ function makeFakeBackendActorDeps(
     getTranscriptPath: async (id) => `/tmp/cc-ephemeral-test/${id}.jsonl`,
     readConfig: async () => ({
       agentBackends: {
-        claude: { model: "opus", timeoutMs: 300_000 },
-        codex: { model: "gpt-5.4", timeoutMs: null },
-        cursor: { model: "composer-2.5", timeoutMs: null },
+        claude: {
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+          timeoutMs: 300_000,
+        },
+        codex: {
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "false", reasoning: "high" },
+          },
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+          timeoutMs: null,
+        },
       },
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
@@ -413,6 +431,10 @@ function makeFakeBackendActorDeps(
     getConversationBackendFactory: unusedInTaskRun(
       "getConversationBackendFactory",
     ),
+    admitConfiguredModelSelection: async ({ modelSelection }) => ({
+      ok: true,
+      modelSelection,
+    }),
     getConversationCapabilities: () => undefined,
     registerBackendRuntime: () => {},
     unregisterBackendRuntime: () => {},

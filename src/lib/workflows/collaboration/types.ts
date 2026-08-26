@@ -18,10 +18,8 @@ import {
   agentProfileSnapshotSchema,
 } from "@/lib/agent-profiles/schemas";
 import {
-  claudeEffortLevelSchema,
-  claudeModelSchema,
-  codexModelSchema,
-  codexReasoningEffortSchema,
+  backendModelSelectionSchema,
+  type BackendModelSelection,
 } from "@/lib/agent-backends/schemas";
 import {
   backendLabel,
@@ -150,18 +148,13 @@ export function collaborationBackendRefusal(
 }
 
 /**
- * The model + reasoning effort a collaboration lane runs with, resolved by
- * the manager (request override for the primary lane, global config for the
- * other). Persisted into the envelope's feature snapshot so the UI can show
- * which model produced each artifact.
+ * The complete model selection a collaboration lane runs with. Persisted into
+ * the envelope's feature snapshot so the UI can show exactly which variant
+ * produced each artifact.
  */
-export const collaborationAgentModelSettingsSchema = z.object({
-  model: z.string(),
-  effort: z.string().optional(),
-});
-export type CollaborationAgentModelSettings = z.infer<
-  typeof collaborationAgentModelSettingsSchema
->;
+export const collaborationAgentModelSettingsSchema =
+  backendModelSelectionSchema;
+export type CollaborationAgentModelSettings = BackendModelSelection;
 
 /**
  * LEGACY persisted shape, read-only: envelopes written before per-flow-agent
@@ -169,28 +162,30 @@ export type CollaborationAgentModelSettings = z.infer<
  * the envelope adapter can decode old feature snapshots for display; nothing
  * writes this shape anymore.
  */
-export const collaborationAgentModelSettingsMapSchema = z.object({
-  claude: collaborationAgentModelSettingsSchema,
-  codex: collaborationAgentModelSettingsSchema,
+export const legacyReadOnlyCollaborationAgentModelSettingsMapSchema = z.object({
+  claude: z.object({
+    model: z.string(),
+    effort: z.string().optional(),
+  }),
+  codex: z.object({
+    model: z.string(),
+    effort: z.string().optional(),
+  }),
 });
-export type CollaborationAgentModelSettingsMap = z.infer<
-  typeof collaborationAgentModelSettingsMapSchema
+export type LegacyReadOnlyCollaborationAgentModelSettingsMap = z.infer<
+  typeof legacyReadOnlyCollaborationAgentModelSettingsMapSchema
 >;
 
 /**
  * One flow agent's fully resolved runtime, persisted into the envelope's
- * feature snapshot at start and replayed verbatim on resume. `model` is always
- * concrete — a lane must never reach an SDK without one (the SDK's own default
- * model is rejected for some accounts and surfaces as a misleading
- * structured-output failure). `fastMode` is meaningful only for backends whose
- * capability supports it (Codex); `profileSnapshot` is the agent-profile
- * snapshot the lane is staffed with, when one was assigned.
+ * feature snapshot at start and replayed verbatim on resume. The selection is
+ * complete and indivisible; no resume path may reconstruct it from current
+ * defaults. `profileSnapshot` is the agent-profile snapshot the lane is
+ * staffed with, when one was assigned.
  */
 export const collaborationResolvedAgentSchema = z.object({
   backend: collaborationAgentSchema,
-  model: z.string().min(1),
-  effort: z.string().optional(),
-  fastMode: z.boolean().optional(),
+  modelSelection: backendModelSelectionSchema,
   profileSnapshot: agentProfileSnapshotSchema.optional(),
 });
 export type CollaborationResolvedAgent = z.infer<
@@ -207,32 +202,20 @@ export type CollaborationAgentsMap = z.infer<
 >;
 
 /**
- * Agent Two's explicit start-request configuration. A discriminated union on
- * `backend` so a model can only be named for the backend it belongs to and
- * `fastMode` exists only where the capability does (Codex) — invalid
- * combinations fail at parse rather than at dispatch. Every field except
- * `backend` is optional: absent fields resolve from the global config default
- * for that backend, then the catalog default. Client-safe (zod only) because
- * the composer's start payload carries it.
+ * Agent Two's explicit start-request configuration. The optional selection is
+ * a whole value: absent resolves from that backend's configured default, while
+ * present replaces it entirely and is validated against the backend catalog.
  */
-export const collaborationAgentTwoRequestSchema = z.discriminatedUnion(
-  "backend",
-  [
-    z.object({
-      backend: z.literal("claude"),
-      model: claudeModelSchema.optional(),
-      reasoningEffort: claudeEffortLevelSchema.optional(),
-      profile: agentProfileRefSchema.optional(),
-    }),
-    z.object({
-      backend: z.literal("codex"),
-      model: codexModelSchema.optional(),
-      reasoningEffort: codexReasoningEffortSchema.optional(),
-      fastMode: z.boolean().optional(),
-      profile: agentProfileRefSchema.optional(),
-    }),
-  ],
-);
+export const collaborationAgentTwoRequestSchema = z
+  .object({
+    backend: collaborationAgentSchema,
+    modelSelection: backendModelSelectionSchema.optional(),
+    profile: agentProfileRefSchema.optional(),
+    model: z.never().optional(),
+    reasoningEffort: z.never().optional(),
+    fastMode: z.never().optional(),
+  })
+  .strict();
 export type CollaborationAgentTwoRequest = z.infer<
   typeof collaborationAgentTwoRequestSchema
 >;

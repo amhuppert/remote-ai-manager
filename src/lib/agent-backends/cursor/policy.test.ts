@@ -66,7 +66,10 @@ describe("cursor phase 1 policy", () => {
         type: "attachAgent",
         mode,
         ref: mode === "resume" ? "agent-ref-1" : null,
-        model: "composer-2.5",
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
         disallowedTools: [...CURSOR_PHASE1_POLICY.disallowedTools],
         sandboxEnabled: CURSOR_PHASE1_POLICY.sandboxOptions.enabled,
         autoReview: CURSOR_PHASE1_POLICY.autoReview,

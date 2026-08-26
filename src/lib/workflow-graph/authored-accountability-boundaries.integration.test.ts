@@ -3,6 +3,7 @@ import {
   createWorkflowDefinition,
   createWorkflowExecution,
   createWorkflowLayout,
+  TEST_AGENT_BACKENDS_CONFIG,
 } from "./test-fixtures";
 import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
 import { locateAuthoredAccountabilityCoverage } from "./authored-accountability-coverage";
@@ -18,6 +19,7 @@ describe("authored accountability application boundaries", () => {
       caller: "project-validate",
       documentScope: { kind: "project", projectPath: "/repo" },
       workflowDefaults: undefined,
+      agentBackends: TEST_AGENT_BACKENDS_CONFIG,
       assignmentReferences: {
         async checkDefinition() {
           return [];

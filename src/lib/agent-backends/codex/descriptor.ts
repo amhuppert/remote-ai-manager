@@ -159,6 +159,12 @@ export function createCodexBackendDescriptor(
   return {
     id: "codex",
     metadata: codexBackendMetadata,
+    modelCatalog: {
+      getCatalog: async ({ configuredSelection }) => {
+        const { getStaticBackendModelCatalog } = await import("../catalog");
+        return getStaticBackendModelCatalog("codex", configuredSelection);
+      },
+    },
     conversation: {
       factory: deps.conversationFactory,
       continuity: deps.continuity,

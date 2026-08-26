@@ -9,6 +9,7 @@ import type {
   DocumentFeedbackTarget,
 } from "@/lib/document-comments/schemas";
 import type { LayoutMode } from "@/lib/sessions/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 export type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 export type RightPaneTab = "diff" | "docs" | "specs" | "alignment" | "artifact";
@@ -41,21 +42,15 @@ export interface SpecBrowserSelection {
  * user + streaming assistant rows so they match the durable transcript.
  */
 export interface OptimisticAgentSettings {
-  model?: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection?: BackendModelSelection;
 }
 
 export function agentSettingsStamp(
   settings: OptimisticAgentSettings | undefined,
-): Pick<TranscriptMessage, "model" | "effort" | "codexFastMode"> {
-  return {
-    ...(settings?.model !== undefined ? { model: settings.model } : {}),
-    ...(settings?.effort !== undefined ? { effort: settings.effort } : {}),
-    ...(settings?.codexFastMode !== undefined
-      ? { codexFastMode: settings.codexFastMode }
-      : {}),
-  };
+): Pick<TranscriptMessage, "modelSelection"> {
+  return settings?.modelSelection === undefined
+    ? {}
+    : { modelSelection: settings.modelSelection };
 }
 
 export type OptimisticQueueStatus = "pending" | "accepted" | "failed";

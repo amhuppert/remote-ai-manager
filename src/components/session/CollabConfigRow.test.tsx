@@ -1,17 +1,24 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import CollabConfigRow, {
   type CollabConfigRowProps,
 } from "@/components/session/CollabConfigRow";
-import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 
+const CLAUDE_CATALOG = getStaticBackendModelCatalog("claude");
+const CODEX_CATALOG = getStaticBackendModelCatalog("codex");
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "opus", effort: "high" },
-  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: defaultSelectionForModel(CLAUDE_CATALOG, "opus"),
+  codex: defaultSelectionForModel(CODEX_CATALOG, "gpt-5.4"),
+  cursor: { modelId: "composer-2.5", parameters: {} },
 };
+const MODEL_CATALOGS = { claude: CLAUDE_CATALOG, codex: CODEX_CATALOG };
 
 function renderRow(overrides: Partial<CollabConfigRowProps> = {}) {
   const queryClient = new QueryClient({
@@ -22,11 +29,15 @@ function renderRow(overrides: Partial<CollabConfigRowProps> = {}) {
       <CollabConfigRow
         originatingAgent="claude"
         config={{
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: {
+            backend: "codex",
+            modelSelection: BACKEND_DEFAULTS.codex,
+          },
           negotiationRounds: 3,
           autonomousResolutionThreshold: "major",
         }}
         backendDefaults={BACKEND_DEFAULTS}
+        modelCatalogs={MODEL_CATALOGS}
         onChange={vi.fn()}
         onDismiss={vi.fn()}
         {...overrides}
@@ -47,32 +58,40 @@ describe("CollabConfigRow", () => {
     }
   });
 
-  it("shows the Codex speed toggle only when Agent Two runs Codex", () => {
-    const { unmount } = renderRow();
-    expect(screen.getByLabelText("Codex speed")).toBeInTheDocument();
-    unmount();
+  it("updates Agent Two's complete selection atomically", () => {
+    const onChange = vi.fn();
+    renderRow({ onChange });
 
-    renderRow({
-      config: {
-        agentTwo: { backend: "claude", model: "opus", effort: "high" },
-        negotiationRounds: 3,
-        autonomousResolutionThreshold: "major",
-      },
-    });
-    expect(screen.queryByLabelText("Codex speed")).toBeNull();
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    fireEvent.click(screen.getByRole("option", { name: /GPT-5.6 Terra/ }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentTwo: {
+          backend: "codex",
+          modelSelection: defaultSelectionForModel(
+            CODEX_CATALOG,
+            "gpt-5.6-terra",
+          ),
+        },
+      }),
+    );
   });
 
   it("mirrors Agent One's composer selection as a read-only summary", () => {
     renderRow({
       agentOne: {
         backend: "claude",
-        model: "fable",
-        effort: "max",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max", thinking: "true" },
+        },
       },
     });
     const summary = screen.getByTitle("Uses this conversation's settings");
     expect(summary.textContent).toContain("fable");
-    expect(summary.textContent).toContain("max");
+    expect(summary.textContent).toContain("effort=max");
+    expect(summary.textContent).toContain("thinking=true");
   });
 
   // A non-Claude collaboration lane is dispatched as a task run
@@ -101,9 +120,10 @@ describe("CollabConfigRow", () => {
       config: {
         agentTwo: {
           backend: "codex",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          fastMode: true,
+          modelSelection: defaultSelectionForModel(
+            CODEX_CATALOG,
+            "gpt-5.6-sol",
+          ),
           profile: "global:reviewer",
         },
         negotiationRounds: 3,
@@ -119,8 +139,7 @@ describe("CollabConfigRow", () => {
       expect.objectContaining({
         agentTwo: {
           backend: "claude",
-          model: "opus",
-          effort: "high",
+          modelSelection: BACKEND_DEFAULTS.claude,
           // The profile is prompt identity, not runtime — it survives.
           profile: "global:reviewer",
         },

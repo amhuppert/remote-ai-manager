@@ -100,8 +100,8 @@ Written live by `src/lib/workflow-graph/execution-logger.ts`. Every record:
   `context_changed` is a lane switch, not a real rotation),
   max_iterations.reached: the scheduler's choices.
 - `contexts/<contextId>/`
-  - `iterations.jsonl` — `iteration.started` (`iterationNumber`, `model`,
-    `reasoningEffort`, `incompleteTaskIds`), `iteration.conversation_resolved`
+  - `iterations.jsonl` — `iteration.started` (`iterationNumber`, `modelId`,
+    `parameterIds`, `incompleteTaskIds`), `iteration.conversation_resolved`
     (`conversationId` — recovers rotated conversations),
     `iteration.prompt_sent` (`promptLength`, `promptMode`),
     `iteration.agent_turn_completed` (`contextTokens`, `contextWindowMax`,

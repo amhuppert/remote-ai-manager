@@ -26,6 +26,7 @@ import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   EnsureConversationCompactionInput,
   EnsureConversationCompactionResult,
@@ -202,6 +203,7 @@ export interface TicketCommandInput {
   sessionName: string | null;
   conversationId: string;
   hint: string;
+  modelSelection?: BackendModelSelection;
 }
 
 export type TicketCommandOutcome =
@@ -370,6 +372,9 @@ export function createTicketCommandRunner(
           schema: TICKET_COMMAND_JSON_SCHEMA,
         },
         timeoutMs: GENERATION_TIMEOUT_MS,
+        ...(input.modelSelection !== undefined
+          ? { modelSelection: input.modelSelection }
+          : {}),
       });
       logger.info("ticket_command.generation_complete", {
         resultKind: result.kind,

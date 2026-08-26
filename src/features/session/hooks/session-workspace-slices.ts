@@ -13,7 +13,6 @@ import type {
   PublicConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
 import type { EffectiveCollabConfig } from "@/stores/collaboration.store";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
@@ -26,7 +25,7 @@ type PanelContainerProps =
 /**
  * The session workspace's view props are assembled from stable, knowledge-owning
  * slices rather than one flat prop bag. Each slice concentrates one area of
- * knowledge (identity, prompt execution, collaboration, backend/model/effort,
+ * knowledge (identity, prompt execution, collaboration, backend/model selection,
  * voice, dev servers, layout, dialog actions) so a change in one area touches
  * one slice, not a ~90-field relay. `useSessionPageViewProps` composes these
  * into `ConversationWorkspaceViewProps`; each internal builder reads only the
@@ -81,19 +80,16 @@ export interface CollaborationSlice {
   backendDefaults: BackendSelectionDefaultsById;
 }
 
-/** Backend / model / effort selection. */
-export interface BackendModelEffortSlice {
+/** Backend plus its indivisible model selection and effective catalog. */
+export interface BackendModelSelectionSlice {
   backendLocked: boolean;
   selectedBackend: PromptComposerArgs["selectedBackend"];
-  codexFastMode: boolean;
-  setCodexFastMode: (enabled: boolean) => void;
-  selectedModel: string;
-  selectedEffort: EffortLevel;
-  availableEffortLevels: EffortLevel[];
-  effortSupported: boolean;
-  setSelectedEffort: (effort: EffortLevel) => void;
   handleBackendChange: PromptComposerArgs["handleBackendChange"];
-  handleModelChange: PromptComposerArgs["handleModelChange"];
+  modelCatalog: PromptComposerArgs["modelCatalog"];
+  modelCatalogs: PromptComposerArgs["modelCatalogs"];
+  modelSelection: PromptComposerArgs["modelSelection"];
+  modelSelectionBlockedReason: PromptComposerArgs["modelSelectionBlockedReason"];
+  setModelSelection: PromptComposerArgs["setModelSelection"];
 }
 
 /** Voice transcription recorder state + controls. */
@@ -149,7 +145,7 @@ export interface SessionWorkspaceSlices {
   identity: SessionIdentitySlice;
   prompt: PromptExecutionSlice;
   collaboration: CollaborationSlice;
-  backendModelEffort: BackendModelEffortSlice;
+  backendModelSelection: BackendModelSelectionSlice;
   voice: VoiceSlice;
   devServers: DevServerSlice;
   layout: LayoutSlice;

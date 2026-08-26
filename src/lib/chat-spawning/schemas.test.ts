@@ -137,43 +137,67 @@ describe("proposedSessionSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("keeps an optional model and reasoningEffort when provided", () => {
+  it("keeps an optional complete model selection when provided", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
       agent: "codex",
       mode: "normal",
-      model: "gpt-5.4",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelSelection).toEqual({
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      });
+    }
+  });
+
+  it("leaves modelSelection undefined when omitted", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "x",
+      agent: "claude",
+      mode: "normal",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.modelSelection).toBeUndefined();
+    }
+  });
+
+  it("rejects the split legacy fields", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "x",
+      agent: "claude",
+      mode: "normal",
+      model: "opus",
       reasoningEffort: "high",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.model).toBe("gpt-5.4");
-      expect(result.data.reasoningEffort).toBe("high");
-    }
-  });
-
-  it("leaves model and reasoningEffort undefined when omitted", () => {
-    const result = proposedSessionSchema.safeParse({
-      name: "x",
-      agent: "claude",
-      mode: "normal",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.model).toBeUndefined();
-      expect(result.data.reasoningEffort).toBeUndefined();
-    }
-  });
-
-  it("rejects a reasoningEffort outside the effort-level union", () => {
-    const result = proposedSessionSchema.safeParse({
-      name: "x",
-      agent: "claude",
-      mode: "normal",
-      reasoningEffort: "turbo",
     });
     expect(result.success).toBe(false);
   });
+
+  it.each([
+    ["effort", "high"],
+    ["reasoning", "high"],
+    ["fast", "true"],
+    ["context", "max"],
+    ["thinking", "enabled"],
+  ])(
+    "rejects a top-level %s model parameter instead of silently dropping it",
+    (field, value) => {
+      const result = proposedSessionSchema.safeParse({
+        name: "x",
+        agent: "cursor",
+        mode: "normal",
+        [field]: value,
+      });
+
+      expect(result.success).toBe(false);
+    },
+  );
 });
 
 describe("spawnProposalSchema", () => {
@@ -202,6 +226,15 @@ describe("spawnProposalSchema", () => {
       mode: "normal" as const,
     }));
     const result = spawnProposalSchema.safeParse({ sessions });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects model controls outside the proposed session", () => {
+    const result = spawnProposalSchema.safeParse({
+      sessions: [{ name: "a", agent: "cursor", mode: "normal" }],
+      thinking: "enabled",
+    });
+
     expect(result.success).toBe(false);
   });
 });

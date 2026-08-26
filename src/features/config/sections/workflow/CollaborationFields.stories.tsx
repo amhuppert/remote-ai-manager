@@ -9,8 +9,10 @@ const SEEDED: WorkflowCollaborationConfig = {
   enabled: false,
   secondAgent: {
     backend: "claude",
-    model: "sonnet",
-    reasoningEffort: "medium",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
   },
   negotiationRounds: 3,
   autonomousResolutionThreshold: "minor",
@@ -18,7 +20,13 @@ const SEEDED: WorkflowCollaborationConfig = {
 
 const CUSTOM: WorkflowCollaborationConfig = {
   enabled: true,
-  secondAgent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+  secondAgent: {
+    backend: "codex",
+    modelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    },
+  },
   negotiationRounds: 6,
   autonomousResolutionThreshold: "blocking",
 };

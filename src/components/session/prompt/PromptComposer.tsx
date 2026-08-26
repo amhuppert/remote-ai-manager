@@ -11,12 +11,9 @@ import {
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   backendLabel,
-  backendSupportsFastMode,
-  getModelsForBackend,
   type BackendSelectionDefaultsById,
+  type BackendValueMap,
 } from "@/lib/agent-backends/catalog";
-import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
-import { EFFORT_OPTIONS } from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { WithTooltip } from "@/components/ui/WithTooltip";
@@ -47,7 +44,10 @@ import type {
   ImageAttachment,
 } from "@/hooks/use-image-attachments";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
@@ -85,6 +85,7 @@ export function computeSendButtonState({
   isReadOnly,
   isRecording,
   isProcessing = false,
+  modelSelectionBlockedReason = null,
   queueCapabilityForBackend = defaultQueueCapabilityForBackend,
 }: {
   promptText: string;
@@ -102,6 +103,7 @@ export function computeSendButtonState({
   isReadOnly: boolean;
   isRecording: boolean;
   isProcessing?: boolean;
+  modelSelectionBlockedReason?: string | null;
   queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
 }): SendButtonState {
   const sessionBusyNoConvo = sending && !conversationId;
@@ -111,6 +113,9 @@ export function computeSendButtonState({
 
   if (isReadOnly) {
     return { disabled: true, title: "Session is read-only" };
+  }
+  if (modelSelectionBlockedReason !== null) {
+    return { disabled: true, title: modelSelectionBlockedReason };
   }
   if (sessionBusyNoConvo) {
     return { disabled: true, title: "Session is busy" };
@@ -221,14 +226,11 @@ interface PromptComposerProps {
   backendLocked: boolean;
   selectedBackend: AgentBackendId;
   onBackendChange: (backend: AgentBackendId) => void;
-  selectedModel: string;
-  onModelChange: (model: string) => void;
-  selectedEffort: EffortLevel;
-  onEffortChange: (effort: EffortLevel) => void;
-  codexFastMode: boolean;
-  onCodexFastModeChange: (enabled: boolean) => void;
-  availableEffortLevels: EffortLevel[];
-  effortSupported: boolean;
+  modelCatalog: BackendModelCatalog | null;
+  modelCatalogs: BackendValueMap<BackendModelCatalog | null>;
+  modelSelection: BackendModelSelection;
+  modelSelectionBlockedReason: string | null;
+  onModelSelectionChange(selection: BackendModelSelection): void;
   hasCollabChip: boolean;
   effectiveCollabConfig: CollabConfigRowConfig;
   /** Null when the conversation's backend cannot run Collaboration Mode; the
@@ -278,14 +280,11 @@ export default function PromptComposer({
   backendLocked,
   selectedBackend,
   onBackendChange,
-  selectedModel,
-  onModelChange,
-  selectedEffort,
-  onEffortChange,
-  codexFastMode,
-  onCodexFastModeChange,
-  availableEffortLevels,
-  effortSupported,
+  modelCatalog,
+  modelCatalogs,
+  modelSelection,
+  modelSelectionBlockedReason,
+  onModelSelectionChange,
   hasCollabChip,
   effectiveCollabConfig,
   originatingCollabAgent,
@@ -345,7 +344,7 @@ export default function PromptComposer({
       : isReadOnly
         ? "Session is read-only"
         : (promptPlaceholder ?? `Message ${selectedBackendLabel}…`);
-  // Portaled controls (model/effort dropdowns, capabilities drawer) render
+  // Portaled controls (model/parameter dropdowns, capabilities drawer) render
   // outside this region and move focus away from the editor; they report their
   // open-state so the focus hook holds `composerFocused` true while open. Each
   // reporter is memoized so the controls' onOpenChange effects don't re-fire.
@@ -353,8 +352,12 @@ export default function PromptComposer({
     (open: boolean) => setControlActive("model", open),
     [setControlActive],
   );
-  const onEffortOpenChange = useCallback(
-    (open: boolean) => setControlActive("effort", open),
+  const onPrimaryParameterOpenChange = useCallback(
+    (open: boolean) => setControlActive("primary-model-parameter", open),
+    [setControlActive],
+  );
+  const onModelOptionsOpenChange = useCallback(
+    (open: boolean) => setControlActive("model-options", open),
     [setControlActive],
   );
   const onCapabilitiesOpenChange = useCallback(
@@ -383,14 +386,22 @@ export default function PromptComposer({
     isReadOnly,
     isRecording,
     isProcessing,
+    modelSelectionBlockedReason,
   });
   const handlePrimaryAction = useCallback(() => {
+    if (modelSelectionBlockedReason !== null) return;
     if (isRecording || isProcessing) {
       stopAndSubmit();
       return;
     }
     onSendPrompt();
-  }, [isProcessing, isRecording, onSendPrompt, stopAndSubmit]);
+  }, [
+    isProcessing,
+    isRecording,
+    modelSelectionBlockedReason,
+    onSendPrompt,
+    stopAndSubmit,
+  ]);
   const cancellableEntries = selectCancellableQueueEntries(
     queueTurnState?.pendingQueue ?? activeConversation?.pendingQueue ?? [],
   );
@@ -429,13 +440,6 @@ export default function PromptComposer({
       cancelOptimisticQueueEntry,
       setQueueError,
     ],
-  );
-  // Same project-effective options the desktop toolbar's selector uses; both
-  // read one shared React Query entry, so the two toolbars can never offer
-  // different models for the same project (spec D10).
-  const projectModelOptions = useProjectBackendModelOptions(
-    projectName,
-    selectedBackend,
   );
   const sendBusy = sending && !conversationId;
   const sendButtonInner =
@@ -521,18 +525,15 @@ export default function PromptComposer({
             <CollabConfigRow
               config={effectiveCollabConfig}
               originatingAgent={originatingCollabAgent}
+              agentOne={{
+                backend: originatingCollabAgent,
+                modelSelection,
+              }}
               onChange={onCollabConfigChange}
               onDismiss={onCollabDismiss}
               backendDefaults={collabBackendDefaults}
+              modelCatalogs={modelCatalogs}
               projectName={projectName}
-              agentOne={{
-                backend: originatingCollabAgent,
-                model: selectedModel,
-                ...(effortSupported ? { effort: selectedEffort } : {}),
-                ...(backendSupportsFastMode(selectedBackend)
-                  ? { fastMode: codexFastMode }
-                  : {}),
-              }}
             />
           ) : null}
           {cancellableEntries.length > 0 ? (
@@ -600,14 +601,10 @@ export default function PromptComposer({
             backendLocked={backendLocked}
             selectedBackend={selectedBackend}
             onBackendChange={onBackendChange}
-            selectedModel={selectedModel}
-            onModelChange={onModelChange}
-            selectedEffort={selectedEffort}
-            onEffortChange={onEffortChange}
-            codexFastMode={codexFastMode}
-            onCodexFastModeChange={onCodexFastModeChange}
-            availableEffortLevels={availableEffortLevels}
-            effortSupported={effortSupported}
+            modelCatalog={modelCatalog}
+            modelSelection={modelSelection}
+            modelSelectionBlockedReason={modelSelectionBlockedReason}
+            onModelSelectionChange={onModelSelectionChange}
             isReadOnly={isReadOnly}
             sending={sending}
             isRecording={isRecording}
@@ -621,27 +618,15 @@ export default function PromptComposer({
             sendButtonInner={sendButtonInner}
             onSendPrompt={handlePrimaryAction}
             onModelOpenChange={onModelOpenChange}
-            onEffortOpenChange={onEffortOpenChange}
+            onPrimaryParameterOpenChange={onPrimaryParameterOpenChange}
+            onModelOptionsOpenChange={onModelOptionsOpenChange}
             onCapabilitiesOpenChange={onCapabilitiesOpenChange}
           />
           <MobilePromptToolbar
-            modelOptions={getModelsForBackend(selectedBackend)}
-            projectOptions={projectModelOptions}
-            effortOptions={EFFORT_OPTIONS.filter((o) =>
-              availableEffortLevels.includes(o.id),
-            )}
-            selectedModel={selectedModel}
-            selectedEffort={selectedEffort}
-            codexFastMode={codexFastMode}
-            onCodexFastModeChange={onCodexFastModeChange}
-            effortSupported={effortSupported}
-            effortDisabledReason={
-              !effortSupported
-                ? "Reasoning level is only available for Opus and Sonnet models"
-                : undefined
-            }
-            onSelectModel={onModelChange}
-            onSelectEffort={onEffortChange}
+            modelCatalog={modelCatalog}
+            modelSelection={modelSelection}
+            modelSelectionBlockedReason={modelSelectionBlockedReason}
+            onModelSelectionChange={onModelSelectionChange}
             backend={selectedBackend}
             backendLocked={backendLocked}
             onSelectBackend={onBackendChange}

@@ -48,6 +48,7 @@ import {
 } from "./schemas";
 import type { ParsedConversationCommand } from "./schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 const logger = createLogger("conversation-commands");
 
@@ -151,6 +152,7 @@ export interface ConversationCommandDeps {
     sessionName: string;
     conversationId: string;
     message: string;
+    modelSelection?: BackendModelSelection;
   }): Promise<void>;
   /**
    * Server-owned `/ticket` creation: structured task-run turn, compaction
@@ -192,6 +194,7 @@ export interface RunCommandInput {
   noticeSessionName?: string;
   conversationId: string;
   parsed: ParsedConversationCommand;
+  modelSelection?: BackendModelSelection;
 }
 
 export type RejectionReason =
@@ -351,6 +354,9 @@ export function createConversationCommandService(
         },
         structuredOutputTextField: "message",
         timeoutMs: GENERATION_TIMEOUT_MS,
+        ...(input.modelSelection !== undefined
+          ? { modelSelection: input.modelSelection }
+          : {}),
       });
       logger.info("command.generation_complete", {
         command: ctx.command,
@@ -650,6 +656,9 @@ export function createConversationCommandService(
       sessionName: input.sessionName,
       conversationId: input.conversationId,
       message: draft.authoringPrompt,
+      ...(input.modelSelection !== undefined
+        ? { modelSelection: input.modelSelection }
+        : {}),
     });
 
     logger.info("align.draft_started", {
@@ -701,6 +710,9 @@ export function createConversationCommandService(
       sessionName: input.sessionName,
       conversationId: input.conversationId,
       hint: input.parsed.hint,
+      ...(input.modelSelection !== undefined
+        ? { modelSelection: input.modelSelection }
+        : {}),
     });
 
     logger.info("command.ticket_complete", {

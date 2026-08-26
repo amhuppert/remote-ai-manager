@@ -152,15 +152,25 @@ describe("graphWorkflowAgentConfigSchema", () => {
   it("defaults an omitted backend to claude and accepts both role-capable backends", () => {
     expect(
       graphWorkflowAgentConfigSchema.parse({
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       }),
-    ).toEqual({ backend: "claude", model: "opus", reasoningEffort: "medium" });
+    ).toEqual({
+      backend: "claude",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "medium" },
+      },
+    });
     expect(
       graphWorkflowAgentConfigSchema.safeParse({
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       }).success,
     ).toBe(true);
   });
@@ -171,8 +181,10 @@ describe("graphWorkflowAgentConfigSchema", () => {
   it("refuses a registered backend with no task facet by naming the facet", () => {
     const result = graphWorkflowAgentConfigSchema.safeParse({
       backend: "cursor",
-      model: "composer-2.5",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
     });
 
     expect(result.success).toBe(false);
@@ -184,8 +196,7 @@ describe("graphWorkflowAgentConfigSchema", () => {
   it("keeps zod's own message for an unregistered backend value", () => {
     const result = graphWorkflowAgentConfigSchema.safeParse({
       backend: "mystery",
-      model: "m",
-      reasoningEffort: "medium",
+      modelSelection: { modelId: "m", parameters: {} },
     });
 
     expect(result.success).toBe(false);
@@ -194,14 +205,16 @@ describe("graphWorkflowAgentConfigSchema", () => {
 
   // An arm that matches and then fails on its own fields must not be
   // mislabelled as a facet problem.
-  it("reports the arm's own issue for a bad model on a matched backend", () => {
+  it("rejects the removed tuple fields on a matched backend", () => {
     const result = graphWorkflowAgentConfigSchema.safeParse({
       backend: "claude",
-      model: "not-a-claude-model",
+      model: "opus",
       reasoningEffort: "medium",
     });
 
     expect(result.success).toBe(false);
-    expect(result.error?.issues[0]?.path).toEqual(["model"]);
+    expect(
+      result.error?.issues.some((issue) => issue.path[0] === "model"),
+    ).toBe(true);
   });
 });

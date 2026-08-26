@@ -1,6 +1,5 @@
 import path from "node:path";
 import { z } from "zod";
-import { effortLevelSchema } from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   buildAttachmentIndex,
@@ -327,6 +326,7 @@ export async function runTicket(
   rest: string[],
   flags: GlobalFlags,
   values: Record<string, string>,
+  lists: Record<string, string[]>,
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
@@ -340,7 +340,7 @@ export async function runTicket(
       get: (r) => runTicketGet(r, flags, values, env, host),
       update: (r) => runTicketUpdate(r, flags, values, env, host),
       delete: (r) => runTicketDelete(r, flags, values, env, host),
-      start: (r) => runTicketStart(r, flags, values, env, host),
+      start: (r) => runTicketStart(r, flags, values, lists, env, host),
       attach: (r) => runTicketAttach(r, flags, values, env, host),
       attachment: (r) => runTicketAttachment(r, flags, values, env, host),
     },
@@ -812,6 +812,7 @@ async function runTicketStart(
   rest: string[],
   flags: GlobalFlags,
   values: Record<string, string>,
+  lists: Record<string, string[]>,
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
@@ -833,9 +834,13 @@ async function runTicketStart(
   if (!mode.ok) return mode.result;
   const backend = enumFlagValue(values, "backend", agentBackendSchema, json);
   if (!backend.ok) return backend.result;
-  const effort = enumFlagValue(values, "effort", effortLevelSchema, json);
-  if (!effort.ok) return effort.result;
   const model = values["model"];
+  const rawModelParameters = lists["model-param"] ?? [];
+  if (model === undefined && rawModelParameters.length > 0) {
+    return usageFailure("--model-param requires --model", json);
+  }
+  const modelParameters = parseModelParameters(rawModelParameters, json);
+  if (!modelParameters.ok) return modelParameters.result;
 
   const resolved = await resolveTicketTarget(ref.ref, flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -851,8 +856,14 @@ async function runTicketStart(
     body: {
       mode: mode.value,
       ...(backend.value !== undefined ? { backend: backend.value } : {}),
-      ...(model !== undefined ? { model } : {}),
-      ...(effort.value !== undefined ? { reasoningEffort: effort.value } : {}),
+      ...(model !== undefined
+        ? {
+            modelSelection: {
+              modelId: model,
+              parameters: modelParameters.value,
+            },
+          }
+        : {}),
     },
   });
   if (result.kind !== "ok") return failureFromRequest(result, json);
@@ -895,6 +906,40 @@ async function runTicketStart(
     stdout: render(json, humanBody, { ok: true, ...output }),
     stderr: "",
   };
+}
+
+function parseModelParameters(
+  entries: readonly string[],
+  json: boolean,
+):
+  | { ok: true; value: Record<string, string> }
+  | { ok: false; result: CliResult } {
+  const parameters: Record<string, string> = {};
+  for (const entry of entries) {
+    const separator = entry.indexOf("=");
+    const id = entry.slice(0, separator).trim();
+    const value = entry.slice(separator + 1).trim();
+    if (separator < 1 || value === "") {
+      return {
+        ok: false,
+        result: usageFailure(
+          `invalid --model-param "${entry}" — expected <id=value>`,
+          json,
+        ),
+      };
+    }
+    if (parameters[id] !== undefined) {
+      return {
+        ok: false,
+        result: usageFailure(
+          `duplicate --model-param "${id}" — pass each parameter once`,
+          json,
+        ),
+      };
+    }
+    parameters[id] = value;
+  }
+  return { ok: true, value: parameters };
 }
 
 // ---------------------------------------------------------------------------

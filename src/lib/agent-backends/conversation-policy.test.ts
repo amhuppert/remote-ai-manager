@@ -11,18 +11,28 @@ function makeConfig(
   return {
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 300_000,
         ...overrides.claude,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: null,
         ...overrides.codex,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
   };
 }
@@ -31,89 +41,69 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
   it("resolves each backend exclusively from its own profile", () => {
     const config = makeConfig({
       claude: {
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
         timeoutMs: 45_000,
       },
       codex: {
-        model: "gpt-5.6-sol",
-        reasoningEffort: "ultra",
-        fastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "ultra", fast: "true" },
+        },
         timeoutMs: 90_000,
         stallTimeoutMs: 60_000,
       },
     });
 
     expect(resolveConfiguredAgentBackendDefaults(config, "claude")).toEqual({
-      modelId: "sonnet",
-      reasoningEffort: "medium",
-      codexFastMode: false,
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
       timeoutMs: 45_000,
       stallTimeoutMs: CLAUDE_DEFAULT_STALL_TIMEOUT_MS,
     });
     expect(resolveConfiguredAgentBackendDefaults(config, "codex")).toEqual({
-      modelId: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "ultra", fast: "true" },
+      },
       timeoutMs: 90_000,
       stallTimeoutMs: 60_000,
     });
   });
 
-  it("uses high when effort is unset and the model supports it", () => {
+  it("preserves a complete parameterless selection", () => {
     const config = makeConfig({
       claude: {
-        model: "opus",
-        reasoningEffort: undefined,
-        timeoutMs: null,
-      },
-      codex: {
-        model: "gpt-5.4",
-        reasoningEffort: undefined,
+        modelSelection: { modelId: "haiku", parameters: {} },
         timeoutMs: null,
       },
     });
 
     expect(
-      resolveConfiguredAgentBackendDefaults(config, "claude").reasoningEffort,
-    ).toBe("high");
-    expect(
-      resolveConfiguredAgentBackendDefaults(config, "codex").reasoningEffort,
-    ).toBe("high");
-  });
-
-  it("rejects a Claude model configured in the Codex profile", () => {
-    const config = makeConfig({
-      codex: {
-        model: "opus",
-        reasoningEffort: "medium",
-        timeoutMs: null,
-      },
-    });
-
-    expect(resolveConfiguredAgentBackendDefaults(config, "codex").modelId).toBe(
-      "gpt-5.4",
-    );
-  });
-
-  it("omits effort for a model that does not support reasoning effort", () => {
-    const config = makeConfig({
-      claude: {
-        model: "haiku",
-        reasoningEffort: undefined,
-        timeoutMs: null,
-      },
-    });
-
-    expect(
-      resolveConfiguredAgentBackendDefaults(config, "claude").reasoningEffort,
-    ).toBeUndefined();
+      resolveConfiguredAgentBackendDefaults(config, "claude").modelSelection,
+    ).toEqual({ modelId: "haiku", parameters: {} });
   });
 
   it("converts null safety timeouts to the runtime's unbounded sentinel", () => {
     const config = makeConfig({
-      claude: { model: "opus", timeoutMs: null },
-      codex: { model: "gpt-5.4", timeoutMs: null },
+      claude: {
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+        timeoutMs: null,
+      },
+      codex: {
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+        timeoutMs: null,
+      },
     });
 
     expect(
@@ -132,7 +122,10 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
 
     const disabled = makeConfig({
       codex: {
-        model: "gpt-5.4",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: null,
         stallTimeoutMs: null,
       },
@@ -145,7 +138,10 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
   it("honors a Claude stall override and lets null disable the bound", () => {
     const raised = makeConfig({
       claude: {
-        model: "opus",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: null,
         stallTimeoutMs: 45 * 60 * 1000,
       },
@@ -156,7 +152,10 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
 
     const disabled = makeConfig({
       claude: {
-        model: "opus",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: null,
         stallTimeoutMs: null,
       },

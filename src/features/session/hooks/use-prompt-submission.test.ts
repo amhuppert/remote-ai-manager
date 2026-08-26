@@ -6,6 +6,7 @@ import { usePromptSubmission } from "./use-prompt-submission";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
@@ -30,6 +31,29 @@ function makeConversation(
 interface CollabMutateOptions {
   onSuccess?: () => void;
   onError?: (err: unknown) => void;
+}
+
+const CLAUDE_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "medium" },
+};
+const CODEX_SELECTION: BackendModelSelection = {
+  modelId: "gpt-5.4",
+  parameters: { reasoning: "high", fast: "false" },
+};
+const CURSOR_SELECTION: BackendModelSelection = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+};
+const AGENT_TWO_DRAFT = {
+  backend: "codex" as const,
+  modelSelection: CODEX_SELECTION,
+};
+
+function selectionForBackend(backend: AgentBackendId): BackendModelSelection {
+  if (backend === "codex") return CODEX_SELECTION;
+  if (backend === "cursor") return CURSOR_SELECTION;
+  return CLAUDE_SELECTION;
 }
 
 function makeEditorRef(serialized: {
@@ -78,15 +102,13 @@ describe("usePromptSubmission", () => {
         clearImages: () => {},
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: AGENT_TWO_DRAFT,
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         clearCollabConfigDraft,
         messagesLength: 0,
-        selectedModel: "sonnet",
-        selectedEffort: "medium",
-        effortSupported: true,
+        selectedModelSelection: CLAUDE_SELECTION,
         selectedBackend: "claude",
         sendPrompt,
         queueMessage,
@@ -113,11 +135,10 @@ describe("usePromptSubmission", () => {
       autonomousResolutionThreshold: "minor",
       conversationId: "c",
       backend: "claude",
-      modelId: "sonnet",
-      effort: "medium",
+      modelSelection: CLAUDE_SELECTION,
       // Agent Two's seeded draft rides along so the server runs exactly what
       // the config row showed.
-      agentTwo: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agentTwo: { backend: "codex", modelSelection: CODEX_SELECTION },
     });
     expect(clearCollabConfigDraft).toHaveBeenCalledWith("p", "s", "c");
     expect(sendPrompt).not.toHaveBeenCalled();
@@ -143,15 +164,13 @@ describe("usePromptSubmission", () => {
         clearImages: () => {},
         suppressPendingPromptAutosaveAfterSubmit: () => {},
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: AGENT_TWO_DRAFT,
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         clearCollabConfigDraft: () => {},
         messagesLength: 0,
-        selectedModel: "sonnet",
-        selectedEffort: "medium",
-        effortSupported: true,
+        selectedModelSelection: CLAUDE_SELECTION,
         selectedBackend: "claude",
         sendPrompt,
         queueMessage: vi.fn(async () => {}),
@@ -171,7 +190,7 @@ describe("usePromptSubmission", () => {
     });
   });
 
-  it("omits effort from the /collab start when the backend does not support it", async () => {
+  it("forwards a complete selection without fabricating unsupported parameters", async () => {
     const collabMutate = vi.fn();
 
     const { result } = renderHook(() => {
@@ -190,15 +209,13 @@ describe("usePromptSubmission", () => {
         clearImages: () => {},
         suppressPendingPromptAutosaveAfterSubmit: () => {},
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: AGENT_TWO_DRAFT,
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         clearCollabConfigDraft: () => {},
         messagesLength: 0,
-        selectedModel: "sonnet",
-        selectedEffort: "medium",
-        effortSupported: false,
+        selectedModelSelection: { modelId: "haiku", parameters: {} },
         selectedBackend: "claude",
         sendPrompt: vi.fn(async () => {}),
         queueMessage: vi.fn(async () => {}),
@@ -212,8 +229,9 @@ describe("usePromptSubmission", () => {
     });
     expect(collabMutate).toHaveBeenCalledTimes(1);
     const [vars] = collabMutate.mock.calls[0]!;
-    expect(vars).toMatchObject({ modelId: "sonnet" });
-    expect(vars).not.toHaveProperty("effort");
+    expect(vars).toMatchObject({
+      modelSelection: { modelId: "haiku", parameters: {} },
+    });
   });
 
   it("defers clearing the persisted /collab draft until the mutation succeeds", async () => {
@@ -255,15 +273,13 @@ describe("usePromptSubmission", () => {
         clearImages,
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: AGENT_TWO_DRAFT,
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         clearCollabConfigDraft: vi.fn(),
         messagesLength: 0,
-        selectedModel: "sonnet",
-        selectedEffort: "medium",
-        effortSupported: true,
+        selectedModelSelection: CLAUDE_SELECTION,
         selectedBackend: "claude",
         sendPrompt: vi.fn(async () => {}),
         queueMessage: vi.fn(async () => {}),
@@ -334,15 +350,13 @@ describe("usePromptSubmission", () => {
         clearImages,
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: AGENT_TWO_DRAFT,
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         clearCollabConfigDraft: vi.fn(),
         messagesLength: 0,
-        selectedModel: "sonnet",
-        selectedEffort: "medium",
-        effortSupported: true,
+        selectedModelSelection: CLAUDE_SELECTION,
         selectedBackend: "claude",
         sendPrompt: vi.fn(async () => {}),
         queueMessage: vi.fn(async () => {}),
@@ -408,15 +422,13 @@ describe("usePromptSubmission", () => {
         clearImages,
         suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: AGENT_TWO_DRAFT,
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         clearCollabConfigDraft: vi.fn(),
         messagesLength: 0,
-        selectedModel: "sonnet",
-        selectedEffort: "medium",
-        effortSupported: true,
+        selectedModelSelection: CLAUDE_SELECTION,
         selectedBackend: "claude",
         sendPrompt: vi.fn(async () => {}),
         queueMessage: vi.fn(async () => {}),
@@ -447,7 +459,6 @@ describe("usePromptSubmission", () => {
     function renderQueueHook(args: {
       sending: boolean;
       selectedBackend: AgentBackendId;
-      selectedCodexFastMode?: boolean;
       serialized: { prompt: string; images: ImagePayload[] };
       conversations?: ConversationState[];
       queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
@@ -477,17 +488,14 @@ describe("usePromptSubmission", () => {
           clearImages,
           suppressPendingPromptAutosaveAfterSubmit: clearPersisted,
           effectiveCollabConfig: {
-            agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+            agentTwo: AGENT_TWO_DRAFT,
             negotiationRounds: 2,
             autonomousResolutionThreshold: "minor",
           },
           clearCollabConfigDraft: vi.fn(),
           messagesLength: 0,
-          selectedModel: "sonnet",
-          selectedEffort: "medium",
-          effortSupported: true,
+          selectedModelSelection: selectionForBackend(args.selectedBackend),
           selectedBackend: args.selectedBackend,
-          selectedCodexFastMode: args.selectedCodexFastMode ?? false,
           sendPrompt,
           queueMessage,
           ...(args.queueCapabilityForBackend
@@ -525,6 +533,7 @@ describe("usePromptSubmission", () => {
         "follow up",
         undefined,
         "  follow up  ",
+        CLAUDE_SELECTION,
       );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
@@ -541,7 +550,12 @@ describe("usePromptSubmission", () => {
       });
 
       expect(h.queueMessage).toHaveBeenCalledTimes(1);
-      expect(h.queueMessage).toHaveBeenCalledWith("later", undefined, "later");
+      expect(h.queueMessage).toHaveBeenCalledWith(
+        "later",
+        undefined,
+        "later",
+        CODEX_SELECTION,
+      );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
 
@@ -570,6 +584,7 @@ describe("usePromptSubmission", () => {
         "follow up during drained turn",
         undefined,
         "follow up during drained turn",
+        CODEX_SELECTION,
       );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });
@@ -599,7 +614,6 @@ describe("usePromptSubmission", () => {
       const h = renderQueueHook({
         sending: false,
         selectedBackend: "codex",
-        selectedCodexFastMode: true,
         serialized: { prompt: "fresh turn", images: [] },
         conversations: [makeConversation({ id: "c", status: "awaiting" })],
       });
@@ -610,7 +624,7 @@ describe("usePromptSubmission", () => {
 
       expect(h.sendPrompt).toHaveBeenCalledTimes(1);
       expect(h.sendPrompt.mock.calls[0]?.[0]).toBe("fresh turn");
-      expect(h.sendPrompt.mock.calls[0]?.[7]).toBe(true);
+      expect(h.sendPrompt.mock.calls[0]?.[2]).toEqual(CODEX_SELECTION);
       expect(h.queueMessage).not.toHaveBeenCalled();
     });
 
@@ -655,7 +669,7 @@ describe("usePromptSubmission", () => {
 
       expect(h.sendPrompt).toHaveBeenCalledTimes(1);
       expect(h.sendPrompt.mock.calls[0]?.[0]).toBe("go now");
-      expect(h.sendPrompt.mock.calls[0]?.[6]).toBe("  go now  ");
+      expect(h.sendPrompt.mock.calls[0]?.[5]).toBe("  go now  ");
       expect(h.queueMessage).not.toHaveBeenCalled();
     });
 
@@ -697,6 +711,7 @@ describe("usePromptSubmission", () => {
         "see this",
         [image],
         "see this",
+        CLAUDE_SELECTION,
       );
       expect(h.sendPrompt).not.toHaveBeenCalled();
     });

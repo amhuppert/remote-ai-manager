@@ -21,12 +21,24 @@ describe("graphWorkflowPlanRepairPolicySchema", () => {
     const parsed = graphWorkflowPlanRepairPolicySchema.parse({
       enabled: false,
       maxAttemptsPerContext: 3,
-      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agent: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     });
     expect(parsed).toEqual({
       enabled: false,
       maxAttemptsPerContext: 3,
-      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agent: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     });
   });
 
@@ -138,7 +150,10 @@ describe("resolved context schema — planRepair", () => {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
         profileSnapshot: makeProfileSnapshot(),
-        agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+        agent: {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+        },
       },
       contextValidator: { enabled: false, assignments: [] },
       mutability: { allowAgentTaskAdd: false },

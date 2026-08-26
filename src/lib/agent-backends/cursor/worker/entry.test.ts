@@ -29,6 +29,20 @@ import type { CursorParentFrame, CursorWorkerFrame } from "./ipc";
  */
 
 const API_KEY = "cursor-key-sentinel-4f2b9c";
+const MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+} as const;
+const OPUS_MODEL_SELECTION = {
+  modelId: "claude-opus-5",
+  parameters: {
+    context: "1m",
+    cyber: "false",
+    effort: "high",
+    fast: "false",
+    thinking: "true",
+  },
+} as const;
 
 const WORKER_PID = 4242;
 const PARENT_PID = 1111;
@@ -258,7 +272,7 @@ function attachFrame(
     type: "attachAgent",
     mode: "create",
     ref: null,
-    model: "composer-2.5",
+    modelSelection: MODEL_SELECTION,
     disallowedTools: ["askQuestion", "await"],
     sandboxEnabled: false,
     autoReview: false,
@@ -281,7 +295,7 @@ function startTurnFrame(
     promptText: "hello",
     images: [],
     structuredOutputInstruction: null,
-    model: "composer-2.5",
+    modelSelection: MODEL_SELECTION,
     mcpServers: {},
     forceExpirePersistedRun: false,
     ...overrides,
@@ -474,7 +488,7 @@ describe("cursor worker attach", () => {
     expect(harness.sdk.creates).toStrictEqual([
       {
         apiKey: API_KEY,
-        model: "composer-2.5",
+        modelSelection: MODEL_SELECTION,
         cwd: "/work/tree",
         storePath: "/state/cursor/conv-1",
         disallowedTools: ["askQuestion", "await"],
@@ -513,6 +527,31 @@ describe("cursor worker attach", () => {
       },
     ]);
     expect(harness.channel.ofType("attachResult")[0]?.outcome).toBe("attached");
+  });
+
+  it("rejects an unknown model parameter before create or resume reaches the SDK", async () => {
+    for (const attachTarget of [
+      { mode: "create" as const, ref: null },
+      { mode: "resume" as const, ref: "agent-ref-1" },
+    ]) {
+      const harness = createHarness();
+      await handshake(harness);
+      await attach(harness, {
+        ...attachTarget,
+        modelSelection: {
+          modelId: MODEL_SELECTION.modelId,
+          parameters: { ...MODEL_SELECTION.parameters, turbo: "true" },
+        },
+      });
+
+      expect(harness.sdk.creates).toHaveLength(0);
+      expect(harness.sdk.resumes).toHaveLength(0);
+      expect(harness.channel.ofType("attachResult")[0]?.error).toMatchObject({
+        name: "CursorModelSelectionError",
+        code: "unknown_parameter",
+        status: null,
+      });
+    }
   });
 
   it("reports an attach failure with the SDK's stable error seams", async () => {
@@ -683,13 +722,13 @@ describe("cursor worker turns", () => {
     expect(harness.channel.ofType("turnSettled")[0]?.outcome).toBe("completed");
   });
 
-  it("carries only the model, MCP map, and force-expiry flag as per-send options", async () => {
+  it("carries only the model selection, MCP map, and force-expiry flag as per-send options", async () => {
     const harness = createHarness();
     await handshake(harness);
     await attach(harness);
     harness.channel.emit(
       startTurnFrame({
-        model: "composer-2.5",
+        modelSelection: OPUS_MODEL_SELECTION,
         mcpServers: {
           per_send: { command: "node", args: [], env: {} },
         },
@@ -700,11 +739,54 @@ describe("cursor worker turns", () => {
     expect(harness.sdk.agent.sends).toHaveLength(1);
     expect(
       Object.keys(harness.sdk.agent.sends[0]?.options ?? {}).sort(),
-    ).toStrictEqual(["forceExpirePersistedRun", "mcpServers", "model"]);
-    expect(harness.sdk.agent.sends[0]?.options.model).toBe("composer-2.5");
+    ).toStrictEqual([
+      "forceExpirePersistedRun",
+      "mcpServers",
+      "modelSelection",
+    ]);
+    expect(harness.sdk.agent.sends[0]?.options.modelSelection).toEqual({
+      modelId: "claude-opus-5",
+      parameters: {
+        context: "1m",
+        cyber: "false",
+        effort: "high",
+        fast: "false",
+        thinking: "true",
+      },
+    });
     expect(harness.sdk.agent.sends[0]?.options.forceExpirePersistedRun).toBe(
       false,
     );
+  });
+
+  it("rejects an unsupported complete parameter combination before SDK send", async () => {
+    const harness = createHarness();
+    await handshake(harness);
+    await attach(harness);
+    harness.channel.emit(
+      startTurnFrame({
+        modelSelection: {
+          ...OPUS_MODEL_SELECTION,
+          parameters: {
+            ...OPUS_MODEL_SELECTION.parameters,
+            effort: "xhigh",
+            thinking: "false",
+          },
+        },
+      }),
+    );
+    await settle();
+
+    expect(harness.sdk.agent.sends).toHaveLength(0);
+    expect(harness.channel.ofType("turnSettled")[0]).toMatchObject({
+      runId: "run-1",
+      outcome: "failed",
+      error: {
+        name: "CursorModelSelectionError",
+        code: "unsupported_combination",
+        status: null,
+      },
+    });
   });
 
   it("passes the force-expiry recovery flag through to the SDK send", async () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import {
   formatOutputSchemaShape,
   outputSchemaShapeSchema,
@@ -8,6 +9,7 @@ import {
   graphWorkflowLaneMergeValidationConfigSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import {
+  formatAgentModelSelection,
   formatCommandSelector,
   formatLaneMergeSelection,
 } from "./workflow-outline";
@@ -26,8 +28,7 @@ import {
 const agentSummarySchema = z
   .object({
     backend: z.string(),
-    model: z.string(),
-    reasoningEffort: z.string(),
+    modelSelection: backendModelSelectionSchema,
   })
   .loose();
 
@@ -56,13 +57,8 @@ const implementerSummarySchema = agentSummarySchema.extend(
   assignmentProvenanceSchema.shape,
 );
 
-const validatorSummarySchema = z
-  .object({
-    strategy: z.string(),
-    backend: z.string(),
-    model: z.string(),
-    reasoningEffort: z.string(),
-  })
+const validatorSummarySchema = agentSummarySchema
+  .extend({ strategy: z.string() })
   .extend(assignmentProvenanceSchema.shape)
   .loose();
 
@@ -444,7 +440,7 @@ function validatorSummary(config: LiveOutlineContextConfig): string {
   return config.validators
     .map(
       (validator) =>
-        `validator ${validator.assignmentId} ${validator.strategy} ${validator.backend} ${validator.model} ${validator.reasoningEffort}`,
+        `validator ${validator.assignmentId} ${validator.strategy} ${formatAgentModelSelection(validator.backend, validator.modelSelection)}`,
     )
     .join(", ");
 }
@@ -458,7 +454,10 @@ function scriptGateSummary(
 }
 
 function configLine(config: LiveOutlineContextConfig): string {
-  const impl = `${config.implementer.backend} ${config.implementer.model} ${config.implementer.reasoningEffort}`;
+  const impl = formatAgentModelSelection(
+    config.implementer.backend,
+    config.implementer.modelSelection,
+  );
   const parts = [
     impl,
     validatorSummary(config),
@@ -538,7 +537,10 @@ function staffingBlock(config: LiveOutlineData["config"]): string {
       hash: hashOf(context.implementer),
       detail: detailOf(
         context.implementer,
-        `${context.implementer.backend} ${context.implementer.model} ${context.implementer.reasoningEffort}`,
+        formatAgentModelSelection(
+          context.implementer.backend,
+          context.implementer.modelSelection,
+        ),
       ),
     },
     // Dormant rows are reported and MARKED, the same way the saved surface
@@ -552,7 +554,7 @@ function staffingBlock(config: LiveOutlineData["config"]): string {
       hash: hashOf(validator),
       detail: `${detailOf(
         validator,
-        `${validator.strategy} ${validator.backend} ${validator.model} ${validator.reasoningEffort}`,
+        `${validator.strategy} ${formatAgentModelSelection(validator.backend, validator.modelSelection)}`,
       )}${context.validatorCohortEnabled ? "" : "  (cohort disabled)"}`,
     })),
   ]);

@@ -169,7 +169,7 @@ describe("ContextArtifactPanel", () => {
     // Coverage + provenance from the fetched row feed the meta rail.
     expect(screen.getAllByText(/seq 0–421/).length).toBeGreaterThan(0);
     expect(
-      screen.getAllByText(/claude · sonnet · medium/).length,
+      screen.getAllByText(/claude · sonnet · effort=medium/).length,
     ).toBeGreaterThan(0);
   });
 

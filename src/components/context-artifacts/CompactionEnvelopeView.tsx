@@ -19,15 +19,15 @@ import type {
   FileEntry,
 } from "@/lib/context-artifacts/schemas";
 import type { SourceRef } from "@/lib/conversations/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 /**
  * Row-level generation metadata for the meta rail. `ContextArtifactDetail`
  * satisfies this structurally, so callers can pass the fetched row directly.
  */
 export interface CompactionProvenance {
-  modelProvider: string;
-  model: string;
-  effort?: string | null;
+  backend: string;
+  modelSelection: BackendModelSelection;
   promptVersion: string;
   normalizerVersion: string;
   schemaVersion: number;
@@ -299,11 +299,15 @@ function ProvenanceLines({
   provenance: CompactionProvenance;
   conversationId: string;
 }) {
+  const parameterSummary = Object.entries(provenance.modelSelection.parameters)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, value]) => `${id}=${value}`)
+    .join(" · ");
   return (
     <>
       <span>
-        {provenance.modelProvider} · {provenance.model}
-        {provenance.effort ? ` · ${provenance.effort}` : ""}
+        {provenance.backend} · {provenance.modelSelection.modelId}
+        {parameterSummary ? ` · ${parameterSummary}` : ""}
       </span>
       <span>
         prompt {provenance.promptVersion} · normalizer{" "}

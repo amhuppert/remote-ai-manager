@@ -146,7 +146,10 @@ describe("cursor conversation restart durability", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "hello cursor" }],
-        model: CURSOR_MODEL,
+        modelSelection: {
+          modelId: CURSOR_MODEL,
+          parameters: { fast: "true" },
+        },
       },
       configDir,
     );
@@ -172,7 +175,10 @@ describe("cursor conversation restart durability", () => {
     const messages = await readConversationMessages(reloaded.transcriptPath);
 
     expect(selectLastUserTurnAgentSettings(messages)).toEqual({
-      modelId: CURSOR_MODEL,
+      modelSelection: {
+        modelId: CURSOR_MODEL,
+        parameters: { fast: "true" },
+      },
     });
   });
 

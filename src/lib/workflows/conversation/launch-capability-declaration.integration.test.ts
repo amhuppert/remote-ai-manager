@@ -112,7 +112,7 @@ async function runTurn(input: {
             sendTurn: vi.fn(async () => TURN_RESULT),
           });
         },
-        validateModelAndEffort: () => {},
+        validateModelSelection: () => {},
       }),
     }),
   );
@@ -138,11 +138,10 @@ async function runTurn(input: {
     promptText: "Hello",
     images: [],
     streamId: "stream-1",
-    modelId: null,
-    effort: null,
+    modelSelection: null,
+    onModelSelectionResolved: async () => {},
     autonomous: false,
     debugMode: null,
-    codexFastMode: null,
   };
 
   await executePromptForMachine(promptInput);

@@ -27,6 +27,7 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { AgentFailureWithContinuation } from "@/lib/agent-backends/errors";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,
@@ -44,9 +45,7 @@ export interface DispatchConversationTurnDeps {
   runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
   signal: AbortSignal;
-  modelId?: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   autonomous?: boolean;
   /**
    * Opt-in: hold the turn open until in-flight waitable background tasks
@@ -122,11 +121,7 @@ export async function dispatchConversationTurn(
     promptText: request.prompt,
     imageRefs: deps.imageRefs ?? [],
     sessionInstructions: [...(deps.sessionInstructions ?? [])],
-    modelId: deps.modelId,
-    reasoningEffort: deps.reasoningEffort,
-    ...(deps.codexFastMode !== undefined
-      ? { codexFastMode: deps.codexFastMode }
-      : {}),
+    modelSelection: deps.modelSelection,
     autonomous: deps.autonomous ?? false,
     ...(deps.waitForBackgroundTasks ? { waitForBackgroundTasks: true } : {}),
     outputFormat: request.outputSchema

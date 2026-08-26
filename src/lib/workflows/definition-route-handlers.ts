@@ -299,6 +299,7 @@ export function createWorkflowDefinitionRouteHandlers(
       projectValidation: repoConfig?.validation ?? null,
       globalValidation: globalConfig.validation,
       workflowDefaults: globalConfig.workflowDefaults,
+      agentBackends: globalConfig.agentBackends,
       assignmentReferences,
     });
     if (!validation.ok) {
@@ -392,6 +393,7 @@ export function createWorkflowDefinitionRouteHandlers(
       projectValidation: repoConfig?.validation ?? null,
       globalValidation: globalConfig.validation,
       workflowDefaults: globalConfig.workflowDefaults,
+      agentBackends: globalConfig.agentBackends,
       assignmentReferences,
     });
     if (!validation.ok) {
@@ -466,6 +468,7 @@ export function createWorkflowDefinitionRouteHandlers(
           projectValidation: repoConfig?.validation ?? null,
           globalValidation: globalConfig.validation,
           workflowDefaults: globalConfig.workflowDefaults,
+          agentBackends: globalConfig.agentBackends,
           assignmentReferences,
         });
       },

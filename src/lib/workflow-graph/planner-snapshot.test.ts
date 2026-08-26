@@ -37,8 +37,10 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -60,8 +62,10 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -216,8 +220,12 @@ describe("planner workflow generation — fixture snapshot", () => {
               "implementer": {
                 "agent": {
                   "backend": "claude",
-                  "model": "opus",
-                  "reasoningEffort": "high",
+                  "modelSelection": {
+                    "modelId": "opus",
+                    "parameters": {
+                      "effort": "high",
+                    },
+                  },
                 },
                 "id": "implementer",
                 "profile": {
@@ -249,8 +257,12 @@ describe("planner workflow generation — fixture snapshot", () => {
               "implementer": {
                 "agent": {
                   "backend": "claude",
-                  "model": "sonnet",
-                  "reasoningEffort": "medium",
+                  "modelSelection": {
+                    "modelId": "sonnet",
+                    "parameters": {
+                      "effort": "medium",
+                    },
+                  },
                 },
                 "id": "implementer",
                 "profile": {

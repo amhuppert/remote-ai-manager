@@ -16,17 +16,26 @@ function makeConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
     ignorePatterns: [],
     agentBackends: {
       claude: {
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
         timeoutMs: 45_000,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: 60_000,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     defaultAgentBackend: "claude",
     pushNotification: {
@@ -70,6 +79,10 @@ function makeDeps(
       worktreePath: WORKTREE,
     })),
     readConfig: vi.fn(async () => makeConfig()),
+    admitModelSelection: vi.fn(async ({ modelSelection }) => ({
+      ok: true as const,
+      modelSelection,
+    })),
     startRun: vi.fn(() => ({ runId: "run-1" })),
     getRun: vi.fn((): AgentRunStatusResponse | null => ({
       runId: "run-1",
@@ -112,7 +125,10 @@ describe("POST /agent-runs", () => {
         worktreePath: WORKTREE,
         workingDirectory: WORKTREE,
         timeoutMs: 60_000,
-        model: "gpt-5.4",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         projectName: "cc",
         sessionName: "sess",
       }),
@@ -153,14 +169,16 @@ describe("POST /agent-runs", () => {
     expect(startRun).toHaveBeenCalledWith(
       expect.objectContaining({
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
         timeoutMs: 45_000,
       }),
     );
   });
 
-  it("mirrors the original tool input: model + reasoning_effort + timeout override", async () => {
+  it("accepts a complete selection and timeout override", async () => {
     const startRun = vi.fn(() => ({ runId: "run-2" }));
     const handlers = createAgentRunHandlers(makeDeps({ startRun }));
 
@@ -168,8 +186,10 @@ describe("POST /agent-runs", () => {
       req({
         backend: "codex",
         prompt: "p",
-        model: "gpt-5.5",
-        reasoning_effort: "high",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { reasoning: "high", fast: "true" },
+        },
         timeoutMs: 1000,
       }),
       params(),
@@ -177,9 +197,88 @@ describe("POST /agent-runs", () => {
 
     expect(startRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "gpt-5.5",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { reasoning: "high", fast: "true" },
+        },
         timeoutMs: 1000,
+      }),
+    );
+  });
+
+  it("rejects an invalid selection with stable diagnostics before creating a durable run", async () => {
+    const startRun = vi.fn(() => ({ runId: "never" }));
+    const handlers = createAgentRunHandlers(
+      makeDeps({
+        startRun,
+        admitModelSelection: vi.fn(async () => ({
+          ok: false as const,
+          code: "unsupported_value",
+          message:
+            'Value "turbo" is not supported for parameter "fast" on model "gpt-5.4".',
+          modelId: "gpt-5.4",
+          parameterId: "fast",
+        })),
+      }),
+    );
+
+    const res = await handlers.POST(
+      req({
+        backend: "codex",
+        prompt: "p",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "turbo" },
+        },
+      }),
+      params(),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error:
+        'Value "turbo" is not supported for parameter "fast" on model "gpt-5.4".',
+      code: "unsupported_value",
+      modelId: "gpt-5.4",
+      parameterId: "fast",
+    });
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it("creates the run with the canonical admitted selection", async () => {
+    const startRun = vi.fn(() => ({ runId: "run-canonical" }));
+    const handlers = createAgentRunHandlers(
+      makeDeps({
+        startRun,
+        admitModelSelection: vi.fn(async () => ({
+          ok: true as const,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "true", reasoning: "high" },
+          },
+        })),
+      }),
+    );
+
+    const res = await handlers.POST(
+      req({
+        backend: "codex",
+        prompt: "p",
+        modelSelection: {
+          modelId: "gpt-latest",
+          parameters: { reasoning: "high", fast: "true" },
+        },
+      }),
+      params(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(startRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "true", reasoning: "high" },
+        },
       }),
     );
   });
@@ -223,7 +322,13 @@ describe("POST /agent-runs", () => {
     );
     expect(res.status).toBe(200);
     expect(startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ backend: "codex", model: "gpt-5.4" }),
+      expect.objectContaining({
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      }),
     );
   });
 
@@ -248,6 +353,28 @@ describe("POST /agent-runs", () => {
     expect(body.issues.length).toBeGreaterThan(0);
     expect(body.issues[0].path).toBe("prompt");
   });
+
+  it.each([
+    ["effort", "high"],
+    ["reasoning", "high"],
+    ["fast", "true"],
+    ["context", "max"],
+    ["thinking", "enabled"],
+  ])(
+    "rejects a top-level %s model parameter instead of silently dropping it",
+    async (field, value) => {
+      const startRun = vi.fn(() => ({ runId: "never" }));
+      const handlers = createAgentRunHandlers(makeDeps({ startRun }));
+
+      const res = await handlers.POST(
+        req({ backend: "codex", prompt: "p", [field]: value }),
+        params(),
+      );
+
+      expect(res.status).toBe(400);
+      expect(startRun).not.toHaveBeenCalled();
+    },
+  );
 
   it("400 when workingDirectory escapes the worktree", async () => {
     const startRun = vi.fn(() => ({ runId: "x" }));

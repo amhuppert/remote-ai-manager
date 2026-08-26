@@ -21,17 +21,26 @@ const defaultConfig: GlobalConfig = {
   defaultAgentBackend: "claude",
   agentBackends: {
     claude: {
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       timeoutMs: 3_600_000,
     },
     codex: {
-      fastMode: false,
-      model: "gpt-5.4",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       timeoutMs: null,
     },
-    cursor: { model: "composer-2.5", timeoutMs: null },
+    cursor: {
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      timeoutMs: null,
+    },
   },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,
@@ -70,17 +79,26 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   defaultAgentBackend: "codex",
   agentBackends: {
     claude: {
-      model: "sonnet",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      },
       timeoutMs: 7_200_000,
     },
     codex: {
-      fastMode: true,
-      model: "gpt-5.4-mini",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.4-mini",
+        parameters: { reasoning: "high", fast: "true" },
+      },
       timeoutMs: 5_400_000,
     },
-    cursor: { model: "composer-2.5", timeoutMs: null },
+    cursor: {
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      timeoutMs: null,
+    },
   },
   branchPrefix: "feat",
   maxTurns: 50,
@@ -104,8 +122,10 @@ const fullyConfiguredRaw: RawGlobalConfig = {
           authority: "blocking",
           agent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -119,17 +139,26 @@ const fullyConfiguredConfig: GlobalConfig = {
   defaultAgentBackend: "codex",
   agentBackends: {
     claude: {
-      model: "sonnet",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      },
       timeoutMs: 7_200_000,
     },
     codex: {
-      fastMode: true,
-      model: "gpt-5.4-mini",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.4-mini",
+        parameters: { reasoning: "high", fast: "true" },
+      },
       timeoutMs: 5_400_000,
     },
-    cursor: { model: "composer-2.5", timeoutMs: null },
+    cursor: {
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      timeoutMs: null,
+    },
   },
   branchPrefix: "feat",
   maxTurns: 50,
@@ -148,8 +177,10 @@ const fullyConfiguredConfig: GlobalConfig = {
       profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
     },
     contextValidator: {
@@ -162,8 +193,10 @@ const fullyConfiguredConfig: GlobalConfig = {
           authority: "blocking",
           agent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -183,8 +216,10 @@ const fullyConfiguredConfig: GlobalConfig = {
       enabled: false,
       secondAgent: {
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "minor",
@@ -200,9 +235,14 @@ const fullyConfiguredConfig: GlobalConfig = {
   },
   compaction: {
     backend: "claude",
-    conversationModel: "sonnet",
-    messageModel: "sonnet",
-    effort: "medium",
+    conversationModelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
+    messageModelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
     timeoutMs: 180_000,
   },
 };
@@ -212,18 +252,30 @@ const haikuConfig: GlobalConfig = {
   agentBackends: {
     ...defaultConfig.agentBackends,
     claude: {
-      model: "haiku",
+      modelSelection: { modelId: "haiku", parameters: {} },
       timeoutMs: 3_600_000,
     },
-    cursor: { model: "composer-2.5", timeoutMs: null },
+    cursor: {
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      timeoutMs: null,
+    },
   },
 };
 
 const haikuRaw: RawGlobalConfig = {
   baseDir: "/home/user/projects",
   agentBackends: {
-    claude: { model: "haiku" },
-    cursor: { model: "composer-2.5", timeoutMs: null },
+    claude: { modelSelection: { modelId: "haiku", parameters: {} } },
+    cursor: {
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      timeoutMs: null,
+    },
   },
 };
 

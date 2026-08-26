@@ -18,14 +18,18 @@ import {
   type ResolveProjectDeps,
 } from "@/lib/shared/route-resolution";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
+import { readConfig } from "@/lib/config/loader";
 
 import { getBackendCatalogEntry, listBackendCatalogEntries } from "./catalog";
 import {
   buildProjectModelOptions,
-  projectModelOptionsResponseSchema,
   type ProjectModelOptionsDeps,
 } from "./project-model-options";
-import { getConversationBackendFactory } from "./registry";
+import { projectModelOptionsResponseSchema } from "./project-model-options-schema";
+import {
+  getBackendDescriptor,
+  getConversationBackendFactory,
+} from "./registry";
 
 const logger = createLogger("agent-backends:project-model-options");
 
@@ -44,6 +48,9 @@ const defaultDeps: ProjectModelOptionsRouteDeps = {
     const resolve = factory.resolveProjectModelOptions;
     return resolve === undefined ? undefined : (input) => resolve(input);
   },
+  catalogFacet: (backend) => getBackendDescriptor(backend).modelCatalog,
+  configuredSelection: async (backend) =>
+    (await readConfig()).agentBackends[backend].modelSelection,
 };
 
 type RouteContext = { params: Promise<Record<string, string>> };
@@ -58,6 +65,17 @@ export function createProjectModelOptionsRouteHandlers(
 
     try {
       const response = await buildProjectModelOptions(project.value, deps);
+      for (const entry of response.backends) {
+        for (const diagnostic of entry.diagnostics) {
+          logger.warn("model_catalog.rejected", {
+            backend: entry.backend,
+            code: diagnostic.code,
+            ...(diagnostic.modelId === undefined
+              ? {}
+              : { modelId: diagnostic.modelId }),
+          });
+        }
+      }
       return NextResponse.json(
         projectModelOptionsResponseSchema.parse(response),
       );

@@ -43,6 +43,8 @@ import type { DocumentFeedbackPayload } from "@/lib/conversations/message-conten
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { QueueDeliveryTiming } from "@/lib/agent-backends/descriptor";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import type { ProjectModelSelectionValidation } from "@/lib/agent-backends/conversation";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("message-queue");
@@ -53,6 +55,11 @@ const logger = createLogger("message-queue");
  * conversation without a parallel implementation.
  */
 export interface QueueOperationDeps {
+  admitModelSelection(input: {
+    backend: AgentBackendId;
+    projectPath: string;
+    modelSelection: BackendModelSelection;
+  }): Promise<ProjectModelSelectionValidation>;
   getProjectDisplayName(projectPath: string): string;
   queueMessage(params: {
     projectPath: string;
@@ -61,6 +68,7 @@ export interface QueueOperationDeps {
     text?: string;
     images?: ImagePayload[];
     documentFeedback?: DocumentFeedbackPayload;
+    modelSelection?: BackendModelSelection;
     backend: AgentBackendId;
   }): Promise<{
     entry: PendingQueuedMessage;
@@ -188,6 +196,43 @@ export async function enqueueQueuedMessage(
     );
   }
 
+  let admittedModelSelection = body.modelSelection;
+  if (body.modelSelection !== undefined) {
+    const validation = await deps.admitModelSelection({
+      backend: conversation.agentBackend,
+      projectPath,
+      modelSelection: body.modelSelection,
+    });
+    if (!validation.ok) {
+      logger.warn("model_selection.rejected", {
+        backend: conversation.agentBackend,
+        modelId: validation.modelId,
+        code: validation.code,
+        ...(validation.parameterId !== undefined
+          ? { parameterId: validation.parameterId }
+          : {}),
+      });
+      return NextResponse.json(
+        {
+          error: validation.message,
+          code: validation.code,
+          modelId: validation.modelId,
+          ...(validation.parameterId !== undefined
+            ? { parameterId: validation.parameterId }
+            : {}),
+        },
+        { status: 400 },
+      );
+    }
+    admittedModelSelection = validation.modelSelection;
+    logger.debug("model_selection.resolved", {
+      backend: conversation.agentBackend,
+      modelId: admittedModelSelection.modelId,
+      parameterIds: Object.keys(admittedModelSelection.parameters).sort(),
+      sourceLayer: "queue_request",
+    });
+  }
+
   const storeSessionName = storeSessionNameFromScopeRef(scope);
   const result = await timed(
     logger,
@@ -202,6 +247,9 @@ export async function enqueueQueuedMessage(
         ...(body.images !== undefined ? { images: body.images } : {}),
         ...(body.documentFeedback
           ? { documentFeedback: body.documentFeedback }
+          : {}),
+        ...(admittedModelSelection
+          ? { modelSelection: admittedModelSelection }
           : {}),
         backend: conversation.agentBackend,
       }),

@@ -45,6 +45,7 @@ import type {
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { capabilityViewForBackend } from "./backend-capabilities";
 import { backendCapabilityViewSchema } from "./agent-call-vocabulary";
 import { dispatchConversationTurn } from "./agent-call-conversation";
@@ -59,6 +60,14 @@ import { runStructuredOutputGate } from "./structured-output-gate";
 
 const CLAUDE_CAPABILITY_VIEW = capabilityViewForBackend("claude");
 const CODEX_CAPABILITY_VIEW = capabilityViewForBackend("codex");
+const CLAUDE_MODEL_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "high" },
+};
+const CODEX_MODEL_SELECTION: BackendModelSelection = {
+  modelId: "gpt-5.2",
+  parameters: { reasoning: "high", fast: "false" },
+};
 
 describe("section 7.1 — capability view canonical identity", () => {
   it("the derived Claude view reflects every supported Claude capability dimension", () => {
@@ -162,9 +171,11 @@ describe("section 7.1 — lane continuity handles are opaque and backend-owned",
 
 describe("section 7.1 — structured-output enforcement always flows through the shared gate", () => {
   it("Codex's backend_native enforcement does not skip the shared structured-output gate on schema violations", async () => {
+    const requests: AgentTaskRequest[] = [];
     const runner: AgentTaskRunner = {
       backend: "codex",
-      async run(): Promise<AgentTaskResult> {
+      async run(request): Promise<AgentTaskResult> {
+        requests.push(request);
         return {
           backendRef: { backend: "codex", ref: "th-1" } as AgentSessionRef,
           text: "shaped",
@@ -186,6 +197,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         runner,
         capabilityView: CODEX_CAPABILITY_VIEW,
         workingDirectory: "/tmp",
+        modelSelection: CODEX_MODEL_SELECTION,
       }),
       validateStructuredOutput: validate,
     };
@@ -201,6 +213,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
     );
 
     expect(validate).toHaveBeenCalledTimes(1);
+    expect(requests[0]?.modelSelection).toEqual(CODEX_MODEL_SELECTION);
     expect(result.outcome.kind).toBe("failed");
     if (result.outcome.kind === "failed") {
       expect(result.outcome.error.failureKind).toBe("schema_validation");
@@ -212,8 +225,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CLAUDE_MODEL_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
@@ -245,6 +257,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         runtime,
         capabilityView: CLAUDE_CAPABILITY_VIEW,
         signal: new AbortController().signal,
+        modelSelection: CLAUDE_MODEL_SELECTION,
       }),
       validateStructuredOutput: validate,
     };
@@ -270,8 +283,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CLAUDE_MODEL_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
@@ -300,6 +312,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
         runtime,
         capabilityView: CLAUDE_CAPABILITY_VIEW,
         signal: new AbortController().signal,
+        modelSelection: CLAUDE_MODEL_SELECTION,
       }),
       validateStructuredOutput: validate,
     };
@@ -333,8 +346,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     const runtime: ConversationBackendRuntime = {
       backend: "codex",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CODEX_MODEL_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
@@ -369,6 +381,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
         runtime,
         capabilityView: CODEX_CAPABILITY_VIEW,
         signal: new AbortController().signal,
+        modelSelection: CODEX_MODEL_SELECTION,
       },
     );
     expect(result.outcome.kind).toBe("failed");
@@ -383,8 +396,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CLAUDE_MODEL_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
@@ -419,6 +431,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
         runtime,
         capabilityView: CLAUDE_CAPABILITY_VIEW,
         signal: new AbortController().signal,
+        modelSelection: CLAUDE_MODEL_SELECTION,
       },
     );
     expect(result.outcome.kind).toBe("failed");
@@ -457,6 +470,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
         runner,
         capabilityView: CODEX_CAPABILITY_VIEW,
         workingDirectory: "/tmp",
+        modelSelection: CODEX_MODEL_SELECTION,
       },
     );
     expect(result.outcome.kind).toBe("completed");
@@ -544,6 +558,7 @@ describe("section 7.1 — native mid-turn ask-user is observable only on backend
         runner,
         capabilityView: CODEX_CAPABILITY_VIEW,
         workingDirectory: "/tmp",
+        modelSelection: CODEX_MODEL_SELECTION,
       },
     );
     expect(result.outcome.kind).toBe("completed");
@@ -556,8 +571,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CLAUDE_MODEL_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
@@ -587,6 +601,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
         runtime,
         capabilityView: CLAUDE_CAPABILITY_VIEW,
         signal: new AbortController().signal,
+        modelSelection: CLAUDE_MODEL_SELECTION,
       },
     );
     expect(result.capabilities).toEqual(CLAUDE_CAPABILITY_VIEW);
@@ -614,6 +629,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
         runner,
         capabilityView: CODEX_CAPABILITY_VIEW,
         workingDirectory: "/tmp",
+        modelSelection: CODEX_MODEL_SELECTION,
       },
     );
     expect(result.capabilities).toEqual(CODEX_CAPABILITY_VIEW);

@@ -24,8 +24,10 @@ function liveContext(): GraphWorkflowExecutionContextDefinition {
       enabled: true,
       secondAgent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
       negotiationRounds: 5,
       autonomousResolutionThreshold: "major",

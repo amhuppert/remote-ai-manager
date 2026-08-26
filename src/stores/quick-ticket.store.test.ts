@@ -56,8 +56,7 @@ describe("quick-ticket store — open-time snapshot", () => {
         removedBundleKeys: [],
         autoStart: false,
         kickoffBackend: null,
-        kickoffModel: null,
-        kickoffReasoningEffort: null,
+        kickoffModelSelection: null,
       },
     });
   });
@@ -68,8 +67,10 @@ describe("quick-ticket store — open-time snapshot", () => {
     store.updateQuickTicketDraft({
       autoStart: true,
       kickoffBackend: "codex",
-      kickoffModel: "gpt-5.6-sol",
-      kickoffReasoningEffort: "ultra",
+      kickoffModelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "ultra", fast: "false" },
+      },
     });
     store.closeQuickTicket({ stashDraft: true });
     store.openQuickTicket({ pathname: "/projects/second" });
@@ -77,8 +78,10 @@ describe("quick-ticket store — open-time snapshot", () => {
     expect(useQuickTicketStore.getState().draft).toMatchObject({
       autoStart: true,
       kickoffBackend: "codex",
-      kickoffModel: "gpt-5.6-sol",
-      kickoffReasoningEffort: "ultra",
+      kickoffModelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "ultra", fast: "false" },
+      },
     });
   });
 

@@ -12,131 +12,33 @@ import {
   type DeliveryPlanPreviewStage,
 } from "./delivery-plan-views";
 import { specKeys } from "./query-keys";
-import {
-  actorProvenanceSchema,
-  specApprovalRowSchema,
-  specAssumptionDispositionSchema,
-  specEvidenceRowSchema,
-  specProofVerdictRowSchema,
-  specQuestionStatusSchema,
-  specRevisionElementSchema,
-  specRevisionSchema,
-  specWaiverRowSchema,
-} from "./schemas";
+import { specReferenceQueries } from "./reference-queries";
 import {
   integrityReportSchema,
   specDetailViewSchema,
   specStatusViewSchema,
-  specSummaryViewSchema,
   type SpecDetailView,
-  type SpecSummaryView,
 } from "./view-schemas";
 
-export { specStatusViewSchema };
-
-export const specQuestionViewSchema = z
-  .object({
-    id: z.string().min(1),
-    number: z.number().int().positive(),
-    handle: z.string().min(1),
-    elementId: z.string().nullable(),
-    text: z.string(),
-    status: specQuestionStatusSchema,
-    answer: z.string().nullable(),
-    answeredAt: z.string().nullable(),
-    provenance: actorProvenanceSchema.nullable(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
-export type SpecQuestionView = z.infer<typeof specQuestionViewSchema>;
-
-export const specAssumptionViewSchema = z
-  .object({
-    id: z.string().min(1),
-    number: z.number().int().positive(),
-    handle: z.string().min(1),
-    elementId: z.string().nullable(),
-    text: z.string(),
-    disposition: specAssumptionDispositionSchema,
-    disposedAt: z.string().nullable(),
-    proposedBy: actorProvenanceSchema.nullable(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
-export type SpecAssumptionView = z.infer<typeof specAssumptionViewSchema>;
-
-export { specDetailViewSchema, specSummaryViewSchema };
-export type { SpecDetailView, SpecSummaryView };
-
-const evidenceStateSchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    handle: z.string().min(1),
-    evidence: z.array(specEvidenceRowSchema),
-    verdicts: z.array(specProofVerdictRowSchema),
-    waiver: specWaiverRowSchema.nullable(),
-  })
-  .strict();
-
-export const specElementReferenceStateSchema = z
-  .object({
-    observedRevision: z.number().int().positive(),
-    observedPayloadHash: z.string().min(1).nullable(),
-    latestContainingRevision: z.number().int().positive(),
-    latestPayloadHash: z.string().min(1),
-  })
-  .strict();
-export type SpecElementReferenceState = z.infer<
-  typeof specElementReferenceStateSchema
->;
-
-export const specElementViewSchema = z
-  .object({
-    specId: z.string().min(1),
-    slug: z.string().min(1),
-    revision: specRevisionSchema,
-    handle: z.string().min(1),
-    element: specRevisionElementSchema,
-    approvals: z.array(specApprovalRowSchema),
-    evidenceState: z.array(evidenceStateSchema),
-    referenceState: specElementReferenceStateSchema.nullable(),
-  })
-  .strict();
-export type SpecElementView = z.infer<typeof specElementViewSchema>;
-
-const specQuestionElementViewSchema = z
-  .object({
-    specId: z.string().min(1),
-    slug: z.string().min(1),
-    kind: z.literal("question"),
-    handle: z.string().min(1),
-    question: specQuestionViewSchema,
-  })
-  .strict();
-
-const specAssumptionElementViewSchema = z
-  .object({
-    specId: z.string().min(1),
-    slug: z.string().min(1),
-    kind: z.literal("assumption"),
-    handle: z.string().min(1),
-    assumption: specAssumptionViewSchema,
-  })
-  .strict();
-
-// The elements/<handle> endpoint serves revision elements and the
-// revision-independent Q/A records through one address space; every
-// bare-handle consumer parses this union.
-export const specElementGetResponseSchema = z.union([
+export { specDetailViewSchema, specStatusViewSchema };
+export {
+  specElementGetResponseSchema,
+  specElementReferenceStateSchema,
   specElementViewSchema,
-  specQuestionElementViewSchema,
-  specAssumptionElementViewSchema,
-]);
-export type SpecElementGetResponse = z.infer<
-  typeof specElementGetResponseSchema
->;
+  specInventoryViewSchema,
+  specSummaryViewSchema,
+} from "./reference-view-schemas";
+export type { SpecDetailView };
+export type {
+  SpecAssumptionView,
+  SpecElementGetResponse,
+  SpecElementReferenceState,
+  SpecElementView,
+  SpecInventoryView,
+  SpecQuestionView,
+  SpecSummaryView,
+} from "./reference-view-schemas";
+export { useSpecElementQuery, useSpecSummaryQuery } from "./reference-queries";
 
 const lintFindingSchema = z
   .object({
@@ -166,11 +68,6 @@ const specSearchResultSchema = z
 export const specSearchViewSchema = z
   .object({ query: z.string(), results: z.array(specSearchResultSchema) })
   .strict();
-
-export const specInventoryViewSchema = z
-  .object({ specs: z.array(specSummaryViewSchema) })
-  .strict();
-export type SpecInventoryView = z.infer<typeof specInventoryViewSchema>;
 
 const linkedTaskReadThroughSchema = z
   .object({
@@ -210,17 +107,7 @@ function specBasePath(projectName: string, slug: string): string {
 }
 
 export const specQueries = {
-  inventory: (projectName: string) =>
-    queryOptions({
-      queryKey: specKeys.list(projectName),
-      queryFn: ({ signal }) =>
-        apiFetch(
-          `/api/specs/${encodeURIComponent(projectName)}`,
-          specInventoryViewSchema,
-          { signal },
-        ),
-      refetchOnReconnect: false,
-    }),
+  inventory: specReferenceQueries.inventory,
   detail: (projectName: string, slug: string) =>
     queryOptions({
       queryKey: specKeys.detail(projectName, slug),
@@ -230,17 +117,7 @@ export const specQueries = {
         }),
       refetchOnReconnect: false,
     }),
-  summary: (projectName: string, slug: string) =>
-    queryOptions({
-      queryKey: specKeys.summary(projectName, slug),
-      queryFn: ({ signal }) =>
-        apiFetch(
-          `${specBasePath(projectName, slug)}/summary`,
-          specSummaryViewSchema,
-          { signal },
-        ),
-      refetchOnReconnect: false,
-    }),
+  summary: specReferenceQueries.summary,
   status: (projectName: string, slug: string) =>
     queryOptions({
       queryKey: specKeys.status(projectName, slug),
@@ -263,38 +140,7 @@ export const specQueries = {
         ),
       refetchOnReconnect: false,
     }),
-  element: (
-    projectName: string,
-    slug: string,
-    handle: string,
-    observedRevision?: number,
-    targetRevisionId?: string,
-  ) =>
-    queryOptions({
-      queryKey: specKeys.element(
-        projectName,
-        slug,
-        handle,
-        observedRevision,
-        targetRevisionId,
-      ),
-      queryFn: ({ signal }) => {
-        const params = new URLSearchParams();
-        if (observedRevision !== undefined) {
-          params.set("observedRevision", String(observedRevision));
-        }
-        if (targetRevisionId !== undefined) {
-          params.set("revisionId", targetRevisionId);
-        }
-        const query = params.size === 0 ? "" : `?${params.toString()}`;
-        return apiFetch(
-          `${specBasePath(projectName, slug)}/elements/${encodeURIComponent(handle)}${query}`,
-          specElementGetResponseSchema,
-          { signal },
-        );
-      },
-      refetchOnReconnect: false,
-    }),
+  element: specReferenceQueries.element,
   lint: (projectName: string, slug: string) =>
     queryOptions({
       queryKey: specKeys.lint(projectName, slug),
@@ -440,10 +286,6 @@ export function useSpecDetailQuery(projectName: string, slug: string) {
   return useQuery(specQueries.detail(projectName, slug));
 }
 
-export function useSpecSummaryQuery(projectName: string, slug: string) {
-  return useQuery(specQueries.summary(projectName, slug));
-}
-
 export function useSpecStatusQuery(projectName: string, slug: string) {
   return useQuery(specQueries.status(projectName, slug));
 }
@@ -453,24 +295,6 @@ export function useTicketSpecReadThroughQuery(
   number: number,
 ) {
   return useQuery(specQueries.ticketReadThrough(projectName, number));
-}
-
-export function useSpecElementQuery(
-  projectName: string,
-  slug: string,
-  handle: string,
-  observedRevision?: number,
-  targetRevisionId?: string,
-) {
-  return useQuery(
-    specQueries.element(
-      projectName,
-      slug,
-      handle,
-      observedRevision,
-      targetRevisionId,
-    ),
-  );
 }
 
 export function useSpecLintQuery(projectName: string, slug: string) {

@@ -242,6 +242,9 @@ async function runQueuedCommand(
       conversationId,
       parsed: command,
       rawText: promptText,
+      ...(batch.modelSelection !== undefined
+        ? { modelSelection: batch.modelSelection }
+        : {}),
     });
     const ticketFallback = ticketCommandFallbackMessage(outcome);
     if (ticketFallback !== null) {
@@ -364,6 +367,7 @@ export async function drainConversationQueue(
       promptText,
       ...(images.length ? { images } : {}),
       ...(documentFeedback ? { documentFeedback } : {}),
+      ...(batch.modelSelection ? { modelSelection: batch.modelSelection } : {}),
       streamId: `drain-${batch.deliveryAttemptId}`,
       queuedDelivery: {
         messageIds: batch.messageIds,

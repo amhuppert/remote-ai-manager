@@ -179,7 +179,13 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
           ? {
               ...context,
               implementer: makeImplementerAssignment(
-                { backend: "claude", model: "opus", reasoningEffort: "high" },
+                {
+                  backend: "claude",
+                  modelSelection: {
+                    modelId: "opus",
+                    parameters: { effort: "high" },
+                  },
+                },
                 // The authored ref is the subject; the cast keeps the fixture
                 // free of a tier-typed helper it does not otherwise need.
                 { profile: profile as never },
@@ -257,8 +263,10 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: true },
               },
@@ -269,8 +277,10 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: true },
               },

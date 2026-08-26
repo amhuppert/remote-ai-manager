@@ -22,6 +22,7 @@ import {
   collaborationStopResponseSchema,
 } from "@/lib/collaboration/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
@@ -660,9 +661,7 @@ export function useCollaborationStartMutation(
       autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
       conversationId: string;
       backend?: AgentBackendId;
-      modelId?: string;
-      effort?: string;
-      codexFastMode?: boolean;
+      modelSelection?: BackendModelSelection;
       agentTwo?: import("@/lib/workflows/collaboration/types").CollaborationAgentTwoRequest;
       images?: ImagePayload[];
     }) =>

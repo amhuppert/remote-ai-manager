@@ -30,7 +30,9 @@ import { resolveInsideWorktree } from "@/lib/sessions/reference-documents-route-
 import type { ApiError } from "@/lib/api/errors";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import type { ProjectModelSelectionValidation } from "@/lib/agent-backends/conversation";
+import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import {
   cancelAgentRun,
   createDefaultAgentRunServiceDeps,
@@ -54,8 +56,7 @@ interface StartRunInput {
   /** Where the agent runs; defaults to the worktree, may be a subdirectory of it. */
   workingDirectory: string;
   timeoutMs: number;
-  model?: string;
-  reasoningEffort?: EffortLevel;
+  modelSelection: BackendModelSelection;
 }
 
 export interface AgentRunRouteDeps {
@@ -66,6 +67,12 @@ export interface AgentRunRouteDeps {
     sessionName: string,
   ): Promise<{ sessionName: string; worktreePath: string } | null>;
   readConfig(): Promise<GlobalConfig>;
+  admitModelSelection(input: {
+    backend: AgentBackendId;
+    projectPath: string;
+    modelSelection: BackendModelSelection;
+    config: GlobalConfig;
+  }): Promise<ProjectModelSelectionValidation>;
   startRun(input: StartRunInput): { runId: string };
   getRun(runId: string, owner: RunOwner): AgentRunStatusResponse | null;
   cancelRun(runId: string, owner: RunOwner): CancelResult;
@@ -183,12 +190,49 @@ export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
     const defaults = resolveAgentBackendTurnDefaults({
       backend: parsed.data.backend,
       config,
-      explicit: {
-        modelId: parsed.data.model,
-        reasoningEffort: parsed.data.reasoning_effort,
-      },
+      explicit: { modelSelection: parsed.data.modelSelection },
     });
     const timeoutMs = parsed.data.timeoutMs ?? defaults.timeoutMs;
+    const admission = await deps.admitModelSelection({
+      backend: parsed.data.backend,
+      projectPath: resolved.projectPath,
+      modelSelection: defaults.modelSelection,
+      config,
+    });
+    if (!admission.ok) {
+      log.warn("model_selection.rejected", {
+        backend: parsed.data.backend,
+        projectName: resolved.projectName,
+        sessionName: resolved.sessionName,
+        modelId: admission.modelId,
+        code: admission.code,
+        ...(admission.parameterId !== undefined
+          ? { parameterId: admission.parameterId }
+          : {}),
+      });
+      return NextResponse.json(
+        {
+          error: admission.message,
+          code: admission.code,
+          modelId: admission.modelId,
+          ...(admission.parameterId !== undefined
+            ? { parameterId: admission.parameterId }
+            : {}),
+        },
+        { status: 400 },
+      );
+    }
+    log.debug("model_selection.resolved", {
+      backend: parsed.data.backend,
+      projectName: resolved.projectName,
+      sessionName: resolved.sessionName,
+      modelId: admission.modelSelection.modelId,
+      parameterIds: Object.keys(admission.modelSelection.parameters).sort(),
+      sourceLayer:
+        parsed.data.modelSelection === undefined
+          ? "configured_default"
+          : "agent_run_request",
+    });
 
     const { runId } = deps.startRun({
       backend: parsed.data.backend,
@@ -199,10 +243,7 @@ export function createAgentRunHandlers(deps: AgentRunRouteDeps) {
       worktreePath: resolved.worktreePath,
       workingDirectory,
       timeoutMs,
-      model: defaults.modelId,
-      ...(defaults.reasoningEffort !== undefined
-        ? { reasoningEffort: defaults.reasoningEffort }
-        : {}),
+      modelSelection: admission.modelSelection,
     });
 
     log.info("agent-run.created", {
@@ -283,10 +324,7 @@ function defaultStartRun(input: StartRunInput): { runId: string } {
       worktreePath: input.worktreePath,
       workingDirectory: input.workingDirectory,
       timeoutMs: input.timeoutMs,
-      ...(input.model !== undefined ? { model: input.model } : {}),
-      ...(input.reasoningEffort !== undefined
-        ? { reasoningEffort: input.reasoningEffort }
-        : {}),
+      modelSelection: input.modelSelection,
     },
     serviceDeps,
   );
@@ -297,6 +335,7 @@ const defaultHandlers = createAgentRunHandlers({
   resolveProjectPath,
   getSession,
   readConfig,
+  admitModelSelection: admitConfiguredModelSelection,
   startRun: defaultStartRun,
   getRun: getAgentRun,
   cancelRun: cancelAgentRun,

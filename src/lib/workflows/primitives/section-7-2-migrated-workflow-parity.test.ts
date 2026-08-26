@@ -56,6 +56,7 @@ import type {
   AgentTaskResult,
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationStatusEvent } from "@/lib/conversations/schemas";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
@@ -65,6 +66,14 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 
 const CLAUDE_CAPABILITY_VIEW = capabilityViewForBackend("claude");
 const CODEX_CAPABILITY_VIEW = capabilityViewForBackend("codex");
+const CLAUDE_MODEL_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "high" },
+};
+const CODEX_MODEL_SELECTION: BackendModelSelection = {
+  modelId: "gpt-5.2",
+  parameters: { reasoning: "high", fast: "false" },
+};
 
 function captureWire() {
   const wire = vi.fn<(event: SSEEvent) => void>();
@@ -310,6 +319,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runner,
             capabilityView: CLAUDE_CAPABILITY_VIEW,
             workingDirectory: workingDir,
+            modelSelection: CLAUDE_MODEL_SELECTION,
             defaultTimeoutMs: 1_000,
           }),
         },
@@ -334,6 +344,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runner,
             capabilityView: CODEX_CAPABILITY_VIEW,
             workingDirectory: workingDir,
+            modelSelection: CODEX_MODEL_SELECTION,
           }),
         },
       );
@@ -368,6 +379,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runner,
             capabilityView: CLAUDE_CAPABILITY_VIEW,
             workingDirectory: workingDir,
+            modelSelection: CLAUDE_MODEL_SELECTION,
           }),
           validateStructuredOutput,
         },
@@ -396,8 +408,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           portableMcpBetweenTurns: true,
           contextWindowMetrics: true,
         },
-        modelId: undefined,
-        reasoningEffort: undefined,
+        modelSelection: CLAUDE_MODEL_SELECTION,
         outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
@@ -432,6 +443,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runtime,
             capabilityView: CLAUDE_CAPABILITY_VIEW,
             signal: new AbortController().signal,
+            modelSelection: CLAUDE_MODEL_SELECTION,
           }),
           validateStructuredOutput,
         },
@@ -457,8 +469,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           portableMcpBetweenTurns: false,
           contextWindowMetrics: false,
         },
-        modelId: undefined,
-        reasoningEffort: undefined,
+        modelSelection: CODEX_MODEL_SELECTION,
         outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
@@ -495,6 +506,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runtime,
             capabilityView: CODEX_CAPABILITY_VIEW,
             signal: new AbortController().signal,
+            modelSelection: CODEX_MODEL_SELECTION,
           }),
           // No validateStructuredOutput intentionally.
         },
@@ -705,8 +717,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
           portableMcpBetweenTurns: true,
           contextWindowMetrics: true,
         },
-        modelId: undefined,
-        reasoningEffort: undefined,
+        modelSelection: CLAUDE_MODEL_SELECTION,
         outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
@@ -731,6 +742,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runtime,
             capabilityView: CLAUDE_CAPABILITY_VIEW,
             signal: new AbortController().signal,
+            modelSelection: CLAUDE_MODEL_SELECTION,
           }),
         },
       );
@@ -745,15 +757,19 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
     });
 
     it("task_run preserves Codex capability view including unsupported context metrics flag", async () => {
+      const requests: AgentTaskRequest[] = [];
       const runner: AgentTaskRunner = {
         backend: "codex",
-        run: vi.fn().mockResolvedValue({
-          backendRef: { backend: "codex", threadId: "t1" },
-          text: "ok",
-          structuredOutput: undefined,
-          usage: null,
-          error: null,
-          timedOut: false,
+        run: vi.fn(async (request: AgentTaskRequest) => {
+          requests.push(request);
+          return {
+            backendRef: { backend: "codex", threadId: "t1" },
+            text: "ok",
+            structuredOutput: undefined,
+            usage: null,
+            error: null,
+            timedOut: false,
+          };
         }),
       } as unknown as AgentTaskRunner;
 
@@ -764,6 +780,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
             runner,
             capabilityView: CODEX_CAPABILITY_VIEW,
             workingDirectory: workingDir,
+            modelSelection: CODEX_MODEL_SELECTION,
           }),
         },
       );
@@ -771,6 +788,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       expect(result.capabilities.contextMetricsAvailable).toBe(false);
       expect(result.capabilities.nativeMidTurnAskUser).toBe(false);
       expect(result.capabilities.continuationStrength).toBe("synthetic_thread");
+      expect(requests[0]?.modelSelection).toEqual(CODEX_MODEL_SELECTION);
     });
   });
 });

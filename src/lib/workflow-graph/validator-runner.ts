@@ -77,6 +77,7 @@ import type {
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { LaneConversationPendingState } from "./user-input-gate";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   GraphWorkflowContextValidatorInput,
   RenderRoundCommonSectionsInput,
@@ -1022,8 +1023,7 @@ interface ValidatorTaskInvocation {
   prompt: string;
   backend: AgentBackendId;
   workingDirectory: string;
-  modelId: string | undefined;
-  reasoningEffort: string | undefined;
+  modelSelection: BackendModelSelection;
   timeoutMs: number;
   resumeRef: AgentSessionRef | null | undefined;
   laneRef: { workflowId: string; laneId: GraphWorkflowLaneKind };
@@ -1167,8 +1167,7 @@ interface RunValidatorTurnInput {
   prompt: string;
   systemInstructions: string;
   profileSnapshot: AgentProfileSnapshot;
-  modelId: string | undefined;
-  reasoningEffort: string | undefined;
+  modelSelection: BackendModelSelection;
   contextLimitTokens: number | undefined;
   allowedTaskIds: string[];
   /** The context's criterion-record ids, mirroring `allowedTaskIds`. */
@@ -1255,12 +1254,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         schema: invocation.outputSchema,
       },
       timeoutMs: invocation.timeoutMs,
-      ...(invocation.modelId !== undefined
-        ? { modelId: invocation.modelId }
-        : {}),
-      ...(invocation.reasoningEffort !== undefined
-        ? { effort: invocation.reasoningEffort }
-        : {}),
+      modelSelection: invocation.modelSelection,
       actorInput,
       origin: {
         source: "workflow",
@@ -1386,8 +1380,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       prompt,
       systemInstructions,
       profileSnapshot,
-      modelId,
-      reasoningEffort,
+      modelSelection,
       contextLimitTokens,
       allowedTaskIds,
       allowedCriterionIds,
@@ -1443,8 +1436,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         systemInstructions,
         backend,
         workingDirectory: worktreePath,
-        modelId,
-        reasoningEffort,
+        modelSelection,
         timeoutMs,
         resumeRef: undefined,
         laneRef: { workflowId: execution.id, laneId: lane },
@@ -1595,8 +1587,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       systemInstructions,
       backend,
       workingDirectory: worktreePath,
-      modelId,
-      reasoningEffort,
+      modelSelection,
       timeoutMs,
       resumeRef,
       laneRef: { workflowId: execution.id, laneId: lane },
@@ -2026,8 +2017,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const validatorPlan = {
       strategy: input.validator.strategy,
       backend: input.validator.agent.backend,
-      modelId: input.validator.agent.model,
-      reasoningEffort: input.validator.agent.reasoningEffort,
+      modelSelection: input.validator.agent.modelSelection,
     };
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
     const allowedTaskIds = getContextTaskIds(index, input.context.id);
@@ -2181,8 +2171,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         prompt,
         systemInstructions,
         profileSnapshot: input.validator.profileSnapshot,
-        modelId: validatorPlan.modelId,
-        reasoningEffort: validatorPlan.reasoningEffort,
+        modelSelection: validatorPlan.modelSelection,
         contextLimitTokens,
         allowedTaskIds,
         allowedCriterionIds,

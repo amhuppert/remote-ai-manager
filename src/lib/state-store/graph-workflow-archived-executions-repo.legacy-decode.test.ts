@@ -146,12 +146,24 @@ describe("archived execution legacy decode floor", () => {
     expect(contexts[0]?.implementer).toMatchObject({
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+      },
     });
     expect(contexts[1]?.implementer).toMatchObject({
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agent: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     });
   });
 
@@ -208,8 +220,10 @@ describe("archived execution legacy decode floor", () => {
           strategy: "conversation",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true, contextLimitTokens: 120000 },
         },
@@ -227,8 +241,10 @@ describe("archived execution legacy decode floor", () => {
           strategy: "task",
           agent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
           continuity: { enabled: false },
         },
@@ -262,8 +278,10 @@ describe("archived execution legacy decode floor", () => {
         .assignments[0]?.agent,
     ).toEqual({
       backend: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "xhigh",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "xhigh", fast: "false" },
+      },
     });
   });
 
@@ -315,8 +333,10 @@ describe("archived execution legacy decode floor", () => {
     expect(cohort?.assignments).toHaveLength(1);
     expect(cohort?.assignments[0]?.agent).toEqual({
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     });
   });
 
@@ -454,7 +474,13 @@ describe("archived execution legacy decode floor", () => {
     const CURRENT_IMPLEMENTER = {
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+      },
     };
     const CURRENT_COHORT = {
       enabled: true,
@@ -465,8 +491,10 @@ describe("archived execution legacy decode floor", () => {
           strategy: "conversation",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true },
         },

@@ -129,8 +129,20 @@ describe("CollabPassage rendering", () => {
         workflowId="wf-1"
         primary="claude"
         agents={{
-          agent_one: { backend: "claude", model: "fable", effort: "max" },
-          agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
+          agent_one: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "fable",
+              parameters: { effort: "max" },
+            },
+          },
+          agent_two: {
+            backend: "codex",
+            modelSelection: {
+              modelId: "gpt-5.5",
+              parameters: { fast: "false", reasoning: "high" },
+            },
+          },
         }}
         status="drafting"
         artifacts={[makeAgentOneInitialDraft(), makeAgentTwoInitialDraft()]}
@@ -158,8 +170,20 @@ describe("CollabPassage rendering", () => {
         workflowId="wf-1"
         primary="claude"
         agents={{
-          agent_one: { backend: "claude", model: "fable", effort: "max" },
-          agent_two: { backend: "claude", model: "opus", effort: "high" },
+          agent_one: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "fable",
+              parameters: { effort: "max" },
+            },
+          },
+          agent_two: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+          },
         }}
         status="drafting"
         artifacts={[makeAgentOneInitialDraft(), makeAgentTwoInitialDraft()]}

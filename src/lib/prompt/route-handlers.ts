@@ -29,7 +29,7 @@ import {
 import {
   executePromptStream as defaultExecutePromptStream,
   BackendMismatchError,
-  ModelEffortValidationError,
+  ModelSelectionValidationError,
   CollabBriefRequiredError,
   CollabDispatcherUnavailableError,
 } from "@/lib/prompt/sdk-driver";
@@ -54,7 +54,7 @@ import {
   getDefaultCollaborationManager,
   type CollaborationManager,
   CollaborationConversationNotFoundError,
-  CollaborationModelEffortValidationError,
+  CollaborationModelSelectionValidationError,
   CollaborationProfileResolutionError,
   CollaborationSessionNotFoundError,
   CollaborationStartConflictError,
@@ -243,12 +243,10 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             body.prompt.trim(),
             emit,
             undefined,
-            body.modelId,
+            body.modelSelection,
             body.images,
             {
-              effort: body.effort,
               backend: body.backend,
-              codexFastMode: body.codexFastMode,
               ...(body.documentFeedback
                 ? { documentFeedback: body.documentFeedback }
                 : {}),
@@ -289,8 +287,15 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             emit("done", {});
             return;
           }
-          if (err instanceof ModelEffortValidationError) {
-            emit("error", { message: err.message, code: "VALIDATION_ERROR" });
+          if (err instanceof ModelSelectionValidationError) {
+            emit("error", {
+              message: err.message,
+              code: err.code,
+              modelId: err.modelId,
+              ...(err.parameterId !== undefined
+                ? { parameterId: err.parameterId }
+                : {}),
+            });
             emit("done", {});
             return;
           }
@@ -433,10 +438,8 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
           autonomousResolutionThreshold:
             body.collab?.autonomousResolutionThreshold ??
             DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
-          ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
-          ...(body.effort !== undefined ? { effort: body.effort } : {}),
-          ...(body.codexFastMode !== undefined
-            ? { codexFastMode: body.codexFastMode }
+          ...(body.modelSelection !== undefined
+            ? { modelSelection: body.modelSelection }
             : {}),
           ...(body.collab?.agentTwo !== undefined
             ? { agentTwo: body.collab.agentTwo }
@@ -480,7 +483,7 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             { status: 409 },
           );
         }
-        if (err instanceof CollaborationModelEffortValidationError) {
+        if (err instanceof CollaborationModelSelectionValidationError) {
           return NextResponse.json(
             {
               error: err.message,
@@ -547,12 +550,10 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             body.prompt.trim(),
             emit,
             conversationId,
-            body.modelId,
+            body.modelSelection,
             body.images,
             {
-              effort: body.effort,
               backend: body.backend,
-              codexFastMode: body.codexFastMode,
               onAccepted: async () => {
                 await deps.clearConversationPendingPromptTextIfMatches(
                   projectPath,
@@ -572,8 +573,15 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             emit("done", {});
             return;
           }
-          if (err instanceof ModelEffortValidationError) {
-            emit("error", { message: err.message, code: "VALIDATION_ERROR" });
+          if (err instanceof ModelSelectionValidationError) {
+            emit("error", {
+              message: err.message,
+              code: err.code,
+              modelId: err.modelId,
+              ...(err.parameterId !== undefined
+                ? { parameterId: err.parameterId }
+                : {}),
+            });
             emit("done", {});
             return;
           }

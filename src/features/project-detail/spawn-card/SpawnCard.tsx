@@ -5,7 +5,10 @@ import { cn } from "@/lib/ui/cn";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { StatusDot, type StatusDotTone } from "@/components/ui/StatusDot";
-import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
+import {
+  useBranchPrefixQuery,
+  useSessionsQuery,
+} from "@/lib/sessions/list-queries";
 import type { ProposalValidation } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { DerivedSessionStatus } from "@/lib/sessions/schemas";
@@ -233,6 +236,7 @@ export function ValidSpawnCard({
             targetOptions={targetOptions}
             expanded={!!card.expanded[i]}
             onFieldChange={card.updateField}
+            onModelSelectionChange={card.setModelSelection}
             onIncludedChange={card.setIncluded}
             onImagesChange={card.setImages}
             onDocumentChange={card.setPromptDocument}

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import { CURSOR_CANCEL_SETTLE_TIMEOUT_MS } from "../worker/bounds";
 import { decodeNativePayload } from "../worker/ipc";
 import type { CredentialSecret } from "./credential-scan";
@@ -10,6 +9,7 @@ import {
 } from "./evidence";
 import { captureProcessBoundaries, openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -51,12 +51,12 @@ function nativeText(
 async function attached(sessionName: string): Promise<LiveConversation> {
   const live = await harness.startReady({
     sessionName,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
   });
   live.attach({
     mode: "create",
     ref: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
   });
   expect(
@@ -93,7 +93,7 @@ describe("cancelling a Cursor generation", () => {
         "Write a detailed 2000-word essay on the history of the bicycle. Use no tools; just write prose.",
       images: [],
       structuredOutputInstruction: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
       forceExpirePersistedRun: false,
     });
@@ -192,7 +192,7 @@ describe("cancelling a Cursor shell tool", () => {
         `bash -c 'echo ${marker}; sleep 100000'`,
       images: [],
       structuredOutputInstruction: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
       forceExpirePersistedRun: false,
     });
@@ -318,7 +318,7 @@ describe("cancellation leaves no assistant output attributed to a cancelled run"
         "Write a detailed 2000-word essay on the history of the sailing ship. Use no tools.",
       images: [],
       structuredOutputInstruction: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
       forceExpirePersistedRun: false,
     });

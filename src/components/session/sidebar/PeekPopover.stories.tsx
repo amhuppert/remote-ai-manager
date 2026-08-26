@@ -7,13 +7,19 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
-import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 
 const now = new Date("2026-05-15T12:42:00.000Z");
+const CLAUDE_CATALOG = getStaticBackendModelCatalog("claude");
+const CODEX_CATALOG = getStaticBackendModelCatalog("codex");
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "opus", effort: "high" },
-  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: defaultSelectionForModel(CLAUDE_CATALOG, "opus"),
+  codex: defaultSelectionForModel(CODEX_CATALOG, "gpt-5.4"),
+  cursor: { modelId: "composer-2.5", parameters: {} },
 };
 const minutesAgo = (minutes: number) =>
   new Date(now.getTime() - minutes * 60_000).toISOString();

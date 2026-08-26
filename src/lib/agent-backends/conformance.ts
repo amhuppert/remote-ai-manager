@@ -123,12 +123,14 @@ export interface BackendConformanceHarness {
 
 function buildTurnInput(
   promptText: string,
+  modelSelection: ConversationBackendRuntime["modelSelection"],
   signal?: AbortSignal,
 ): ConversationBackendTurnInput {
   return {
     promptText,
     imageRefs: [],
     sessionInstructions: [],
+    modelSelection,
     autonomous: false,
     signal: signal ?? new AbortController().signal,
     onEvent: () => {},
@@ -174,7 +176,7 @@ export async function checkContextMetricsCoherence(
   const runtime = await createRuntimeFor(facet, harness);
   try {
     const result = await runtime.sendTurn(
-      buildTurnInput("conformance metrics turn"),
+      buildTurnInput("conformance metrics turn", runtime.modelSelection),
     );
     expect(result.failure).toBeNull();
     if (facet.capabilities.contextWindowMetrics) {
@@ -212,7 +214,9 @@ export async function checkQueueCoherence(
 
       let turnResolved = false;
       const turnPromise = runtime
-        .sendTurn(buildTurnInput(harness.queueHoldPromptText))
+        .sendTurn(
+          buildTurnInput(harness.queueHoldPromptText, runtime.modelSelection),
+        )
         .then((result) => {
           turnResolved = true;
           return result;
@@ -273,7 +277,10 @@ export async function checkExternalTurnCoherence(
       expect(completedIdx).toBeGreaterThan(startedIdx);
     } else {
       const result = await runtime.sendTurn(
-        buildTurnInput("conformance external-turn negative"),
+        buildTurnInput(
+          "conformance external-turn negative",
+          runtime.modelSelection,
+        ),
       );
       expect(result.failure).toBeNull();
       expect(externalEvents).toEqual([]);
@@ -303,7 +310,10 @@ export async function checkConversationStructuredOutputForwarding(
   });
   try {
     const result = await runtime.sendTurn(
-      buildTurnInput("conformance structured-output turn"),
+      buildTurnInput(
+        "conformance structured-output turn",
+        runtime.modelSelection,
+      ),
     );
     expect(result.failure).toBeNull();
     expect(result.structuredOutput).toEqual(drive.expected);
@@ -339,7 +349,10 @@ export async function checkConversationStructuredOutputPostValidation(
   });
   try {
     const result = await runtime.sendTurn(
-      buildTurnInput("conformance structured-output turn"),
+      buildTurnInput(
+        "conformance structured-output turn",
+        runtime.modelSelection,
+      ),
     );
     expect(result.failure).toBeNull();
     expect(drive.readForwardedSchema()).toBeUndefined();
@@ -364,7 +377,11 @@ export async function checkCancellation(
   const controller = new AbortController();
   const runtime = await createRuntimeFor(facet, harness);
   const turnPromise = runtime.sendTurn(
-    buildTurnInput(harness.hangingPromptText, controller.signal),
+    buildTurnInput(
+      harness.hangingPromptText,
+      runtime.modelSelection,
+      controller.signal,
+    ),
   );
   // Let the dispatch reach the provider port before tearing it down.
   await sleep(10);
@@ -414,7 +431,11 @@ export async function checkApplyTimingBehavior(
   const controller = new AbortController();
   const busyRuntime = await createRuntimeFor(facet, harness);
   const turnPromise = busyRuntime.sendTurn(
-    buildTurnInput(harness.hangingPromptText, controller.signal),
+    buildTurnInput(
+      harness.hangingPromptText,
+      busyRuntime.modelSelection,
+      controller.signal,
+    ),
   );
   try {
     await sleep(10);
@@ -604,8 +625,10 @@ export function describeBackendConformance(
       const stubRuntime = {
         backend: descriptor.id,
         status: "alive" as const,
-        modelId: undefined,
-        reasoningEffort: undefined,
+        modelSelection: {
+          modelId: descriptor.metadata.defaultModelId,
+          parameters: {},
+        },
         outputFormat: undefined,
         alignmentVersion: null,
         async sendTurn(): Promise<never> {

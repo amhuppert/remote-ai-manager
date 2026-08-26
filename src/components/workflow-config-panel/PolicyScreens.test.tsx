@@ -190,10 +190,10 @@ describe("Plan repair screen", () => {
     // catalog's long label rather than its short selector id.
     expect(row.textContent).toContain("Opus 5");
     expect(row.textContent).toContain(
-      PLAN_REPAIR_DEFAULT_AGENT.reasoningEffort,
+      `effort=${PLAN_REPAIR_DEFAULT_AGENT.modelSelection.parameters.effort}`,
     );
     expect(
-      screen.queryByTestId("config-row-planrepair-agent-model"),
+      screen.queryByTestId("config-row-planrepair-agent-model-selection"),
     ).toBeNull();
   });
 
@@ -232,7 +232,7 @@ describe("Plan repair screen", () => {
     renderScreen(<PlanRepairScreen editor={editor} />);
 
     expect(
-      screen.getByTestId("config-row-planrepair-agent-model"),
+      screen.getByTestId("config-row-planrepair-agent-model-selection"),
     ).toBeInTheDocument();
 
     fireEvent.click(

@@ -127,8 +127,7 @@ export function createPlanRepairAgentRunner(
         schema: PLAN_REPAIR_VERDICT_JSON_SCHEMA,
       },
       timeoutMs: invocation.timeoutMs,
-      modelId: invocation.agent.model,
-      effort: invocation.agent.reasoningEffort,
+      modelSelection: invocation.agent.modelSelection,
       actorInput: buildRepairActorInput(invocation, projectName),
       origin: {
         source: "workflow",

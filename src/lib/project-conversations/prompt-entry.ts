@@ -19,7 +19,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { publishEvent } from "@/lib/events/publication";
 import { resolveProjectExecutionTarget } from "./execution-target";
 import { createProjectConversationService } from "./service";
@@ -88,11 +88,9 @@ export interface ExecuteProjectPromptStreamInput {
   conversationId?: string;
   promptText: string;
   emit: (event: string, data: unknown) => void;
-  modelId?: string;
+  modelSelection?: BackendModelSelection;
   images?: ImagePayload[];
   backend?: AgentBackendId;
-  effort?: string;
-  codexFastMode?: boolean;
   /**
    * Opaque token the posting client generated for this submission. Recorded on
    * the conversation this entry creates, so the client can identify its own
@@ -260,16 +258,11 @@ export function createProjectPromptExecutor(
       input.promptText,
       input.emit,
       conversation.id,
-      input.modelId,
+      input.modelSelection,
       input.images,
       {
         executionTarget,
         actorInput,
-        ...(input.effort !== undefined ? { effort: input.effort } : {}),
-        ...(backendSupportsFastMode(conversation.agentBackend) &&
-        input.codexFastMode !== undefined
-          ? { codexFastMode: input.codexFastMode }
-          : {}),
       },
     );
   }

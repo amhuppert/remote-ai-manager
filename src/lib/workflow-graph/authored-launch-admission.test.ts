@@ -1,16 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  AgentBackendsConfig,
   GlobalConfig,
   PerRepoConfig,
   WorkflowDefaults,
 } from "@/lib/config/schemas";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import type { BackendModelCatalogFacet } from "@/lib/agent-backends/descriptor";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { unreviewedPlanReviewLookup } from "@/lib/shared/testing/graph-plan-review-fixture";
 import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import {
   createWorkflowDefinitionRecord,
   makeImplementerAssignment,
+  TEST_AGENT_BACKENDS_CONFIG,
 } from "@/lib/workflow-graph/test-fixtures";
 import type {
   AssignmentDocumentScope,
@@ -37,6 +42,8 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 const maximalLaunch = createMaximalAuthoredWorkflowLaunchFixture;
+
+const agentBackends = TEST_AGENT_BACKENDS_CONFIG;
 
 function references(
   expectedScope: AssignmentDocumentScope,
@@ -72,6 +79,219 @@ function references(
 }
 
 describe("admitAuthoredWorkflowLaunch", () => {
+  it("refuses an arbitrary Codex selection that is not the globally configured custom model", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const launch = maximalLaunch();
+    launch.definition.workflowConfig.implementer = makeImplementerAssignment({
+      backend: "codex",
+      modelSelection: {
+        modelId: "arbitrary-codex-model",
+        parameters: { fast: "false", reasoning: "high" },
+      },
+    });
+
+    const result = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "project-create",
+      documentScope: scope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      agentBackends,
+      assignmentReferences: references(scope),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "workflow_model_selection_invalid",
+      issues: [
+        expect.objectContaining({
+          path: "definition.workflowConfig.implementer.agent.modelSelection.modelId",
+          code: "unknown_model",
+          modelId: "arbitrary-codex-model",
+          message: expect.stringContaining("arbitrary-codex-model"),
+        }),
+      ],
+    });
+  });
+
+  it("accepts the one globally configured custom Codex model", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const customSelection = {
+      modelId: "company-codex",
+      parameters: { fast: "false", reasoning: "high" },
+    };
+    const configuredBackends: AgentBackendsConfig = {
+      ...agentBackends,
+      codex: {
+        ...agentBackends.codex,
+        modelSelection: customSelection,
+      },
+    };
+    const launch = maximalLaunch();
+    launch.definition.workflowConfig.planRepair = {
+      enabled: true,
+      maxAttemptsPerContext: 2,
+      agent: { backend: "codex", modelSelection: customSelection },
+    };
+
+    await expect(
+      admitAuthoredWorkflowLaunch(launch, {
+        caller: "project-create",
+        documentScope: scope,
+        projectValidation: repoValidation,
+        globalValidation: globalConfig.validation,
+        workflowDefaults: undefined,
+        agentBackends: configuredBackends,
+        assignmentReferences: references(scope),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it("canonicalizes aliases across every authored role and passes project scope to the catalog facet", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const launch = maximalLaunch();
+    const aliasSelection = {
+      modelId: "claude-opus-alias",
+      parameters: { effort: "high" },
+    };
+    const assignment = () =>
+      makeImplementerAssignment({
+        backend: "claude",
+        modelSelection: structuredClone(aliasSelection),
+      });
+    launch.definition.workflowConfig.implementer = assignment();
+    launch.definition.workflowConfig.contextValidator = {
+      enabled: false,
+      assignments: [
+        {
+          ...launch.definition.workflowConfig.contextValidator!.assignments[0]!,
+          agent: {
+            backend: "claude",
+            modelSelection: structuredClone(aliasSelection),
+          },
+        },
+      ],
+    };
+    launch.definition.workflowConfig.planRepair!.agent = {
+      backend: "claude",
+      modelSelection: structuredClone(aliasSelection),
+    };
+    launch.definition.workflowConfig.collaboration!.secondAgent = {
+      backend: "claude",
+      modelSelection: structuredClone(aliasSelection),
+    };
+    const loopContext = launch.definition.executionContexts[1]!;
+    loopContext.implementer = assignment();
+    loopContext.contextValidator = {
+      enabled: false,
+      assignments: [
+        {
+          ...launch.definition.workflowConfig.contextValidator!.assignments[0]!,
+          agent: {
+            backend: "claude",
+            modelSelection: structuredClone(aliasSelection),
+          },
+        },
+      ],
+    };
+    loopContext.planRepair = {
+      enabled: false,
+      maxAttemptsPerContext: 1,
+      agent: {
+        backend: "claude",
+        modelSelection: structuredClone(aliasSelection),
+      },
+    };
+    loopContext.collaboration = {
+      enabled: false,
+      secondAgent: {
+        backend: "claude",
+        modelSelection: structuredClone(aliasSelection),
+      },
+    };
+    const getCatalog = vi.fn<BackendModelCatalogFacet["getCatalog"]>(
+      async ({ configuredSelection }) => {
+        const catalog = getConfiguredBackendModelCatalog(
+          "claude",
+          configuredSelection,
+        );
+        return {
+          ...catalog,
+          models: catalog.models.map((model) =>
+            model.id === "opus"
+              ? {
+                  ...model,
+                  aliases: [...model.aliases, aliasSelection.modelId],
+                }
+              : model,
+          ),
+        };
+      },
+    );
+    const modelCatalogFor: (
+      backend: AgentBackendId,
+    ) => BackendModelCatalogFacet = (backend) =>
+      backend === "claude"
+        ? { getCatalog }
+        : {
+            getCatalog: async ({ configuredSelection }) =>
+              getConfiguredBackendModelCatalog(backend, configuredSelection),
+          };
+
+    const result = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "project-create",
+      documentScope: scope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      agentBackends,
+      modelCatalogFor,
+      assignmentReferences: references(scope),
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(getCatalog).toHaveBeenCalledWith({
+      projectPath: scope.projectPath,
+      configuredSelection: agentBackends.claude.modelSelection,
+    });
+    expect(
+      result.launch.definition.workflowConfig.implementer?.agent.modelSelection
+        .modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.workflowConfig.contextValidator?.assignments[0]
+        ?.agent.modelSelection.modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.workflowConfig.planRepair?.agent?.modelSelection
+        .modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.workflowConfig.collaboration?.secondAgent
+        ?.modelSelection.modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.executionContexts[1]?.implementer?.agent
+        .modelSelection.modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.executionContexts[1]?.planRepair?.agent
+        ?.modelSelection.modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.executionContexts[1]?.contextValidator
+        ?.assignments[0]?.agent.modelSelection.modelId,
+    ).toBe("opus");
+    expect(
+      result.launch.definition.executionContexts[1]?.collaboration?.secondAgent
+        ?.modelSelection.modelId,
+    ).toBe("opus");
+    expect(
+      launch.definition.workflowConfig.implementer?.agent.modelSelection,
+    ).toEqual(aliasSelection);
+  });
+
   it("normalizes the maximal full-dialect launch and preserves its warning", async () => {
     const scope = { kind: "project", projectPath: "/repo" } as const;
     const launch = maximalLaunch();
@@ -83,6 +303,7 @@ describe("admitAuthoredWorkflowLaunch", () => {
       projectValidation: repoValidation,
       globalValidation: globalConfig.validation,
       workflowDefaults: undefined,
+      agentBackends,
       assignmentReferences: references(scope),
       accountabilityGroups: MAXIMAL_AUTHORED_LAUNCH_ACCOUNTABILITY_GROUPS,
     });
@@ -167,6 +388,7 @@ describe("admitAuthoredWorkflowLaunch", () => {
       projectValidation: repoValidation,
       globalValidation: globalConfig.validation,
       workflowDefaults: {} as Partial<WorkflowDefaults>,
+      agentBackends,
       assignmentReferences,
     };
 
@@ -192,7 +414,10 @@ describe("admitAuthoredWorkflowLaunch", () => {
     const scope = { kind: "project", projectPath: "/repo" } as const;
     const launch = maximalLaunch();
     launch.definition.workflowConfig.implementer = makeImplementerAssignment(
-      { backend: "claude", model: "opus", reasoningEffort: "high" },
+      {
+        backend: "claude",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+      },
       { profile: { tier: "project", id: "missing" } },
     );
     admissionLogger.warn.mockClear();
@@ -204,6 +429,7 @@ describe("admitAuthoredWorkflowLaunch", () => {
         projectValidation: repoValidation,
         globalValidation: globalConfig.validation,
         workflowDefaults: undefined,
+        agentBackends,
         assignmentReferences: references(scope),
       }),
     ).resolves.toMatchObject({
@@ -233,6 +459,7 @@ describe("admitAuthoredWorkflowLaunch", () => {
         projectValidation: repoValidation,
         globalValidation: globalConfig.validation,
         workflowDefaults: undefined,
+        agentBackends,
         assignmentReferences: references(scope),
       }),
     ).rejects.toThrow("Unregistered authored-launch admission caller");
@@ -246,7 +473,13 @@ describe("admitAuthoredWorkflowLaunch", () => {
       mutate: (launch: WorkflowDefinitionDraft) => {
         launch.definition.workflowConfig.implementer =
           makeImplementerAssignment(
-            { backend: "claude", model: "opus", reasoningEffort: "high" },
+            {
+              backend: "claude",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
+            },
             { profile: { tier: "project", id: "missing" } },
           );
       },
@@ -259,7 +492,13 @@ describe("admitAuthoredWorkflowLaunch", () => {
       mutate: (launch: WorkflowDefinitionDraft) => {
         launch.definition.workflowConfig.implementer =
           makeImplementerAssignment(
-            { backend: "claude", model: "opus", reasoningEffort: "high" },
+            {
+              backend: "claude",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
+            },
             { profile: { tier: "project", id: "not-global" } },
           );
       },
@@ -294,6 +533,7 @@ describe("admitAuthoredWorkflowLaunch", () => {
           : { projectValidation: repoValidation }),
         globalValidation: globalConfig.validation,
         workflowDefaults: {} as Partial<WorkflowDefaults>,
+        agentBackends,
         assignmentReferences: references(scope, defaultIssues),
       });
 
@@ -324,8 +564,12 @@ const repoValidation = {
 } satisfies NonNullable<PerRepoConfig["validation"]>;
 
 const globalConfig = {
+  baseDir: "/projects",
+  ignorePatterns: [],
+  agentBackends,
+  defaultAgentBackend: "claude",
   validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
-} as GlobalConfig;
+} satisfies GlobalConfig;
 
 function request(url: string, method: string, body?: unknown): Request {
   return new Request(`http://localhost${url}`, {
@@ -356,6 +600,7 @@ describe("ordinary authored-launch callers", () => {
       projectValidation: repoValidation,
       globalValidation: globalConfig.validation,
       workflowDefaults: undefined,
+      agentBackends,
       assignmentReferences: references(projectScope),
     });
     expect(expectedProject.ok).toBe(true);
@@ -366,6 +611,7 @@ describe("ordinary authored-launch callers", () => {
       projectValidation: repoValidation,
       globalValidation: globalConfig.validation,
       workflowDefaults: undefined,
+      agentBackends,
       assignmentReferences: references(globalScope),
     });
     expect(expectedGlobal.ok).toBe(true);
@@ -563,13 +809,19 @@ describe("ordinary authored-launch callers", () => {
     const projectLaunch = maximalLaunch();
     projectLaunch.definition.workflowConfig.implementer =
       makeImplementerAssignment(
-        { backend: "claude", model: "opus", reasoningEffort: "high" },
+        {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        },
         { profile: { tier: "project", id: "missing" } },
       );
     const globalLaunch = maximalLaunch();
     globalLaunch.definition.workflowConfig.implementer =
       makeImplementerAssignment(
-        { backend: "claude", model: "opus", reasoningEffort: "high" },
+        {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        },
         { profile: { tier: "builtin", id: "missing" } },
       );
     const validRecord = createWorkflowDefinitionRecord({
@@ -677,7 +929,13 @@ describe("ordinary authored-launch callers", () => {
             {
               type: "update-workflow-config",
               implementer: makeImplementerAssignment(
-                { backend: "claude", model: "opus", reasoningEffort: "high" },
+                {
+                  backend: "claude",
+                  modelSelection: {
+                    modelId: "opus",
+                    parameters: { effort: "high" },
+                  },
+                },
                 { profile: { tier: "project", id: "missing" } },
               ),
             },
@@ -700,7 +958,13 @@ describe("ordinary authored-launch callers", () => {
             {
               type: "update-workflow-config",
               implementer: makeImplementerAssignment(
-                { backend: "claude", model: "opus", reasoningEffort: "high" },
+                {
+                  backend: "claude",
+                  modelSelection: {
+                    modelId: "opus",
+                    parameters: { effort: "high" },
+                  },
+                },
                 { profile: { tier: "builtin", id: "missing" } },
               ),
             },

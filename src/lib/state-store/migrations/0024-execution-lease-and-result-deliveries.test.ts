@@ -5,7 +5,6 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import { executionLeaseAndResultDeliveries } from "./0024-execution-lease-and-result-deliveries";
 
 type Db = InstanceType<typeof Database>;
@@ -389,7 +388,7 @@ describe("0024-execution-lease-and-result-deliveries", () => {
     ]);
   });
 
-  it("is a no-op on a floor-created database and leaves the compatibility version alone", async () => {
+  it("is a no-op on a floor-created database and publishes no compatibility barrier", async () => {
     const opened = createPersistenceFixture();
     fixture = opened;
     expect(columnNames(opened.db, "graph_workflow_executions")).toContain(
@@ -397,8 +396,10 @@ describe("0024-execution-lease-and-result-deliveries", () => {
     );
     expect(tableNames(opened.db)).toContain("graph_workflow_result_deliveries");
     const stampedBefore = opened.db
-      .prepare("SELECT MAX(version) AS version FROM schema_migrations")
-      .get() as { version: number | null };
+      .prepare(
+        "SELECT version, description FROM schema_migrations ORDER BY version",
+      )
+      .all();
 
     await runMigration(opened.db);
 
@@ -407,12 +408,11 @@ describe("0024-execution-lease-and-result-deliveries", () => {
     );
     expect(
       opened.db
-        .prepare("SELECT MAX(version) AS version FROM schema_migrations")
-        .get(),
+        .prepare(
+          "SELECT version, description FROM schema_migrations ORDER BY version",
+        )
+        .all(),
     ).toEqual(stampedBefore);
-    // Version 11 is the attention-citation cutover (migration 0034); this
-    // migration's own barrier remains the version-8 stamp asserted above.
-    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 
   it("cascades a delivery with its session but survives losing the origin conversation", async () => {

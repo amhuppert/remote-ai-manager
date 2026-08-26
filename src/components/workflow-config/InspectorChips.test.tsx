@@ -21,24 +21,30 @@ describe("implementerChipLabel / validatorChipLabel", () => {
       implementerChipLabel(
         graphWorkflowAgentConfigSchema.parse({
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
         }),
       ),
-    ).toBe(`Claude ${modelDisplayLabel("claude", "opus")} · high`);
+    ).toBe(`Claude ${modelDisplayLabel("claude", "opus")} · effort=high`);
     expect(
       implementerChipLabel(
         graphWorkflowAgentConfigSchema.parse({
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "medium", fast: "false" },
+          },
         }),
       ),
-    ).toBe(`Codex ${modelDisplayLabel("codex", "gpt-5.4")} · medium`);
+    ).toBe(
+      `Codex ${modelDisplayLabel("codex", "gpt-5.4")} · fast=false, reasoning=medium`,
+    );
   });
 
   it("leads with the assignment id so two cohort entries stay distinguishable", () => {
-    const parse = (id: string, agent: Record<string, string>) =>
+    const parse = (id: string, agent: unknown) =>
       validatorAssignmentSchema.parse({
         id,
         profile: { tier: "builtin", id: "general-reviewer" },
@@ -50,20 +56,28 @@ describe("implementerChipLabel / validatorChipLabel", () => {
       validatorChipLabel(
         parse("security", {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         }),
       ),
-    ).toBe(`security · Claude ${modelDisplayLabel("claude", "sonnet")}`);
+    ).toBe(
+      `security · Claude ${modelDisplayLabel("claude", "sonnet")} · effort=medium`,
+    );
     expect(
       validatorChipLabel(
         parse("performance", {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "medium", fast: "false" },
+          },
         }),
       ),
-    ).toBe(`performance · Codex ${modelDisplayLabel("codex", "gpt-5.4")}`);
+    ).toBe(
+      `performance · Codex ${modelDisplayLabel("codex", "gpt-5.4")} · fast=false, reasoning=medium`,
+    );
   });
 
   // The catalog holds short ids; every surface that DISPLAYS a model shows the
@@ -72,8 +86,10 @@ describe("implementerChipLabel / validatorChipLabel", () => {
     const label = implementerChipLabel(
       graphWorkflowAgentConfigSchema.parse({
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       }),
     );
     expect(label).toContain("Opus 5");

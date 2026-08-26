@@ -127,8 +127,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         focus: "workflow-tier implementer steer",
         agent: {
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
         },
       },
       contextValidator: {
@@ -142,8 +144,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: false, contextLimitTokens: 110_000 },
           },
@@ -161,16 +165,20 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         maxAttemptsPerContext: 3,
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       collaboration: {
         enabled: true,
         secondAgent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "low",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "low" },
+          },
         },
         negotiationRounds: 3,
         autonomousResolutionThreshold: "major",
@@ -285,8 +293,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           focus: "context-tier implementer steer",
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
         },
         // Disabled with assignments intact: the dormant entries — their
@@ -304,8 +314,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
               authority: "blocking",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: false, contextLimitTokens: 120_000 },
             },
@@ -317,8 +329,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "high", fast: "false" },
+                },
               },
               continuity: { enabled: true, contextLimitTokens: 60_000 },
             },
@@ -336,16 +350,20 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           maxAttemptsPerContext: 4,
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "low",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "low" },
+            },
           },
         },
         collaboration: {
           enabled: true,
           secondAgent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",

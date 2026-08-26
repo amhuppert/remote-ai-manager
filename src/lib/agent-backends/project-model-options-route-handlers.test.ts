@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { listBackendCatalogEntries } from "./catalog";
 import { createProjectModelOptionsRouteHandlers } from "./project-model-options-route-handlers";
-import { projectModelOptionsResponseSchema } from "./project-model-options";
+import { projectModelOptionsResponseSchema } from "./project-model-options-schema";
 
 const PROJECT_PATH = "/work/tree";
 

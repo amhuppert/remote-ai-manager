@@ -1018,8 +1018,20 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     const built = await buildDeps(programmed);
 
     const agents: CollaborationAgentsMap = {
-      agent_one: { backend: "claude", model: "fable", effort: "max" },
-      agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
+      agent_one: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      },
+      agent_two: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     };
     await runAsymmetricCollaborationSlice(baseInput({ agents }), built.deps);
 
@@ -1027,8 +1039,20 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     if (!stored) throw new Error("envelope missing");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
     expect(snapshot["agents"]).toEqual({
-      agent_one: { backend: "claude", model: "fable", effort: "max" },
-      agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
+      agent_one: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      },
+      agent_two: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     });
   });
 
@@ -1301,7 +1325,7 @@ describe("runAsymmetricCollaborationSlice — captured session context durabilit
 
 describe("runAsymmetricCollaborationSlice — Codex speed durability", () => {
   it.each([false, true])(
-    "persists agent_one's explicit Codex fast-mode value of %s through a user-input pause via the agents map",
+    "persists agent_one's explicit Codex fast parameter of %s through a user-input pause via the agents map",
     async (codexFastMode) => {
       const programmed = makeProgrammedCallAgent({
         claude: [
@@ -1325,10 +1349,21 @@ describe("runAsymmetricCollaborationSlice — Codex speed durability", () => {
       const agents: CollaborationAgentsMap = {
         agent_one: {
           backend: "codex",
-          model: "gpt-5.5-codex",
-          fastMode: codexFastMode,
+          modelSelection: {
+            modelId: "gpt-5.5-codex",
+            parameters: {
+              reasoning: "high",
+              fast: String(codexFastMode),
+            },
+          },
         },
-        agent_two: { backend: "claude", model: "opus" },
+        agent_two: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        },
       };
       const result = await runAsymmetricCollaborationSlice(
         baseInput({

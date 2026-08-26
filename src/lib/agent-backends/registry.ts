@@ -21,6 +21,7 @@ import { createCursorBackendDescriptor } from "./cursor/descriptor";
 import {
   createProductionCursorContinuityAdapter,
   cursorConversationBackendFactory,
+  cursorModelCatalog,
 } from "./cursor/production-wiring";
 import { createCursorRuntimeConfigAdapter } from "./cursor/runtime-config";
 import {
@@ -69,6 +70,7 @@ export function bootstrapBackends(): void {
     registerBackend(
       createCursorBackendDescriptor({
         conversationFactory: cursorConversationBackendFactory,
+        modelCatalog: cursorModelCatalog,
         continuity: createProductionCursorContinuityAdapter(),
         runtimeConfig: createCursorRuntimeConfigAdapter(),
         mcp: cursorMcpCapabilities,

@@ -16,17 +16,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import ModelSelector from "@/components/ModelSelector";
+import {
+  DesktopModelSelectionControls,
+  UnavailableModelSelectionControl,
+} from "@/components/session/prompt/ModelSelectionControls";
 import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
 import { DEFAULT_AGENT_BACKEND_ID } from "@/lib/shared/schemas";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { sanitizeBranchName } from "@/lib/sessions/branch-name";
 import { spawnAgentSchema, spawnModeSchema } from "@/lib/chat-spawning/schemas";
 import type { SegmentedControlTone } from "@/components/ui/SegmentedControl";
-import {
-  effortLevelsForCatalogEntry,
-  findBackendCatalogEntry,
-} from "@/lib/agent-backends/catalog";
+import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import {
   backendForAgent,
   summarizePrompt,
@@ -35,6 +34,7 @@ import {
 } from "./useSpawnCard";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 /** Spawn agents are catalog backends plus the composite "dual" race. */
 function agentLabel(agent: EditableSession["agent"]): string {
@@ -90,6 +90,10 @@ export interface SpawnCardRowProps {
   /** Whether a long initial prompt is expanded in read mode. */
   expanded: boolean;
   onFieldChange: (index: number, field: EditableField, value: string) => void;
+  onModelSelectionChange(
+    index: number,
+    modelSelection: BackendModelSelection,
+  ): void;
   onIncludedChange: (index: number, included: boolean) => void;
   onImagesChange: (index: number, images: ImagePayload[]) => void;
   onDocumentChange: (index: number, document: SerializedPromptDoc) => void;
@@ -120,6 +124,7 @@ const SpawnCardRow = forwardRef<SpawnCardRowHandle, SpawnCardRowProps>(
       targetOptions,
       expanded,
       onFieldChange,
+      onModelSelectionChange,
       onIncludedChange,
       onImagesChange,
       onDocumentChange,
@@ -134,10 +139,8 @@ const SpawnCardRow = forwardRef<SpawnCardRowHandle, SpawnCardRowProps>(
     const [hasMountedPrompt, setHasMountedPrompt] = useState(editing);
     if (editing && !hasMountedPrompt) setHasMountedPrompt(true);
     // The concrete backend a single-backend agent runs on; null for the dual race,
-    // which has no single model/effort and so hides those controls.
+    // which has no single model selection and so hides those controls.
     const backend = backendForAgent(session.agent);
-    const backendEntry =
-      backend === null ? null : findBackendCatalogEntry(backend);
     // A spawn row always creates sessions inside this project, so its model
     // choices are the project's effective ones (spec D10) rather than the
     // process-global catalog's. The dual race has no single backend to scope,
@@ -253,32 +256,27 @@ const SpawnCardRow = forwardRef<SpawnCardRowHandle, SpawnCardRowProps>(
           </div>
         </div>
 
-        {/* Model + reasoning effort apply to a single concrete backend; the dual
-          race has no single model/effort, so these are hidden for it. */}
-        {backend !== null && (
+        {/* A complete model selection applies to a single concrete backend; the
+          dual race has no single selection, so these controls are hidden. */}
+        {backend !== null && session.modelSelection !== null && (
           <div className="flex flex-wrap items-end gap-xl">
             <div className="flex flex-col gap-2xs">
               <span className={META_LABEL_CLASS}>Model</span>
-              <ModelSelector
-                backend={backend}
-                value={session.model}
-                onChange={(model) => onFieldChange(index, "model", model)}
-                projectOptions={projectModelOptions}
-              />
-            </div>
-            <div className="flex flex-col gap-2xs">
-              <span className={META_LABEL_CLASS}>Reasoning</span>
-              <ReasoningLevelSelector
-                value={session.reasoningEffort}
-                availableLevels={
-                  backendEntry
-                    ? effortLevelsForCatalogEntry(backendEntry, session.model)
-                    : []
-                }
-                onChange={(level) =>
-                  onFieldChange(index, "reasoningEffort", level)
-                }
-              />
+              {projectModelOptions?.modelCatalog === null ||
+              projectModelOptions === null ? (
+                <UnavailableModelSelectionControl
+                  selection={session.modelSelection}
+                  reason="Model options are unavailable."
+                />
+              ) : (
+                <DesktopModelSelectionControls
+                  catalog={projectModelOptions.modelCatalog}
+                  selection={session.modelSelection}
+                  onSelectionChange={(modelSelection) =>
+                    onModelSelectionChange(index, modelSelection)
+                  }
+                />
+              )}
             </div>
           </div>
         )}

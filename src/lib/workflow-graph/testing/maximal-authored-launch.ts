@@ -95,7 +95,10 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
     ],
     workflowConfig: {
       implementer: makeImplementerAssignment(
-        { backend: "claude", model: "opus", reasoningEffort: "high" },
+        {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        },
         { focus: "Exercise the complete graph launch dialect" },
       ),
       contextValidator: { enabled: false, assignments: [validator] },
@@ -113,14 +116,19 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
       planRepair: {
         enabled: true,
         maxAttemptsPerContext: 3,
-        agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+        agent: {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        },
       },
       collaboration: {
         enabled: true,
         secondAgent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         negotiationRounds: 2,
         autonomousResolutionThreshold: "minor",
@@ -216,7 +224,10 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
         outputSchema: routeVerdictSchema,
         routing: { cardinality: "independent" as const },
         implementer: makeImplementerAssignment(
-          { backend: "claude", model: "opus", reasoningEffort: "high" },
+          {
+            backend: "claude",
+            modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          },
           { focus: "Classify and expand" },
         ),
         contextValidator: { enabled: false, assignments: [validator] },
@@ -232,8 +243,10 @@ export function createMaximalAuthoredWorkflowLaunchFixture(): WorkflowDefinition
           maxAttemptsPerContext: 1,
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         collaboration: {

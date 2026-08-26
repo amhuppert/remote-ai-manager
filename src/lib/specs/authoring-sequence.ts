@@ -1,5 +1,5 @@
 import { dialRequiresHumanApproval, resolveDial } from "./policy";
-import { toCitationDiffContext, toDiffRows } from "./review-state";
+import { toCitationDiffContext, toDiffRows } from "./revision-diff-projections";
 import type {
   SpecAuthoringStage,
   SpecGatePolicy,
@@ -11,7 +11,7 @@ import {
   consultedAuthoringGates,
   nextAuthoringStage,
   type AuthoringGate,
-} from "./transitions";
+} from "./authoring-gates";
 import type { RemainingAuthoringSequence } from "./view-schemas";
 
 export interface RemainingAuthoringSequenceContext {

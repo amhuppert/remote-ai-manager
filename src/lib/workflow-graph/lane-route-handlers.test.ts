@@ -832,8 +832,10 @@ describe("lane route handlers — collaboration request", () => {
         secondAgent: {
           value: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
           },
           source: "global",
         },

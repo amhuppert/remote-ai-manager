@@ -83,6 +83,50 @@ function makeDescriptor(
       defaultModelId: "model-1",
       defaultTimeoutMs: null,
     },
+    modelCatalog: {
+      getCatalog: async () => ({
+        backend,
+        defaultModelId: "model-1",
+        models: [
+          {
+            id: "model-1",
+            label: "Model 1",
+            description: "test model",
+            aliases: [],
+            parameters: [
+              {
+                id: "effort",
+                label: "Effort",
+                values: [
+                  { value: "low", label: "Low" },
+                  { value: "high", label: "High" },
+                ],
+                prominence: "primary",
+              },
+            ],
+            variants: [
+              {
+                selection: {
+                  modelId: "model-1",
+                  parameters: { effort: "low" },
+                },
+                label: "Low",
+                isDefault: false,
+              },
+              {
+                selection: {
+                  modelId: "model-1",
+                  parameters: { effort: "high" },
+                },
+                label: "High",
+                isDefault: true,
+              },
+            ],
+          },
+        ],
+        provenance: { source: "test" },
+      }),
+    },
     conversation: {
       factory: fakeConversationFactory(backend),
       continuity: fakeContinuity(backend),

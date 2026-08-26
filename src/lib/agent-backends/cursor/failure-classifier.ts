@@ -26,6 +26,7 @@ const LOCAL_FAILURE_KINDS = [
   "worker_exit",
   "stream_stall",
   "invalid_ref",
+  "binding_mismatch",
 ] as const;
 
 export type CursorLocalFailureKind = (typeof LOCAL_FAILURE_KINDS)[number];
@@ -33,8 +34,8 @@ export type CursorLocalFailureKind = (typeof LOCAL_FAILURE_KINDS)[number];
 /**
  * Raised by the Cursor worker supervisor and conversation runtime for the
  * failure modes that have no SDK error: the worker died, the event stream went
- * silent past its bound, or a persisted ref proved corrupt or bound to another
- * workspace.
+ * silent past its bound, a persisted ref proved corrupt or bound to another
+ * workspace, or the conversation's live worker belongs to another selection.
  */
 export class CursorLocalFailure extends Error {
   readonly localKind: CursorLocalFailureKind;
@@ -192,6 +193,8 @@ function localVerdict(
       // A corrupt or cross-workspace ref is a genuinely invalid session: the
       // only class besides agent-not-found that clears the persisted ref.
       return { kind: "stale_resume_ref", retryable: true };
+    case "binding_mismatch":
+      return { kind: "backend_error", retryable: false };
   }
 }
 

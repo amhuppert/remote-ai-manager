@@ -6,11 +6,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 
 import type { ConversationBackendCreateInput } from "../conversation";
+import { defaultSelectionForModel } from "../model-selection";
+import type { BackendModelSelection } from "../schemas";
 import { CursorConversationRuntime } from "./conversation-runtime";
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import {
+  createCursorModelCatalogFacet,
+  loadGeneratedCursorModelCatalog,
+} from "./model-catalog";
+import {
+  CURSOR_DEFAULT_MODEL,
   createCursorSupportedModelsReader,
-  resolveCursorModelForProject,
+  validateCursorModelSelectionForProject,
 } from "./model-policy";
 import { cursorConversationBackendFactory } from "./production-wiring";
 import {
@@ -27,6 +34,26 @@ import {
  */
 
 const CONVERSATION_ID = "conv-cursor-models";
+const GENERATED_MODEL_CATALOG = loadGeneratedCursorModelCatalog();
+const DEFAULT_MODEL_SELECTION = defaultSelectionForModel(
+  GENERATED_MODEL_CATALOG,
+  CURSOR_DEFAULT_MODEL,
+);
+const DEFAULT_MODEL_ALIAS_SELECTION: BackendModelSelection = {
+  ...DEFAULT_MODEL_SELECTION,
+  modelId: "composer-2-5",
+};
+const CUSTOM_MODEL_SELECTION = defaultSelectionForModel(
+  GENERATED_MODEL_CATALOG,
+  "composer-2",
+);
+const UNLISTED_MODEL_SELECTION = defaultSelectionForModel(
+  GENERATED_MODEL_CATALOG,
+  "gpt-5.6-sol",
+);
+const ALL_GENERATED_MODEL_IDS = GENERATED_MODEL_CATALOG.models.map(
+  ({ id }) => id,
+);
 
 let projectPath: string;
 
@@ -59,6 +86,7 @@ function createInput(): ConversationBackendCreateInput {
     },
     worktreePath: path.join(projectPath, ".worktrees/s1"),
     persistedRef: null,
+    modelSelection: DEFAULT_MODEL_SELECTION,
     sessionInstructions: [],
     tooling: {},
   };
@@ -67,11 +95,11 @@ function createInput(): ConversationBackendCreateInput {
 /**
  * The runtime wired to the production model-resolution chain — the project's
  * configured list read through `ConversationBackendCreateInput.projectPath` —
- * with only the global profile injected, so the test does not depend on the
- * server's own configuration file.
+ * with the configured global selection injected, so the test does not depend
+ * on the server's own configuration file.
  */
 function createRuntimeOverRepoConfig(
-  globalProfileModel: string | null,
+  configuredSelection: BackendModelSelection = DEFAULT_MODEL_SELECTION,
   options: {
     worker?: ScriptedWorkerOptions;
     create?: Partial<ConversationBackendCreateInput>;
@@ -79,16 +107,17 @@ function createRuntimeOverRepoConfig(
 ) {
   const transport = createScriptedTransport(options.worker);
   const input = { ...createInput(), ...options.create };
+  const modelCatalog = createCursorModelCatalogFacet({
+    loadCatalog: () => GENERATED_MODEL_CATALOG,
+    supportedModels: createCursorSupportedModelsReader(readRepoConfig),
+  });
   const runtime = new CursorConversationRuntime(input, {
     transport,
     storePath: (conversationId) => `/state/cursor/${conversationId}`,
-    resolveModel: (explicitSelection) =>
-      resolveCursorModelForProject(
-        { projectPath: input.projectPath, explicitSelection },
-        {
-          supportedModels: createCursorSupportedModelsReader(readRepoConfig),
-          globalProfileModel: async () => globalProfileModel,
-        },
+    resolveModel: (selection) =>
+      validateCursorModelSelectionForProject(
+        { projectPath: input.projectPath, selection, configuredSelection },
+        { modelCatalog },
       ),
     translatePortableMcpToCursor,
     newRunId: () => "run-1",
@@ -99,149 +128,196 @@ function createRuntimeOverRepoConfig(
 
   return {
     transport,
-    send: (modelId?: string) =>
+    send: (modelSelection: BackendModelSelection = input.modelSelection) =>
       runtime.sendTurn({
         promptText: "do the thing",
         imageRefs: [],
         sessionInstructions: [],
+        modelSelection,
         autonomous: false,
         signal: new AbortController().signal,
         onEvent: () => {},
-        ...(modelId !== undefined ? { modelId } : {}),
       }),
   };
 }
 
 describe("per-repo supported-model list enforced before a worker starts", () => {
-  it("refuses an explicit model the project does not list", async () => {
+  it("refuses a complete selection the project does not list", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: { cursor: { supportedModels: [CURSOR_DEFAULT_MODEL] } },
     });
-    const harness = createRuntimeOverRepoConfig(null);
+    const harness = createRuntimeOverRepoConfig();
 
-    const result = await harness.send("composer-2.5");
+    const result = await harness.send(UNLISTED_MODEL_SELECTION);
 
     expect(result.failure?.kind).toBe("backend_error");
-    expect(result.failure?.message).toContain("composer-2.5");
+    expect(result.failure?.message).toContain(UNLISTED_MODEL_SELECTION.modelId);
     expect(harness.transport.startInputs).toHaveLength(0);
   });
 
-  it("runs a model the project lists", async () => {
+  it("runs a complete variant the project lists", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: {
+        cursor: {
+          supportedModels: [
+            CURSOR_DEFAULT_MODEL,
+            CUSTOM_MODEL_SELECTION.modelId,
+          ],
+        },
+      },
     });
-    const harness = createRuntimeOverRepoConfig(null);
+    const harness = createRuntimeOverRepoConfig();
 
-    const result = await harness.send("composer-1");
+    const result = await harness.send(CUSTOM_MODEL_SELECTION);
 
     expect(result.failure).toBeNull();
-    expect(harness.transport.workers[0]?.turns[0]?.input.model).toBe(
-      "composer-1",
+    expect(harness.transport.startInputs[0]?.modelSelection).toEqual(
+      CUSTOM_MODEL_SELECTION,
+    );
+    expect(
+      harness.transport.workers[0]?.attachments[0]?.modelSelection,
+    ).toEqual(CUSTOM_MODEL_SELECTION);
+    expect(
+      harness.transport.workers[0]?.turns[0]?.input.modelSelection,
+    ).toEqual(CUSTOM_MODEL_SELECTION);
+  });
+
+  it("runs an explicitly allowed selection when the configured default is excluded", async () => {
+    await writeRepoConfig({
+      agentBackends: {
+        cursor: { supportedModels: [CUSTOM_MODEL_SELECTION.modelId] },
+      },
+    });
+    const harness = createRuntimeOverRepoConfig();
+
+    const result = await harness.send(CUSTOM_MODEL_SELECTION);
+
+    expect(result.failure).toBeNull();
+    expect(harness.transport.startInputs[0]?.modelSelection).toEqual(
+      CUSTOM_MODEL_SELECTION,
     );
   });
 
-  it("fails closed when the project's list omits the default and nothing is selected", async () => {
-    // The no-substitution edge: with no explicit selection and no global
-    // profile, the descriptor default is not a member, so the turn is refused
-    // rather than run on a model the project never listed.
+  it("refuses an applied configured selection outside the project's list", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: { cursor: { supportedModels: [CURSOR_DEFAULT_MODEL] } },
     });
-    const harness = createRuntimeOverRepoConfig(null);
+    const harness = createRuntimeOverRepoConfig(CUSTOM_MODEL_SELECTION, {
+      create: { modelSelection: CUSTOM_MODEL_SELECTION },
+    });
 
     const result = await harness.send();
 
     expect(result.failure?.kind).toBe("backend_error");
+    expect(result.failure?.message).toContain(CUSTOM_MODEL_SELECTION.modelId);
     expect(harness.transport.startInputs).toHaveLength(0);
   });
 
-  it("refuses a globally configured model outside the project's list", async () => {
-    await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
-    });
-    const harness = createRuntimeOverRepoConfig("composer-2.5");
-
-    const result = await harness.send();
-
-    expect(result.failure?.kind).toBe("backend_error");
-    expect(result.failure?.message).toContain("composer-2.5");
-    expect(harness.transport.startInputs).toHaveLength(0);
-  });
-
-  it("uses the descriptor default when the project declares no list", async () => {
-    const harness = createRuntimeOverRepoConfig(null);
+  it("uses the complete generated default when the project declares no list", async () => {
+    const harness = createRuntimeOverRepoConfig();
 
     const result = await harness.send();
 
     expect(result.failure).toBeNull();
-    expect(harness.transport.workers[0]?.turns[0]?.input.model).toBe(
-      "composer-2.5",
-    );
+    expect(
+      harness.transport.workers[0]?.turns[0]?.input.modelSelection,
+    ).toEqual(DEFAULT_MODEL_SELECTION);
+  });
+
+  it("refuses a partial parameter record rather than filling it from defaults", async () => {
+    const harness = createRuntimeOverRepoConfig();
+
+    const result = await harness.send({
+      modelId: CURSOR_DEFAULT_MODEL,
+      parameters: {},
+    });
+
+    expect(result.failure?.kind).toBe("backend_error");
+    expect(result.failure?.message).toContain("fast");
+    expect(harness.transport.startInputs).toHaveLength(0);
   });
 });
 
 /**
  * The registered factory must declare both model hooks: the project-scoped one
- * is where membership is decided, and a missing hook would make every test
- * below vacuous.
+ * decides membership and the synchronous one guards the bundle shape.
  */
-const { validateProjectModelSelection, validateModelAndEffort } =
+const { validateProjectModelSelection, validateModelSelection } =
   cursorConversationBackendFactory;
 if (
   validateProjectModelSelection === undefined ||
-  validateModelAndEffort === undefined
+  validateModelSelection === undefined
 ) {
   throw new Error("The Cursor factory declares no model validation hooks.");
 }
 
 describe("cursor factory project-scoped model validation", () => {
-  it("refuses an explicit model outside the project's list and names the supported ones", async () => {
+  it("refuses a shaped bundle absent from the generated catalog", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: {
+        cursor: { supportedModels: ALL_GENERATED_MODEL_IDS },
+      },
     });
 
     const validation = await validateProjectModelSelection({
       projectPath,
-      modelId: "gpt-5",
+      modelSelection: {
+        modelId: "not-in-generated-catalog",
+        parameters: {},
+      },
     });
 
     expect(validation.ok).toBe(false);
     if (validation.ok) return;
-    expect(validation.message).toContain("gpt-5");
-    expect(validation.message).toContain("composer-1");
+    expect(validation.message).toContain("not-in-generated-catalog");
   });
 
-  it("accepts a model the project lists", async () => {
+  it("accepts a complete generated selection the project lists", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: {
+        cursor: { supportedModels: ALL_GENERATED_MODEL_IDS },
+      },
     });
 
     expect(
       await validateProjectModelSelection({
         projectPath,
-        modelId: "composer-1",
+        modelSelection: CUSTOM_MODEL_SELECTION,
       }),
-    ).toEqual({ ok: true });
+    ).toEqual({
+      ok: true,
+      modelSelection: CUSTOM_MODEL_SELECTION,
+    });
   });
 
-  it("refuses with no explicit selection when the project's list omits the default", async () => {
+  it("returns the canonical complete selection when it accepts an alias", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: {
+        cursor: { supportedModels: ALL_GENERATED_MODEL_IDS },
+      },
     });
 
-    const validation = await validateProjectModelSelection({
-      projectPath,
-    });
-
-    expect(validation.ok).toBe(false);
-  });
-
-  it("accepts an unconfigured project running the descriptor default", async () => {
     expect(
       await validateProjectModelSelection({
         projectPath,
+        modelSelection: DEFAULT_MODEL_ALIAS_SELECTION,
       }),
-    ).toEqual({ ok: true });
+    ).toEqual({
+      ok: true,
+      modelSelection: DEFAULT_MODEL_SELECTION,
+    });
+  });
+
+  it("accepts an unconfigured project running the generated default bundle", async () => {
+    expect(
+      await validateProjectModelSelection({
+        projectPath,
+        modelSelection: DEFAULT_MODEL_SELECTION,
+      }),
+    ).toEqual({
+      ok: true,
+      modelSelection: DEFAULT_MODEL_SELECTION,
+    });
   });
 
   it("refuses rather than throwing when the project's configuration is malformed", async () => {
@@ -251,30 +327,31 @@ describe("cursor factory project-scoped model validation", () => {
 
     const validation = await validateProjectModelSelection({
       projectPath,
-      modelId: "composer-1",
+      modelSelection: DEFAULT_MODEL_SELECTION,
     });
 
     expect(validation.ok).toBe(false);
     if (validation.ok) return;
-    expect(validation.message).toContain("CommandCenter.json");
+    expect(validation.message).toContain("supportedModels");
+    expect(validation.message).toContain("expected array");
   });
 });
 
 describe("cursor factory shape validation", () => {
   it("rejects a blank model id", () => {
-    // All the sync, project-blind hook can answer: membership belongs to
-    // validateProjectModelSelection, which can read the project's list.
     expect(() =>
-      validateModelAndEffort({
+      validateModelSelection({
         modelId: "   ",
+        parameters: {},
       }),
     ).toThrow();
   });
 
-  it("accepts an unrecognized-but-shaped model id, leaving membership to the project check", () => {
+  it("accepts an unrecognized-but-shaped bundle, leaving membership to the project check", () => {
     expect(() =>
-      validateModelAndEffort({
+      validateModelSelection({
         modelId: "composer-next",
+        parameters: { providerOwned: "value" },
       }),
     ).not.toThrow();
   });
@@ -286,14 +363,21 @@ describe("SDK rejection of a configured model", () => {
     // the SDK is the one that refuses it. Retrying on a different model would
     // be the substitution D10 forbids — the refusal has to reach the operator.
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: {
+        cursor: {
+          supportedModels: [
+            CURSOR_DEFAULT_MODEL,
+            CUSTOM_MODEL_SELECTION.modelId,
+          ],
+        },
+      },
     });
-    const harness = createRuntimeOverRepoConfig(null, {
+    const harness = createRuntimeOverRepoConfig(DEFAULT_MODEL_SELECTION, {
       worker: {
         onTurn: (turn, worker) => {
           worker.settle(turn.runId, "failed", {
             name: "ConfigurationError",
-            message: "model composer-1 is not available for this account",
+            message: "model composer-2 is not available for this account",
             code: null,
             status: 400,
           });
@@ -301,26 +385,37 @@ describe("SDK rejection of a configured model", () => {
       },
     });
 
-    const result = await harness.send("composer-1");
+    const result = await harness.send(CUSTOM_MODEL_SELECTION);
 
     expect(result.failure?.kind).toBe("backend_error");
     expect(result.failure?.retryable).toBe(false);
-    expect(result.failure?.message).toContain("composer-1");
+    expect(result.failure?.message).toContain(CUSTOM_MODEL_SELECTION.modelId);
 
     const worker = harness.transport.workers[0];
     expect(worker?.turns).toHaveLength(1);
-    expect(worker?.turns.map((t) => t.input.model)).toEqual(["composer-1"]);
+    expect(worker?.turns.map((turn) => turn.input.modelSelection)).toEqual([
+      CUSTOM_MODEL_SELECTION,
+    ]);
   });
 
-  it("reapplies the declared model when resuming a persisted ref", async () => {
+  it("reapplies the whole declared selection when resuming a persisted ref", async () => {
     await writeRepoConfig({
-      agentBackends: { cursor: { supportedModels: ["composer-1"] } },
+      agentBackends: {
+        cursor: {
+          supportedModels: [
+            CURSOR_DEFAULT_MODEL,
+            CUSTOM_MODEL_SELECTION.modelId,
+          ],
+        },
+      },
     });
-    const harness = createRuntimeOverRepoConfig(null, {
-      create: { persistedRef: { backend: "cursor", ref: "agent-prior" } },
+    const harness = createRuntimeOverRepoConfig(DEFAULT_MODEL_SELECTION, {
+      create: {
+        persistedRef: { backend: "cursor", ref: "agent-prior" },
+      },
     });
 
-    const result = await harness.send("composer-1");
+    const result = await harness.send(CUSTOM_MODEL_SELECTION);
 
     expect(result.failure).toBeNull();
     const worker = harness.transport.workers[0];
@@ -328,9 +423,11 @@ describe("SDK rejection of a configured model", () => {
       expect.objectContaining({
         mode: "resume",
         ref: "agent-prior",
-        model: "composer-1",
+        modelSelection: CUSTOM_MODEL_SELECTION,
       }),
     ]);
-    expect(worker?.turns[0]?.input.model).toBe("composer-1");
+    expect(worker?.turns[0]?.input.modelSelection).toEqual(
+      CUSTOM_MODEL_SELECTION,
+    );
   });
 });

@@ -52,7 +52,13 @@ function context(
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
       profileSnapshot: makeProfileSnapshot(),
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+      },
     },
     contextValidator: {
       enabled: true,
@@ -65,8 +71,10 @@ function context(
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true, contextLimitTokens: 50000 },
         },
@@ -83,7 +91,13 @@ function context(
     collaboration: {
       enabled: { value: true, source: "per-node" },
       secondAgent: {
-        value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+        value: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
         source: "per-node",
       },
       negotiationRounds: { value: 5, source: "workflow" },

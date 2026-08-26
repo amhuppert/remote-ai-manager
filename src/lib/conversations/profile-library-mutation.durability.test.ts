@@ -136,7 +136,7 @@ async function runTurnAfterRestart(
             sendTurn: vi.fn(async () => TURN_RESULT),
           });
         },
-        validateModelAndEffort: () => {},
+        validateModelSelection: () => {},
       }),
     }),
   );
@@ -157,11 +157,13 @@ async function runTurnAfterRestart(
     promptText: "Hello",
     images: [],
     streamId: "stream-1",
-    modelId: null,
-    effort: null,
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
+    onModelSelectionResolved: async () => {},
     autonomous: false,
     debugMode: null,
-    codexFastMode: null,
   };
 
   registerConversationRuntime(

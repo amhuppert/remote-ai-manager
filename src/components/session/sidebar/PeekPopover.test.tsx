@@ -10,7 +10,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
-import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { useCollaborationStore } from "@/stores/collaboration.store";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
@@ -69,11 +74,33 @@ const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [
   },
 ];
 
+const CLAUDE_CATALOG = getStaticBackendModelCatalog("claude");
+const CODEX_CATALOG = getStaticBackendModelCatalog("codex");
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "opus", effort: "high" },
-  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: defaultSelectionForModel(CLAUDE_CATALOG, "opus"),
+  codex: defaultSelectionForModel(CODEX_CATALOG, "gpt-5.4"),
+  cursor: { modelId: "composer-2.5", parameters: {} },
 };
+const PROJECT_MODEL_OPTIONS = [
+  {
+    backend: "claude",
+    models: [],
+    defaultModelId: BACKEND_DEFAULTS.claude.modelId,
+    source: "catalog",
+    modelCatalog: CLAUDE_CATALOG,
+    defaultSelection: BACKEND_DEFAULTS.claude,
+    diagnostics: [],
+  },
+  {
+    backend: "codex",
+    models: [],
+    defaultModelId: BACKEND_DEFAULTS.codex.modelId,
+    source: "catalog",
+    modelCatalog: CODEX_CATALOG,
+    defaultSelection: BACKEND_DEFAULTS.codex,
+    diagnostics: [],
+  },
+];
 
 function renderPeek(
   overrides: Partial<React.ComponentProps<typeof PeekPopover>> = {},
@@ -242,6 +269,10 @@ describe("PeekPopover", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    queryClient.setQueryData(
+      backendCatalogKeys.projectModelOptions("command-center"),
+      PROJECT_MODEL_OPTIONS,
+    );
     renderPeek({ onReplyText }, (ui) => (
       <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
     ));
@@ -277,8 +308,11 @@ describe("PeekPopover", () => {
     await user.keyboard("{Escape}");
 
     await user.click(within(controls).getByRole("button", { name: "Codex" }));
-    expect(within(controls).getByLabelText("Codex speed")).toBeInTheDocument();
-    await user.click(within(controls).getByRole("radio", { name: "Fast" }));
+    await user.click(
+      within(controls).getByRole("button", { name: "Model options" }),
+    );
+    await user.click(screen.getByRole("switch", { name: "Fast mode" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(onReplyText).toHaveBeenCalledWith(
@@ -289,9 +323,10 @@ describe("PeekPopover", () => {
         autonomousResolutionThreshold: "major",
         agentTwo: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          fastMode: true,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "true" },
+          },
         },
       },
       {
@@ -299,9 +334,10 @@ describe("PeekPopover", () => {
         autonomousResolutionThreshold: "major",
         agentTwo: {
           backend: "codex",
-          model: "gpt-5.4",
-          effort: "high",
-          fastMode: true,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "true" },
+          },
         },
       },
     );

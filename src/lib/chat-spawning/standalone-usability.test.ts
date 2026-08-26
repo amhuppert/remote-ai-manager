@@ -80,6 +80,10 @@ describe("chat-spawning usable without the cockpit UI", () => {
       resolveCommittedHeadBase: vi.fn().mockResolvedValue("HEADSHA"),
       setSessionSpawnedFrom: vi.fn().mockResolvedValue(undefined),
       addPlcSpawnedSessionIds,
+      admitModelSelection: vi.fn(async ({ modelSelection }) => ({
+        ok: true as const,
+        modelSelection: modelSelection ?? { modelId: "sonnet", parameters: {} },
+      })),
       dispatchFirstTurn: dispatcher.dispatchFirstTurn,
       broadcast: vi.fn(),
     });
@@ -136,6 +140,10 @@ describe("chat-spawning usable without the cockpit UI", () => {
       resolveCommittedHeadBase: vi.fn().mockResolvedValue("HEADSHA"),
       setSessionSpawnedFrom: vi.fn().mockResolvedValue(undefined),
       addPlcSpawnedSessionIds: vi.fn().mockResolvedValue(undefined),
+      admitModelSelection: vi.fn(async ({ modelSelection }) => ({
+        ok: true as const,
+        modelSelection: modelSelection ?? { modelId: "sonnet", parameters: {} },
+      })),
       dispatchFirstTurn: dispatcher.dispatchFirstTurn,
       broadcast: vi.fn(),
     });

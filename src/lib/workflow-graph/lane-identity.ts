@@ -22,6 +22,7 @@
  */
 
 import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
+import { modelSelectionKey } from "@/lib/agent-backends/model-selection";
 import {
   graphWorkflowLaneKindSchema,
   type GraphWorkflowLaneKind,
@@ -359,7 +360,7 @@ export function parseGraphLaneId(
  *
  * The delivered profile bytes (`resolvedInstructionHash`) are in it because a
  * lane replays its instructions once, at creation; strategy, continuity, and
- * the runtime triple are in it because each decides which handle the lane
+ * the atomic runtime selection is in it because it decides which handle the lane
  * holds. Authority is in it because it selects the output schema the lane's
  * turn is bound to, so a lane that already ran under the other one has to be
  * rebuilt rather than resumed. `focus` is in it because a BLOCKING seat's
@@ -392,7 +393,6 @@ export function assignmentFingerprint(
       : String(assignment.continuity.enabled),
     assignment.continuity?.contextLimitTokens ?? "",
     assignment.agent.backend,
-    assignment.agent.model,
-    assignment.agent.reasoningEffort,
+    modelSelectionKey(assignment.agent.modelSelection),
   ].join("|");
 }

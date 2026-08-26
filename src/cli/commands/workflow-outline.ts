@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  backendModelSelectionSchema,
+  type BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import { charterInvariantSchema } from "@/lib/workflows/charter-schemas";
 import {
   acceptanceCriteriaSchema,
@@ -63,8 +67,7 @@ const outlineProfileRefSchema = z
 const outlineAgentRuntimeSchema = z
   .object({
     backend: z.string(),
-    model: z.string(),
-    reasoningEffort: z.string(),
+    modelSelection: backendModelSelectionSchema,
   })
   .loose();
 
@@ -124,6 +127,16 @@ export function formatLaneMergeSelection(
         ? commands.commands.join("+")
         : "none";
   return `${laneMergeValidation.strategy ?? "final-only"} ${selection}`;
+}
+
+export function formatAgentModelSelection(
+  backend: string,
+  selection: BackendModelSelection,
+): string {
+  const parameters = Object.entries(selection.parameters)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, value]) => `${id}=${value}`);
+  return [backend, selection.modelId, ...parameters].join(" ");
 }
 
 // The selector blocks parse with the FOUNDATION schemas (charter invariant
@@ -704,7 +717,10 @@ function assignmentRow(
     profile: `${assignment.profile.tier}:${assignment.profile.id}`,
     focus: assignment.focus ?? null,
     strategy,
-    runtime: `${assignment.agent.backend} ${assignment.agent.model} ${assignment.agent.reasoningEffort}`,
+    runtime: formatAgentModelSelection(
+      assignment.agent.backend,
+      assignment.agent.modelSelection,
+    ),
   };
 }
 

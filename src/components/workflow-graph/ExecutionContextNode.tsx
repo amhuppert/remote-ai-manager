@@ -616,9 +616,11 @@ export function ContextNodeCard({
                 className="h-[5px] w-[5px] shrink-0 rounded-full bg-cyan"
               />
             )}
-            <span className="ml-auto rounded-full border border-solid border-border-default px-[7px] text-[0.7rem] font-medium text-text-secondary uppercase">
-              {crew.implementer.effort}
-            </span>
+            {crew.implementer.parametersLabel && (
+              <span className="ml-auto rounded-full border border-solid border-border-default px-[7px] text-[0.7rem] font-medium text-text-secondary">
+                {crew.implementer.parametersLabel}
+              </span>
+            )}
           </div>
           {crew.seats.map((seat, index) => (
             <div
@@ -651,6 +653,11 @@ export function ContextNodeCard({
                 <span className="text-[0.7rem] font-normal whitespace-nowrap text-text-secondary">
                   {seat.modelLabel}
                 </span>
+                {seat.parametersLabel && (
+                  <span className="min-w-0 overflow-hidden text-[0.7rem] font-normal text-ellipsis whitespace-nowrap text-text-tertiary">
+                    {seat.parametersLabel}
+                  </span>
+                )}
               </div>
             </div>
           ))}

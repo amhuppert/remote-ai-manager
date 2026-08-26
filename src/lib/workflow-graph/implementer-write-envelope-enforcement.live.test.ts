@@ -43,6 +43,7 @@ import os from "node:os";
 import path from "node:path";
 import { getConversationBackendFactory } from "@/lib/agent-backends/registry";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 import {
@@ -312,6 +313,13 @@ async function runLiveTurn(
 ): Promise<void> {
   const factory = getConversationBackendFactory(backend);
   if (!factory) throw new Error(`No conversation factory for ${backend}`);
+  const modelSelection: BackendModelSelection =
+    backend === "codex"
+      ? {
+          modelId: CODEX_MODEL_ID,
+          parameters: { reasoning: "medium", fast: "false" },
+        }
+      : { modelId: "sonnet", parameters: { effort: "medium" } };
 
   const runtime = await factory.createRuntime({
     conversationId: `live-envelope-${backend}`,
@@ -324,7 +332,7 @@ async function runLiveTurn(
     ),
     worktreePath: fixture.worktreePath,
     persistedRef: null,
-    ...(backend === "codex" ? { modelId: CODEX_MODEL_ID } : {}),
+    modelSelection,
     sessionInstructions: [],
     tooling: { portableMcp: { servers: [] } },
     fsWritePolicy: fixture.policy,
@@ -333,6 +341,7 @@ async function runLiveTurn(
   try {
     await runtime.sendTurn({
       promptText: probePrompt(fixture),
+      modelSelection,
       imageRefs: [],
       sessionInstructions: [],
       autonomous: true,

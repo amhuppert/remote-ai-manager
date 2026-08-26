@@ -7,7 +7,6 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 
-import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import { addGraphPlanReviews } from "./0032-add-graph-plan-reviews";
 
 type Db = InstanceType<typeof Database>;
@@ -100,6 +99,5 @@ describe("0032-add-graph-plan-reviews", () => {
         .prepare("SELECT version FROM schema_migrations ORDER BY version")
         .all(),
     ).toEqual(before);
-    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 });

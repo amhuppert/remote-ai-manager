@@ -60,6 +60,11 @@ function makeDeps(overrides: Partial<ChatSpawnDeps> = {}): ChatSpawnDeps {
     resolveCommittedHeadBase: vi.fn().mockResolvedValue(COMMITTED_HEAD),
     setSessionSpawnedFrom: vi.fn().mockResolvedValue(undefined),
     addPlcSpawnedSessionIds: vi.fn().mockResolvedValue(undefined),
+    admitModelSelection: vi.fn(async ({ modelSelection }) => ({
+      ok: true as const,
+      modelSelection:
+        modelSelection ?? ({ modelId: "default", parameters: {} } as const),
+    })),
     dispatchFirstTurn: vi.fn().mockResolvedValue({ dispatched: true }),
     broadcast: vi.fn(),
     ...overrides,
@@ -67,6 +72,138 @@ function makeDeps(overrides: Partial<ChatSpawnDeps> = {}): ChatSpawnDeps {
 }
 
 describe("createChatSpawnService.createFromProposal", () => {
+  it("rejects a catalog-invalid selection before resolving a base or provisioning any session", async () => {
+    const deps = makeDeps({
+      admitModelSelection: vi.fn(async ({ modelSelection }) =>
+        modelSelection?.modelId === "invalid"
+          ? {
+              ok: false as const,
+              code: "unknown_model",
+              message:
+                'Model "invalid" is not present in this backend catalog.',
+              modelId: "invalid",
+            }
+          : {
+              ok: true as const,
+              modelSelection: modelSelection ?? {
+                modelId: "default",
+                parameters: {},
+              },
+            },
+      ),
+    });
+    const service = createChatSpawnService(deps);
+
+    await expect(
+      service.createFromProposal({
+        projectPath: "/repo",
+        projectName: "repo",
+        conversationId: "plc-1",
+        proposal: {
+          sessions: [
+            proposed({ name: "alpha", initialPrompt: "go" }),
+            proposed({
+              name: "beta",
+              agent: "codex",
+              initialPrompt: "go",
+              modelSelection: { modelId: "invalid", parameters: {} },
+            }),
+          ],
+        },
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        code: "unknown_model",
+        modelId: "invalid",
+      }),
+    );
+    expect(deps.resolveCommittedHeadBase).not.toHaveBeenCalled();
+    expect(deps.createSession).not.toHaveBeenCalled();
+    expect(deps.setSessionSpawnedFrom).not.toHaveBeenCalled();
+    expect(deps.addPlcSpawnedSessionIds).not.toHaveBeenCalled();
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "dual race",
+      proposed: proposed({
+        agent: "dual",
+        initialPrompt: "race it",
+        modelSelection: { modelId: "unused", parameters: {} },
+      }),
+    },
+    {
+      label: "session without an initial turn",
+      proposed: proposed({
+        agent: "codex",
+        modelSelection: { modelId: "unused", parameters: {} },
+      }),
+    },
+  ])(
+    "rejects a model selection for a $label instead of silently discarding it",
+    async ({ proposed: sessionProposal }) => {
+      const deps = makeDeps();
+      const service = createChatSpawnService(deps);
+
+      await expect(
+        service.createFromProposal({
+          projectPath: "/repo",
+          projectName: "repo",
+          conversationId: "plc-1",
+          proposal: { sessions: [sessionProposal] },
+        }),
+      ).rejects.toMatchObject({
+        code: "model_selection_inapplicable",
+        modelId: "unused",
+      });
+      expect(deps.admitModelSelection).not.toHaveBeenCalled();
+      expect(deps.resolveCommittedHeadBase).not.toHaveBeenCalled();
+      expect(deps.createSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it("dispatches the canonical selection admitted before provisioning", async () => {
+    const deps = makeDeps({
+      admitModelSelection: vi.fn(async () => ({
+        ok: true as const,
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      })),
+    });
+    const service = createChatSpawnService(deps);
+
+    await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: {
+        sessions: [
+          proposed({
+            agent: "cursor",
+            initialPrompt: "go",
+            modelSelection: {
+              modelId: "composer",
+              parameters: { fast: "true" },
+            },
+          }),
+        ],
+      },
+    });
+
+    expect(deps.dispatchFirstTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "cursor",
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      }),
+    );
+  });
+
   it("keeps successes and records failures without rolling back the batch", async () => {
     const createSession = vi
       .fn()
@@ -131,7 +268,7 @@ describe("createChatSpawnService.createFromProposal", () => {
     expect(call.baseBranch).toBe(COMMITTED_HEAD);
   });
 
-  it("forwards the proposed model + reasoning effort to the dispatcher", async () => {
+  it("forwards the proposed complete model selection to the dispatcher", async () => {
     const deps = makeDeps();
     const service = createChatSpawnService(deps);
     await service.createFromProposal({
@@ -143,8 +280,10 @@ describe("createChatSpawnService.createFromProposal", () => {
           proposed({
             name: "alpha",
             agent: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
             initialPrompt: "go",
           }),
         ],
@@ -152,8 +291,10 @@ describe("createChatSpawnService.createFromProposal", () => {
     });
     const call = (deps.dispatchFirstTurn as ReturnType<typeof vi.fn>).mock
       .calls[0]![0] as Parameters<ChatSpawnDeps["dispatchFirstTurn"]>[0];
-    expect(call.model).toBe("gpt-5.4");
-    expect(call.reasoningEffort).toBe("high");
+    expect(call.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    });
   });
 
   it("forwards ordered proposed images to the dispatcher", async () => {

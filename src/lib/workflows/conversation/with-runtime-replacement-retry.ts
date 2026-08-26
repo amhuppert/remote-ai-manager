@@ -178,11 +178,8 @@ export function withRuntimeReplacementRetry(
     get isTurnActive() {
       return live().isTurnActive;
     },
-    get modelId() {
-      return live().modelId;
-    },
-    get reasoningEffort() {
-      return live().reasoningEffort;
+    get modelSelection() {
+      return live().modelSelection;
     },
     get outputFormat() {
       return live().outputFormat;

@@ -156,7 +156,13 @@ describe("WorkflowDefinitionCanvas — effective crew and overrides", () => {
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
-        agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+        agent: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        },
       },
       contextValidator: {
         enabled: true,
@@ -168,8 +174,10 @@ describe("WorkflowDefinitionCanvas — effective crew and overrides", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -213,8 +221,10 @@ describe("WorkflowDefinitionCanvas — effective crew and overrides", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "codex",
-            model: "gpt-5.5",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.5",
+              parameters: { effort: "medium" },
+            },
           },
         },
       },

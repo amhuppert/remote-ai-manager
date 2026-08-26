@@ -20,8 +20,10 @@ const messages: TranscriptMessage[] = [
       { type: "text", text: "I'll start by mapping the current auth flow." },
     ],
     timestamp: "2026-01-01T00:00:05Z",
-    model: "opus",
-    effort: "high",
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
   },
   {
     role: "user",

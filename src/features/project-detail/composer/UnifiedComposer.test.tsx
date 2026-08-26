@@ -16,17 +16,45 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import type { BackendModelCatalog } from "@/lib/agent-backends/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
   codex: {
     modelId: "gpt-5.6-sol",
-    effort: "ultra",
-    codexFastMode: true,
+    parameters: { reasoning: "ultra", fast: "true" },
   },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
+
+function projectModelOptions(defaults: BackendSelectionDefaultsById) {
+  const catalogs: Record<"claude" | "codex" | "cursor", BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex", defaults.codex),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return (["claude", "codex", "cursor"] as const).map((backend) => {
+    const catalog = catalogs[backend];
+    return {
+      backend,
+      models: catalog.models.map((model) => ({
+        id: model.id,
+        label: model.label,
+        description: model.description ?? model.label,
+        effortLevels: [],
+      })),
+      defaultModelId: defaults[backend].modelId,
+      source: "catalog" as const,
+      modelCatalog: catalog,
+      defaultSelection: defaults[backend],
+      diagnostics: [],
+    };
+  });
+}
 
 function makeConversation(
   o: Partial<ConversationState> = {},
@@ -84,6 +112,10 @@ function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
     busy: false,
     ...overrides,
   };
+  client.setQueryData(
+    backendCatalogKeys.projectModelOptions(props.projectName),
+    projectModelOptions(props.backendDefaults),
+  );
   const rendered = render(
     <QueryClientProvider client={client}>
       <UnifiedComposer {...props} />
@@ -247,23 +279,27 @@ describe("UnifiedComposer backend lock", () => {
 });
 
 describe("UnifiedComposer model settings", () => {
-  it("initializes and switches controls from each configured backend profile", async () => {
+  it("initializes and switches complete selections from each configured backend profile", async () => {
     const rendered = renderComposer({
       activeConversation: makeConversation({ promptCount: 0 }),
     });
 
-    expect(screen.getByTitle(/Model: Sonnet/)).toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: /Effort: Medium/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "Sonnet",
+    );
+    expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent(
+      "Medium",
+    );
 
     fireEvent.click(document.querySelector('[data-backend="codex"]')!);
     rendered.rerender({ agentBackend: "codex" });
 
-    expect(await screen.findByTitle(/Model: GPT-5.6 Sol/)).toBeInTheDocument();
+    expect(await screen.findByTestId("model-selector-label")).toHaveTextContent(
+      "GPT-5.6 Sol",
+    );
     expect(
-      screen.getByRole("combobox", { name: /Effort: Ultra/i }),
-    ).toBeInTheDocument();
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent("Ultra");
   });
 
   // The canonical selection flow for a Cursor conversation: pick the backend
@@ -283,36 +319,43 @@ describe("UnifiedComposer model settings", () => {
     fireEvent.click(cursorOption);
     rendered.rerender({ agentBackend: "cursor" });
 
-    expect(await screen.findByTitle(/Model: Composer 2.5/)).toBeInTheDocument();
+    expect(await screen.findByTestId("model-selector-label")).toHaveTextContent(
+      "Composer 2.5",
+    );
     const activeToggle = document.querySelector(
       'button[data-backend="cursor"][data-active="true"]',
     );
     expect(activeToggle?.textContent).toBe("Cursor");
-    // Composer declares no effort levels, so no effort control is offered.
-    expect(screen.queryByRole("combobox", { name: /Effort:/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Model options" })).toBeEnabled();
     expect(document.body.innerHTML).not.toMatch(/api[-_ ]?key/i);
   });
 
-  it("initializes controls from the active conversation's last sent model and effort", async () => {
+  it("initializes controls from the active conversation's last complete selection", async () => {
     renderComposer({
       activeConversation: makeConversation({ promptCount: 2 }),
-      lastUsedModelId: "sonnet",
-      lastUsedEffort: "medium",
+      lastUsedModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "low" },
+      },
     });
 
     await waitFor(() =>
       expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
     );
-    expect(screen.getByTitle(/Model: Sonnet/)).toBeInTheDocument();
-    // The effort trigger is now a Radix Select (role="combobox"), named by its
-    // aria-label; the model trigger is matched above by its descriptive title.
-    expect(
-      screen.getByRole("combobox", { name: /Effort: Medium/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "Sonnet",
+    );
+    expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent(
+      "Low",
+    );
   });
 
   it("shows and submits the configured custom Codex model unchanged", () => {
     const customModel = "custom-codex-model";
+    const customSelection = {
+      modelId: customModel,
+      parameters: { reasoning: "ultra", fast: "true" },
+    };
     renderComposer({
       agentBackend: "codex",
       activeConversation: makeConversation({
@@ -320,9 +363,8 @@ describe("UnifiedComposer model settings", () => {
         promptCount: 0,
       }),
       backendDefaults: {
-        claude: { modelId: "sonnet", effort: "medium" },
-        codex: { modelId: customModel, effort: "ultra" },
-        cursor: { modelId: "composer-2.5", effort: "high" },
+        ...BACKEND_DEFAULTS,
+        codex: customSelection,
       },
     });
 
@@ -335,125 +377,31 @@ describe("UnifiedComposer model settings", () => {
         pendingImages: [],
         tokens: [],
         backend: "codex",
-        modelId: customModel,
-        effort: "ultra",
-        effortSupported: true,
+        modelSelection: customSelection,
       }),
     ).toMatchObject({
       kind: "send",
-      input: { backend: "codex", modelId: customModel, effort: "ultra" },
+      input: { backend: "codex", modelSelection: customSelection },
     });
   });
 
-  it("rejects a remembered Claude model for an initialized Codex conversation", () => {
+  it("preserves an invalid higher-precedence selection and blocks submission", () => {
     renderComposer({
       agentBackend: "codex",
       activeConversation: makeConversation({
         agentBackend: "codex",
         promptCount: 2,
       }),
-      lastUsedModelId: "opus",
-      lastUsedEffort: "ultra",
+      lastUsedModelSelection: {
+        modelId: "opus",
+        parameters: { effort: "ultra" },
+      },
     });
 
-    expect(screen.getByTitle(/Model: GPT-5.6 Sol/)).toBeInTheDocument();
-    expect(screen.getByTestId("model-selector-label")).not.toHaveTextContent(
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
       "opus",
     );
-  });
-
-  it("does not submit a Claude model configured as the Codex default", async () => {
-    const onSendPrompt = vi.fn(async () => "accepted" as const);
-    renderComposer({
-      agentBackend: "codex",
-      activeConversation: makeConversation({
-        agentBackend: "codex",
-        promptCount: 2,
-      }),
-      backendDefaults: {
-        claude: { modelId: "sonnet", effort: "medium" },
-        codex: { modelId: "opus", effort: "ultra" },
-        cursor: { modelId: "composer-2.5", effort: "high" },
-      },
-      initialDocument: { prompt: "run it", images: [] },
-      onSendPrompt,
-    });
-
-    await waitFor(() =>
-      expect(
-        document.querySelector(".prompt-editor__content .ProseMirror"),
-      ).toHaveTextContent("run it"),
-    );
-    fireEvent.click(screen.getByTestId("prompt-send"));
-
-    expect(onSendPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        backend: "codex",
-        modelId: "gpt-5.4",
-      }),
-    );
-  });
-});
-
-describe("UnifiedComposer Codex speed", () => {
-  it("initializes a new Codex conversation from the global default", () => {
-    renderComposer({
-      agentBackend: "codex",
-      activeConversationId: null,
-      activeConversation: undefined,
-    });
-
-    expect(screen.getByRole("radio", { name: "Fast" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-  });
-
-  it("restores the active conversation's last sent speed over the global default", () => {
-    renderComposer({
-      agentBackend: "codex",
-      activeConversation: makeConversation({
-        agentBackend: "codex",
-        promptCount: 2,
-      }),
-      lastUsedCodexFastMode: false,
-    });
-
-    expect(screen.getByRole("radio", { name: "Standard" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-  });
-
-  it("includes the selected speed on Codex sends and omits it from Claude sends", () => {
-    const common = {
-      draft: "ship it",
-      pendingImages: [],
-      tokens: [],
-      modelId: "model",
-      effort: "high" as const,
-      effortSupported: true,
-      codexFastMode: true,
-    };
-
-    expect(
-      resolveProjectComposerSubmit({ ...common, backend: "codex" }),
-    ).toMatchObject({
-      kind: "send",
-      input: { backend: "codex", codexFastMode: true },
-    });
-    expect(
-      resolveProjectComposerSubmit({ ...common, backend: "claude" }),
-    ).toEqual({
-      kind: "send",
-      input: {
-        text: "ship it",
-        images: [],
-        backend: "claude",
-        modelId: "model",
-        effort: "high",
-      },
-    });
+    expect(screen.getByTestId("prompt-send")).toBeDisabled();
   });
 });
 
@@ -464,9 +412,10 @@ describe("resolveProjectComposerSubmit", () => {
       pendingImages: [],
       tokens: [],
       backend: "claude",
-      modelId: "claude-sonnet-4-5-20250929",
-      effort: "high",
-      effortSupported: true,
+      modelSelection: {
+        modelId: "claude-sonnet-4-5-20250929",
+        parameters: { effort: "high" },
+      },
     });
     expect(result).toEqual({
       kind: "send",
@@ -474,8 +423,10 @@ describe("resolveProjectComposerSubmit", () => {
         text: "fix the bug",
         images: [],
         backend: "claude",
-        modelId: "claude-sonnet-4-5-20250929",
-        effort: "high",
+        modelSelection: {
+          modelId: "claude-sonnet-4-5-20250929",
+          parameters: { effort: "high" },
+        },
       },
     });
   });
@@ -487,9 +438,10 @@ describe("resolveProjectComposerSubmit", () => {
         pendingImages: [],
         tokens: [],
         backend: "claude",
-        modelId: "claude-sonnet-4-5-20250929",
-        effort: "high",
-        effortSupported: true,
+        modelSelection: {
+          modelId: "claude-sonnet-4-5-20250929",
+          parameters: { effort: "high" },
+        },
       }),
     ).toEqual({ kind: "command", id: "capabilities" });
     expect(
@@ -498,9 +450,10 @@ describe("resolveProjectComposerSubmit", () => {
         pendingImages: [],
         tokens: [],
         backend: "claude",
-        modelId: "claude-sonnet-4-5-20250929",
-        effort: "high",
-        effortSupported: true,
+        modelSelection: {
+          modelId: "claude-sonnet-4-5-20250929",
+          parameters: { effort: "high" },
+        },
       }),
     ).toEqual({ kind: "command", id: "new" });
   });
@@ -511,9 +464,10 @@ describe("resolveProjectComposerSubmit", () => {
       pendingImages: [],
       tokens: [],
       backend: "claude",
-      modelId: "claude-sonnet-4-5-20250929",
-      effort: "high",
-      effortSupported: true,
+      modelSelection: {
+        modelId: "claude-sonnet-4-5-20250929",
+        parameters: { effort: "high" },
+      },
     });
     expect(result.kind).toBe("tokens");
     if (result.kind !== "tokens") return;

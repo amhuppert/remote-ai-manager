@@ -66,22 +66,29 @@ Command Center reads MCP server definitions from two `.mcp.json` files it owns:
 
 When the same `serverKey` appears in both files, the project definition overrides the global one.
 
-## Optional: Enable the Codex Tool
+## Optional: Configure the Codex Backend
 
-CC can expose an MCP tool (`run_codex`) that lets Claude delegate tasks to OpenAI's Codex agent. To enable it, add a `codex` block to your global config file (`~/.config/cc/config.json` on Linux, `~/Library/Application Support/cc/config.json` on macOS):
+Codex is always available as an agent backend. To override its default model variant, add an `agentBackends.codex` block to your global config file (`~/.config/cc/config.json` on Linux, `~/Library/Application Support/cc/config.json` on macOS):
 
 ```json
 {
-  "codex": {
-    "enabled": true,
-    "model": "gpt-5-codex",
-    "reasoningEffort": "medium"
+  "agentBackends": {
+    "codex": {
+      "modelSelection": {
+        "modelId": "gpt-5.4",
+        "parameters": {
+          "reasoning": "medium",
+          "fast": "false"
+        }
+      },
+      "timeoutMs": null
+    }
   }
 }
 ```
 
-- `model` and `reasoningEffort` are optional defaults — Claude can override them per invocation
-- Allowed reasoning effort values: `minimal`, `low`, `medium`, `high`, `xhigh`
+- `modelSelection` is an atomic catalog variant; do not split the model and its parameters across fields
+- Per-run overrides use the same `{ "modelId", "parameters" }` shape
 - CC forces Codex into autonomous `workspace-write` sandbox mode with no approval prompts
 - The tool is immediately available in newly created interactive sessions
 - Long-lived interactive sessions do not hot-reload Codex config mid-session

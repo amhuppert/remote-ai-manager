@@ -127,9 +127,15 @@ function renderPage(args: {
     <QueryClientProvider client={queryClient}>
       <ConversationsPage
         backendDefaults={{
-          claude: { modelId: "sonnet", effort: "high" },
-          codex: { modelId: "gpt-5.6-sol", effort: "high" },
-          cursor: { modelId: "composer-2.5", effort: "high" },
+          claude: { modelId: "sonnet", parameters: { effort: "high" } },
+          codex: {
+            modelId: "gpt-5.6-sol",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+          cursor: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
         }}
       />
     </QueryClientProvider>,

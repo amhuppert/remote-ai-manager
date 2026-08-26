@@ -46,9 +46,9 @@ import CollabPassageControls from "@/features/session/conversation/collab/Collab
 import CollabMobileBar from "@/features/session/conversation/collab/CollabMobileBar";
 import CollabControlSheet from "@/features/session/conversation/collab/CollabControlSheet";
 import CollabReaderOverlay from "@/features/session/conversation/collab/CollabReaderOverlay";
+import type { CollabAgentMetaSettings } from "@/features/session/conversation/collab/CollabAgentModelMeta";
 import { CollabCardOrchestrationProvider } from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import type {
-  CollabAgentDisplay,
   CollabAgentsDisplayMap,
   CollabPassageStatus,
 } from "@/features/session/conversation/collab/envelope-adapter";
@@ -387,7 +387,7 @@ function pushPendingCard(
   cards: CardEntry[],
   rows: Array<{ rowId: string; cardIds: string[]; rowKind: string }>,
   step: CollabPendingStep,
-  modelSettings: CollabAgentDisplay | undefined,
+  modelSettings: CollabAgentMetaSettings | undefined,
 ): void {
   cards.push({
     id: step.id,
@@ -433,7 +433,16 @@ function buildTimeline(
     latestNonFinal !== undefined && latestNonFinal === artifact;
   const settingsFor = (
     flow: CollaborationFlowAgent,
-  ): CollabAgentDisplay | undefined => agents?.[flow];
+  ): CollabAgentMetaSettings | undefined => {
+    const agent = agents?.[flow];
+    if (agent === undefined) return undefined;
+    return {
+      ...agent.modelSelection,
+      ...(agent.profileName === undefined
+        ? {}
+        : { profileName: agent.profileName }),
+    };
+  };
   const artifactFileUrl =
     projectName && sessionName
       ? (artifact: { path: string }): string =>

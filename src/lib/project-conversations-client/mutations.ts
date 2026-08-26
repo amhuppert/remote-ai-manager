@@ -41,8 +41,8 @@ import type {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { OptimisticAgentSettings } from "@/stores/session-detail/types";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { projectConversationKeys } from "./query-keys";
 
@@ -322,6 +322,7 @@ export interface QueueProjectMessageInput {
   conversationId: string;
   text: string;
   images?: ImagePayload[];
+  modelSelection?: BackendModelSelection;
 }
 
 export interface UseQueueProjectMessageResult {
@@ -357,6 +358,7 @@ export function useQueueProjectMessage(
       conversationId,
       text,
       images,
+      modelSelection,
     }: QueueProjectMessageInput): Promise<boolean> => {
       const content = buildUserContent(text, images);
       if (content.length === 0) return false;
@@ -375,6 +377,7 @@ export function useQueueProjectMessage(
           body: JSON.stringify({
             text,
             ...(images && images.length > 0 ? { images } : {}),
+            ...(modelSelection ? { modelSelection } : {}),
           }),
         });
       } catch {
@@ -512,9 +515,7 @@ export interface SendProjectPromptInput {
   text: string;
   images?: ImagePayload[];
   backend?: AgentBackendId;
-  modelId?: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection?: BackendModelSelection;
   /**
    * Identity for the conversation a `create` target builds — the create-and-send
    * composer's own picker, travelling beside the runtime fields rather than
@@ -527,15 +528,9 @@ export interface SendProjectPromptInput {
 function projectPromptAgentSettings(
   input: SendProjectPromptInput,
 ): OptimisticAgentSettings {
-  return {
-    ...(input.modelId !== undefined ? { model: input.modelId } : {}),
-    ...(input.effort !== undefined ? { effort: input.effort } : {}),
-    ...(input.backend !== undefined &&
-    backendSupportsFastMode(input.backend) &&
-    input.codexFastMode !== undefined
-      ? { codexFastMode: input.codexFastMode }
-      : {}),
-  };
+  return input.modelSelection === undefined
+    ? {}
+    : { modelSelection: input.modelSelection };
 }
 
 export interface ProjectPromptError {
@@ -1032,19 +1027,12 @@ export function useSendProjectPrompt(
         body.creationRequestId = unnamedTurn.creationRequestId;
         if (input.profile !== undefined) body.profile = input.profile;
       }
-      if (input.modelId !== undefined) body.modelId = input.modelId;
-      if (input.effort !== undefined) body.effort = input.effort;
+      if (input.modelSelection !== undefined) {
+        body.modelSelection = input.modelSelection;
+      }
       if (input.images !== undefined && input.images.length > 0)
         body.images = input.images;
       if (input.backend !== undefined) body.backend = input.backend;
-      if (
-        input.backend !== undefined &&
-        backendSupportsFastMode(input.backend) &&
-        input.codexFastMode !== undefined
-      ) {
-        body.codexFastMode = input.codexFastMode;
-      }
-
       try {
         const res = await fetch(url, {
           method: "POST",

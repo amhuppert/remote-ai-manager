@@ -45,8 +45,10 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       profileSnapshot: makeProfileSnapshot(),
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
     },
     contextValidator: { enabled: false, assignments: [] },
@@ -62,8 +64,10 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       secondAgent: {
         value: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         source: "global",
       },
@@ -312,8 +316,10 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
               profile: { tier: "builtin", id: "general-implementer" },
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "high" },
+                },
               },
             },
           },
@@ -346,8 +352,10 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
               profile: { tier: "builtin", id: "general-implementer" },
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "high" },
+                },
               },
             },
           },
@@ -379,7 +387,10 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
       profileSnapshot: makeProfileSnapshot(),
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+      },
     });
     expect(
       afterEdit.workingDefinition.tasks.some(
@@ -432,6 +443,11 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
     const implementConfig = outline2.outline.config.find(
       (c: { contextId: string }) => c.contextId === "context-implement",
     );
-    expect(implementConfig?.implementer).toMatchObject({ model: "opus" });
+    expect(implementConfig?.implementer).toMatchObject({
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
   });
 });

@@ -1,12 +1,14 @@
-import { useMemo } from "react";
-import {
-  effortLevelsForCatalogEntry,
-  type BackendCatalogEntry,
-} from "@/lib/agent-backends/catalog";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { conversationNamingConfigSchema } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  CatalogModelSelect,
+  ModelOptionsEditor,
+} from "@/components/session/prompt/ModelSelectionControls";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
@@ -16,16 +18,9 @@ import { SettingsSubSection } from "../components/SettingsSubSection";
 import type { ConfigFormController } from "./types";
 
 // Effective defaults rendered when config.json carries no `conversationNaming`
-// block yet. For the schema's own default backend, the naming default model is
-// deliberately the schema's (haiku — a cheap one-shot titler), not the backend
-// catalog default. Any other backend starts from its catalog default model.
+// block yet. Haiku is deliberately cheaper than the Claude profile default for
+// this one-shot task; subsequent backend changes use the target catalog default.
 const NAMING_DEFAULTS = conversationNamingConfigSchema.parse({});
-
-function defaultModelForBackend(entry: BackendCatalogEntry): string {
-  return entry.id === NAMING_DEFAULTS.backend
-    ? NAMING_DEFAULTS.model
-    : entry.defaultModelId;
-}
 
 export function NamingSection({
   controller,
@@ -45,22 +40,25 @@ export function NamingSection({
   const naming = formState.conversationNaming;
   const enabled = naming?.enabled ?? NAMING_DEFAULTS.enabled;
   const backend: AgentBackendId = naming?.backend ?? NAMING_DEFAULTS.backend;
-  const model = naming?.model ?? NAMING_DEFAULTS.model;
-  const effort = naming?.effort ?? NAMING_DEFAULTS.effort;
+  const modelSelection: BackendModelSelection =
+    naming?.modelSelection ?? NAMING_DEFAULTS.modelSelection;
 
   const { data: backends } = useBackendCatalogQuery();
   const entry = backends.find((b) => b.id === backend);
   if (!entry) {
     throw new Error(`Unknown agent backend: ${backend}`);
   }
-
-  const modelOptions = entry.models.map((m) => m.id);
-  const modelLabel = (value: string) =>
-    entry.models.find((option) => option.id === value)?.label ?? value;
-  const effortOptions = useMemo(
-    () => effortLevelsForCatalogEntry(entry, model),
-    [entry, model],
+  const catalog = getConfiguredBackendModelCatalog(backend, modelSelection);
+  const selectedModel = catalog.models.find(
+    ({ id, aliases }) =>
+      id === modelSelection.modelId || aliases.includes(modelSelection.modelId),
   );
+  const hasConfigurableParameters = selectedModel?.parameters.some(
+    ({ prominence, values }) => prominence !== "hidden" && values.length > 1,
+  );
+  const applySelection = (selection: BackendModelSelection): void => {
+    handleChange("conversationNaming.modelSelection", selection);
+  };
 
   return (
     <SettingsPage
@@ -88,8 +86,8 @@ export function NamingSection({
         </ConfigField>
       </SettingsSubSection>
       <SettingsSubSection
-        title="Model & reasoning"
-        hint="The backend, model and effort used for the one-shot naming call."
+        title="Model selection"
+        hint="The backend, model, and supported model parameters used for the one-shot naming call."
       >
         <ConfigField
           label="Backend"
@@ -110,49 +108,43 @@ export function NamingSection({
               if (!nextEntry) {
                 throw new Error(`Unknown agent backend: ${value}`);
               }
-              // The model field is shared across backends, so a backend switch
-              // must reset it to a model valid for the new backend. Effort
-              // clears so the schema default applies (clamped per-model by the
-              // naming service).
+              const nextCatalog = getConfiguredBackendModelCatalog(value);
+              // A complete selection belongs to one backend catalog, so a
+              // backend change also installs the target catalog's default.
               handleChangeMulti([
                 ["conversationNaming.backend", value],
-                ["conversationNaming.model", defaultModelForBackend(nextEntry)],
-                ["conversationNaming.effort", undefined],
+                [
+                  "conversationNaming.modelSelection",
+                  defaultSelectionForModel(
+                    nextCatalog,
+                    nextCatalog.defaultModelId,
+                  ),
+                ],
               ]);
             }}
           />
         </ConfigField>
         <ConfigField
-          label="Model"
-          fieldPath="conversationNaming.model"
-          isDefault={isDefault("conversationNaming.model")}
-          isModified={isModified("conversationNaming.model")}
+          label="Model selection"
+          fieldPath="conversationNaming.modelSelection"
+          isDefault={isDefault("conversationNaming.modelSelection")}
+          isModified={isModified("conversationNaming.modelSelection")}
         >
-          <ConfigPillGroup
-            value={model}
-            options={modelOptions}
-            getOptionLabel={modelLabel}
-            onChange={(value) =>
-              handleChange("conversationNaming.model", value)
-            }
+          <CatalogModelSelect
+            catalog={catalog}
+            selection={modelSelection}
+            onSelectionChange={applySelection}
           />
+          {hasConfigurableParameters ? (
+            <div className="mt-md max-w-[420px]">
+              <ModelOptionsEditor
+                catalog={catalog}
+                selection={modelSelection}
+                onApply={applySelection}
+              />
+            </div>
+          ) : null}
         </ConfigField>
-        {effortOptions.length > 0 ? (
-          <ConfigField
-            label="Effort"
-            fieldPath="conversationNaming.effort"
-            isDefault={isDefault("conversationNaming.effort")}
-            isModified={isModified("conversationNaming.effort")}
-          >
-            <ConfigPillGroup
-              value={effort}
-              options={effortOptions}
-              onChange={(value) =>
-                handleChange("conversationNaming.effort", value)
-              }
-            />
-          </ConfigField>
-        ) : null}
         <ConfigField
           label="Timeout"
           fieldPath="conversationNaming.timeoutMs"

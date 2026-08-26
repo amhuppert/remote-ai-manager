@@ -4,11 +4,13 @@ import { makeConversationState } from "@/lib/conversations/testing/conversation-
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
+import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import type {
   ConversationTurnExecution,
   ConversationTurnProjection,
   ExecuteConversationTurnInput,
 } from "@/lib/workflows/conversation/manager";
+import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 
 // ---------------------------------------------------------------------------
 // Infrastructure mocks (module-level side effects only)
@@ -32,7 +34,7 @@ vi.mock("@/lib/logging", () => ({
 import {
   createPromptExecutor,
   BackendMismatchError,
-  ModelEffortValidationError,
+  ModelSelectionValidationError,
   ConversationCommandDispatcherUnavailableError,
   DEBUG_MODE_INSTRUCTIONS,
   TDD_INSTRUCTIONS,
@@ -47,6 +49,7 @@ import {
 } from "@/lib/conversation-commands/service";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { getConversationBackendFactory as getRegisteredConversationBackendFactory } from "@/lib/agent-backends/registry";
 
 // ---------------------------------------------------------------------------
 // Mock actor (simulates XState conversation actor for waitForTurnCompletion)
@@ -112,12 +115,12 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
 
 function makeMockFactory(
   backend: AgentBackendId = "claude",
-  validateFn?: ConversationBackendFactory["validateModelAndEffort"],
+  validateFn?: ConversationBackendFactory["validateModelSelection"],
 ): ConversationBackendFactory {
   return {
     backend,
     createRuntime: vi.fn() as ConversationBackendFactory["createRuntime"],
-    validateModelAndEffort: validateFn,
+    validateModelSelection: validateFn,
   };
 }
 
@@ -1089,10 +1092,10 @@ describe("executePromptStream (facade)", () => {
   });
 
   // =========================================================================
-  // Model/effort validation
+  // Model-selection validation
   // =========================================================================
 
-  it("calls factory.validateModelAndEffort before execution", async () => {
+  it("calls factory.validateModelSelection before execution", async () => {
     const validateFn = vi.fn();
     deps = createTestDeps({
       getConversationBackendFactory: vi.fn(() =>
@@ -1108,21 +1111,27 @@ describe("executePromptStream (facade)", () => {
       "Hello",
       vi.fn(),
       "conv-123",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
-      { effort: "high" },
     );
 
     expect(validateFn).toHaveBeenCalledWith({
       modelId: "opus",
-      reasoningEffort: "high",
+      parameters: { effort: "high" },
     });
   });
 
-  it("throws ModelEffortValidationError when factory validation fails", async () => {
+  it("throws ModelSelectionValidationError when factory validation fails", async () => {
     const onAccepted = vi.fn();
     const validateFn = vi.fn(() => {
-      throw new Error("Invalid model for codex");
+      throw new ModelSelectionPolicyError([
+        {
+          code: "unknown_parameter",
+          message: 'Parameter "turbo" is not defined.',
+          modelId: "invalid-model",
+          parameterId: "turbo",
+        },
+      ]);
     });
     deps = createTestDeps({
       getConversationBackendFactory: vi.fn(() =>
@@ -1132,22 +1141,63 @@ describe("executePromptStream (facade)", () => {
     const executor = createPromptExecutor(deps);
     executePromptStream = executor.executePromptStream;
 
-    await expect(
-      executePromptStream(
+    const error = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      { modelId: "invalid-model", parameters: { turbo: "true" } },
+      undefined,
+      { onAccepted },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ModelSelectionValidationError);
+    expect(error).toMatchObject({
+      code: "unknown_parameter",
+      modelId: "invalid-model",
+      parameterId: "turbo",
+    });
+    expect(onAccepted).not.toHaveBeenCalled();
+  });
+
+  it("preserves stable project-policy diagnostics on model selection failures", async () => {
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: false as const,
+      code: "model_not_allowed",
+      message: 'Model "gpt-5" is not allowed.',
+      modelId: "gpt-5",
+    }));
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        ...makeMockFactory("claude"),
+        validateProjectModelSelection,
+      })),
+    });
+
+    const error = await createPromptExecutor(deps)
+      .executePromptStream(
         "/projects/repo",
         makeSession(),
         "Hello",
         vi.fn(),
         "conv-123",
-        "invalid-model",
+        {
+          modelId: "gpt-5",
+          parameters: { fast: "false", reasoning: "high" },
+        },
         undefined,
-        { onAccepted },
-      ),
-    ).rejects.toThrow(ModelEffortValidationError);
-    expect(onAccepted).not.toHaveBeenCalled();
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ModelSelectionValidationError);
+    expect(error).toMatchObject({
+      code: "model_not_allowed",
+      modelId: "gpt-5",
+    });
   });
 
-  it("skips validation when factory has no validateModelAndEffort", async () => {
+  it("skips validation when factory has no validateModelSelection", async () => {
     deps = createTestDeps({
       getConversationBackendFactory: vi.fn(() => makeMockFactory("claude")),
     });
@@ -1173,7 +1223,9 @@ describe("executePromptStream (facade)", () => {
     const onAccepted = vi.fn();
     const validateProjectModelSelection = vi.fn(async () => ({
       ok: false as const,
+      code: "model_not_allowed",
       message: 'Cursor model "gpt-5" is not in this project\'s supported list.',
+      modelId: "gpt-5",
     }));
     deps = createTestDeps({
       getConversationBackendFactory: vi.fn(() => ({
@@ -1191,22 +1243,121 @@ describe("executePromptStream (facade)", () => {
         "Hello",
         vi.fn(),
         "conv-123",
-        "gpt-5",
+        {
+          modelId: "gpt-5",
+          parameters: { fast: "false", reasoning: "high" },
+        },
         undefined,
         { onAccepted },
       ),
-    ).rejects.toThrow(ModelEffortValidationError);
+    ).rejects.toThrow(ModelSelectionValidationError);
 
     expect(validateProjectModelSelection).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
-      modelId: "gpt-5",
+      modelSelection: {
+        modelId: "gpt-5",
+        parameters: { fast: "false", reasoning: "high" },
+      },
     });
     expect(onAccepted).not.toHaveBeenCalled();
   });
 
-  it("consults the project-scoped hook with no explicit model so a configured default is checked too", async () => {
+  it("submits the canonical selection returned by project validation", async () => {
+    const requestedSelection = {
+      modelId: "opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+    const canonicalSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
     const validateProjectModelSelection = vi.fn(async () => ({
       ok: true as const,
+      modelSelection: canonicalSelection,
+    }));
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        ...makeMockFactory("claude"),
+        validateProjectModelSelection,
+      })),
+    });
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      requestedSelection,
+    );
+
+    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turn: expect.objectContaining({
+          modelSelection: canonicalSelection,
+        }),
+      }),
+    );
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      expect.objectContaining({
+        type: "SUBMIT_PROMPT",
+        modelSelection: canonicalSelection,
+      }),
+    );
+  });
+
+  it("persists and dispatches the canonical selection returned by the Claude factory", async () => {
+    const requestedSelection = {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    };
+    deps = createTestDeps({
+      getConversationBackendFactory: vi.fn(() =>
+        getRegisteredConversationBackendFactory("claude"),
+      ),
+    });
+
+    await createPromptExecutor(deps).executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      requestedSelection,
+    );
+
+    const dispatchedSelection = vi.mocked(deps.executeConversationTurn).mock
+      .calls[0]?.[0].turn.modelSelection;
+    const persistedEvent = vi
+      .mocked(deps.sendConversationEvent)
+      .mock.calls.map((call) => call[3])
+      .find(
+        (
+          event,
+        ): event is Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }> =>
+          typeof event === "object" &&
+          event !== null &&
+          "type" in event &&
+          event.type === "SUBMIT_PROMPT",
+      );
+    const persistedSelection = persistedEvent?.modelSelection;
+
+    expect(dispatchedSelection).toEqual(requestedSelection);
+    expect(dispatchedSelection).not.toBe(requestedSelection);
+    expect(persistedSelection).toBe(dispatchedSelection);
+  });
+
+  it("leaves project selection validation to runtime resolution when no explicit selection is supplied", async () => {
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: true as const,
+      modelSelection: {
+        modelId: "claude-opus-5",
+        parameters: { effort: "high" },
+      },
     }));
     deps = createTestDeps({
       getConversationBackendFactory: vi.fn(() => ({
@@ -1225,9 +1376,7 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
     );
 
-    expect(validateProjectModelSelection).toHaveBeenCalledWith({
-      projectPath: "/projects/repo",
-    });
+    expect(validateProjectModelSelection).not.toHaveBeenCalled();
     expect(deps.sendConversationEvent).toHaveBeenCalled();
   });
 });
@@ -1570,13 +1719,27 @@ describe("conversation command interception", () => {
     });
   });
 
-  it("passes the submitted model and effort with the command to the dispatcher", async () => {
+  it("admits and canonicalizes the complete model selection before command dispatch", async () => {
     const dispatchConversationCommand = vi.fn(async () => ({
       status: "dispatched" as const,
       jobId: "job-1",
       usedFallback: false,
     }));
-    deps = createTestDeps({ dispatchConversationCommand });
+    const validateModelSelection = vi.fn();
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: true as const,
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
+    }));
+    deps = createTestDeps({
+      dispatchConversationCommand,
+      getConversationBackendFactory: vi.fn(() => ({
+        ...makeMockFactory("codex", validateModelSelection),
+        validateProjectModelSelection,
+      })),
+    });
     const executor = createPromptExecutor(deps);
 
     await executor.executePromptStream(
@@ -1585,11 +1748,25 @@ describe("conversation command interception", () => {
       "/merge keep it short",
       vi.fn(),
       "conv-123",
-      "gpt-5.6-sol",
+      {
+        modelId: "sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
       undefined,
-      { effort: "ultra", backend: "codex" },
+      { backend: "codex" },
     );
 
+    expect(validateModelSelection).toHaveBeenCalledWith({
+      modelId: "sol",
+      parameters: { fast: "true", reasoning: "ultra" },
+    });
+    expect(validateProjectModelSelection).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      modelSelection: {
+        modelId: "sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
+    });
     expect(dispatchConversationCommand).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
       projectName: "repo",
@@ -1597,9 +1774,99 @@ describe("conversation command interception", () => {
       conversationId: "conv-123",
       parsed: { command: "merge", hint: "keep it short" },
       rawText: "/merge keep it short",
-      modelId: "gpt-5.6-sol",
-      effort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
     });
+  });
+
+  it("rejects an invalid explicit selection before any command dispatch side effect", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "dispatched" as const,
+      jobId: "job-1",
+      usedFallback: false,
+    }));
+    const validateModelSelection = vi.fn(() => {
+      throw new ModelSelectionPolicyError([
+        {
+          code: "unknown_parameter",
+          message: 'Parameter "turbo" is not defined.',
+          modelId: "gpt-5.6-sol",
+          parameterId: "turbo",
+        },
+      ]);
+    });
+    deps = createTestDeps({
+      dispatchConversationCommand,
+      getConversationBackendFactory: vi.fn(() =>
+        makeMockFactory("codex", validateModelSelection),
+      ),
+    });
+
+    const error = await createPromptExecutor(deps)
+      .executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/commit",
+        vi.fn(),
+        "conv-123",
+        {
+          modelId: "gpt-5.6-sol",
+          parameters: { turbo: "true" },
+        },
+        undefined,
+        { backend: "codex" },
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ModelSelectionValidationError);
+    expect(error).toMatchObject({
+      code: "unknown_parameter",
+      modelId: "gpt-5.6-sol",
+      parameterId: "turbo",
+    });
+    expect(deps.setConversationBackend).not.toHaveBeenCalled();
+    expect(dispatchConversationCommand).not.toHaveBeenCalled();
+  });
+
+  it("does not create a conversation for a new command whose selection is rejected", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "dispatched" as const,
+      jobId: "job-1",
+      usedFallback: false,
+    }));
+    const validateModelSelection = vi.fn(() => {
+      throw new ModelSelectionPolicyError([
+        {
+          code: "unknown_model",
+          message: 'Model "retired-model" is not defined.',
+          modelId: "retired-model",
+        },
+      ]);
+    });
+    deps = createTestDeps({
+      dispatchConversationCommand,
+      getConversationBackendFactory: vi.fn(() =>
+        makeMockFactory("codex", validateModelSelection),
+      ),
+    });
+
+    await expect(
+      createPromptExecutor(deps).executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/commit",
+        vi.fn(),
+        undefined,
+        { modelId: "retired-model", parameters: {} },
+        undefined,
+        { backend: "codex" },
+      ),
+    ).rejects.toBeInstanceOf(ModelSelectionValidationError);
+
+    expect(deps.createConversation).not.toHaveBeenCalled();
+    expect(dispatchConversationCommand).not.toHaveBeenCalled();
   });
 
   it("reports a committed ticket identifier when its transcript confirmation could not be persisted", async () => {

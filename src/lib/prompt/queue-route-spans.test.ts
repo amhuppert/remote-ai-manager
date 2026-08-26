@@ -54,6 +54,10 @@ function createTestDeps(
 ): QueueRouteDeps {
   const entry = makePendingEntry();
   return {
+    admitModelSelection: vi.fn(async ({ modelSelection }) => ({
+      ok: true as const,
+      modelSelection,
+    })),
     resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
     getSession: vi.fn().mockResolvedValue({
       sessionName: "test-session",

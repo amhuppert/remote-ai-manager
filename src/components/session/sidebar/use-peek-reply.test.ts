@@ -187,9 +187,10 @@ describe("createPeekReplySubmitter", () => {
         autonomousResolutionThreshold: "minor",
         agentTwo: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "xhigh",
-          fastMode: true,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "true", reasoning: "xhigh" },
+          },
         },
       },
     });
@@ -202,9 +203,10 @@ describe("createPeekReplySubmitter", () => {
           autonomousResolutionThreshold: "minor",
           agentTwo: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "xhigh",
-            fastMode: true,
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { fast: "true", reasoning: "xhigh" },
+            },
           },
         },
       }),
@@ -278,7 +280,13 @@ describe("usePeekReply", () => {
     const client = makeClient();
     const collaborationListKey = collaborationKeys.list("p", "s");
     const draft = {
-      agentTwo: { backend: "codex" as const, model: "gpt-5.4" },
+      agentTwo: {
+        backend: "codex" as const,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
+      },
       negotiationRounds: 4,
       autonomousResolutionThreshold: "minor" as const,
     };
@@ -306,7 +314,13 @@ describe("usePeekReply", () => {
       collab: {
         negotiationRounds: 4,
         autonomousResolutionThreshold: "minor",
-        agentTwo: { backend: "codex", model: "gpt-5.4" },
+        agentTwo: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "false", reasoning: "high" },
+          },
+        },
       },
       collabDraft: draft,
     });
@@ -326,16 +340,26 @@ describe("usePeekReply", () => {
     const submittedDraft = {
       agentTwo: {
         backend: "codex" as const,
-        model: "gpt-5.4",
-        effort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
       },
       negotiationRounds: 4,
       autonomousResolutionThreshold: "minor" as const,
     };
     const nextDraft = {
       ...submittedDraft,
-      agentTwo: { ...submittedDraft.agentTwo, fastMode: true },
+      agentTwo: {
+        ...submittedDraft.agentTwo,
+        modelSelection: {
+          ...submittedDraft.agentTwo.modelSelection,
+          parameters: {
+            ...submittedDraft.agentTwo.modelSelection.parameters,
+            fast: "true",
+          },
+        },
+      },
     };
     useCollaborationStore.setState({
       collabConfigDraftsByConversation: { "p::s::c1": submittedDraft },
@@ -364,9 +388,10 @@ describe("usePeekReply", () => {
         autonomousResolutionThreshold: "minor",
         agentTwo: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          fastMode: false,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "false", reasoning: "high" },
+          },
         },
       },
       collabDraft: submittedDraft,
@@ -389,7 +414,13 @@ describe("usePeekReply", () => {
   it("preserves the collaboration draft when submission fails", async () => {
     const client = makeClient();
     const draft = {
-      agentTwo: { backend: "codex" as const, model: "gpt-5.4" },
+      agentTwo: {
+        backend: "codex" as const,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
+      },
       negotiationRounds: 4,
       autonomousResolutionThreshold: "minor" as const,
     };

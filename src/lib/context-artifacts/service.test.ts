@@ -233,9 +233,11 @@ function makeCompleteRow(
     sourceHash: "previous-hash",
     status: "complete",
     error: null,
-    modelProvider: "claude",
-    model: "sonnet",
-    effort: "medium",
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
     schemaVersion: CONTEXT_ARTIFACT_SCHEMA_VERSION,
     promptVersion: PROMPT_VERSION,
     normalizerVersion: NORMALIZER_VERSION,
@@ -313,9 +315,11 @@ describe("createCompactionService — full run", () => {
     expect(reloaded?.coveredStartSeq).toBe(0);
     expect(reloaded?.coveredEndSeq).toBe(3);
     expect(reloaded?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(reloaded?.modelProvider).toBe("claude");
-    expect(reloaded?.model).toBe("sonnet");
-    expect(reloaded?.effort).toBe("medium");
+    expect(reloaded?.backend).toBe("claude");
+    expect(reloaded?.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    });
     expect(reloaded?.schemaVersion).toBe(CONTEXT_ARTIFACT_SCHEMA_VERSION);
     expect(reloaded?.promptVersion).toBe(PROMPT_VERSION);
     expect(reloaded?.normalizerVersion).toBe(NORMALIZER_VERSION);
@@ -346,8 +350,10 @@ describe("createCompactionService — full run", () => {
     expect(call?.actorInput?.conversation.agentBackend).toBe("claude");
     expect(call?.actorInput?.conversation.transcriptPath).toBeNull();
     expect(call?.outputFormat?.type).toBe("json_schema");
-    expect(call?.modelId).toBe("sonnet");
-    expect(call?.effort).toBe("medium");
+    expect(call?.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    });
     // Unset compaction timeout resolves to 0 — the task runner's "no timeout".
     expect(call?.timeoutMs).toBe(0);
   });

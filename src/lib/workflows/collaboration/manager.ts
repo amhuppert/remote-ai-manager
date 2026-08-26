@@ -48,7 +48,7 @@ import {
   type CollaborationProductionAgentCallerInput,
 } from "./agent-caller-production";
 import { oppositeCollaborationBackend } from "./backend-pair";
-import { getConversationBackendFactory as defaultGetConversationBackendFactory } from "@/lib/agent-backends/registry";
+import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
 import type {
   AgentProfileRef,
@@ -88,7 +88,10 @@ import {
   resolveConfiguredAgentBackendDefaults,
   type ConversationTurnConfig,
 } from "@/lib/agent-backends/conversation-policy";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+import {
+  backendModelSelectionSchema,
+  type BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import {
@@ -239,30 +242,27 @@ const logger = createLogger("workflows.collaboration.manager");
  */
 export const COLLABORATION_INITIAL_ATTEMPT_EPOCH = 1;
 
-export const collaborationStartRequestSchema = z.object({
-  brief: z.string().trim().min(1, "brief is required"),
-  negotiationRounds: z.number().int().min(1).max(20),
-  autonomousResolutionThreshold:
-    collaborationAutonomousResolutionThresholdSchema,
-  conversationId: z.string().trim().min(1, "conversationId is required"),
-  // The user's currently-selected backend in the UI. The route handler adopts
-  // this onto the conversation (mirroring executePromptStream) before the
-  // manager reads `conversation.agentBackend` to pick Agent One. Optional so
-  // older clients and direct API callers keep working.
-  backend: agentBackendSchema.optional(),
-  // The user's currently-selected model/effort in the composer. They belong
-  // to the selected backend — Agent One's lane — so the manager overrides
-  // that lane's config-resolved settings with them; Agent Two's opposite-
-  // backend lane always runs on global config. Optional so older clients
-  // and direct API callers keep working.
-  modelId: z.string().trim().min(1).optional(),
-  effort: z.string().trim().min(1).optional(),
-  codexFastMode: z.boolean().optional(),
-  // Agent Two's explicit configuration. Absent means the legacy default:
-  // the opposite backend of Agent One, on global config defaults.
-  agentTwo: collaborationAgentTwoRequestSchema.optional(),
-  images: z.array(imagePayloadSchema).max(5).optional(),
-});
+export const collaborationStartRequestSchema = z
+  .object({
+    brief: z.string().trim().min(1, "brief is required"),
+    negotiationRounds: z.number().int().min(1).max(20),
+    autonomousResolutionThreshold:
+      collaborationAutonomousResolutionThresholdSchema,
+    conversationId: z.string().trim().min(1, "conversationId is required"),
+    // The route handler adopts the selected backend onto the conversation
+    // before the manager derives Agent One. It remains optional when the
+    // stored conversation backend is authoritative.
+    backend: agentBackendSchema.optional(),
+    // Present replaces Agent One's configured selection as one whole value.
+    modelSelection: backendModelSelectionSchema.optional(),
+    modelId: z.never().optional(),
+    effort: z.never().optional(),
+    codexFastMode: z.never().optional(),
+    // Agent Two defaults to the opposite backend and its configured selection.
+    agentTwo: collaborationAgentTwoRequestSchema.optional(),
+    images: z.array(imagePayloadSchema).max(5).optional(),
+  })
+  .strict();
 type CollaborationStartRequest = z.infer<
   typeof collaborationStartRequestSchema
 >;
@@ -345,9 +345,7 @@ interface CollaborationStartPersistenceInput {
   expectedPromptCount: number;
   brief: string;
   imageRefs: readonly ConversationImageRef[];
-  modelId?: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
 }
 
 interface CollaborationStartPersisterDeps {
@@ -442,11 +440,7 @@ export function createCollaborationStartPersister(
           timestamp,
           brief: input.brief,
           imageRefs: input.imageRefs,
-          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-          ...(input.effort !== undefined ? { effort: input.effort } : {}),
-          ...(input.codexFastMode !== undefined
-            ? { codexFastMode: input.codexFastMode }
-            : {}),
+          modelSelection: input.modelSelection,
         }) as ReturnType<typeof buildCollaborationUserTranscriptEntry> & {
           id: string;
         },
@@ -555,9 +549,7 @@ export async function prepareCollaborationInitialImages(
 }
 
 export interface CollaborationBackendRuntimeConfig {
-  model: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   timeoutMs: number;
   stallTimeoutMs: number;
 }
@@ -735,9 +727,7 @@ export interface CollaborationManagerDeps {
     expectedPromptCount: number;
     brief: string;
     imageRefs: readonly ConversationImageRef[];
-    modelId?: string;
-    effort?: string;
-    codexFastMode?: boolean;
+    modelSelection: BackendModelSelection;
   }): Promise<CollaborationStartClaim>;
 
   /**
@@ -794,16 +784,15 @@ export interface CollaborationManagerDeps {
   }): AsymmetricCollaborationSliceDeps["callAgent"];
 
   /**
-   * Validates a lane's resolved model/effort with its backend factory before
-   * anything durable happens, mirroring the prompt path's pre-execution gate.
-   * Throws on an invalid combination. Defaults to the registry factory's
-   * `validateModelAndEffort`; tests inject a deterministic implementation.
+   * Validates a lane's complete selection against the configured catalog and
+   * project policy before anything durable happens, mirroring the prompt
+   * path's pre-execution gate. Tests inject a deterministic implementation.
    */
-  validateModelAndEffort(input: {
+  admitModelSelection(input: {
     backend: AgentBackendId;
-    modelId: string;
-    reasoningEffort?: string;
-  }): void;
+    projectPath: string;
+    modelSelection: BackendModelSelection;
+  }): BackendModelSelection | Promise<BackendModelSelection>;
 
   /**
    * Resolves Agent Two's profile selection (or the Standard Agent default)
@@ -1009,15 +998,13 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
     buildStandaloneCollaborationCallerInput(input),
   );
 
-const defaultValidateModelAndEffort: CollaborationManagerDeps["validateModelAndEffort"] =
-  (input) => {
-    const factory = defaultGetConversationBackendFactory(input.backend);
-    factory.validateModelAndEffort?.({
-      modelId: input.modelId,
-      ...(input.reasoningEffort !== undefined
-        ? { reasoningEffort: input.reasoningEffort }
-        : {}),
-    });
+const defaultAdmitModelSelection: CollaborationManagerDeps["admitModelSelection"] =
+  async (input) => {
+    const admission = await admitConfiguredModelSelection(input);
+    if (!admission.ok) {
+      throw new Error(admission.message);
+    }
+    return admission.modelSelection;
   };
 
 const defaultResolveAgentTwoProfileSnapshot: CollaborationManagerDeps["resolveAgentTwoProfileSnapshot"] =
@@ -1029,13 +1016,7 @@ export function resolveCollaborationBackendModelConfig(
 ): CollaborationBackendRuntimeConfig {
   const resolved = resolveConfiguredAgentBackendDefaults(config, backend);
   return {
-    model: resolved.modelId,
-    ...(resolved.reasoningEffort !== undefined
-      ? { reasoningEffort: resolved.reasoningEffort }
-      : {}),
-    ...(backendSupportsFastMode(backend)
-      ? { codexFastMode: resolved.codexFastMode }
-      : {}),
+    modelSelection: resolved.modelSelection,
     timeoutMs: resolved.timeoutMs,
     stallTimeoutMs: resolved.stallTimeoutMs,
   };
@@ -1068,11 +1049,7 @@ function laneAgentInput(
 ): CollaborationLaneAgentConfig {
   return {
     backend: resolved.backend,
-    model: resolved.model,
-    ...(resolved.effort !== undefined
-      ? { reasoningEffort: resolved.effort }
-      : {}),
-    ...(resolved.fastMode !== undefined ? { fastMode: resolved.fastMode } : {}),
+    modelSelection: resolved.modelSelection,
     timeoutMs: runtime.timeoutMs,
     stallTimeoutMs: runtime.stallTimeoutMs,
   };
@@ -1143,7 +1120,7 @@ const defaultDeps: CollaborationManagerDeps = {
       }),
     }),
   buildCallAgent: defaultBuildCallAgent,
-  validateModelAndEffort: defaultValidateModelAndEffort,
+  admitModelSelection: defaultAdmitModelSelection,
   resolveAgentTwoProfileSnapshot: defaultResolveAgentTwoProfileSnapshot,
   async resolveCodexModelConfig() {
     const config = await defaultReadConfig();
@@ -1325,18 +1302,17 @@ export class CollaborationProfileResolutionError extends Error {
   }
 }
 
-export class CollaborationModelEffortValidationError extends Error {
+export class CollaborationModelSelectionValidationError extends Error {
   constructor(
     public readonly agent: "agent_one" | "agent_two",
     public readonly backend: AgentBackendId,
-    public readonly modelId: string,
-    public readonly reasoningEffort: string | undefined,
+    public readonly modelSelection: BackendModelSelection,
     reason: string,
   ) {
     super(
-      `Invalid model/effort for ${agent} (${backend} ${modelId}${reasoningEffort ? ` @ ${reasoningEffort}` : ""}): ${reason}`,
+      `Invalid model selection for ${agent} (${backend} ${modelSelection.modelId}): ${reason}`,
     );
-    this.name = "CollaborationModelEffortValidationError";
+    this.name = "CollaborationModelSelectionValidationError";
   }
 }
 
@@ -1367,6 +1343,32 @@ function requireCollaborationAgent(
     throw new CollaborationBackendNotEligibleError(agent, backend);
   }
   return backend;
+}
+
+async function admitCollaborationAgentSelections(
+  deps: Pick<CollaborationManagerDeps, "admitModelSelection">,
+  projectPath: string,
+  agents: CollaborationAgentsMap,
+): Promise<CollaborationAgentsMap> {
+  const canonicalAgents = structuredClone(agents);
+  for (const agent of ["agent_one", "agent_two"] as const) {
+    const resolved = canonicalAgents[agent];
+    try {
+      resolved.modelSelection = await deps.admitModelSelection({
+        backend: resolved.backend,
+        projectPath,
+        modelSelection: resolved.modelSelection,
+      });
+    } catch (err) {
+      throw new CollaborationModelSelectionValidationError(
+        agent,
+        resolved.backend,
+        resolved.modelSelection,
+        getErrorMessage(err),
+      );
+    }
+  }
+  return canonicalAgents;
 }
 
 export class CollaborationNotStoppableError extends Error {
@@ -1429,9 +1431,7 @@ export function createCollaborationManager(
         negotiationRounds: input.negotiationRounds,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,
         conversationId: input.conversationId,
-        modelId: input.modelId,
-        effort: input.effort,
-        codexFastMode: input.codexFastMode,
+        modelSelection: input.modelSelection,
         agentTwo: input.agentTwo,
         images: input.images,
       });
@@ -1517,22 +1517,12 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
       });
 
-      // The request's model/effort reflect the composer selection for the
-      // conversation's backend — Agent One's lane — so they override its
-      // config-resolved settings.
-      const primaryOverride = {
-        ...(parsed.modelId !== undefined ? { model: parsed.modelId } : {}),
-        ...(parsed.effort !== undefined
-          ? { reasoningEffort: parsed.effort }
-          : {}),
-      };
-      const agentOneRuntime = {
-        ...(await resolveRuntimeConfigFor(deps, primaryAgentBackend)),
-        ...primaryOverride,
-      };
-      const agentOneFastMode = backendSupportsFastMode(primaryAgentBackend)
-        ? (parsed.codexFastMode ?? agentOneRuntime.codexFastMode ?? false)
-        : undefined;
+      const agentOneRuntime = await resolveRuntimeConfigFor(
+        deps,
+        primaryAgentBackend,
+      );
+      const agentOneModelSelection =
+        parsed.modelSelection ?? agentOneRuntime.modelSelection;
 
       // Agent Two resolves explicit request config → global config default
       // for its backend → catalog default. Its backend defaults to the
@@ -1542,38 +1532,17 @@ export function createCollaborationManager(
         parsed.agentTwo?.backend === undefined
           ? oppositeCollaborationBackend(primaryAgentBackend)
           : requireCollaborationAgent("agent_two", parsed.agentTwo.backend);
-      const agentTwoOverride = {
-        ...(parsed.agentTwo?.model !== undefined
-          ? { model: parsed.agentTwo.model }
-          : {}),
-        ...(parsed.agentTwo?.reasoningEffort !== undefined
-          ? { reasoningEffort: parsed.agentTwo.reasoningEffort }
-          : {}),
-      };
-      const agentTwoRuntime = {
-        ...(await resolveRuntimeConfigFor(deps, agentTwoBackend)),
-        ...agentTwoOverride,
-      };
-      // `fastMode` exists only on the union branch whose backend supports it,
-      // so field presence — not backend identity — is the discriminator.
-      const requestedAgentTwoFastMode =
-        parsed.agentTwo !== undefined && "fastMode" in parsed.agentTwo
-          ? parsed.agentTwo.fastMode
-          : undefined;
-      const agentTwoFastMode = backendSupportsFastMode(agentTwoBackend)
-        ? (requestedAgentTwoFastMode ?? agentTwoRuntime.codexFastMode ?? false)
-        : undefined;
+      const agentTwoRuntime = await resolveRuntimeConfigFor(
+        deps,
+        agentTwoBackend,
+      );
+      const agentTwoModelSelection =
+        parsed.agentTwo?.modelSelection ?? agentTwoRuntime.modelSelection;
 
-      const agents: CollaborationAgentsMap = {
+      const requestedAgents: CollaborationAgentsMap = {
         agent_one: {
           backend: primaryAgentBackend,
-          model: agentOneRuntime.model,
-          ...(agentOneRuntime.reasoningEffort !== undefined
-            ? { effort: agentOneRuntime.reasoningEffort }
-            : {}),
-          ...(agentOneFastMode !== undefined
-            ? { fastMode: agentOneFastMode }
-            : {}),
+          modelSelection: agentOneModelSelection,
           // Verbatim inheritance of the conversation's staffing; a legacy
           // conversation with no snapshot collaborates profile-less as before.
           ...(conversation.profileSnapshot != null
@@ -1582,39 +1551,18 @@ export function createCollaborationManager(
         },
         agent_two: {
           backend: agentTwoBackend,
-          model: agentTwoRuntime.model,
-          ...(agentTwoRuntime.reasoningEffort !== undefined
-            ? { effort: agentTwoRuntime.reasoningEffort }
-            : {}),
-          ...(agentTwoFastMode !== undefined
-            ? { fastMode: agentTwoFastMode }
-            : {}),
+          modelSelection: agentTwoModelSelection,
           profileSnapshot: agentTwoProfileSnapshot,
         },
       };
 
-      // Both lanes gate on the backend factory's model/effort validation
-      // before anything durable happens, mirroring the prompt path.
-      for (const agent of ["agent_one", "agent_two"] as const) {
-        const resolved = agents[agent];
-        try {
-          deps.validateModelAndEffort({
-            backend: resolved.backend,
-            modelId: resolved.model,
-            ...(resolved.effort !== undefined
-              ? { reasoningEffort: resolved.effort }
-              : {}),
-          });
-        } catch (err) {
-          throw new CollaborationModelEffortValidationError(
-            agent,
-            resolved.backend,
-            resolved.model,
-            resolved.effort,
-            getErrorMessage(err),
-          );
-        }
-      }
+      // Both lanes gate on exact complete catalog variants before anything
+      // durable happens, mirroring the prompt path.
+      const agents = await admitCollaborationAgentSelections(
+        deps,
+        input.projectPath,
+        requestedAgents,
+      );
 
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
@@ -1649,11 +1597,7 @@ export function createCollaborationManager(
           expectedPromptCount: conversation.promptCount,
           brief,
           imageRefs,
-          ...(parsed.modelId !== undefined ? { modelId: parsed.modelId } : {}),
-          ...(parsed.effort !== undefined ? { effort: parsed.effort } : {}),
-          ...(agentOneFastMode !== undefined
-            ? { codexFastMode: agentOneFastMode }
-            : {}),
+          modelSelection: agents.agent_one.modelSelection,
         });
       } catch (error) {
         deps.stopRegistry.release(workflowId);
@@ -1687,18 +1631,12 @@ export function createCollaborationManager(
         negotiationRounds: parsed.negotiationRounds,
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
         primaryAgentBackend,
-        requestModelId: parsed.modelId ?? null,
-        requestEffort: parsed.effort ?? null,
-        requestCodexFastMode: agentOneFastMode ?? null,
+        requestModelSelection: parsed.modelSelection ?? null,
         requestAgentTwoBackend: parsed.agentTwo?.backend ?? null,
         agentOneBackend: agents.agent_one.backend,
-        agentOneModel: agents.agent_one.model,
-        agentOneEffort: agents.agent_one.effort ?? null,
-        agentOneFastMode: agents.agent_one.fastMode ?? null,
+        agentOneModelSelection: agents.agent_one.modelSelection,
         agentTwoBackend: agents.agent_two.backend,
-        agentTwoModel: agents.agent_two.model,
-        agentTwoEffort: agents.agent_two.effort ?? null,
-        agentTwoFastMode: agents.agent_two.fastMode ?? null,
+        agentTwoModelSelection: agents.agent_two.modelSelection,
         // Profile identity only — instruction contents never reach the log.
         agentTwoProfile: `${agentTwoProfileSnapshot.tier}:${agentTwoProfileSnapshot.id}`,
         agentTwoProfileRevision: agentTwoProfileSnapshot.revision,
@@ -1829,24 +1767,33 @@ export function createCollaborationManager(
       );
       const primaryAgentBackend: CollaborationAgent =
         primaryBackendParse.success ? primaryBackendParse.data : "claude";
-      const persistedCodexFastMode = existingSnapshot["codexFastMode"];
-      const codexFastMode =
-        backendSupportsFastMode(primaryAgentBackend) &&
-        typeof persistedCodexFastMode === "boolean"
-          ? persistedCodexFastMode
-          : undefined;
       const autonomousResolutionThreshold =
         collaborationAutonomousResolutionThresholdSchema.safeParse(
           existingSnapshot["autonomousResolutionThreshold"],
         );
       const conversationId = parsed.conversationId;
       const completedRounds = extractCompletedRounds(existingSnapshot);
+      const persistedAgentsParse = collaborationAgentsMapSchema.safeParse(
+        existingSnapshot["agents"],
+      );
+      if (!resumingFailure && !persistedAgentsParse.success) {
+        const refusal: ResumeRefusal = {
+          code: "premise_missing",
+          detail: "agents",
+        };
+        throw new CollaborationResumeRefusedError(
+          input.workflowId,
+          refusal,
+          describeResumeRefusal(refusal),
+        );
+      }
 
       // Everything a resumed failure must be true about is checked BEFORE
       // anything moves, so a refusal leaves the run exactly where it was and
       // the user can act on the reason.
       let resumeAttemptEpoch = COLLABORATION_INITIAL_ATTEMPT_EPOCH;
       let claimedTurnGeneration: number | undefined;
+      let agents: CollaborationAgentsMap | undefined;
       if (resumingFailure) {
         const read = await deps.readArtifactStream(input.workflowId);
         const ledgerOutcome =
@@ -1864,10 +1811,7 @@ export function createCollaborationManager(
                 } as const);
 
         const missingPremises: string[] = [];
-        if (
-          !collaborationAgentsMapSchema.safeParse(existingSnapshot["agents"])
-            .success
-        ) {
+        if (!persistedAgentsParse.success) {
           missingPremises.push("agents");
         }
         if (typeof existingSnapshot["claimedTurnGeneration"] !== "number") {
@@ -1901,6 +1845,16 @@ export function createCollaborationManager(
           );
         }
 
+        if (!persistedAgentsParse.success) {
+          throw new Error("Resume eligibility admitted missing agents.");
+        }
+
+        agents = await admitCollaborationAgentSelections(
+          deps,
+          input.projectPath,
+          persistedAgentsParse.data,
+        );
+
         claimedTurnGeneration = existingSnapshot[
           "claimedTurnGeneration"
         ] as number;
@@ -1931,6 +1885,20 @@ export function createCollaborationManager(
         }
       }
 
+      if (!resumingFailure) {
+        if (!persistedAgentsParse.success) {
+          throw new Error("Paused collaboration has no persisted agents.");
+        }
+        agents = await admitCollaborationAgentSelections(
+          deps,
+          input.projectPath,
+          persistedAgentsParse.data,
+        );
+      }
+      if (agents === undefined) {
+        throw new Error("Collaboration model selections were not admitted.");
+      }
+
       // A run, including its pause, is one logical turn: the premises the two
       // peers negotiated under are the persisted ones. Parsing before
       // markRunning keeps an unresumable envelope paused rather than stranding
@@ -1959,6 +1927,7 @@ export function createCollaborationManager(
           : 0;
       const updatedSnapshot: Record<string, unknown> = {
         ...existingSnapshot,
+        agents,
         userAnswersByQuestionId,
         attemptEpoch: resumeAttemptEpoch,
         ...(resumingFailure
@@ -1987,45 +1956,16 @@ export function createCollaborationManager(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
       });
-      // Replay the persisted per-agent settings; a pre-`agents` envelope
-      // falls back to re-resolving from global config, exactly as its start
-      // did. Timeouts are config-derived either way — they are never
-      // persisted.
-      const persistedAgentsParse = collaborationAgentsMapSchema.safeParse(
-        existingSnapshot["agents"],
-      );
-      const agentTwoBackend: CollaborationAgent = persistedAgentsParse.success
-        ? persistedAgentsParse.data.agent_two.backend
-        : oppositeCollaborationBackend(primaryAgentBackend);
+      // Replay the same persisted atomic bundles. Current config contributes
+      // only timeout bounds; it can never alter a resumed lane's model variant.
       const agentOneRuntime = await resolveRuntimeConfigFor(
         deps,
-        primaryAgentBackend,
+        agents.agent_one.backend,
       );
       const agentTwoRuntime = await resolveRuntimeConfigFor(
         deps,
-        agentTwoBackend,
+        agents.agent_two.backend,
       );
-      const agents: CollaborationAgentsMap = persistedAgentsParse.success
-        ? persistedAgentsParse.data
-        : {
-            agent_one: {
-              backend: primaryAgentBackend,
-              model: agentOneRuntime.model,
-              ...(agentOneRuntime.reasoningEffort !== undefined
-                ? { effort: agentOneRuntime.reasoningEffort }
-                : {}),
-              ...(codexFastMode !== undefined
-                ? { fastMode: codexFastMode }
-                : {}),
-            },
-            agent_two: {
-              backend: agentTwoBackend,
-              model: agentTwoRuntime.model,
-              ...(agentTwoRuntime.reasoningEffort !== undefined
-                ? { effort: agentTwoRuntime.reasoningEffort }
-                : {}),
-            },
-          };
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -2075,7 +2015,8 @@ export function createCollaborationManager(
         workflowId: input.workflowId,
         userAnswerCount: Object.keys(parsed.userAnswers).length,
         completedRounds,
-        codexFastMode: codexFastMode ?? null,
+        agentOneModelSelection: agents.agent_one.modelSelection,
+        agentTwoModelSelection: agents.agent_two.modelSelection,
       });
 
       void deps

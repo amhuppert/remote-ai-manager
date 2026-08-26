@@ -8,14 +8,18 @@ import {
 
 const CLAUDE_AGENT = {
   backend: "claude",
-  model: "sonnet",
-  reasoningEffort: "medium",
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  },
 } as const;
 
 const CODEX_AGENT = {
   backend: "codex",
-  model: "gpt-5.4",
-  reasoningEffort: "high",
+  modelSelection: {
+    modelId: "gpt-5.4",
+    parameters: { reasoning: "high", fast: "false" },
+  },
 } as const;
 
 function reviewer(overrides: Record<string, unknown> = {}) {
@@ -41,13 +45,25 @@ describe("agentAssignmentSchema", () => {
     const parsed = agentAssignmentSchema.parse({
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
+      },
     });
 
     expect(parsed).toEqual({
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
+      },
     });
   });
 
@@ -133,11 +149,10 @@ describe("agentAssignmentSchema", () => {
     if (!result.success) expect(issuePaths(result)).toContain("focus");
   });
 
-  it("refuses a backend/model pairing the per-backend union rejects", () => {
+  it("refuses the removed runtime tuple instead of reinterpreting it", () => {
     const result = agentAssignmentSchema.safeParse({
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      // `opus` is a Claude model; the codex member of the union refuses it.
       agent: { backend: "codex", model: "opus", reasoningEffort: "high" },
     });
 

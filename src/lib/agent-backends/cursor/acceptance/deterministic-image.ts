@@ -5,10 +5,10 @@ import { deflateSync } from "node:zlib";
  * (spec R16.1, R14.2).
  *
  * The case has to prove the model saw THIS image, which means the image has to
- * have an unambiguous answer and the same bytes on every run. A solid field of
- * one primary colour gives both: any vision model names it the same way, and a
- * fixture generated from fixed inputs hashes identically, so the published
- * digest identifies the exact image the run used.
+ * have a tightly bounded answer and the same bytes on every run. A solid field
+ * of one primary colour gives both: vision models use only a narrow family of
+ * common names, and a fixture generated from fixed inputs hashes identically,
+ * so the published digest identifies the exact image the run used.
  *
  * Written here rather than pulled from a dependency because an encoder is a few
  * lines and a committed binary fixture would be an untracked-or-committed

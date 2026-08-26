@@ -27,9 +27,12 @@ import {
   RichPromptInput,
   type RichPromptInputHandle,
 } from "@/components/rich-prompt/RichPromptInput";
-import CollabConfigRow from "@/components/session/CollabConfigRow";
+import CollabConfigRow, {
+  type CollabConfigRowProps,
+} from "@/components/session/CollabConfigRow";
 import { BranchIcon, CloseIcon } from "@/components/icons";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import { useProjectModelOptionsQuery } from "@/lib/agent-backends/queries";
 import type {
   ActiveConversation,
   SessionActiveConversation,
@@ -47,7 +50,10 @@ import {
   stripCollabPrefix,
 } from "@/lib/conversation-commands/parse";
 import { buildAgentTwoStartRequest } from "@/lib/workflows/collaboration/agent-two-request";
-import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
+import {
+  COLLABORATION_BACKEND_PAIR,
+  oppositeCollaborationBackend,
+} from "@/lib/workflows/collaboration/backend-pair";
 import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
 import {
   type CollabConfigDraft,
@@ -152,6 +158,35 @@ function logPeekDebug(message: string, fields: Record<string, unknown>): void {
   logger.debug(message, fields);
 }
 
+function ProjectCollabConfigRow({
+  projectName,
+  ...props
+}: Omit<CollabConfigRowProps, "modelCatalogs"> & {
+  projectName: string;
+}): React.JSX.Element {
+  const projectModelOptions = useProjectModelOptionsQuery(projectName);
+  const modelCatalogs = useMemo(
+    () =>
+      Object.fromEntries(
+        COLLABORATION_BACKEND_PAIR.map((backend) => [
+          backend,
+          projectModelOptions.data?.find(
+            (options) => options.backend === backend,
+          )?.modelCatalog ?? null,
+        ]),
+      ) as CollabConfigRowProps["modelCatalogs"],
+    [projectModelOptions.data],
+  );
+
+  return (
+    <CollabConfigRow
+      {...props}
+      projectName={projectName}
+      modelCatalogs={modelCatalogs}
+    />
+  );
+}
+
 function PeekReplyComposer({
   conversation,
   backendDefaults,
@@ -176,10 +211,10 @@ function PeekReplyComposer({
   );
   const setCollabConfigDraft = useSetCollabConfigDraft();
   const clearCollabConfigDraft = useClearCollabConfigDraft();
+  const hasCollabCommand = hasCollabPrefix(replyText);
   // Null when this conversation runs a backend Collaboration Mode does not
   // support: the /collab row is not offered rather than offered and refused.
   const originatingAgent = asCollaborationAgent(conversation.agentBackend);
-  const hasCollabCommand = hasCollabPrefix(replyText);
   const effectiveCollabConfig = useMemo(() => {
     if (backendDefaults === null) return null;
     const agentTwo =
@@ -276,7 +311,7 @@ function PeekReplyComposer({
       effectiveCollabConfig !== null &&
       originatingAgent !== null &&
       backendDefaults !== null ? (
-        <CollabConfigRow
+        <ProjectCollabConfigRow
           config={effectiveCollabConfig}
           originatingAgent={originatingAgent}
           onChange={(next) =>

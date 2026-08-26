@@ -90,23 +90,37 @@ describe("parseCollabFeatureSnapshot", () => {
     const parsed = parseCollabFeatureSnapshot({
       ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
       agents: {
-        agent_one: { backend: "claude", model: "fable", effort: "max" },
+        agent_one: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "fable",
+            parameters: { effort: "max" },
+          },
+        },
         agent_two: {
           backend: "claude",
-          model: "opus",
-          effort: "high",
-          fastMode: false,
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
         },
       },
     });
     expect(parsed).not.toBeNull();
     expect(parsed!.agents).toEqual({
-      agent_one: { backend: "claude", model: "fable", effort: "max" },
+      agent_one: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      },
       agent_two: {
         backend: "claude",
-        model: "opus",
-        effort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
     });
   });
@@ -125,8 +139,20 @@ describe("parseCollabFeatureSnapshot", () => {
     });
     expect(parsed).not.toBeNull();
     expect(parsed!.agents).toEqual({
-      agent_one: { backend: "claude", model: "fable", effort: "max" },
-      agent_two: { backend: "codex", model: "gpt-5.5", fastMode: true },
+      agent_one: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      },
+      agent_two: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { fast: "true" },
+        },
+      },
     });
   });
 
@@ -146,7 +172,10 @@ describe("parseCollabFeatureSnapshot", () => {
       agents: {
         agent_one: {
           backend: "claude",
-          model: "fable",
+          modelSelection: {
+            modelId: "fable",
+            parameters: { effort: "max" },
+          },
           profileSnapshot: snapshot(
             "builtin",
             "standard-agent",
@@ -155,7 +184,10 @@ describe("parseCollabFeatureSnapshot", () => {
         },
         agent_two: {
           backend: "claude",
-          model: "opus",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
           profileSnapshot: snapshot("global", "reviewer", "Reviewer"),
         },
       },
@@ -163,8 +195,21 @@ describe("parseCollabFeatureSnapshot", () => {
     expect(parsed).not.toBeNull();
     // Identity only crosses into UI props — never the instruction bytes.
     expect(parsed!.agents).toEqual({
-      agent_one: { backend: "claude", model: "fable" },
-      agent_two: { backend: "claude", model: "opus", profileName: "Reviewer" },
+      agent_one: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      },
+      agent_two: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+        profileName: "Reviewer",
+      },
     });
   });
 
@@ -205,8 +250,20 @@ describe("envelopeToCollabPassageProps", () => {
       featureSnapshot: {
         ...(makeEnvelope().featureSnapshot as Record<string, unknown>),
         agents: {
-          agent_one: { backend: "claude", model: "fable", effort: "max" },
-          agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
+          agent_one: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "fable",
+              parameters: { effort: "max" },
+            },
+          },
+          agent_two: {
+            backend: "codex",
+            modelSelection: {
+              modelId: "gpt-5.5",
+              parameters: { fast: "false", reasoning: "high" },
+            },
+          },
         },
       },
     });
@@ -214,8 +271,20 @@ describe("envelopeToCollabPassageProps", () => {
     const props = envelopeToCollabPassageProps(env);
     expect(props).not.toBeNull();
     expect(props!.agents).toEqual({
-      agent_one: { backend: "claude", model: "fable", effort: "max" },
-      agent_two: { backend: "codex", model: "gpt-5.5", effort: "high" },
+      agent_one: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      },
+      agent_two: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { fast: "false", reasoning: "high" },
+        },
+      },
     });
   });
 

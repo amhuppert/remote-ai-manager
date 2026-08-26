@@ -109,8 +109,7 @@ export function createTicketKickoffQueuer(
           session,
           initialPrompt: input.prompt,
           agent,
-          model: input.model,
-          reasoningEffort: input.reasoningEffort,
+          modelSelection: input.modelSelection,
         })
         .then(
           (result) => {

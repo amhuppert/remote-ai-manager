@@ -274,7 +274,7 @@ describe("CompactionEnvelopeView", () => {
       />,
     );
     expect(
-      screen.getAllByText(/claude · sonnet · medium/).length,
+      screen.getAllByText(/claude · sonnet · effort=medium/).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/prompt cp-1 · normalizer nv-1 · schema v1/).length,
@@ -282,6 +282,32 @@ describe("CompactionEnvelopeView", () => {
     // conversation id shortened to its first 8 chars
     expect(
       screen.getAllByText(/by user · conv conv-fix/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("renders every model parameter in stable ID order", () => {
+    render(
+      <CompactionEnvelopeView
+        envelope={buildMaximalEnvelope()}
+        provenance={buildProvenance({
+          backend: "cursor",
+          modelSelection: {
+            modelId: "claude-opus-5",
+            parameters: {
+              thinking: "true",
+              fast: "false",
+              effort: "max",
+              context: "1m",
+            },
+          },
+        })}
+      />,
+    );
+
+    expect(
+      screen.getAllByText(
+        /cursor · claude-opus-5 · context=1m · effort=max · fast=false · thinking=true/,
+      ).length,
     ).toBeGreaterThan(0);
   });
 

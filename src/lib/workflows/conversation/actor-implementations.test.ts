@@ -6,6 +6,7 @@ import type {
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   AgentCapabilityDiagnostic,
   AgentCapabilityRuntimeApplicationState,
@@ -116,7 +117,13 @@ function createMockBackendRuntime(
   const backend = overrides.backend ?? "claude";
   return {
     ...createMockBackendRuntimeFixture({ backend }),
-    modelId: backend === "codex" ? "gpt-5.4" : "opus",
+    modelSelection:
+      backend === "codex"
+        ? {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          }
+        : { modelId: "opus", parameters: { effort: "high" } },
     sendTurn: mockSendTurn,
     ...overrides,
   } as ConversationBackendRuntime;
@@ -127,7 +134,7 @@ const mockBackendRuntime = createMockBackendRuntime();
 const mockFactory = {
   backend: "claude" as const,
   createRuntime: vi.fn(async () => mockBackendRuntime),
-  validateModelAndEffort: vi.fn(),
+  validateModelSelection: vi.fn(),
 };
 
 // ---------------------------------------------------------------------------
@@ -182,12 +189,11 @@ function makeExecutePromptInput(
     promptText: "Hello, world!",
     images: [],
     streamId: "stream-1",
-    modelId: null,
-    effort: null,
+    modelSelection: null,
+    onModelSelectionResolved: async () => {},
     autonomous: false,
     debugMode: null,
     ...overrides,
-    codexFastMode: overrides.codexFastMode ?? null,
   };
 }
 
@@ -207,66 +213,55 @@ function makeProjectExecutePromptInput(
 // ===========================================================================
 
 describe("shouldRecreateRuntime", () => {
+  const lowA = { modelId: "a", parameters: { effort: "low" } };
+  const highA = { modelId: "a", parameters: { effort: "high" } };
+  const lowB = { modelId: "b", parameters: { effort: "low" } };
+
   it("returns false when session is undefined", () => {
-    expect(shouldRecreateRuntime(undefined, "model", "effort")).toBe(false);
+    expect(shouldRecreateRuntime(undefined, lowA)).toBe(false);
   });
 
   it("returns false when session is dead", () => {
     expect(
-      shouldRecreateRuntime(
-        { status: "dead", modelId: "a", reasoningEffort: "low" },
-        "b",
-        "high",
-      ),
+      shouldRecreateRuntime({ status: "dead", modelSelection: lowA }, highA),
     ).toBe(false);
   });
 
-  it("returns false when model and effort unchanged", () => {
+  it("returns false when the complete selection is unchanged", () => {
     expect(
-      shouldRecreateRuntime(
-        { status: "alive", modelId: "a", reasoningEffort: "low" },
-        "a",
-        "low",
-      ),
+      shouldRecreateRuntime({ status: "alive", modelSelection: lowA }, lowA),
     ).toBe(false);
   });
 
   it("returns true when model changed", () => {
     expect(
+      shouldRecreateRuntime({ status: "alive", modelSelection: lowA }, lowB),
+    ).toBe(true);
+  });
+
+  it("returns true when a model parameter changed", () => {
+    expect(
+      shouldRecreateRuntime({ status: "alive", modelSelection: lowA }, highA),
+    ).toBe(true);
+  });
+
+  it("returns true when an existing parameter is removed", () => {
+    expect(
       shouldRecreateRuntime(
-        { status: "alive", modelId: "a", reasoningEffort: "low" },
-        "b",
-        "low",
+        { status: "alive", modelSelection: lowA },
+        { modelId: "a", parameters: {} },
       ),
     ).toBe(true);
   });
 
-  it("returns true when effort changed", () => {
+  it("returns false when both parameter maps are empty", () => {
     expect(
       shouldRecreateRuntime(
-        { status: "alive", modelId: "a", reasoningEffort: "low" },
-        "a",
-        "high",
-      ),
-    ).toBe(true);
-  });
-
-  it("returns true when an existing model/effort changes to undefined", () => {
-    expect(
-      shouldRecreateRuntime(
-        { status: "alive", modelId: "a", reasoningEffort: "low" },
-        undefined,
-        undefined,
-      ),
-    ).toBe(true);
-  });
-
-  it("returns false when runtime and desired model/effort are both undefined", () => {
-    expect(
-      shouldRecreateRuntime(
-        { status: "alive", modelId: undefined, reasoningEffort: undefined },
-        undefined,
-        undefined,
+        {
+          status: "alive",
+          modelSelection: { modelId: "a", parameters: {} },
+        },
+        { modelId: "a", parameters: {} },
       ),
     ).toBe(false);
   });
@@ -277,12 +272,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           outputFormat: undefined,
         },
-        "a",
-        "low",
+        lowA,
         { type: "json_schema", schema },
       ),
     ).toBe(true);
@@ -294,12 +287,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           outputFormat: { type: "json_schema", schema },
         },
-        "a",
-        "low",
+        lowA,
         undefined,
       ),
     ).toBe(true);
@@ -312,12 +303,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           outputFormat: { type: "json_schema", schema: schema1 },
         },
-        "a",
-        "low",
+        lowA,
         { type: "json_schema", schema: schema2 },
       ),
     ).toBe(true);
@@ -332,12 +321,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           outputFormat: format,
         },
-        "a",
-        "low",
+        lowA,
         format,
       ),
     ).toBe(false);
@@ -348,12 +335,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           outputFormat: undefined,
         },
-        "a",
-        "low",
+        lowA,
         undefined,
       ),
     ).toBe(false);
@@ -364,12 +349,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           alignmentVersion: 3,
         },
-        "a",
-        "low",
+        lowA,
         undefined,
         4,
       ),
@@ -381,12 +364,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           alignmentVersion: 3,
         },
-        "a",
-        "low",
+        lowA,
         undefined,
         3,
       ),
@@ -398,12 +379,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           alignmentVersion: null,
         },
-        "a",
-        "low",
+        lowA,
         undefined,
         null,
       ),
@@ -415,12 +394,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           alignmentVersion: 3,
         },
-        "a",
-        "low",
+        lowA,
         undefined,
         null,
       ),
@@ -432,12 +409,10 @@ describe("shouldRecreateRuntime", () => {
       shouldRecreateRuntime(
         {
           status: "alive",
-          modelId: "a",
-          reasoningEffort: "low",
+          modelSelection: lowA,
           alignmentVersion: null,
         },
-        "a",
-        "low",
+        lowA,
         undefined,
         3,
       ),
@@ -447,9 +422,8 @@ describe("shouldRecreateRuntime", () => {
   it("treats a missing runtime alignmentVersion as null (no recreate when desired is null)", () => {
     expect(
       shouldRecreateRuntime(
-        { status: "alive", modelId: "a", reasoningEffort: "low" },
-        "a",
-        "low",
+        { status: "alive", modelSelection: lowA },
+        lowA,
         undefined,
         null,
       ),
@@ -818,7 +792,7 @@ describe("executePromptForMachine", () => {
 
     mockSendTurn.mockResolvedValue(defaultTurnResult);
     mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
-    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+    mockFactory.validateModelSelection.mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -840,9 +814,9 @@ describe("executePromptForMachine", () => {
     const result = await executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
-    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+    expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "opus",
-      reasoningEffort: "high",
+      parameters: { effort: "high" },
     });
     expect(result.backendRef).toEqual({
       backend: "claude",
@@ -1250,7 +1224,12 @@ describe("executePromptForMachine", () => {
   });
 
   it("gates turn-start MCP apply and idle capability drain for ephemeral turns", async () => {
-    const reusedRuntime = createMockBackendRuntime({ modelId: "opus" });
+    const reusedRuntime = createMockBackendRuntime({
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
     (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
       defaultTurnResult,
     );
@@ -1294,7 +1273,12 @@ describe("executePromptForMachine", () => {
   });
 
   it("reuses an existing alive backend runtime", async () => {
-    const existingRuntime = createMockBackendRuntime({ modelId: "opus" });
+    const existingRuntime = createMockBackendRuntime({
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
     (existingRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
       defaultTurnResult,
     );
@@ -1314,9 +1298,9 @@ describe("executePromptForMachine", () => {
 
     // Should NOT create a new runtime
     expect(mockFactory.createRuntime).not.toHaveBeenCalled();
-    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+    expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "opus",
-      reasoningEffort: "high",
+      parameters: { effort: "high" },
     });
     expect(result.backendRef).toEqual({
       backend: "claude",
@@ -1326,11 +1310,17 @@ describe("executePromptForMachine", () => {
 
   it("recreates runtime when model changes", async () => {
     const existingRuntime = createMockBackendRuntime({
-      modelId: "claude-sonnet-4-5-20250514",
+      modelSelection: {
+        modelId: "claude-sonnet-4-5-20250514",
+        parameters: { effort: "high" },
+      },
     });
 
     const input = makeExecutePromptInput({
-      modelId: "claude-opus-4-20250514",
+      modelSelection: {
+        modelId: "claude-opus-4-20250514",
+        parameters: { effort: "high" },
+      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
@@ -1348,19 +1338,20 @@ describe("executePromptForMachine", () => {
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it("continues an existing conversation on its last-used model/effort when the turn carries none", async () => {
-    // The turn arrives with no explicit model/effort — the shape produced by
+  it("continues an existing conversation on its last-used model selection when the turn carries none", async () => {
+    // The turn arrives with no explicit selection — the shape produced by
     // document feedback, a drained queued message, or an alignment turn. Prior
     // transcript shows the conversation last ran on Haiku/low, so the turn must
-    // continue there rather than snapping to the config default (opus, no
-    // effort).
+    // continue there rather than snapping to the configured Opus selection.
     vi.mocked(mockDeps.readConversationMessages).mockResolvedValue([
       {
         role: "user",
         content: [{ type: "text", text: "earlier" }],
         timestamp: null,
-        model: "claude-haiku-4-5",
-        effort: "low",
+        modelSelection: {
+          modelId: "claude-haiku-4-5",
+          parameters: { effort: "low" },
+        },
       },
       {
         role: "assistant",
@@ -1369,7 +1360,7 @@ describe("executePromptForMachine", () => {
       },
     ]);
 
-    const input = makeExecutePromptInput({ modelId: null, effort: null });
+    const input = makeExecutePromptInput({ modelSelection: null });
     const key = conversationRuntimeKey(
       input.projectPath,
       input.sessionName,
@@ -1381,23 +1372,252 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+    expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "claude-haiku-4-5",
-      reasoningEffort: "low",
+      parameters: { effort: "low" },
     });
     // The persisted user turn records the resolved values so the next turn —
-    // and the client composer — continues from the same model/effort.
+    // and the client composer — continues from the same complete selection.
     const userAppend = vi
       .mocked(mockDeps.safeAppendTranscriptEntry)
       .mock.calls.find(([, entry]) => entry.role === "user");
     expect(userAppend?.[1]).toMatchObject({
-      model: "claude-haiku-4-5",
-      effort: "low",
+      modelSelection: {
+        modelId: "claude-haiku-4-5",
+        parameters: { effort: "low" },
+      },
     });
   });
 
-  it("does not read the transcript when the turn carries explicit model and effort", async () => {
-    const input = makeExecutePromptInput({ modelId: "opus", effort: "high" });
+  it("canonicalizes a last-used project model selection before transcript persistence and runtime dispatch", async () => {
+    const aliasSelection: BackendModelSelection = {
+      modelId: "composer",
+      parameters: { fast: "true" },
+    };
+    const canonicalSelection: BackendModelSelection = {
+      modelId: "composer-2.5",
+      parameters: { fast: "true" },
+    };
+    const validateModelSelection = vi.fn();
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: true as const,
+      modelSelection: canonicalSelection,
+    }));
+    const cursorRuntime = createMockBackendRuntime({
+      backend: "cursor",
+      modelSelection: canonicalSelection,
+    });
+    const createRuntime = vi.fn(async () => cursorRuntime);
+    let acknowledgeSelection!: () => void;
+    const onModelSelectionResolved = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledgeSelection = resolve;
+        }),
+    );
+    const log = createCapturingLogger();
+    mockDeps = createMockDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        backend: "cursor" as const,
+        createRuntime,
+        validateModelSelection,
+        validateProjectModelSelection,
+      })),
+      readConversationMessages: vi.fn(async () => [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "earlier" }],
+          timestamp: null,
+          modelSelection: aliasSelection,
+        },
+      ]),
+      log,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({
+      agentBackend: "cursor",
+      modelSelection: null,
+      onModelSelectionResolved,
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+
+    const execution = executePromptForMachine(input);
+
+    await vi.waitFor(() => {
+      expect(onModelSelectionResolved).toHaveBeenCalledWith(canonicalSelection);
+    });
+    expect(createRuntime).not.toHaveBeenCalled();
+    expect(mockSendTurn).not.toHaveBeenCalled();
+
+    acknowledgeSelection();
+    await execution;
+
+    expect(validateModelSelection).toHaveBeenCalledWith(aliasSelection);
+    expect(validateProjectModelSelection).toHaveBeenCalledWith({
+      projectPath: input.projectPath,
+      modelSelection: aliasSelection,
+    });
+    expect(createRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSelection: canonicalSelection }),
+    );
+    expect(mockSendTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSelection: canonicalSelection }),
+    );
+    const userAppend = vi
+      .mocked(mockDeps.safeAppendTranscriptEntry)
+      .mock.calls.find(([, entry]) => entry.role === "user");
+    expect(userAppend?.[1]).toMatchObject({
+      modelSelection: canonicalSelection,
+    });
+    expect(log.entries).toContainEqual({
+      level: "debug",
+      message: "model_selection.resolved",
+      fields: {
+        backend: "cursor",
+        modelId: "composer-2.5",
+        parameterIds: ["fast"],
+        sourceLayer: "last_turn",
+      },
+    });
+  });
+
+  it("fails a project-model refusal before user transcript persistence or runtime dispatch", async () => {
+    const validateModelSelection = vi.fn();
+    const validateProjectModelSelection = vi.fn(async () => ({
+      ok: false as const,
+      code: "model_not_allowed",
+      message: 'Cursor model "composer-2.5" is not allowed for this project.',
+      modelId: "composer-2.5",
+    }));
+    const createRuntime = vi.fn(async () =>
+      createMockBackendRuntime({ backend: "cursor" }),
+    );
+    const streamEmit = vi.fn();
+    const onModelSelectionResolved = vi.fn(async () => {});
+    const log = createCapturingLogger();
+    mockDeps = createMockDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        backend: "cursor" as const,
+        createRuntime,
+        validateModelSelection,
+        validateProjectModelSelection,
+      })),
+      log,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({
+      agentBackend: "cursor",
+      modelSelection: null,
+      onModelSelectionResolved,
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      ),
+      { abortController: new AbortController(), streamEmit },
+    );
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.error).toBe(
+      'Cursor model "composer-2.5" is not allowed for this project.',
+    );
+    expect(validateProjectModelSelection).toHaveBeenCalledWith({
+      projectPath: input.projectPath,
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+    });
+    expect(mockDeps.safeAppendTranscriptEntry).not.toHaveBeenCalled();
+    expect(onModelSelectionResolved).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
+    expect(mockSendTurn).not.toHaveBeenCalled();
+    expect(streamEmit).toHaveBeenCalledWith("error", {
+      message: 'Cursor model "composer-2.5" is not allowed for this project.',
+    });
+    expect(log.entries).toContainEqual({
+      level: "warn",
+      message: "model_selection.rejected",
+      fields: {
+        backend: "cursor",
+        modelId: "composer-2.5",
+        parameterIds: ["fast"],
+        sourceLayer: "backend_default",
+        code: "model_not_allowed",
+      },
+    });
+  });
+
+  it("marks a claimed queued turn failed when its model selection is refused", async () => {
+    const error =
+      'Cursor model "composer-2.5" is not allowed for this project.';
+    mockDeps = createMockDeps({
+      getConversationBackendFactory: vi.fn(() => ({
+        backend: "cursor" as const,
+        createRuntime: vi.fn(),
+        validateModelSelection: vi.fn(),
+        validateProjectModelSelection: vi.fn(async () => ({
+          ok: false as const,
+          code: "model_not_allowed",
+          message: error,
+          modelId: "composer-2.5",
+        })),
+      })),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({
+      agentBackend: "cursor",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      queuedDelivery: {
+        messageIds: ["m1", "m2"],
+        deliveryAttemptId: "att-model",
+      },
+    });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.error).toBe(error);
+    expect(mockDeps.markQueuedFailed).toHaveBeenCalledWith({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      ids: ["m1", "m2"],
+      deliveryAttemptId: "att-model",
+      error,
+    });
+  });
+
+  it("does not read the transcript when the turn carries an explicit complete selection", async () => {
+    const input = makeExecutePromptInput({
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
     const key = conversationRuntimeKey(
       input.projectPath,
       input.sessionName,
@@ -1410,23 +1630,27 @@ describe("executePromptForMachine", () => {
     await executePromptForMachine(input);
 
     expect(mockDeps.readConversationMessages).not.toHaveBeenCalled();
-    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+    expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "opus",
-      reasoningEffort: "high",
+      parameters: { effort: "high" },
     });
   });
 
   it("sends and records the explicit Codex speed without reading prior turns", async () => {
     const codexRuntime = createMockBackendRuntime({
       backend: "codex",
-      modelId: "gpt-5.4",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { fast: "true", reasoning: "high" },
+      },
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
     const input = makeExecutePromptInput({
       agentBackend: "codex",
-      modelId: "gpt-5.4",
-      effort: "high",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { fast: "true", reasoning: "high" },
+      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
@@ -1441,12 +1665,22 @@ describe("executePromptForMachine", () => {
 
     expect(mockDeps.readConversationMessages).not.toHaveBeenCalled();
     expect(mockSendTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ codexFastMode: true }),
+      expect.objectContaining({
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "true", reasoning: "high" },
+        },
+      }),
     );
     const userAppend = vi
       .mocked(mockDeps.safeAppendTranscriptEntry)
       .mock.calls.find(([, entry]) => entry.role === "user");
-    expect(userAppend?.[1]).toMatchObject({ codexFastMode: true });
+    expect(userAppend?.[1]).toMatchObject({
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { fast: "true", reasoning: "high" },
+      },
+    });
   });
 
   describe("pre-turn readiness gate", () => {
@@ -1457,7 +1691,10 @@ describe("executePromptForMachine", () => {
       });
       const reusedSendTurn = vi.fn();
       const reused = createMockBackendRuntime({
-        modelId: "opus",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         prepareForTurnStart: reusedPrepare,
         sendTurn: reusedSendTurn,
       });
@@ -1465,7 +1702,10 @@ describe("executePromptForMachine", () => {
       const freshSendTurn = vi.fn().mockResolvedValue(defaultTurnResult);
       const freshPrepare = vi.fn().mockResolvedValue({ status: "ready" });
       const fresh = createMockBackendRuntime({
-        modelId: "opus",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         prepareForTurnStart: freshPrepare,
         sendTurn: freshSendTurn,
       });
@@ -1511,7 +1751,10 @@ describe("executePromptForMachine", () => {
       });
       const reusedSendTurn = vi.fn();
       const reused = createMockBackendRuntime({
-        modelId: "opus",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         prepareForTurnStart: reusedPrepare,
         sendTurn: reusedSendTurn,
       });
@@ -1522,7 +1765,10 @@ describe("executePromptForMachine", () => {
       });
       const freshSendTurn = vi.fn();
       const fresh = createMockBackendRuntime({
-        modelId: "opus",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         prepareForTurnStart: freshPrepare,
         sendTurn: freshSendTurn,
       });
@@ -1684,17 +1930,31 @@ describe("executePromptForMachine", () => {
     expect(result.error).toBeNull();
   });
 
-  it("uses config-derived Codex model and effort for actor-side validation", async () => {
+  it("uses the config-derived Codex selection for actor-side validation", async () => {
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
         agentBackends: {
-          claude: { model: "opus", timeoutMs: 300_000 },
+          claude: {
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+            timeoutMs: 300_000,
+          },
           codex: {
-            model: "gpt-5.4",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { fast: "false", reasoning: "high" },
+            },
             timeoutMs: null,
           },
-          cursor: { model: "composer-2.5", timeoutMs: null },
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+            timeoutMs: null,
+          },
         },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
@@ -1714,9 +1974,9 @@ describe("executePromptForMachine", () => {
 
     await executePromptForMachine(input);
 
-    expect(mockFactory.validateModelAndEffort).toHaveBeenCalledWith({
+    expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "gpt-5.4",
-      reasoningEffort: "high",
+      parameters: { fast: "false", reasoning: "high" },
     });
   });
 
@@ -1725,20 +1985,34 @@ describe("executePromptForMachine", () => {
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
         agentBackends: {
-          claude: { model: "opus", timeoutMs: 300_000 },
+          claude: {
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+            timeoutMs: 300_000,
+          },
           codex: {
-            model: "gpt-5.6-sol",
-            reasoningEffort: "max",
+            modelSelection: {
+              modelId: "gpt-5.6-sol",
+              parameters: { fast: "false", reasoning: "max" },
+            },
             timeoutMs: null,
           },
-          cursor: { model: "composer-2.5", timeoutMs: null },
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+            timeoutMs: null,
+          },
         },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
       })),
     });
     setActorDeps(mockDeps);
-    mockFactory.validateModelAndEffort.mockImplementation(() => {
+    mockFactory.validateModelSelection.mockImplementation(() => {
       throw new Error('Invalid Codex reasoning effort: "max"');
     });
 
@@ -1817,7 +2091,10 @@ describe("executePromptForMachine", () => {
     const staleSendTurn = vi.fn();
     const staleRuntime = createMockBackendRuntime({
       sendTurn: staleSendTurn,
-      modelId: "opus",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
     });
     staleSendTurn.mockImplementation(async () => {
       (staleRuntime as unknown as { status: string }).status = "dead";
@@ -1893,9 +2170,27 @@ describe("executePromptForMachine", () => {
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
         agentBackends: {
-          claude: { model: "opus", timeoutMs: 25 },
-          codex: { model: "gpt-5.4", timeoutMs: null },
-          cursor: { model: "composer-2.5", timeoutMs: null },
+          claude: {
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+            timeoutMs: 25,
+          },
+          codex: {
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { fast: "false", reasoning: "high" },
+            },
+            timeoutMs: null,
+          },
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+            timeoutMs: null,
+          },
         },
         maxTurns: 50,
         idleQuerySessionTtlMs: 300_000,
@@ -1976,9 +2271,27 @@ describe("executePromptForMachine", () => {
   it("aborts the controller before closing the runtime when the safety-net timeout fires", async () => {
     vi.mocked(mockDeps.readConfig).mockResolvedValue({
       agentBackends: {
-        claude: { model: "opus", timeoutMs: 30 },
-        codex: { model: "gpt-5.4", timeoutMs: null },
-        cursor: { model: "composer-2.5", timeoutMs: null },
+        claude: {
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+          timeoutMs: 30,
+        },
+        codex: {
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "false", reasoning: "high" },
+          },
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+          timeoutMs: null,
+        },
       },
       maxTurns: 50,
       idleQuerySessionTtlMs: 300_000,
@@ -2304,7 +2617,12 @@ describe("executePromptForMachine", () => {
         effectiveConfigHash: conversationState.mcpRuntime.lastAppliedConfigHash,
       };
     });
-    const reusedRuntime = createMockBackendRuntime({ modelId: "opus" });
+    const reusedRuntime = createMockBackendRuntime({
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
     (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
       defaultTurnResult,
     );
@@ -3045,7 +3363,12 @@ describe("executePromptForMachine", () => {
         );
 
         // A persistent runtime is already alive — its instructions are frozen.
-        const existingRuntime = createMockBackendRuntime({ modelId: "opus" });
+        const existingRuntime = createMockBackendRuntime({
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        });
         (
           existingRuntime.sendTurn as ReturnType<typeof vi.fn>
         ).mockResolvedValue(defaultTurnResult);
@@ -4471,7 +4794,7 @@ describe("executePromptForMachine alignment injection", () => {
     vi.clearAllMocks();
     mockSendTurn.mockResolvedValue(turnResult);
     mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
-    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+    mockFactory.validateModelSelection.mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -4618,12 +4941,18 @@ describe("executePromptForMachine alignment injection", () => {
 
     const staleClose = vi.fn();
     const staleRuntime = createMockBackendRuntime({
-      modelId: "opus",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       alignmentVersion: 3,
       close: staleClose,
     });
     const freshRuntime = createMockBackendRuntime({
-      modelId: "opus",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       alignmentVersion: 4,
     });
     (freshRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -4668,7 +4997,10 @@ describe("executePromptForMachine alignment injection", () => {
 
     const reusedClose = vi.fn();
     const reusedRuntime = createMockBackendRuntime({
-      modelId: "opus",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       alignmentVersion: 3,
       close: reusedClose,
     });
@@ -4727,7 +5059,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
   beforeEach(() => {
     _resetForTesting();
     vi.clearAllMocks();
-    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+    mockFactory.validateModelSelection.mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -4779,13 +5111,20 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
         backend === "claude"
           ? ({ backend: "claude", ref: "sdk-claude-live" } as const)
           : ({ backend: "codex", ref: "thread-codex-live" } as const);
+      const modelSelection: BackendModelSelection =
+        backend === "codex"
+          ? {
+              modelId: "gpt-5.4",
+              parameters: { fast: "false", reasoning: "high" },
+            }
+          : { modelId: "opus", parameters: { effort: "high" } };
 
       // An already-running runtime whose instructions were baked at the PRIOR
       // charter version — the "baked once" state this regression guards against.
       const staleClose = vi.fn();
       const staleRuntime = createMockBackendRuntime({
         backend,
-        modelId: "opus",
+        modelSelection,
         alignmentVersion: BAKED_VERSION,
         close: staleClose,
       });
@@ -4805,20 +5144,19 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       } satisfies ConversationBackendTurnResult);
       const freshRuntime = createMockBackendRuntime({
         backend,
-        modelId: "opus",
+        modelSelection,
         alignmentVersion: ADVANCED_VERSION,
         sendTurn: freshSendTurn,
       });
       mockFactory.createRuntime.mockResolvedValue(freshRuntime);
 
-      // Pin the model so model/effort/outputFormat all match the live runtime
-      // (config-derived codex model would otherwise resolve to undefined and
-      // trigger a model-change recreation) — isolating the alignment version as
-      // the SOLE recreation trigger this regression exercises.
+      // Pin the complete selection so it and outputFormat both match the live
+      // runtime, isolating the alignment version as the sole recreation trigger
+      // this regression exercises.
       const input = makeExecutePromptInput({
         agentBackend: backend,
         backendRef: continuityRef,
-        modelId: "opus",
+        modelSelection,
       });
       const key = conversationRuntimeKey(
         input.projectPath,
@@ -4915,7 +5253,7 @@ describe("executePromptForMachine pending agent notices", () => {
       error: null,
     });
     mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
-    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+    mockFactory.validateModelSelection.mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -5159,8 +5497,8 @@ describe("runTaskRunTurnForMachine", () => {
       agentBackend: "claude",
       backendRef: null,
       promptText: "do the task",
-      modelId: null,
-      effort: null,
+      modelSelection: null,
+      onModelSelectionResolved: async () => {},
       ...overrides,
     };
   }
@@ -5738,7 +6076,7 @@ describe("runTaskRunTurnForMachine", () => {
     expect(typeof facadeDeps.getTaskRunner).toBe("function");
   });
 
-  it("fills missing task-run model, effort, timeout, and stall settings from the actual backend profile", async () => {
+  it("fills a missing task-run model selection, timeout, and stall settings from the actual backend profile", async () => {
     let received: AgentTaskRequest | undefined;
     const runner = makeMockTaskRunner(async (request) => {
       received = request;
@@ -5756,14 +6094,28 @@ describe("runTaskRunTurnForMachine", () => {
     mockDeps = createMockDeps({
       readConfig: vi.fn(async () => ({
         agentBackends: {
-          claude: { model: "opus", timeoutMs: 300_000 },
+          claude: {
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+            timeoutMs: 300_000,
+          },
           codex: {
-            model: "gpt-5.6-sol",
-            reasoningEffort: "ultra",
+            modelSelection: {
+              modelId: "gpt-5.6-sol",
+              parameters: { fast: "false", reasoning: "ultra" },
+            },
             timeoutMs: 90_000,
             stallTimeoutMs: 45_000,
           },
-          cursor: { model: "composer-2.5", timeoutMs: null },
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+            timeoutMs: null,
+          },
         },
       })),
       getTaskRunner: vi.fn(() => runner),
@@ -5771,16 +6123,136 @@ describe("runTaskRunTurnForMachine", () => {
     });
     setActorDeps(mockDeps);
 
-    await runTaskRunTurnForMachine(
-      makeRunTaskRunInput({ agentBackend: "codex" }),
+    let acknowledgeSelection!: () => void;
+    const onModelSelectionResolved = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          acknowledgeSelection = resolve;
+        }),
+    );
+    const execution = runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        agentBackend: "codex",
+        onModelSelectionResolved,
+      }),
     );
 
+    await vi.waitFor(() => {
+      expect(onModelSelectionResolved).toHaveBeenCalledWith({
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "false", reasoning: "ultra" },
+      });
+    });
+    expect(received).toBeUndefined();
+
+    acknowledgeSelection();
+    await execution;
+
     expect(received).toMatchObject({
-      modelId: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "false", reasoning: "ultra" },
+      },
       timeoutMs: 90_000,
       stallTimeoutMs: 45_000,
     });
+  });
+
+  it("reports and dispatches the canonical selection admitted from a task-run alias", async () => {
+    const aliasSelection: BackendModelSelection = {
+      modelId: "gpt-latest",
+      parameters: { fast: "false", reasoning: "high" },
+    };
+    const canonicalSelection: BackendModelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { fast: "false", reasoning: "high" },
+    };
+    let received: AgentTaskRequest | undefined;
+    const runner = makeMockTaskRunner(async (request) => {
+      received = request;
+      return {
+        backendRef: null,
+        text: "done",
+        usage: null,
+        error: null,
+        timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+    }, "codex");
+    const admitConfiguredModelSelection = vi.fn(async () => ({
+      ok: true as const,
+      modelSelection: canonicalSelection,
+    }));
+    const onModelSelectionResolved = vi.fn(async () => {});
+    mockDeps = createMockDeps({
+      admitConfiguredModelSelection,
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        agentBackend: "codex",
+        modelSelection: aliasSelection,
+        onModelSelectionResolved,
+      }),
+    );
+
+    expect(admitConfiguredModelSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: "codex",
+        projectPath: "/projects/repo",
+        modelSelection: aliasSelection,
+      }),
+    );
+    expect(onModelSelectionResolved).toHaveBeenCalledWith(canonicalSelection);
+    expect(received?.modelSelection).toEqual(canonicalSelection);
+  });
+
+  it("refuses an invalid task-run selection before reporting or provider dispatch", async () => {
+    const invalidSelection: BackendModelSelection = {
+      modelId: "not-configured",
+      parameters: { reasoning: "high" },
+    };
+    const runner = makeMockTaskRunner(
+      async () => ({
+        backendRef: null,
+        text: "should not run",
+        usage: null,
+        error: null,
+        timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
+      }),
+      "codex",
+    );
+    const admitConfiguredModelSelection = vi.fn(async () => ({
+      ok: false as const,
+      code: "unknown_model",
+      message: 'Unknown model "not-configured".',
+      modelId: "not-configured",
+    }));
+    const onModelSelectionResolved = vi.fn(async () => {});
+    mockDeps = createMockDeps({
+      admitConfiguredModelSelection,
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        agentBackend: "codex",
+        modelSelection: invalidSelection,
+        onModelSelectionResolved,
+      }),
+    );
+
+    expect(result.error).toBe('Unknown model "not-configured".');
+    expect(onModelSelectionResolved).not.toHaveBeenCalled();
+    expect(runner.run).not.toHaveBeenCalled();
   });
 
   it("preserves explicit task-run settings over the backend profile", async () => {
@@ -5806,15 +6278,19 @@ describe("runTaskRunTurnForMachine", () => {
     await runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         agentBackend: "codex",
-        modelId: "gpt-5.5",
-        effort: "low",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { fast: "false", reasoning: "low" },
+        },
         timeoutMs: 12_000,
       }),
     );
 
     expect(received).toMatchObject({
-      modelId: "gpt-5.5",
-      reasoningEffort: "low",
+      modelSelection: {
+        modelId: "gpt-5.5",
+        parameters: { fast: "false", reasoning: "low" },
+      },
       timeoutMs: 12_000,
     });
   });

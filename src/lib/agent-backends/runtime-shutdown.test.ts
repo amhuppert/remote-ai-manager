@@ -14,8 +14,7 @@ function makeRuntime(close: () => Promise<void>): ConversationBackendRuntime {
   return {
     backend: "cursor",
     status: "alive",
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
     outputFormat: undefined,
     alignmentVersion: null,
     sendTurn: () => {

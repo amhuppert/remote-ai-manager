@@ -48,6 +48,10 @@ function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
     prompt: "Do the thing",
     timeoutMs: 30_000,
     autonomous: true,
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     ...overrides,
   };
 }
@@ -793,27 +797,39 @@ describe("ClaudeTaskRunner", () => {
     });
   });
 
-  it("passes reasoning effort through to the SDK query options", async () => {
+  it("translates the complete model selection into SDK query options", async () => {
     mockQuery.mockReturnValue(
       makeStream([successResultMessage()]) as ReturnType<typeof query>,
     );
 
-    await runner.run(makeRequest({ reasoningEffort: "high" }));
+    await runner.run(
+      makeRequest({
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
+      }),
+    );
 
     const callArg = mockQuery.mock.calls[0]?.[0] as {
-      options: { effort?: string };
+      options: { model?: string; effort?: string };
     };
-    expect(callArg.options.effort).toBe("high");
+    expect(callArg.options).toMatchObject({ model: "fable", effort: "max" });
   });
 
-  it("fails fast when reasoning effort is invalid", async () => {
+  it("fails fast when the complete model selection is invalid", async () => {
     const result = await runner.run(
-      makeRequest({ reasoningEffort: "minimal" }),
+      makeRequest({
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "minimal" },
+        },
+      }),
     );
 
     expect(mockQuery).not.toHaveBeenCalled();
     expect(result.error).toContain(
-      'Invalid Claude reasoning effort: "minimal"',
+      'Value "minimal" is not supported for parameter "effort"',
     );
   });
 

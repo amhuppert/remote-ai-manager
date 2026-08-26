@@ -28,7 +28,11 @@ import {
   getTicketService,
 } from "@/lib/tickets/service-factory";
 import type { TicketAttachment } from "@/lib/tickets/schemas";
-import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
+import {
+  admitAuthoredWorkflowLaunch,
+  admitAuthoredWorkflowModelSelections,
+} from "@/lib/workflow-graph/authored-launch-admission";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { launchSpecDeliveryGraphWorkflowExecution } from "@/lib/workflow-graph/execution-route-handlers";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
 import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
@@ -420,7 +424,17 @@ export async function createProductionSpecRouteServices(
         projectValidation: repoConfig?.validation ?? null,
         globalValidation: globalConfig.validation,
         workflowDefaults: globalConfig.workflowDefaults,
+        agentBackends: globalConfig.agentBackends,
         accountabilityGroups,
+      });
+    },
+    async admitModelSelections({ spec, launch }) {
+      const globalConfig = await readConfig();
+      return admitAuthoredWorkflowModelSelections(launch, {
+        agentBackends: globalConfig.agentBackends,
+        projectPath: spec.projectPath,
+        modelCatalogFor: (backend) =>
+          getBackendDescriptor(backend).modelCatalog,
       });
     },
     nextId: () => randomUUID(),

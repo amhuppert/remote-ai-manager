@@ -6,9 +6,12 @@ import {
   RichPromptInput,
   type RichPromptInputHandle,
 } from "@/components/rich-prompt/RichPromptInput";
-import { useCreateSessionMutation } from "@/lib/sessions/mutations";
+import { useCreateSessionMutation } from "@/lib/sessions/create-mutation";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
+import {
+  useBranchPrefixQuery,
+  useSessionsQuery,
+} from "@/lib/sessions/list-queries";
 import { sanitizeBranchName } from "@/lib/sessions/branch-name";
 import BranchSelector from "@/components/BranchSelector";
 import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";

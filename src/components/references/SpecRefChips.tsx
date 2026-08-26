@@ -12,14 +12,16 @@ import {
   type SpecMentionAttrs,
   type SpecRefAttrs,
 } from "@/lib/prompt-editor/spec-reference-contract";
-import type { SpecPhaseProjection } from "@/lib/specs/phase";
 import {
   useSpecElementQuery,
   useSpecSummaryQuery,
-  type SpecElementGetResponse,
-  type SpecElementReferenceState,
-  type SpecSummaryView,
-} from "@/lib/specs/queries";
+} from "@/lib/specs/reference-queries";
+import type { SpecPhaseProjection } from "@/lib/specs/phase-view-schemas";
+import type {
+  SpecElementGetResponse,
+  SpecElementReferenceState,
+  SpecSummaryView,
+} from "@/lib/specs/reference-view-schemas";
 import { cn } from "@/lib/ui/cn";
 
 interface QueryShape<T> {

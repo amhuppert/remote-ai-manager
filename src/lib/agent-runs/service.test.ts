@@ -40,6 +40,10 @@ function makeInput(
     worktreePath: "/wt",
     workingDirectory: "/wt",
     timeoutMs: 0,
+    modelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    },
     ...overrides,
   };
 }
@@ -323,8 +327,10 @@ describe("startAgentRun", () => {
       makeInput({
         workingDirectory: "/wt/sub",
         timeoutMs: 1000,
-        model: "gpt-5.5",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { reasoning: "high", fast: "true" },
+        },
       }),
       deps,
     );
@@ -335,8 +341,10 @@ describe("startAgentRun", () => {
         backend: "codex",
         workingDirectory: "/wt/sub",
         timeoutMs: 1000,
-        model: "gpt-5.5",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.5",
+          parameters: { reasoning: "high", fast: "true" },
+        },
         signal: expect.any(AbortSignal),
       }),
     );

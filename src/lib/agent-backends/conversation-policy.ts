@@ -1,12 +1,7 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import {
-  getDefaultModelForBackend,
-  getDefaultStallTimeoutForBackend,
-  getEffortLevelsForBackend,
-  isModelCompatibleWithBackend,
-} from "./catalog";
+import { getDefaultStallTimeoutForBackend } from "./catalog";
 import { resolveConfiguredTimeoutMs } from "./timeout";
-import { effortLevelSchema, type EffortLevel } from "./schemas";
+import type { BackendModelSelection } from "./schemas";
 import type {
   BackendConversationTranscriptProjection,
   BackendTaskTranscriptProjection,
@@ -14,9 +9,7 @@ import type {
 import { getBackendDescriptor } from "./registry-core";
 
 interface BackendProfileConfig {
-  model: string;
-  reasoningEffort?: string;
-  fastMode?: boolean;
+  modelSelection: BackendModelSelection;
   timeoutMs: number | null;
   stallTimeoutMs?: number | null;
 }
@@ -30,9 +23,7 @@ export interface ConversationTurnConfig {
 }
 
 export interface ResolvedAgentBackendDefaults {
-  modelId: string;
-  reasoningEffort: EffortLevel | undefined;
-  codexFastMode: boolean;
+  modelSelection: BackendModelSelection;
   /** Runtime sentinel: zero means unbounded. */
   timeoutMs: number;
   /** Runtime sentinel: zero means disabled. */
@@ -40,9 +31,7 @@ export interface ResolvedAgentBackendDefaults {
 }
 
 export interface AgentBackendSettingsOverride {
-  modelId?: string | null;
-  reasoningEffort?: string | null;
-  codexFastMode?: boolean | null;
+  modelSelection?: BackendModelSelection | null;
 }
 
 // Selection defaults are resolved by the client-safe catalog; the aliases keep
@@ -52,48 +41,13 @@ export type {
   BackendSelectionDefaultsById,
 } from "./catalog";
 
-function resolveModelValidEffort(
-  backend: AgentBackendId,
-  modelId: string,
-  configured: string | undefined,
-): EffortLevel | undefined {
-  let supported: EffortLevel[];
-  try {
-    supported = getEffortLevelsForBackend(backend, modelId);
-  } catch {
-    const metadata = getBackendDescriptor(backend).metadata;
-    const model = metadata.models.find(({ id }) => id === modelId);
-    supported = model
-      ? [...model.effortLevels]
-      : [
-          ...new Set(
-            metadata.models.flatMap(({ effortLevels }) => effortLevels),
-          ),
-        ];
-  }
-  if (supported.length === 0) return undefined;
-
-  const parsed = effortLevelSchema.safeParse(configured);
-  if (parsed.success && supported.includes(parsed.data)) return parsed.data;
-  if (supported.includes("high")) return "high";
-  return supported.at(-1);
-}
-
-function resolveCompatibleModel(
-  backend: AgentBackendId,
-  candidates: readonly (string | null | undefined)[],
-  fallback: string,
-): string {
-  for (const candidate of candidates) {
-    if (
-      candidate !== null &&
-      candidate !== undefined &&
-      isModelCompatibleWithBackend(backend, candidate)
-    ) {
-      return candidate;
-    }
-  }
-  return fallback;
+function cloneSelection(
+  selection: BackendModelSelection,
+): BackendModelSelection {
+  return {
+    modelId: selection.modelId,
+    parameters: { ...selection.parameters },
+  };
 }
 
 /**
@@ -111,44 +65,22 @@ export function resolveAgentBackendTurnDefaults(input: {
   const profile = config.agentBackends[backend] as
     | BackendProfileConfig
     | undefined;
-  const descriptor =
-    profile === undefined ? getBackendDescriptor(backend) : undefined;
-  const modelId = resolveCompatibleModel(
-    backend,
-    [input.explicit?.modelId, input.scoped?.modelId, profile?.model],
-    profile === undefined
-      ? descriptor!.metadata.defaultModelId
-      : getDefaultModelForBackend(backend),
-  );
-  const reasoningEffort =
-    input.explicit?.reasoningEffort ??
-    input.scoped?.reasoningEffort ??
-    profile?.reasoningEffort;
+  if (profile === undefined) {
+    throw new Error(`Missing configured profile for backend "${backend}".`);
+  }
+  const modelSelection =
+    input.explicit?.modelSelection ??
+    input.scoped?.modelSelection ??
+    profile.modelSelection;
   const configuredStallTimeout = profile?.stallTimeoutMs;
   const stallTimeoutMs =
     configuredStallTimeout === undefined
-      ? resolveConfiguredTimeoutMs(
-          profile === undefined
-            ? descriptor!.metadata.defaultStallTimeoutMs
-            : getDefaultStallTimeoutForBackend(backend),
-        )
+      ? resolveConfiguredTimeoutMs(getDefaultStallTimeoutForBackend(backend))
       : resolveConfiguredTimeoutMs(configuredStallTimeout);
 
   return {
-    modelId,
-    reasoningEffort: resolveModelValidEffort(backend, modelId, reasoningEffort),
-    codexFastMode:
-      backend === "codex"
-        ? (input.explicit?.codexFastMode ??
-          input.scoped?.codexFastMode ??
-          profile?.fastMode ??
-          false)
-        : false,
-    timeoutMs: resolveConfiguredTimeoutMs(
-      profile === undefined
-        ? descriptor!.metadata.defaultTimeoutMs
-        : profile.timeoutMs,
-    ),
+    modelSelection: cloneSelection(modelSelection),
+    timeoutMs: resolveConfiguredTimeoutMs(profile.timeoutMs),
     stallTimeoutMs,
   };
 }

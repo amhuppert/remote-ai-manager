@@ -108,6 +108,13 @@ describe("project message queue durability", () => {
   function handlers(store: StateStore) {
     const svc = queueService(store);
     return createProjectQueueRouteHandlers({
+      admitModelSelection: async ({ modelSelection }) => ({
+        ok: true,
+        modelSelection: modelSelection ?? {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+      }),
       async resolveProjectPath() {
         return PROJECT_PATH;
       },

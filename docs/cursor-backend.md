@@ -75,13 +75,13 @@ Which models a project's Cursor conversations may run is a **per-project setting
 }
 ```
 
-Omit the block and the effective list is `["composer-2.5"]`. The model for a turn resolves as: the model selected for the conversation → the global `agentBackends.cursor.model` setting → `composer-2.5`; whatever that resolves to must be a member of the project's list, or the turn is refused with a client error **before any Cursor process starts**. A declared-empty list permits nothing. See [Project Configuration → `agentBackends.cursor`](./project-configuration.md#agentbackendscursor--cursor-supported-models) for the full rules.
+Omit the block and the effective list is `["composer-2.5"]`. The complete selection for a turn resolves atomically: the selection chosen for the conversation → the global `agentBackends.cursor.modelSelection` → the generated catalog's default variant for `composer-2.5`. Its model must be a member of the project's list, or the turn is refused with a client error **before any Cursor process starts**. A declared-empty list permits nothing. See [Project Configuration → `agentBackends.cursor`](./project-configuration.md#agentbackendscursor--cursor-supported-models) for the full rules.
 
-Composer takes no reasoning-effort setting, so no effort control is offered for Cursor. There is no fast-mode toggle for Cursor — that is a Codex setting.
+Command Center renders every user-selectable parameter advertised for the chosen model. Effort or reasoning appears beside the model picker; thinking, context size, fast mode, and future multi-value parameters appear under Model Options. Fixed parameters remain hidden in the UI but stay in the exact selection sent to Cursor.
 
 Two consequences worth knowing:
 
-- **The list is not discovered.** Command Center makes no live call to Cursor's model catalog, in production or in settings. Adding a model your team has adopted means editing `CommandCenter.json`, which takes effect on the next turn without a restart.
+- **The parameter catalog is generated, not discovered per request.** `bun run cursor-models:refresh` calls the authenticated `Cursor.models.list()` API and writes a checked-in catalog. Normal builds run `cursor-models:check` without a credential or network call. `CommandCenter.json` still controls the project's model-ID allowlist.
 - **A model the SDK itself rejects** (an id in your list that Cursor does not actually serve) fails the turn with a bounded model-configuration error. It never falls back to `composer-2.5`, so a stale entry surfaces as an error rather than as an answer from a model you did not ask for.
 
 The composers offer exactly the project's list. A globally configured model outside it is shown as an explicit invalid selection, in red, waiting for you to choose — not quietly replaced.

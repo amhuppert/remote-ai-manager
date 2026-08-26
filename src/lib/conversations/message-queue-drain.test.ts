@@ -273,6 +273,26 @@ describe("drainConversationQueue", () => {
     expect(deps.markPending).not.toHaveBeenCalled();
   });
 
+  it("dispatches the complete enqueue-time model selection without reconstructing it", async () => {
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+    const claimNextTurnBatch = vi.fn(async () => ({
+      ...BATCH,
+      modelSelection,
+    }));
+    const deps = makeQueueDeps({ claimNextTurnBatch });
+    const { self, send } = makeDrainSelf(true);
+
+    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+    const event = send.mock.calls[0]?.[0];
+    expect(event?.type).toBe("SUBMIT_PROMPT");
+    if (event?.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+    expect(event.modelSelection).toEqual(modelSelection);
+  });
+
   it("dispatches a SUBMIT_PROMPT carrying documentFeedback for a queued feedback batch", async () => {
     const items = [
       {
@@ -398,6 +418,10 @@ describe("drainConversationQueue command routing", () => {
     messageIds: ["c1"],
     content: [{ type: "text", text: "/commit focus on the API" }],
     command: { command: "commit", hint: "focus on the API" },
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
   };
 
   it("routes a command batch to the command service with the direct-path input shape and never sends SUBMIT_PROMPT", async () => {
@@ -417,6 +441,10 @@ describe("drainConversationQueue command routing", () => {
       conversationId: DRAIN_CONTEXT.conversationId,
       parsed: { command: "commit", hint: "focus on the API" },
       rawText: "/commit focus on the API",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
     });
     expect(deps.markPending).not.toHaveBeenCalled();
     expect(deps.markFailed).not.toHaveBeenCalled();

@@ -210,8 +210,8 @@ for real cascade values (`form-state.test.ts` pins the identity).
 // config.json — global tier
 {
   "workflowDefaults": {
-    "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "medium" } },
-    "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "authority": "blocking", "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } } ] },
+    "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "modelSelection": { "modelId": "opus", "parameters": { "effort": "medium" } } } },
+    "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "authority": "blocking", "agent": { "backend": "claude", "modelSelection": { "modelId": "sonnet", "parameters": { "effort": "medium" } } }, "continuity": { "enabled": true } } ] },
     "scriptValidator":  { "commands": [] },
     "humanApprovalGate": { "enabled": false },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
@@ -219,7 +219,7 @@ for real cascade values (`form-state.test.ts` pins the identity).
     "mutability":       { "allowAgentTaskAdd": false, "allowAgentContextAdd": false },
     "planRepair":       { "enabled": true, "maxAttemptsPerContext": 2 },
     "askUserQuestions": { "enabled": false },
-    "collaboration":    { "enabled": false, "secondAgent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "negotiationRounds": 3, "autonomousResolutionThreshold": "minor" }
+    "collaboration":    { "enabled": false, "secondAgent": { "backend": "claude", "modelSelection": { "modelId": "sonnet", "parameters": { "effort": "medium" } } }, "negotiationRounds": 3, "autonomousResolutionThreshold": "minor" }
   }
 }
 ```
@@ -259,7 +259,7 @@ it protects their shared fan-in target. The list is closed by
 
 | Block | Purpose |
 |---|---|
-| `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the runtime (backend, model, reasoning) that runs it |
+| `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the backend and complete model selection that run it |
 | `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, authority, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; `authority` (`blocking \| advisory`) decides whether the seat can reopen tasks — the built-in acceptance-criteria validator defaults blocking and every other profile defaults advisory; a disabled cohort keeps its assignments dormant |
 | `scriptValidator` | Deterministic validator that runs its ordered registered command selection. `{ commands: string[] }`; an empty list disables it |
 | `humanApprovalGate` | Whether a context pauses for operator approval before it lands. `{ enabled: boolean }`, default disabled |
@@ -275,26 +275,20 @@ it protects their shared fan-in target. The list is closed by
 **An assignment pairs prompt identity with runtime.** `profile` references the
 agent-profile library (`src/lib/agent-profiles/`, see the adoption matrix row)
 and supplies who the role IS — name, description, instructions; `agent` supplies
-which backend/model/effort runs it; the optional `focus` is a use-site steer
+which backend and complete model selection run it; the optional `focus` is a use-site steer
 that narrows the profile, never durable behaviour (that belongs in the profile).
 `id` is the stable use-site identity findings are grouped by, so renaming it
 re-keys the use site.
 
-The pre-cutover shapes — a bare implementer triple, the provider-named
-`type: "claude" | "codex"` singleton validator, the `{kind: "use" | "disabled"}`
-context wrapper — were rewritten once by migration
-`0011-workflow-agent-assignments` and are now REFUSED everywhere with a located
-error. There is no inbound compatibility parser; the single exception is the
-read-only decode floor for archived execution blobs, which are historical
-records and are never rewritten.
-
-That migration transforms shape, never values, and it fails closed rather than
-choose one. A legacy Codex validator that omitted `model`/`reasoningEffort` ran
-on the effective `agentBackends.codex` profile, and `config.json` accepts any
-model string while an assignment's runtime is catalog-bound — so if that
-effective value is off-catalog the migration refuses, naming the holder and the
-value, and startup stops until the operator states the runtime explicitly.
-Nothing is ledgered, so the fix-and-restart replays the whole cutover.
+Migration `0011-workflow-agent-assignments` rewrites the earlier assignment
+container shapes; migration `0035-generalized-model-selection` converts their
+provider tuples into complete catalog variants. The latter uses frozen mapping
+tables and the frozen effective backend profile for omitted legacy values. It
+refuses an unknown model, ambiguous alias, mixed representation, or combination
+that cannot map to exactly one variant. Live schemas accept only
+`modelSelection`; the single compatibility exception is the read-only decoder
+for terminal archived execution blobs, which can never produce a runtime
+request.
 
 ### Declarations that do NOT cascade
 
@@ -553,10 +547,10 @@ workflow's three rather than adding a fourth.
 
 ```jsonc
 { "contextValidator": { "enabled": false, "assignments": [] } }
-{ "contextValidator": { "enabled": true, "assignments": [ { "id": "security", "profile": { "tier": "builtin", "id": "security-reviewer" }, "focus": "auth boundaries", "strategy": "task", "authority": "advisory", "agent": { "backend": "codex", "model": "gpt-5.4", "reasoningEffort": "high" }, "continuity": { "enabled": true } } ] } }
+{ "contextValidator": { "enabled": true, "assignments": [ { "id": "security", "profile": { "tier": "builtin", "id": "security-reviewer" }, "focus": "auth boundaries", "strategy": "task", "authority": "advisory", "agent": { "backend": "codex", "modelSelection": { "modelId": "gpt-5.4", "parameters": { "reasoning": "high", "fast": "false" } } }, "continuity": { "enabled": true } } ] } }
 ```
 
-Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns allowed levels.
+Model parameters are catalog-driven, and an assignment must contain one exact complete variant from the backend catalog.
 
 ## Validator authority and advisories
 

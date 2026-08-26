@@ -4,82 +4,21 @@ import { conversationKeys } from "@/lib/conversations/query-keys";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import {
-  sessionStateSchema,
   bulkSessionsResponseSchema,
   type BulkSessionsRequest,
   type BulkSessionsResponse,
-  type CreateSessionRequest,
   type SessionListItem,
 } from "@/lib/sessions/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { invalidateTicketSessionLifecycle } from "@/lib/tickets/cache-lifecycle";
+import {
+  withSessionsArchived,
+  withoutSessions,
+  withoutSessionsActiveConversations,
+} from "./cache-updates";
 
-function withSessionsArchived(
-  sessions: SessionListItem[] | undefined,
-  sessionNames: ReadonlySet<string>,
-  archived: boolean,
-): SessionListItem[] | undefined {
-  return sessions?.map((s) =>
-    sessionNames.has(s.sessionName) ? { ...s, archived } : s,
-  );
-}
-
-function withoutSessions(
-  sessions: SessionListItem[] | undefined,
-  sessionNames: ReadonlySet<string>,
-): SessionListItem[] | undefined {
-  return sessions?.filter((s) => !sessionNames.has(s.sessionName));
-}
-
-function withoutSessionsActiveConversations(
-  active: ActiveConversationsResponse | undefined,
-  projectName: string,
-  sessionNames: ReadonlySet<string>,
-): ActiveConversationsResponse | undefined {
-  if (active === undefined) return undefined;
-  return {
-    ...active,
-    conversations: active.conversations.filter(
-      (c) =>
-        !(
-          c.scope === "session" &&
-          c.projectName === projectName &&
-          sessionNames.has(c.sessionName)
-        ),
-    ),
-  };
-}
-
-export function useCreateSessionMutation(projectName: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (params: CreateSessionRequest) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions`,
-        "create-session",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(params),
-        },
-        sessionStateSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
-      // Refresh the active-conversations feed so the new session's initial
-      // conversation surfaces immediately. The feed has a persistent observer
-      // (the Topbar), so without this it stays cached and the new conversation
-      // never appears in the /conversations tabs/panes until something else
-      // refetches it.
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
-    },
-  });
-}
+export { useCreateSessionMutation } from "./create-mutation";
+export { useGenericArchiveSessionMutation } from "./generic-archive-mutation";
 
 export function useDeleteSessionMutation(projectName: string) {
   const queryClient = useQueryClient();
@@ -232,65 +171,6 @@ export function useBulkSessionsMutation(projectName: string) {
           );
         }
       },
-    }),
-  );
-}
-
-/**
- * Archive a session from any project. Accepts project/session as mutation
- * variables — used from the active conversations sidebar where rows can
- * belong to sessions other than the one this component is bound to.
- */
-interface GenericArchiveSessionVariables {
-  projectName: string;
-  sessionName: string;
-  archived: boolean;
-}
-
-export function useGenericArchiveSessionMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation(
-    createOptimisticMutation(queryClient, {
-      mutationFn: ({
-        projectName,
-        sessionName,
-        archived,
-      }: GenericArchiveSessionVariables) =>
-        mutationFetch(
-          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
-          "archive-session",
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ archived }),
-          },
-        ),
-      updates: [
-        cacheUpdate<GenericArchiveSessionVariables, SessionListItem[]>({
-          key: (vars) => sessionKeys.list(vars.projectName),
-          update: (old, vars) =>
-            withSessionsArchived(
-              old,
-              new Set([vars.sessionName]),
-              vars.archived,
-            ),
-        }),
-        cacheUpdate<
-          GenericArchiveSessionVariables,
-          ActiveConversationsResponse
-        >({
-          key: () => conversationKeys.active(),
-          update: (old, vars) =>
-            vars.archived
-              ? withoutSessionsActiveConversations(
-                  old,
-                  vars.projectName,
-                  new Set([vars.sessionName]),
-                )
-              : undefined,
-        }),
-      ],
     }),
   );
 }

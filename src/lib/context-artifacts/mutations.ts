@@ -56,7 +56,7 @@ function matchesLogicalKey(
  * Rung-2 optimistic placeholder (data-fetching-and-sse.md): the run's result
  * can't be predicted client-side, so a `pending` row with an `optimistic-*` id
  * stands in until the 202 response or the `context_artifact_status` SSE event
- * reconciles it by id. Fields the client can't know (projectPath, model,
+ * reconciles it by id. Fields the client can't know (projectPath, selection,
  * coverage) carry inert placeholders that the post-settle refetch replaces.
  */
 function makeOptimisticRow(
@@ -78,9 +78,8 @@ function makeOptimisticRow(
     sourceHash: "",
     status: "pending",
     error: null,
-    modelProvider: "claude",
-    model: "",
-    effort: null,
+    backend: "claude",
+    modelSelection: { modelId: "pending", parameters: {} },
     schemaVersion: CONTEXT_ARTIFACT_SCHEMA_VERSION,
     promptVersion: "",
     normalizerVersion: "",
@@ -146,8 +145,9 @@ export function useCompactMutation(target: ContextArtifactTarget) {
             contextArtifactKeys.detail(target, artifact.id),
             artifact,
           );
-          // Zod strips keys the list-item schema omits, i.e. the payload.
-          const listItem = contextArtifactListItemSchema.parse(artifact);
+          const { payload: _payload, ...listItemCandidate } = artifact;
+          const listItem =
+            contextArtifactListItemSchema.parse(listItemCandidate);
           queryClient.setQueryData<ContextArtifactListItem[]>(
             listKey,
             (old) => {

@@ -35,7 +35,10 @@ import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 const GLOBAL_IMPLEMENTER: AgentAssignment = {
   id: "implementer",
   profile: { tier: "builtin", id: "general-implementer" },
-  agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  agent: {
+    backend: "claude",
+    modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+  },
 };
 
 const GLOBAL_VALIDATOR: ValidatorCohort = {
@@ -46,7 +49,10 @@ const GLOBAL_VALIDATOR: ValidatorCohort = {
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
       authority: "blocking",
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
       continuity: { enabled: true },
     },
   ],
@@ -101,8 +107,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
     enabled: false,
     secondAgent: {
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     },
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
@@ -115,17 +123,23 @@ function makeGlobalConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
     ignorePatterns: [],
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
         timeoutMs: 3_600_000,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: null,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     defaultAgentBackend: "claude",
     workflowDefaults: GLOBAL_DEFAULTS,
@@ -180,8 +194,10 @@ describe("resolveContext", () => {
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
       },
       iterationPolicy: { maxIterations: 5, continuity: { enabled: false } },
@@ -204,7 +220,10 @@ describe("resolveContext", () => {
       id: "context-implementer",
       profile: { tier: "project", id: "focused-implementer" },
       focus: "the persistence layer only",
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "low" } },
+      },
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
@@ -240,8 +259,10 @@ describe("resolveContext", () => {
           authority: "blocking",
           agent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -267,8 +288,10 @@ describe("resolveContext", () => {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "haiku",
-            reasoningEffort: "low",
+            modelSelection: {
+              modelId: "haiku",
+              parameters: { effort: "low" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -384,8 +407,10 @@ describe("resolveContext", () => {
   it("populates resolved collaboration with per-field provenance from the cascade (doc 06, D11)", () => {
     const contextSecondAgent: GraphWorkflowAgentConfig = {
       backend: "claude",
-      model: "haiku",
-      reasoningEffort: "low",
+      modelSelection: {
+        modelId: "haiku",
+        parameters: { effort: "low" },
+      },
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
@@ -469,8 +494,10 @@ describe("resolveWorkflowConfig", () => {
       profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "codex",
-        model: "gpt-5.4-mini",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4-mini",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
     };
     const definition = makeDefinition({
@@ -597,7 +624,10 @@ describe("planRepair cascade (D1)", () => {
     const contextBlock: GraphWorkflowPlanRepairPolicy = {
       enabled: true,
       maxAttemptsPerContext: 3,
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "high" } },
+      },
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
@@ -750,8 +780,10 @@ describe("resolveWorkflowDefinition", () => {
     // context "b" overrides the second agent at the per-node tier.
     const contextSecondAgent: GraphWorkflowAgentConfig = {
       backend: "codex",
-      model: "gpt-5.4",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
     };
     const definition = makeDefinition({
       workflowConfig: { collaboration: { negotiationRounds: 9 } },
@@ -853,7 +885,10 @@ describe("resolveWorkflowDefinition", () => {
     const workflowImpl: AgentAssignment = {
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
     };
     const definition = makeDefinition({
       workflowConfig: { implementer: workflowImpl },
@@ -1087,18 +1122,24 @@ describe("expandCommandSelector", () => {
 describe("resolveCollaborationConfigWithProvenance", () => {
   const GLOBAL_SECOND_AGENT: GraphWorkflowAgentConfig = {
     backend: "claude",
-    model: "sonnet",
-    reasoningEffort: "medium",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
   };
   const WORKFLOW_SECOND_AGENT: GraphWorkflowAgentConfig = {
     backend: "codex",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
+    modelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    },
   };
   const CONTEXT_SECOND_AGENT: GraphWorkflowAgentConfig = {
     backend: "claude",
-    model: "haiku",
-    reasoningEffort: "low",
+    modelSelection: {
+      modelId: "haiku",
+      parameters: { effort: "low" },
+    },
   };
 
   const GLOBAL_NEGOTIATION_ROUNDS = 3;
@@ -1384,19 +1425,31 @@ describe("computeUsedBackends", () => {
   const CLAUDE_IMPL: AgentAssignment = {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
-    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+    },
   };
   const CODEX_IMPL: AgentAssignment = {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
-    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    agent: {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    },
   };
   const CLAUDE_VALIDATOR: ValidatorAssignment = {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
     authority: "blocking",
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+    },
     continuity: { enabled: true },
   };
   const CODEX_VALIDATOR: ValidatorAssignment = {
@@ -1404,7 +1457,13 @@ describe("computeUsedBackends", () => {
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "task",
     authority: "blocking",
-    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
+    agent: {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
+    },
     continuity: { enabled: true },
   };
 
@@ -1536,13 +1595,22 @@ describe("agent assignment cascade", () => {
     id: "workflow-implementer",
     profile: { tier: "global", id: "careful-implementer" },
     focus: "the workflow-wide steer",
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "high" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "sonnet", parameters: { effort: "high" } },
+    },
   };
 
   const CONTEXT_IMPLEMENTER: AgentAssignment = {
     id: "context-implementer",
     profile: { tier: "project", id: "persistence-implementer" },
-    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "low" },
+    agent: {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "low", fast: "false" },
+      },
+    },
   };
 
   function cohort(
@@ -1558,7 +1626,13 @@ describe("agent assignment cascade", () => {
     focus: "cross-module consistency",
     strategy: "conversation",
     authority: "blocking",
-    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    agent: {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    },
     continuity: { enabled: false, contextLimitTokens: 40_000 },
   };
 
@@ -1567,7 +1641,10 @@ describe("agent assignment cascade", () => {
     profile: { tier: "project", id: "spec-reviewer" },
     strategy: "task",
     authority: "blocking",
-    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+    },
     continuity: { enabled: true },
   };
 
@@ -1681,8 +1758,10 @@ describe("agent assignment cascade", () => {
         authority: "blocking",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         continuity: { enabled: true },
       },

@@ -4,154 +4,115 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog"
 import { resolveKickoffSelection } from "./kickoff-selection";
 
 const DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "opus", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "opus", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
 
 const UNTOUCHED = {
   kickoffBackend: null,
-  kickoffModel: null,
-  kickoffReasoningEffort: null,
+  kickoffModelSelection: null,
 };
 
 describe("resolveKickoffSelection", () => {
-  it("follows the configured defaults while the draft is untouched", () => {
+  it("follows the configured complete selection while the draft is untouched", () => {
     expect(
       resolveKickoffSelection({
         draft: UNTOUCHED,
         defaultBackend: "codex",
         backendDefaults: DEFAULTS,
       }),
-    ).toMatchObject({
+    ).toEqual({
       backend: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "ultra", fast: "false" },
+      },
     });
   });
 
-  it("keeps a fully valid draft selection", () => {
+  it("keeps a complete draft selection as one indivisible value", () => {
+    expect(
+      resolveKickoffSelection({
+        draft: {
+          kickoffBackend: "codex",
+          kickoffModelSelection: {
+            modelId: "gpt-5.6-terra",
+            parameters: { reasoning: "low", fast: "true" },
+          },
+        },
+        defaultBackend: "claude",
+        backendDefaults: DEFAULTS,
+      }),
+    ).toEqual({
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.6-terra",
+        parameters: { reasoning: "low", fast: "true" },
+      },
+    });
+  });
+
+  it("uses the selected backend's whole default when no draft selection exists", () => {
     expect(
       resolveKickoffSelection({
         draft: {
           kickoffBackend: "claude",
-          kickoffModel: "sonnet",
-          kickoffReasoningEffort: "low",
+          kickoffModelSelection: null,
         },
         defaultBackend: "codex",
         backendDefaults: DEFAULTS,
       }),
-    ).toMatchObject({
+    ).toEqual({
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "low",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "medium" },
+      },
     });
   });
 
-  it("applies a model choice against the default backend", () => {
-    expect(
-      resolveKickoffSelection({
-        draft: { ...UNTOUCHED, kickoffModel: "sonnet" },
-        defaultBackend: "claude",
-        backendDefaults: DEFAULTS,
-      }),
-    ).toMatchObject({ backend: "claude", model: "sonnet" });
-  });
-
-  it("replaces a model that is invalid for the selected backend with the configured default", () => {
-    expect(
-      resolveKickoffSelection({
-        draft: {
-          kickoffBackend: "claude",
-          kickoffModel: "gpt-5.4",
-          kickoffReasoningEffort: null,
-        },
-        defaultBackend: "codex",
-        backendDefaults: DEFAULTS,
-      }),
-    ).toMatchObject({ backend: "claude", model: "opus" });
-  });
-
-  it("clamps an effort the resolved model does not support", () => {
-    // Terra tops out at xhigh; ultra falls back to the model's high tier.
+  it("does not merge missing parameters from a lower-precedence default", () => {
     expect(
       resolveKickoffSelection({
         draft: {
           kickoffBackend: "codex",
-          kickoffModel: "gpt-5.6-terra",
-          kickoffReasoningEffort: "ultra",
+          kickoffModelSelection: {
+            modelId: "gpt-5.6-sol",
+            parameters: { reasoning: "low" },
+          },
         },
         defaultBackend: "claude",
         backendDefaults: DEFAULTS,
       }),
-    ).toMatchObject({
+    ).toEqual({
       backend: "codex",
-      model: "gpt-5.6-terra",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "low" },
+      },
     });
   });
 
-  it("clamps a configured default effort the chosen model does not support", () => {
-    // No draft effort: the codex configured default (ultra) is invalid for Terra.
-    expect(
-      resolveKickoffSelection({
-        draft: {
-          kickoffBackend: "codex",
-          kickoffModel: "gpt-5.6-terra",
-          kickoffReasoningEffort: null,
-        },
-        defaultBackend: "claude",
-        backendDefaults: DEFAULTS,
-      }),
-    ).toMatchObject({ reasoningEffort: "high" });
-  });
+  it("returns a clone so callers cannot mutate the persisted draft", () => {
+    const draft = {
+      kickoffBackend: "claude" as const,
+      kickoffModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      },
+    };
 
-  it("omits reasoning effort for a model without effort levels", () => {
-    expect(
-      resolveKickoffSelection({
-        draft: {
-          kickoffBackend: "claude",
-          kickoffModel: "haiku",
-          kickoffReasoningEffort: "high",
-        },
-        defaultBackend: "claude",
-        backendDefaults: DEFAULTS,
-      }),
-    ).toMatchObject({
-      model: "haiku",
-      reasoningEffort: undefined,
-      effortLevels: [],
+    const resolved = resolveKickoffSelection({
+      draft,
+      defaultBackend: "codex",
+      backendDefaults: DEFAULTS,
     });
-  });
+    resolved.modelSelection.parameters.effort = "low";
 
-  it("keeps a custom codex model configured outside the catalog", () => {
-    expect(
-      resolveKickoffSelection({
-        draft: UNTOUCHED,
-        defaultBackend: "codex",
-        backendDefaults: {
-          ...DEFAULTS,
-          codex: { modelId: "gpt-experimental", effort: "high" },
-        },
-      }),
-    ).toMatchObject({
-      backend: "codex",
-      model: "gpt-experimental",
-      reasoningEffort: "high",
-    });
-  });
-
-  it("exposes the resolved model's effort levels for the selector", () => {
-    expect(
-      resolveKickoffSelection({
-        draft: {
-          kickoffBackend: "codex",
-          kickoffModel: "gpt-5.6-sol",
-          kickoffReasoningEffort: "ultra",
-        },
-        defaultBackend: "claude",
-        backendDefaults: DEFAULTS,
-      }).effortLevels,
-    ).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
+    expect(draft.kickoffModelSelection.parameters.effort).toBe("high");
   });
 });

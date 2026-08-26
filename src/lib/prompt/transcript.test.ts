@@ -575,7 +575,7 @@ describe("readConversationMessages", () => {
     });
   });
 
-  it("propagates turn settings from user entries to assistant messages", async () => {
+  it("propagates the complete model selection from user entries to assistant messages", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "model-effort.jsonl");
     const lines = [
       JSON.stringify({
@@ -583,9 +583,10 @@ describe("readConversationMessages", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "Hello" }],
-        model: "opus",
-        effort: "high",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "true", reasoning: "high" },
+        },
       }),
       JSON.stringify({
         timestamp: "t1",
@@ -598,16 +599,15 @@ describe("readConversationMessages", () => {
 
     const result = await readConversationMessages(filePath);
     expect(result).toHaveLength(2);
-    expect(result[0]!.model).toBe("opus");
-    expect(result[0]!.effort).toBe("high");
-    expect(result[0]!.codexFastMode).toBe(true);
-    // Assistant inherits turn settings from the preceding user entry.
-    expect(result[1]!.model).toBe("opus");
-    expect(result[1]!.effort).toBe("high");
-    expect(result[1]!.codexFastMode).toBe(true);
+    const expectedSelection = {
+      modelId: "gpt-5.4",
+      parameters: { fast: "true", reasoning: "high" },
+    };
+    expect(result[0]!.modelSelection).toEqual(expectedSelection);
+    expect(result[1]!.modelSelection).toEqual(expectedSelection);
   });
 
-  it("tracks model/effort changes across turns", async () => {
+  it("tracks complete model selection changes across turns", async () => {
     const filePath = path.join(
       TEST_DIR,
       "transcripts",
@@ -619,8 +619,10 @@ describe("readConversationMessages", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "Hello" }],
-        model: "opus",
-        effort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       }),
       JSON.stringify({
         timestamp: "t1",
@@ -633,7 +635,10 @@ describe("readConversationMessages", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "Try with sonnet" }],
-        model: "sonnet",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       }),
       JSON.stringify({
         timestamp: "t3",
@@ -646,18 +651,21 @@ describe("readConversationMessages", () => {
 
     const result = await readConversationMessages(filePath);
     expect(result).toHaveLength(4);
-    // First assistant inherits opus + high
-    expect(result[1]!.model).toBe("opus");
-    expect(result[1]!.effort).toBe("high");
-    // Second user has sonnet, no effort (model doesn't support it)
-    expect(result[2]!.model).toBe("sonnet");
-    expect(result[2]!.effort).toBeUndefined();
-    // Second assistant inherits sonnet, no effort
-    expect(result[3]!.model).toBe("sonnet");
-    expect(result[3]!.effort).toBeUndefined();
+    expect(result[1]!.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
+    expect(result[2]!.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    });
+    expect(result[3]!.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    });
   });
 
-  it("handles legacy transcripts without model/effort fields", async () => {
+  it("handles transcripts without model selections", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "legacy.jsonl");
     const lines = [
       JSON.stringify({
@@ -677,10 +685,8 @@ describe("readConversationMessages", () => {
 
     const result = await readConversationMessages(filePath);
     expect(result).toHaveLength(2);
-    expect(result[0]!.model).toBeUndefined();
-    expect(result[0]!.effort).toBeUndefined();
-    expect(result[1]!.model).toBeUndefined();
-    expect(result[1]!.effort).toBeUndefined();
+    expect(result[0]!.modelSelection).toBeUndefined();
+    expect(result[1]!.modelSelection).toBeUndefined();
   });
 
   it("detects plain text slash commands in user messages", async () => {
@@ -847,17 +853,19 @@ describe("readConversationMessagesWithSeq", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "failed attempt" }],
-        model: "opus",
-        effort: "high",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       }),
       JSON.stringify({
         type: "user",
         role: "user",
         content: [{ type: "text", text: "successful retry" }],
-        model: "gpt-5.6-luna",
-        effort: "medium",
-        codexFastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.6-luna",
+          parameters: { fast: "false", reasoning: "medium" },
+        },
       }),
       JSON.stringify({
         type: "assistant",
@@ -876,21 +884,23 @@ describe("readConversationMessagesWithSeq", () => {
         { type: "text", text: "failed attempt" },
         { type: "text", text: "successful retry" },
       ],
-      model: "gpt-5.6-luna",
-      effort: "medium",
-      codexFastMode: false,
+      modelSelection: {
+        modelId: "gpt-5.6-luna",
+        parameters: { fast: "false", reasoning: "medium" },
+      },
       seq: 1,
     });
     expect(result[1]).toMatchObject({
       role: "assistant",
-      model: "gpt-5.6-luna",
-      effort: "medium",
-      codexFastMode: false,
+      modelSelection: {
+        modelId: "gpt-5.6-luna",
+        parameters: { fast: "false", reasoning: "medium" },
+      },
       seq: 2,
     });
   });
 
-  it("clears effort when the latest merged user entry omits it", async () => {
+  it("uses the latest complete selection for a merged user turn", async () => {
     const filePath = path.join(
       TEST_DIR,
       "transcripts",
@@ -901,16 +911,19 @@ describe("readConversationMessagesWithSeq", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "first attempt" }],
-        model: "opus",
-        effort: "high",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       }),
       JSON.stringify({
         type: "user",
         role: "user",
-        content: [{ type: "text", text: "retry without effort" }],
-        model: "gpt-5.6-luna",
-        codexFastMode: false,
+        content: [{ type: "text", text: "retry with a new selection" }],
+        modelSelection: {
+          modelId: "gpt-5.6-luna",
+          parameters: { fast: "false", reasoning: "low" },
+        },
       }),
       JSON.stringify({
         type: "assistant",
@@ -923,17 +936,19 @@ describe("readConversationMessagesWithSeq", () => {
     const result = await readConversationMessagesWithSeq(filePath);
 
     expect(result[0]).toMatchObject({
-      model: "gpt-5.6-luna",
-      codexFastMode: false,
+      modelSelection: {
+        modelId: "gpt-5.6-luna",
+        parameters: { fast: "false", reasoning: "low" },
+      },
       seq: 1,
     });
-    expect(result[0]!.effort).toBeUndefined();
     expect(result[1]).toMatchObject({
-      model: "gpt-5.6-luna",
-      codexFastMode: false,
+      modelSelection: {
+        modelId: "gpt-5.6-luna",
+        parameters: { fast: "false", reasoning: "low" },
+      },
       seq: 2,
     });
-    expect(result[1]!.effort).toBeUndefined();
   });
 
   it("does not carry optional settings into a separate metadata-free user turn", async () => {
@@ -947,9 +962,10 @@ describe("readConversationMessagesWithSeq", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "configured turn" }],
-        model: "gpt-5.6-luna",
-        effort: "medium",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.6-luna",
+          parameters: { fast: "true", reasoning: "medium" },
+        },
       }),
       JSON.stringify({
         type: "assistant",
@@ -972,12 +988,8 @@ describe("readConversationMessagesWithSeq", () => {
     const result = await readConversationMessagesWithSeq(filePath);
 
     expect(result).toHaveLength(4);
-    expect(result[2]!.model).toBeUndefined();
-    expect(result[2]!.effort).toBeUndefined();
-    expect(result[2]!.codexFastMode).toBeUndefined();
-    expect(result[3]!.model).toBe("gpt-5.6-luna");
-    expect(result[3]!.effort).toBeUndefined();
-    expect(result[3]!.codexFastMode).toBeUndefined();
+    expect(result[2]!.modelSelection).toBeUndefined();
+    expect(result[3]!.modelSelection).toBeUndefined();
   });
 
   it("does not advance seq for non-visible lines between visible entries", async () => {
@@ -1993,7 +2005,7 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(captured).toHaveLength(0);
   });
 
-  it("includes agent settings in the broadcast message when set on the entry", async () => {
+  it("includes the complete model selection in the broadcast message", async () => {
     await appendTranscriptEntry(
       "conv-model",
       {
@@ -2001,9 +2013,10 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
         type: "user",
         role: "user",
         content: [{ type: "text", text: "hi" }],
-        model: "opus",
-        effort: "high",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
       TEST_DIR,
       meta,
@@ -2011,14 +2024,16 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(captured).toHaveLength(1);
     const event = captured[0] as {
       message: {
-        model?: string;
-        effort?: string;
-        codexFastMode?: boolean;
+        modelSelection?: {
+          modelId: string;
+          parameters: Record<string, string>;
+        };
       };
     };
-    expect(event.message.model).toBe("opus");
-    expect(event.message.effort).toBe("high");
-    expect(event.message.codexFastMode).toBe(true);
+    expect(event.message.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
   });
 
   it("indexes visible Markdown refs before broadcasting", async () => {
@@ -2280,7 +2295,7 @@ describe("system notices", () => {
     );
   });
 
-  it("keeps model/effort inheritance across an interleaved notice and gives notices no model/effort", async () => {
+  it("keeps the atomic selection across an interleaved notice and gives notices no selection", async () => {
     const transcriptPath = path.join(
       TEST_DIR,
       "transcripts",
@@ -2292,8 +2307,10 @@ describe("system notices", () => {
         role: "user",
         content: [{ type: "text", text: "hi" }],
         timestamp: "2024-01-01T00:00:00Z",
-        model: "opus",
-        effort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       }),
       JSON.stringify({
         type: "notice",
@@ -2316,10 +2333,11 @@ describe("system notices", () => {
       "notice",
       "assistant",
     ]);
-    expect(messages[1]?.model).toBeUndefined();
-    expect(messages[1]?.effort).toBeUndefined();
-    expect(messages[2]?.model).toBe("opus");
-    expect(messages[2]?.effort).toBe("high");
+    expect(messages[1]?.modelSelection).toBeUndefined();
+    expect(messages[2]?.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
   });
 
   it("copyTranscriptUpTo counts notices as visible merged messages", async () => {
@@ -2470,13 +2488,15 @@ describe("readTranscriptEntriesWithSeq", () => {
     expect(result.maxSeq).toBe(3);
   });
 
-  it("normalizes missing timestamp to null and does not carry model/effort", async () => {
+  it("normalizes missing timestamp to null and does not expose turn metadata on raw entries", async () => {
     const filePath = await writeTranscript("entries-nulls.jsonl", [
       JSON.stringify({
         type: "user",
         role: "user",
-        model: "opus",
-        effort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         content: [{ type: "text", text: "hello" }],
       }),
     ]);

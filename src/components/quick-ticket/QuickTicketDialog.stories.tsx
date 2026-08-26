@@ -3,7 +3,11 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { userEvent, within } from "storybook/test";
 
-import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  listBackendCatalogEntries,
+} from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
 import { useQuickTicketStore } from "@/stores/quick-ticket.store";
 import QuickTicketDialog from "./QuickTicketDialog";
 
@@ -23,6 +27,34 @@ const PROJECTS = [
     hasRunningSession: false,
   },
 ];
+
+const MODEL_DEFAULTS = {
+  claude: { modelId: "opus", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
+};
+
+function projectModelOptions() {
+  const catalogs = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex"),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return {
+    backends: (["claude", "codex", "cursor"] as const).map((backend) => ({
+      backend,
+      models: [],
+      defaultModelId: MODEL_DEFAULTS[backend].modelId,
+      source: "catalog",
+      modelCatalog: catalogs[backend],
+      defaultSelection: MODEL_DEFAULTS[backend],
+      diagnostics: [],
+    })),
+  };
+}
 
 function installStoryFetch(behavior: CreateBehavior): () => void {
   const original = globalThis.fetch;
@@ -48,13 +80,15 @@ function installStoryFetch(behavior: CreateBehavior): () => void {
           ignorePatterns: [],
           agentBackends: {
             claude: {
-              model: "opus",
-              reasoningEffort: "medium",
+              modelSelection: MODEL_DEFAULTS.claude,
               timeoutMs: null,
             },
             codex: {
-              model: "gpt-5.6-sol",
-              reasoningEffort: "ultra",
+              modelSelection: MODEL_DEFAULTS.codex,
+              timeoutMs: null,
+            },
+            cursor: {
+              modelSelection: MODEL_DEFAULTS.cursor,
               timeoutMs: null,
             },
           },
@@ -65,6 +99,12 @@ function installStoryFetch(behavior: CreateBehavior): () => void {
     }
     if (method === "GET" && url.pathname === "/api/agent-backends") {
       return Response.json({ backends: listBackendCatalogEntries() });
+    }
+    if (
+      method === "GET" &&
+      /^\/api\/projects\/[^/]+\/model-options$/.test(url.pathname)
+    ) {
+      return Response.json(projectModelOptions());
     }
     if (
       method === "POST" &&

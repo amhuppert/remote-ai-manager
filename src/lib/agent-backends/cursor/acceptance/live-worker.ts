@@ -4,6 +4,8 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import type { BackendModelSelection } from "../../schemas";
+import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import {
   createCursorPackageProbe,
   runCursorStaticPreflight,
@@ -47,11 +49,16 @@ import {
 export interface LiveConversationOptions {
   conversationId?: string;
   sessionName?: string;
-  model: string;
+  modelSelection: BackendModelSelection;
   /** Reuse an existing workspace — the restart and cross-cwd ref cases need
    *  to control whether a resume sees the same cwd and store. */
   workspace?: LiveWorkspace;
 }
+
+export const CURSOR_ACCEPTANCE_MODEL_SELECTION = {
+  modelId: CURSOR_DEFAULT_MODEL,
+  parameters: { fast: "true" },
+} as const satisfies BackendModelSelection;
 
 export interface LiveWorkspace {
   name: string;
@@ -220,7 +227,8 @@ export function createLiveHarness(options: LiveHarnessOptions): LiveHarness {
       target,
       cwd: workspace.cwd,
       storePath: workspace.storePath,
-      model: conversationOptions.model,
+      modelSelection: conversationOptions.modelSelection,
+      ownerToken: {},
       onFrame: (frame) => frames.push(frame),
       onExit: (info) => exits.push(info),
     });

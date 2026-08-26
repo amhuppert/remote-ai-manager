@@ -8,7 +8,7 @@ import {
   specQueries,
   type SpecDetailView,
 } from "@/lib/specs/queries";
-import { elementHandleInSnapshot } from "@/lib/specs/review-state";
+import { elementHandleInSnapshot } from "@/lib/specs/revision-handles";
 import type {
   SpecAuthoringStage,
   SpecRevision,

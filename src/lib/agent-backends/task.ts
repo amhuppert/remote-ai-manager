@@ -6,6 +6,7 @@ import type {
   AgentFailureClassification,
   ContinuationDisposition,
 } from "./errors";
+import type { BackendModelSelection } from "./schemas";
 
 /**
  * Semantic execution shape for a backend task. `isolated-one-shot` requests a
@@ -73,9 +74,7 @@ export interface AgentTaskRequest {
   /** Persistent image files forwarded to backends that accept local images. */
   imagePaths?: readonly string[];
   systemInstructions?: string[];
-  modelId?: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   resumeRef?: AgentSessionRef | null;
   outputSchema?: Record<string, unknown>;
   timeoutMs: number;

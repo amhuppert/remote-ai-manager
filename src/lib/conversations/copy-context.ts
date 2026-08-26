@@ -2,12 +2,15 @@
  * Builds XML context strings for the "Copy Context" clipboard button.
  * Used on both the session overview and conversation detail pages.
  */
-import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import {
-  deriveSessionStatus,
-  deriveSessionPromptCount,
+  deriveSessionPromptCountFromConvs,
+  deriveSessionStatusFromParts,
+  getCollaborationEnvelopeContribution,
 } from "@/lib/sessions/derived";
+import type {
+  CopyContextGraphWorkflowExecution,
+  CopyContextSession,
+} from "./copy-context-schemas";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -16,14 +19,14 @@ import {
 export function buildSessionContext(params: {
   projectName: string;
   sessionName: string;
-  session: SessionState;
+  session: CopyContextSession;
   /**
    * Active graph-workflow execution, sourced from
    * `useGraphWorkflowExecutionQuery`. It no longer rides `session` (the
    * executions table is decoupled from the sessions row), so callers must
    * thread it in explicitly for the workflow block to appear in the copy.
    */
-  graphWorkflowExecution?: GraphWorkflowExecution | null;
+  graphWorkflowExecution?: CopyContextGraphWorkflowExecution | null;
 }): string {
   const { projectName, sessionName, session } = params;
   const execution = params.graphWorkflowExecution ?? null;
@@ -35,9 +38,17 @@ export function buildSessionContext(params: {
     `  <branch>${session.branchName}</branch>`,
     `  <worktree>${session.worktreePath}</worktree>`,
     `  <created>${session.createdAt}</created>`,
-    `  <status>${deriveSessionStatus(session)}</status>`,
+    `  <status>${deriveSessionStatusFromParts({
+      finished: session.finished,
+      convStatuses: session.conversations.map(
+        (conversation) => conversation.status,
+      ),
+      collabContribution: getCollaborationEnvelopeContribution({
+        workflowEnvelopes: session.workflowEnvelopes,
+      }),
+    })}</status>`,
     `  <conversation-count>${session.conversations.length}</conversation-count>`,
-    `  <total-prompts>${deriveSessionPromptCount(session)}</total-prompts>`,
+    `  <total-prompts>${deriveSessionPromptCountFromConvs(session.conversations)}</total-prompts>`,
     `  <source>${session.source}</source>`,
     `  <creation-mode>${session.creationMode}</creation-mode>`,
     `  <finished>${session.finished}</finished>`,
@@ -54,7 +65,7 @@ export function buildSessionContext(params: {
 export function buildConversationContext(params: {
   projectName: string;
   sessionName: string;
-  session: SessionState;
+  session: CopyContextSession;
   conversationId: string;
   /**
    * Active graph-workflow execution, sourced from
@@ -62,7 +73,7 @@ export function buildConversationContext(params: {
    * executions table is decoupled from the sessions row), so callers must
    * thread it in explicitly for the workflow block to appear in the copy.
    */
-  graphWorkflowExecution?: GraphWorkflowExecution | null;
+  graphWorkflowExecution?: CopyContextGraphWorkflowExecution | null;
 }): string {
   const { projectName, sessionName, session, conversationId } = params;
   const execution = params.graphWorkflowExecution ?? null;
@@ -118,7 +129,7 @@ export function buildConversationContext(params: {
 
 function appendGraphWorkflowLines(
   lines: string[],
-  execution: GraphWorkflowExecution,
+  execution: CopyContextGraphWorkflowExecution,
   indent: string,
   conversationId?: string,
 ): void {

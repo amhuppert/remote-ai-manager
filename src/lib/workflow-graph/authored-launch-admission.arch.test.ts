@@ -13,6 +13,7 @@ const CALLER_SOURCES = {
   "project-validate": "src/lib/workflow-graph/validate-route-handlers.ts",
   "global-template-validate":
     "src/lib/workflow-graph/validate-route-handlers.ts",
+  "project-run": "src/lib/workflow-graph/execution-route-handlers.ts",
   ...Object.fromEntries(
     Object.entries(AUTHORED_WORKFLOW_LAUNCH_PERSISTENCE_SOURCES).flatMap(
       ([sourcePath, registration]) =>
@@ -33,6 +34,7 @@ const ADMISSION_ADAPTERS = [
   "src/lib/workflow-graph/template-library-route-handlers.ts",
   "src/lib/workflows/definition-route-handlers.ts",
   "src/lib/workflows/definition-edit-handler.ts",
+  "src/lib/workflow-graph/execution-route-handlers.ts",
 ];
 
 function read(relativePath: string): string {
@@ -168,7 +170,8 @@ function deliveryPlanLaunchMutationLines(source: string): string[] {
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.getText(sourceFile) === "deps.plans.propose"
+      node.expression.expression.getText(sourceFile) === "deps.plans" &&
+      ["open", "saveDraft", "propose"].includes(node.expression.name.text)
     ) {
       const line = sourceFile.getLineAndCharacterOfPosition(
         node.getStart(sourceFile),
@@ -188,7 +191,9 @@ function persistedLaunchMutationSources(): string[] {
       source.includes("createWorkflowStorageService") ||
       source.includes("WorkflowDefinitionStoragePort") ||
       source.includes("ExecutionWorkflowDefinitions");
-    const mayPersistDeliveryPlanLaunch = source.includes("deps.plans.propose(");
+    const mayPersistDeliveryPlanLaunch = ["open", "saveDraft", "propose"].some(
+      (method) => source.includes(`deps.plans.${method}(`),
+    );
     if (!mayUseWorkflowStorage && !mayPersistDeliveryPlanLaunch) {
       return false;
     }
@@ -209,6 +214,7 @@ describe("authored-launch admission ownership", () => {
       "project-create",
       "project-replace",
       "project-edit",
+      "project-run",
       "global-template-create",
       "global-template-replace",
       "global-template-edit",
@@ -240,7 +246,7 @@ describe("authored-launch admission ownership", () => {
     )
       .filter(([, registration]) => registration.persists)
       .map(([caller]) => caller)
-      .concat(["project-validate", "global-template-validate"])
+      .concat(["project-validate", "global-template-validate", "project-run"])
       .sort();
     expect(Object.keys(CALLER_SOURCES).sort()).toEqual(ordinaryCallers);
     for (const [caller, sourcePath] of Object.entries(CALLER_SOURCES)) {
@@ -270,6 +276,20 @@ describe("authored-launch admission ownership", () => {
     ].join("\n");
     expect(workflowStorageMutationLines(source)).toEqual([
       "storage.create(scope, validation.launch);",
+    ]);
+  });
+
+  it("recognizes every delivery-plan draft write", () => {
+    const source = [
+      "deps.plans.open(openInput);",
+      "deps.plans.saveDraft(editInput);",
+      "deps.plans.propose(proposalInput);",
+    ].join("\n");
+
+    expect(deliveryPlanLaunchMutationLines(source)).toEqual([
+      "deps.plans.open(openInput);",
+      "deps.plans.saveDraft(editInput);",
+      "deps.plans.propose(proposalInput);",
     ]);
   });
 

@@ -7,21 +7,21 @@ import {
   type CollaborationAgent,
 } from "@/lib/workflows/collaboration/types";
 import BackendToggle from "@/components/BackendToggle";
-import ModelSelector from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
+import ModelSelectionMetadata from "@/components/ModelSelectionMetadata";
+import {
+  DesktopModelSelectionControls,
+  UnavailableModelSelectionControl,
+} from "@/components/session/prompt/ModelSelectionControls";
 import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
 import type { SelectContentLayer } from "@/components/ui/Select";
 import { STANDARD_AGENT_PROFILE_VALUE } from "@/components/agent-profiles/agent-profile-picker-state";
 import {
   backendLabel,
-  backendSupportsFastMode,
-  getEffortLevelsForBackend,
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
-import {
-  effortLevelSchema,
-  type EffortLevel,
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
 } from "@/lib/agent-backends/schemas";
 import {
   seedAgentTwoDraft,
@@ -48,9 +48,7 @@ export interface CollabConfigRowConfig {
 /** Agent One's live composer selection, shown read-only. */
 export interface CollabAgentOneSummary {
   backend: CollabAgent;
-  model: string;
-  effort?: string;
-  fastMode?: boolean;
+  modelSelection: BackendModelSelection;
 }
 
 export interface CollabConfigRowProps {
@@ -60,11 +58,13 @@ export interface CollabConfigRowProps {
   originatingAgent: CollabAgent;
   /** Composer selection mirrored as the read-only Agent One summary. */
   agentOne?: CollabAgentOneSummary;
-  /** Seeds Agent Two's model/effort/fastMode when its backend changes. */
+  /** Seeds Agent Two's complete model selection when its backend changes. */
   backendDefaults: BackendSelectionDefaultsById;
+  /** Project-effective catalogs for the backends Collaboration Mode can run. */
+  modelCatalogs: Readonly<Record<CollabAgent, BackendModelCatalog | null>>;
   /** Scopes the profile picker's listing; absent outside a project. */
   projectName?: string;
-  /** Stacking tier for Agent Two's portaled profile/model/effort listboxes. */
+  /** Stacking tier for Agent Two's portaled profile/model-parameter lists. */
   selectContentLayer?: SelectContentLayer;
 }
 
@@ -111,11 +111,6 @@ function clampNegotiationRounds(value: number): number {
   return Math.round(value);
 }
 
-function asEffortLevel(value: string | undefined): EffortLevel | undefined {
-  const parsed = effortLevelSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
-}
-
 export default function CollabConfigRow({
   config,
   onChange,
@@ -123,6 +118,7 @@ export default function CollabConfigRow({
   originatingAgent,
   agentOne,
   backendDefaults,
+  modelCatalogs,
   projectName,
   selectContentLayer,
 }: CollabConfigRowProps): React.JSX.Element {
@@ -134,12 +130,9 @@ export default function CollabConfigRow({
   );
 
   const agentTwo = config.agentTwo;
-  const agentTwoEffortLevels = getEffortLevelsForBackend(
-    agentTwo.backend,
-    agentTwo.model,
-  );
-  const agentTwoEffortSupported = agentTwoEffortLevels.length > 0;
-  const agentTwoEffort = asEffortLevel(agentTwo.effort);
+  const agentTwoSelection =
+    agentTwo.modelSelection ?? backendDefaults[agentTwo.backend];
+  const agentTwoCatalog = modelCatalogs[agentTwo.backend];
 
   const updateAgentTwo = (next: CollabAgentTwoDraft): void => {
     onChange({ ...config, agentTwo: next });
@@ -177,9 +170,7 @@ export default function CollabConfigRow({
             </span>
             {agentOne && (
               <span className="font-mono text-[0.72rem] text-text-secondary">
-                {agentOne.model}
-                {agentOne.effort ? ` · ${agentOne.effort}` : ""}
-                {agentOne.fastMode === true ? " · fast" : ""}
+                <ModelSelectionMetadata selection={agentOne.modelSelection} />
               </span>
             )}
           </div>
@@ -279,9 +270,9 @@ export default function CollabConfigRow({
             // with its reason.
             const backend = asCollaborationAgent(selection);
             if (backend === null || backend === agentTwo.backend) return;
-            // A backend switch re-seeds model/effort/fastMode from that
-            // backend's defaults; the profile is prompt identity, orthogonal
-            // to the runtime, so it survives the switch.
+            // A backend switch re-seeds the complete selection from that
+            // backend's default; the profile is prompt identity, orthogonal to
+            // the runtime, so it survives the switch.
             updateAgentTwo({
               ...seedAgentTwoDraft(backend, backendDefaults),
               ...(agentTwo.profile !== undefined
@@ -301,41 +292,19 @@ export default function CollabConfigRow({
             contentLayer={selectContentLayer}
           />
         </div>
-        <ModelSelector
-          backend={agentTwo.backend}
-          value={agentTwo.model ?? backendDefaults[agentTwo.backend].modelId}
-          onChange={(model) => {
-            // A model switch can invalidate the current effort tier; snap to
-            // the new model's set the same way the composer does.
-            const levels = getEffortLevelsForBackend(agentTwo.backend, model);
-            const effort =
-              agentTwoEffort !== undefined && levels.includes(agentTwoEffort)
-                ? agentTwoEffort
-                : levels.includes("high")
-                  ? "high"
-                  : levels[levels.length - 1];
-            updateAgentTwo({
-              ...agentTwo,
-              model,
-              ...(effort !== undefined ? { effort } : {}),
-            });
-          }}
-          contentLayer={selectContentLayer}
-        />
-        {agentTwoEffortSupported && agentTwoEffort !== undefined && (
-          <ReasoningLevelSelector
-            value={agentTwoEffort}
-            availableLevels={agentTwoEffortLevels}
-            onChange={(level) => updateAgentTwo({ ...agentTwo, effort: level })}
-            contentLayer={selectContentLayer}
+        {agentTwoCatalog === null ? (
+          <UnavailableModelSelectionControl
+            selection={agentTwoSelection}
+            reason={`Model options are unavailable for ${AGENT_LABEL[agentTwo.backend]}.`}
           />
-        )}
-        {backendSupportsFastMode(agentTwo.backend) && (
-          <CodexSpeedToggle
-            fastMode={agentTwo.fastMode ?? false}
-            onFastModeChange={(enabled) =>
-              updateAgentTwo({ ...agentTwo, fastMode: enabled })
+        ) : (
+          <DesktopModelSelectionControls
+            catalog={agentTwoCatalog}
+            selection={agentTwoSelection}
+            onSelectionChange={(modelSelection) =>
+              updateAgentTwo({ ...agentTwo, modelSelection })
             }
+            selectContentLayer={selectContentLayer}
           />
         )}
       </div>

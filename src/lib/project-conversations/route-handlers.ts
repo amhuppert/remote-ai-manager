@@ -12,11 +12,10 @@ import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
   BackendMismatchError,
-  ModelEffortValidationError,
+  ModelSelectionValidationError,
   type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
-import { runPromptRequestSchema } from "@/lib/prompt/schemas";
 import {
   changeConversationProfileRequestSchema,
   generateConversationNameRequestSchema,
@@ -206,9 +205,7 @@ export function createProjectConversationRouteHandlers(
     conversationId: string | undefined,
     body: {
       prompt: string;
-      modelId?: string;
-      effort?: string;
-      codexFastMode?: boolean;
+      modelSelection?: ExecuteProjectPromptStreamInput["modelSelection"];
       backend?: ConversationState["agentBackend"];
       images?: ExecuteProjectPromptStreamInput["images"];
       /**
@@ -246,13 +243,11 @@ export function createProjectConversationRouteHandlers(
             ...(conversationId !== undefined ? { conversationId } : {}),
             promptText: body.prompt.trim(),
             emit,
-            ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
+            ...(body.modelSelection !== undefined
+              ? { modelSelection: body.modelSelection }
+              : {}),
             ...(body.images !== undefined ? { images: body.images } : {}),
             ...(body.backend !== undefined ? { backend: body.backend } : {}),
-            ...(body.effort !== undefined ? { effort: body.effort } : {}),
-            ...(body.codexFastMode !== undefined
-              ? { codexFastMode: body.codexFastMode }
-              : {}),
             // Dropped when this turn targets an existing conversation: that
             // conversation was not created for this submission.
             ...(conversationId === undefined &&
@@ -269,8 +264,15 @@ export function createProjectConversationRouteHandlers(
             emit("done", {});
             return;
           }
-          if (err instanceof ModelEffortValidationError) {
-            emit("error", { message: err.message, code: "VALIDATION_ERROR" });
+          if (err instanceof ModelSelectionValidationError) {
+            emit("error", {
+              message: err.message,
+              code: err.code,
+              modelId: err.modelId,
+              ...(err.parameterId !== undefined
+                ? { parameterId: err.parameterId }
+                : {}),
+            });
             emit("done", {});
             return;
           }
@@ -409,7 +411,7 @@ export function createProjectConversationRouteHandlers(
 
     const parsed = await parseJsonBody(
       request,
-      runPromptRequestSchema,
+      projectFirstPromptRequestSchema,
       "prompt or images required",
     );
     if (!parsed.ok) return parsed.response;

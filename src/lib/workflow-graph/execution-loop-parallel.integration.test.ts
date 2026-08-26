@@ -309,8 +309,10 @@ function createParallelDefinition(
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -1462,8 +1464,10 @@ describe("execution loop — parallel integration", () => {
           executionId: before.id,
           contextId: input.contextId,
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
           toolServer: { servers: [] },
           executionTarget: input.executionTarget,
           placement,
@@ -1849,8 +1853,10 @@ describe("execution loop — parallel integration", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -2032,8 +2038,10 @@ describe("execution loop — parallel integration", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },

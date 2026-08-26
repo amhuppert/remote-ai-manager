@@ -515,7 +515,43 @@ describe("collaboration route handlers — START", () => {
     ]);
   });
 
-  it("forwards the request model and effort to the manager", async () => {
+  it("forwards the complete request model selection to the manager", async () => {
+    const { manager, startCalls } = buildScriptedManager({
+      startResult: { workflowId: "wf-stamp", status: "started" },
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Z",
+          negotiationRounds: 4,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-stamp",
+          modelSelection: {
+            modelId: "fable",
+            parameters: { effort: "max" },
+          },
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0]).toMatchObject({
+      modelSelection: {
+        modelId: "fable",
+        parameters: { effort: "max" },
+      },
+    });
+  });
+
+  it("rejects the split model tuple at the route boundary", async () => {
     const { manager, startCalls } = buildScriptedManager({
       startResult: { workflowId: "wf-stamp", status: "started" },
     });
@@ -534,19 +570,13 @@ describe("collaboration route handlers — START", () => {
           conversationId: "conv-stamp",
           modelId: "fable",
           effort: "max",
-          codexFastMode: true,
         }),
       }),
       buildContext("example", "sess-1"),
     );
 
-    expect(response.status).toBe(202);
-    expect(startCalls).toHaveLength(1);
-    expect(startCalls[0]).toMatchObject({
-      modelId: "fable",
-      effort: "max",
-      codexFastMode: true,
-    });
+    expect(response.status).toBe(400);
+    expect(startCalls).toEqual([]);
   });
 
   it("returns 500 when the manager throws an unexpected error", async () => {

@@ -123,7 +123,10 @@ function implementerFor(ref: AgentProfileRef): AgentAssignment {
   return {
     id: "implementer",
     profile: ref,
-    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+    },
   };
 }
 

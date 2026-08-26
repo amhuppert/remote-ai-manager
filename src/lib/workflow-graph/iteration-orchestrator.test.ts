@@ -105,7 +105,10 @@ const LIVE_EDIT_RESOLVED_DEFAULTS: ResolvedContextConfig = {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
     profileSnapshot: makeProfileSnapshot(),
-    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+    },
   },
   contextValidator: { enabled: false, assignments: [] },
   scriptValidator: { commands: [] },
@@ -118,7 +121,10 @@ const LIVE_EDIT_RESOLVED_DEFAULTS: ResolvedContextConfig = {
   collaboration: {
     enabled: { value: true, source: "global" },
     secondAgent: {
-      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      value: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
       source: "global",
     },
     negotiationRounds: { value: 3, source: "global" },
@@ -3288,8 +3294,10 @@ describe("task validation failure handling (circuit breaker)", () => {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -3350,8 +3358,10 @@ describe("task validation failure handling (circuit breaker)", () => {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -3409,8 +3419,10 @@ describe("codex implementer continuity", () => {
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "codex",
-              model: "gpt-5.4-mini",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "gpt-5.4-mini",
+                parameters: { reasoning: "medium", fast: "false" },
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },
@@ -8719,7 +8731,10 @@ describe("context output capture (D2)", () => {
       agent: {
         ...planContext.implementer.agent,
         backend: "codex",
-        model: "gpt-5.4",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
     };
 

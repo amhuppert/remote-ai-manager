@@ -12,7 +12,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
-    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+    },
   },
   contextValidator: {
     enabled: true,
@@ -24,8 +27,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
         authority: "blocking",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         continuity: { enabled: true },
       },
@@ -42,8 +47,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
     enabled: false,
     secondAgent: {
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     },
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
@@ -72,8 +79,10 @@ function resolvedContext(
       profileSnapshot: makeProfileSnapshot(),
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
     },
     contextValidator: { enabled: false, assignments: [] },
@@ -91,7 +100,13 @@ function resolvedContext(
 const WORKING_COPY_COLLABORATION: ResolvedCollaborationConfig = {
   enabled: { value: true, source: "per-node" },
   secondAgent: {
-    value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    value: {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    },
     source: "per-node",
   },
   negotiationRounds: { value: 5, source: "workflow" },
@@ -125,8 +140,10 @@ describe("resolveLaneToolCollaborationConfig", () => {
         collaboration: {
           secondAgent: {
             backend: "claude",
-            model: "haiku",
-            reasoningEffort: "low",
+            modelSelection: {
+              modelId: "haiku",
+              parameters: { effort: "low" },
+            },
           },
         },
       },
@@ -141,7 +158,10 @@ describe("resolveLaneToolCollaborationConfig", () => {
     expect(loadFallbackInputs).toHaveBeenCalledTimes(1);
     // Cascade provenance: per-node second agent, workflow rounds, global threshold.
     expect(resolved.secondAgent).toEqual({
-      value: { backend: "claude", model: "haiku", reasoningEffort: "low" },
+      value: {
+        backend: "claude",
+        modelSelection: { modelId: "haiku", parameters: { effort: "low" } },
+      },
       source: "per-node",
     });
     expect(resolved.negotiationRounds).toEqual({

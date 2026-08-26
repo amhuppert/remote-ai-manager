@@ -63,7 +63,7 @@ describe("MessageCompactionViewer", () => {
     ).toBeInTheDocument();
     // Provenance from the row feeds the envelope meta rail.
     expect(
-      screen.getAllByText(/claude · sonnet · medium/).length,
+      screen.getAllByText(/claude · sonnet · effort=medium/).length,
     ).toBeGreaterThan(0);
     expect(
       fetchSpy.mock.calls.some((call) => String(call[0]) === DETAIL_URL),

@@ -162,7 +162,10 @@ const validatorConfig: ValidatorAssignment = {
   profile: { tier: "builtin", id: "general-reviewer" },
   strategy: "conversation",
   authority: "blocking",
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  agent: {
+    backend: "claude",
+    modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+  },
   continuity: { enabled: true },
 };
 
@@ -198,8 +201,10 @@ const context: GraphWorkflowResolvedContext = {
     profileSnapshot: makeProfileSnapshot(),
     agent: {
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     },
   },
   contextValidator: {
@@ -1369,7 +1374,10 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
     authority: "blocking",
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+    },
     continuity: { enabled: true },
   };
   const codexValidator: ValidatorAssignment = {
@@ -1379,8 +1387,10 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
     authority: "blocking",
     agent: {
       backend: "codex",
-      model: "gpt-5.4",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
     },
     continuity: { enabled: true },
   };
@@ -1991,8 +2001,10 @@ describe("createValidatorRunner", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -2010,8 +2022,10 @@ describe("createValidatorRunner", () => {
         actorInput: expect.objectContaining({
           conversation: expect.objectContaining({ agentBackend: "codex" }),
         }),
-        modelId: "gpt-5.4",
-        effort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       }),
     );
   });
@@ -2101,8 +2115,10 @@ describe("createValidatorRunner", () => {
         // typed normally.
         agent: {
           backend: TESTFAKE_BACKEND_ID,
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         } as unknown as ValidatorAssignment["agent"],
       };
 
@@ -2276,8 +2292,10 @@ describe("createValidatorRunner", () => {
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input).toMatchObject({
       kind: "task_run",
-      modelId: "sonnet",
-      effort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
       outputFormat: {
         type: "json_schema",
         // The dispatched schema is the one this seat's authority selects, with
@@ -2808,8 +2826,10 @@ describe("createValidatorRunner", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -2853,8 +2873,10 @@ describe("createValidatorRunner", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -2879,7 +2901,7 @@ describe("createValidatorRunner", () => {
     }
   });
 
-  it("runContextValidator forwards codex model and reasoningEffort overrides to executeWorkflowTaskRun", async () => {
+  it("runContextValidator forwards the complete codex selection to executeWorkflowTaskRun", async () => {
     const codexResponse = JSON.stringify({
       summary: "Reopen one task.",
       issues: [
@@ -2912,8 +2934,10 @@ describe("createValidatorRunner", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -2932,8 +2956,10 @@ describe("createValidatorRunner", () => {
 
     expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelId: "gpt-5.4",
-        effort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       }),
     );
     expect(result.result.kind).toBe("fail");
@@ -3185,8 +3211,10 @@ describe("context validator continuity runtime integration", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -3245,7 +3273,10 @@ describe("context validator continuity runtime integration", () => {
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
       authority: "blocking",
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
       continuity: { enabled: true, contextLimitTokens: 100_000 },
     };
     const execution = buildExecutionWithContextValidation(
@@ -3310,8 +3341,10 @@ describe("context validator continuity runtime integration", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -3394,8 +3427,10 @@ describe("context validator continuity runtime integration", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -3472,8 +3507,10 @@ describe("context validator continuity runtime integration", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -3582,8 +3619,10 @@ describe("context validator continuity runtime integration", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };
@@ -3645,8 +3684,10 @@ describe("context validator continuity runtime integration", () => {
       authority: "blocking",
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
       },
       continuity: { enabled: true },
     };

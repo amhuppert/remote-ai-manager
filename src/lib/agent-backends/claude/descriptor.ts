@@ -121,6 +121,12 @@ export function createClaudeBackendDescriptor(
   return {
     id: "claude",
     metadata: claudeBackendMetadata,
+    modelCatalog: {
+      getCatalog: async ({ configuredSelection }) => {
+        const { getStaticBackendModelCatalog } = await import("../catalog");
+        return getStaticBackendModelCatalog("claude", configuredSelection);
+      },
+    },
     conversation: {
       factory: deps.conversationFactory,
       continuity: deps.continuity,

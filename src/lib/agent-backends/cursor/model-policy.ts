@@ -11,6 +11,12 @@
  */
 
 import type { PerRepoConfig } from "@/lib/config/schemas";
+import type { BackendModelCatalogFacet } from "../descriptor";
+import type { BackendModelSelection } from "../schemas";
+import {
+  ModelSelectionPolicyError,
+  validateModelSelection,
+} from "../model-selection";
 
 export const CURSOR_DEFAULT_MODEL = "composer-2.5";
 
@@ -161,5 +167,91 @@ export function createCursorSupportedModelsReader(
   return async (projectPath: string) => {
     const config = await readRepoConfig(projectPath);
     return config?.agentBackends?.cursor?.supportedModels ?? null;
+  };
+}
+
+export interface CursorModelSelectionPolicyDeps {
+  modelCatalog: BackendModelCatalogFacet;
+}
+
+export type CursorModelSelectionResolution =
+  | { ok: true; selection: BackendModelSelection }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      modelId: string;
+      parameterId?: string;
+    };
+
+function catalogFailure(
+  error: unknown,
+  requestedModelId: string,
+): CursorModelSelectionResolution {
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    const modelId =
+      "modelId" in error && typeof error.modelId === "string"
+        ? error.modelId
+        : requestedModelId;
+    return { ok: false, code: error.code, message: error.message, modelId };
+  }
+  if (error instanceof ModelSelectionPolicyError) {
+    const issue = error.issues[0];
+    return {
+      ok: false,
+      code: issue?.code ?? "selection_invalid",
+      message: error.message,
+      modelId: issue?.modelId ?? requestedModelId,
+      ...(issue?.parameterId !== undefined
+        ? { parameterId: issue.parameterId }
+        : {}),
+    };
+  }
+  const detail =
+    error instanceof Error ? error.message.slice(0, 200) : "unknown error";
+  return {
+    ok: false,
+    code: "catalog_unavailable",
+    message: `Could not load the effective Cursor model catalog: ${detail}`,
+    modelId: requestedModelId,
+  };
+}
+
+export async function validateCursorModelSelectionForProject(
+  input: {
+    projectPath: string;
+    selection: BackendModelSelection;
+    configuredSelection: BackendModelSelection;
+  },
+  deps: CursorModelSelectionPolicyDeps,
+): Promise<CursorModelSelectionResolution> {
+  let catalog;
+  try {
+    catalog = await deps.modelCatalog.getCatalog({
+      projectPath: input.projectPath,
+      configuredSelection: input.configuredSelection,
+    });
+  } catch (error) {
+    return catalogFailure(error, input.selection.modelId);
+  }
+
+  const validation = validateModelSelection(catalog, input.selection);
+  if (validation.valid) {
+    return { ok: true, selection: validation.selection };
+  }
+
+  const issue = validation.issues[0];
+  return {
+    ok: false,
+    code: issue?.code ?? "selection_invalid",
+    message: validation.issues.map(({ message }) => message).join(" "),
+    modelId: issue?.modelId ?? input.selection.modelId,
+    ...(issue?.parameterId !== undefined
+      ? { parameterId: issue.parameterId }
+      : {}),
   };
 }

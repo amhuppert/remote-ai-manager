@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import { decodeNativePayload } from "../worker/ipc";
 import type { CredentialSecret } from "./credential-scan";
 import {
@@ -11,6 +10,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -59,7 +59,7 @@ beforeAll(async () => {
 
   live = await harness.startReady({
     sessionName: `file-ops-${randomUUID()}`,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
   });
   writeFileSync(path.join(live.workspace.cwd, SEED_FILE), `${SEED_TOKEN}\n`, {
     mode: 0o600,
@@ -71,7 +71,7 @@ beforeAll(async () => {
   live.attach({
     mode: "create",
     ref: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
   });
   expect(
@@ -91,7 +91,7 @@ beforeAll(async () => {
       `4. Delete ${DOOMED_FILE}.`,
     images: [],
     structuredOutputInstruction: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
     forceExpirePersistedRun: false,
   });

@@ -17,8 +17,12 @@ import {
   type PublicConversationState,
 } from "@/lib/conversations/schemas";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 
 const CONVERSATION_ID = "conv-1";
+const modelCatalog = getStaticBackendModelCatalog("claude");
+const modelSelection = defaultSelectionForModel(modelCatalog, "sonnet");
 
 function makeConversation(): PublicConversationState {
   // Projected, like every conversation a client actually receives.
@@ -130,7 +134,13 @@ function makeSlices(
       hasActiveCollab: false,
       hasCollabChip: false,
       effectiveCollabConfig: {
-        agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+        agentTwo: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
         negotiationRounds: 2,
         autonomousResolutionThreshold: "minor",
       },
@@ -138,27 +148,27 @@ function makeSlices(
       setCollabConfigDraft: vi.fn(),
       clearCollabConfigDraft: vi.fn(),
       backendDefaults: {
-        claude: { modelId: "opus", effort: "high" as const },
+        claude: { modelId: "opus", parameters: { effort: "high" } },
         codex: {
           modelId: "gpt-5.4",
-          effort: "high" as const,
-          codexFastMode: false,
+          parameters: { reasoning: "high", fast: "false" },
         },
-        cursor: { modelId: "composer-2.5", effort: "high" },
+        cursor: { modelId: "composer-2.5", parameters: {} },
       },
     },
-    backendModelEffort: {
+    backendModelSelection: {
       backendLocked: false,
       selectedBackend: "claude",
-      codexFastMode: true,
-      setCodexFastMode: vi.fn(),
-      selectedModel: "sonnet",
-      selectedEffort: "high",
-      availableEffortLevels: ["low", "medium", "high"],
-      effortSupported: true,
-      setSelectedEffort: vi.fn(),
       handleBackendChange: vi.fn(),
-      handleModelChange: vi.fn(),
+      modelCatalog,
+      modelCatalogs: {
+        claude: modelCatalog,
+        codex: null,
+        cursor: null,
+      },
+      modelSelection,
+      modelSelectionBlockedReason: null,
+      setModelSelection: vi.fn(),
     },
     voice: {
       isRecording: false,
@@ -270,16 +280,11 @@ describe("useSessionPageViewProps", () => {
     expect(slot.isWorkflowManagedConversation).toBe(false);
     expect(slot.approvalGate).toBeNull();
     expect(slot.agentBackend).toBe("claude");
-    // Composer sub-bundle carries backend/model/effort + collab + voice.
+    // Composer sub-bundle carries backend/model selection + collab + voice.
     expect(slot.promptComposerProps.selectedBackend).toBe("claude");
-    expect(slot.promptComposerProps.codexFastMode).toBe(true);
-    expect(slot.promptComposerProps.selectedModel).toBe("sonnet");
-    expect(slot.promptComposerProps.selectedEffort).toBe("high");
-    expect(slot.promptComposerProps.availableEffortLevels).toEqual([
-      "low",
-      "medium",
-      "high",
-    ]);
+    expect(slot.promptComposerProps.modelCatalog).toBe(modelCatalog);
+    expect(slot.promptComposerProps.modelCatalogs.claude).toBe(modelCatalog);
+    expect(slot.promptComposerProps.modelSelection).toEqual(modelSelection);
     expect(slot.promptComposerProps.voiceAvailable).toBe(true);
     expect(slot.promptComposerProps.cumulativeImageCount).toBe(3);
     expect(slot.promptComposerProps.hasCollabChip).toBe(false);

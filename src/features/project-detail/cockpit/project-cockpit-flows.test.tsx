@@ -34,11 +34,17 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
 
 vi.mock(
@@ -50,7 +56,28 @@ function withClient(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
+  seedModelOptions(client, "proj");
   return <QueryClientProvider client={client}>{ui}</QueryClientProvider>;
+}
+
+function seedModelOptions(client: QueryClient, projectName: string): void {
+  const catalogs = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex"),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  client.setQueryData(
+    backendCatalogKeys.projectModelOptions(projectName),
+    (["claude", "codex", "cursor"] as const).map((backend) => ({
+      backend,
+      models: [],
+      defaultModelId: BACKEND_DEFAULTS[backend].modelId,
+      source: "catalog" as const,
+      modelCatalog: catalogs[backend],
+      defaultSelection: BACKEND_DEFAULTS[backend],
+      diagnostics: [],
+    })),
+  );
 }
 
 function withHotkeys(ui: React.ReactElement) {
@@ -756,35 +783,45 @@ describe("project page: per-conversation model memory", () => {
         role: "user",
         content: [],
         timestamp: "2026-01-01T00:00:00Z",
-        model: "opus",
-        effort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
       {
         role: "assistant",
         content: [],
         timestamp: "2026-01-01T00:00:01Z",
-        model: "opus",
-        effort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
       {
         role: "user",
         content: [],
         timestamp: "2026-01-01T00:00:02Z",
-        model: "sonnet",
-        effort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
       {
         role: "assistant",
         content: [],
         timestamp: "2026-01-01T00:00:03Z",
-        model: "sonnet",
-        effort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
     ];
 
     expect(selectLastUserTurnAgentSettings(messages)).toEqual({
-      modelId: "sonnet",
-      effort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     });
   });
 
@@ -792,6 +829,7 @@ describe("project page: per-conversation model memory", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
+    seedModelOptions(client, "proj");
     const conversation = makeConversation("c1", {
       agentBackend: "codex",
       promptCount: 2,
@@ -803,7 +841,10 @@ describe("project page: per-conversation model memory", () => {
           role: "user",
           content: [],
           timestamp: "2026-01-01T00:00:00Z",
-          codexFastMode: false,
+          modelSelection: {
+            modelId: "gpt-5.6-sol",
+            parameters: { reasoning: "ultra", fast: "false" },
+          },
         },
       ] satisfies TranscriptMessage[],
     );
@@ -823,22 +864,17 @@ describe("project page: per-conversation model memory", () => {
           onRunCommand={vi.fn()}
           selectedBackend="codex"
           onSelectedBackendChange={vi.fn()}
-          backendDefaults={{
-            ...BACKEND_DEFAULTS,
-            codex: {
-              ...BACKEND_DEFAULTS.codex,
-              codexFastMode: true,
-            },
-          }}
+          backendDefaults={BACKEND_DEFAULTS}
           rail={<div data-testid="rail-stub" />}
         />
       </QueryClientProvider>,
     );
     showConversationsView();
 
-    expect(screen.getByRole("radio", { name: "Standard" })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("button", { name: "Model options" }));
+    expect(screen.getByRole("switch", { name: "Fast mode" })).toHaveAttribute(
       "aria-checked",
-      "true",
+      "false",
     );
   });
 });
@@ -851,9 +887,10 @@ describe("project page: command palette", () => {
         pendingImages: [],
         tokens: [],
         backend: "claude",
-        modelId: "claude-sonnet-4-5-20250929",
-        effort: "high",
-        effortSupported: true,
+        modelSelection: {
+          modelId: "claude-sonnet-4-5-20250929",
+          parameters: { effort: "high" },
+        },
       }),
     ).toEqual({ kind: "command", id: "workflow-builder" });
   });
@@ -868,9 +905,10 @@ describe("project page: shared filter state", () => {
         pendingImages: [],
         tokens,
         backend: "claude",
-        modelId: "claude-sonnet-4-5-20250929",
-        effort: "high",
-        effortSupported: true,
+        modelSelection: {
+          modelId: "claude-sonnet-4-5-20250929",
+          parameters: { effort: "high" },
+        },
       });
       return (
         <>

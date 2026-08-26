@@ -53,9 +53,9 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 - Optional `string[]`; omitted (or `"cursor": {}`) means `["composer-2.5"]`. Strict block: only `supportedModels` is accepted, and `model`/`reasoningEffort`/`apiKey` are rejected by name.
 - The Cursor adapter's model policy (`agent-backends/cursor/model-policy.ts`) is the validation authority. It reads this list through `createCursorSupportedModelsReader(readRepoConfig)` using `ConversationBackendCreateInput.projectPath`, and refuses a resolved model outside it before any worker spawns — never substitutes.
-- Route-level refusal goes through the backend-neutral `ConversationBackendFactory.validateProjectModelSelection` hook (the synchronous `validateModelAndEffort` hook is project-blind and can only check shape).
+- Route-level refusal goes through the backend-neutral model-catalog and complete-selection validation facets; no caller reconstructs model/parameter compatibility.
 - A declared-empty list permits nothing; a malformed list is a bounded refusal, not a thrown error.
-- `GET /api/projects/[name]/model-options` (`agent-backends/project-model-options-route-handlers.ts`) projects the same resolver for creation surfaces, via `useProjectBackendModelOptions`. Surfaces render a value outside the projection as an explicit invalid selection.
+- `GET /api/projects/[name]/model-options` (`agent-backends/project-model-options-route-handlers.ts`) projects the project-effective catalog, atomic default, provenance, and diagnostics for creation surfaces. Surfaces render a value outside the projection as an explicit invalid selection.
 
 ## Env var differences
 

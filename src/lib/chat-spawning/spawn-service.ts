@@ -16,6 +16,11 @@ import { getDefaultCollaborationManager } from "@/lib/workflows/collaboration/ma
 import { publishEvent } from "@/lib/events/publication";
 import { buildConversationCreatedEvent } from "@/lib/conversations/created-event";
 import type { ConversationCreatedEvent } from "@/lib/conversations/schemas";
+import type { ProjectModelSelectionValidation } from "@/lib/agent-backends/conversation";
+import {
+  admitConfiguredModelSelection,
+  ModelSelectionAdmissionError,
+} from "@/lib/agent-backends/model-selection-admission";
 import {
   spawnProposalSchema,
   spawnResultEventSchema,
@@ -45,6 +50,11 @@ export interface ChatSpawnDeps {
     conversationId: string,
     sessionNames: string[],
   ): Promise<void>;
+  admitModelSelection(input: {
+    backend: Exclude<ProposedSession["agent"], "dual">;
+    projectPath: string;
+    modelSelection?: ProposedSession["modelSelection"];
+  }): Promise<ProjectModelSelectionValidation>;
   dispatchFirstTurn(
     input: DispatchFirstTurnInput,
   ): Promise<{ dispatched: boolean }>;
@@ -71,13 +81,83 @@ export interface CreateFromProposalInput {
 export function createChatSpawnService(deps: ChatSpawnDeps): {
   createFromProposal(input: CreateFromProposalInput): Promise<SpawnResult>;
 } {
+  async function admitProposal(
+    projectPath: string,
+    proposal: SpawnProposal,
+  ): Promise<SpawnProposal> {
+    const sessions: ProposedSession[] = [];
+
+    for (const proposed of proposal.sessions) {
+      const hasInitialTurn =
+        proposed.initialPrompt !== undefined ||
+        (proposed.images?.length ?? 0) > 0;
+
+      if (proposed.modelSelection !== undefined && proposed.agent === "dual") {
+        throw new ModelSelectionAdmissionError({
+          code: "model_selection_inapplicable",
+          message:
+            "modelSelection is not supported for dual-agent spawns because each participant uses its own backend default.",
+          modelId: proposed.modelSelection.modelId,
+        });
+      }
+
+      if (proposed.modelSelection !== undefined && !hasInitialTurn) {
+        throw new ModelSelectionAdmissionError({
+          code: "model_selection_inapplicable",
+          message:
+            "modelSelection requires an initial turn; without one the selection would be discarded.",
+          modelId: proposed.modelSelection.modelId,
+        });
+      }
+
+      if (!hasInitialTurn || proposed.agent === "dual") {
+        sessions.push(proposed);
+        continue;
+      }
+
+      const validation = await deps.admitModelSelection({
+        backend: proposed.agent,
+        projectPath,
+        modelSelection: proposed.modelSelection,
+      });
+      if (!validation.ok) {
+        logger.warn("model_selection.rejected", {
+          backend: proposed.agent,
+          modelId: validation.modelId,
+          code: validation.code,
+          ...(validation.parameterId !== undefined
+            ? { parameterId: validation.parameterId }
+            : {}),
+        });
+        throw new ModelSelectionAdmissionError(validation);
+      }
+
+      logger.debug("model_selection.resolved", {
+        backend: proposed.agent,
+        modelId: validation.modelSelection.modelId,
+        parameterIds: Object.keys(validation.modelSelection.parameters).sort(),
+        sourceLayer:
+          proposed.modelSelection === undefined
+            ? "configured_default"
+            : "spawn_request",
+      });
+      sessions.push({
+        ...proposed,
+        modelSelection: validation.modelSelection,
+      });
+    }
+
+    return { sessions };
+  }
+
   async function createFromProposal(
     input: CreateFromProposalInput,
   ): Promise<SpawnResult> {
     const { projectPath, projectName, conversationId } = input;
     // Trusted server boundary: re-`parse` (not safeParse) — the proposal was
     // already validated upstream; defaults (e.g. target) are applied here too.
-    const proposal = spawnProposalSchema.parse(input.proposal);
+    const parsedProposal = spawnProposalSchema.parse(input.proposal);
+    const proposal = await admitProposal(projectPath, parsedProposal);
 
     const baseBranch = await deps.resolveCommittedHeadBase(projectPath);
 
@@ -151,8 +231,7 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
               initialPrompt: proposed.initialPrompt ?? "",
               images: proposed.images,
               agent: proposed.agent,
-              model: proposed.model,
-              reasoningEffort: proposed.reasoningEffort,
+              modelSelection: proposed.modelSelection,
             })
             .catch((err: unknown) => {
               logger.error("chat-spawning.first_turn_dispatch_failed", {
@@ -286,6 +365,7 @@ export function defaultChatSpawnDeps(): ChatSpawnDeps {
     resolveCommittedHeadBase: defaultResolveCommittedHeadBase,
     setSessionSpawnedFrom: defaultSetSessionSpawnedFrom,
     addPlcSpawnedSessionIds: defaultAddPlcSpawnedSessionIds,
+    admitModelSelection: admitConfiguredModelSelection,
     dispatchFirstTurn: dispatcher.dispatchFirstTurn,
     broadcast: publishEvent,
   };

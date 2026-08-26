@@ -14,29 +14,29 @@
  * licence to substitute a different model.
  */
 
-import { z } from "zod";
+import { createLogger } from "@/lib/logging";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
-import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendCatalogEntry } from "./catalog";
+import type { BackendModelCatalogFacet } from "./descriptor";
+import {
+  ModelSelectionPolicyError,
+  defaultSelectionForModel,
+  validateModelSelection,
+} from "./model-selection";
+import {
+  backendModelCatalogSchema,
+  effortLevelSchema,
+  type BackendModelCatalog,
+  type BackendModelSelection,
+} from "./schemas";
+import type {
+  ProjectBackendModelOptions,
+  ProjectModelCatalogDiagnostic,
+  ProjectModelOptionsResponse,
+} from "./project-model-options-schema";
 
-import { backendCatalogModelSchema, type BackendCatalogEntry } from "./catalog";
-
-export const projectBackendModelOptionsSchema = z.object({
-  backend: agentBackendSchema,
-  models: z.array(backendCatalogModelSchema),
-  defaultModelId: z.string().nullable(),
-  /** Where the list came from, so a surface can explain an empty one. */
-  source: z.enum(["catalog", "project"]),
-});
-export type ProjectBackendModelOptions = z.infer<
-  typeof projectBackendModelOptionsSchema
->;
-
-export const projectModelOptionsResponseSchema = z.object({
-  backends: z.array(projectBackendModelOptionsSchema),
-});
-export type ProjectModelOptionsResponse = z.infer<
-  typeof projectModelOptionsResponseSchema
->;
+const logger = createLogger("agent-backends:project-model-options");
 
 /** What a backend reports about one project's permitted models. */
 export interface ProjectModelOptions {
@@ -54,6 +54,12 @@ export interface ProjectModelOptionsDeps {
   entries(): readonly BackendCatalogEntry[];
   /** The backend's project-scoped resolver, or undefined when it declares none. */
   resolver(backend: AgentBackendId): ProjectModelOptionsResolver | undefined;
+  /** Complete-variant provider registered by the backend descriptor. */
+  catalogFacet?(backend: AgentBackendId): BackendModelCatalogFacet | undefined;
+  /** Global atomic default passed to the backend catalog provider. */
+  configuredSelection?(
+    backend: AgentBackendId,
+  ): Promise<BackendModelSelection | undefined>;
 }
 
 /**
@@ -63,7 +69,7 @@ export interface ProjectModelOptionsDeps {
  */
 function describeUnknownModel(
   id: string,
-): z.infer<typeof backendCatalogModelSchema> {
+): ProjectBackendModelOptions["models"][number] {
   return {
     id,
     label: id,
@@ -85,6 +91,14 @@ function projectOptions(
     ),
     defaultModelId: options.defaultModelId,
     source: "project",
+    modelCatalog: null,
+    defaultSelection: null,
+    diagnostics: [
+      {
+        code: "complete_catalog_unavailable",
+        message: `Backend "${entry.id}" did not provide complete model variants.`,
+      },
+    ],
   };
 }
 
@@ -96,7 +110,140 @@ function catalogOptions(
     models: [...entry.models],
     defaultModelId: entry.defaultModelId,
     source: "catalog",
+    modelCatalog: null,
+    defaultSelection: null,
+    diagnostics: [
+      {
+        code: "complete_catalog_unavailable",
+        message: `Backend "${entry.id}" did not provide complete model variants.`,
+      },
+    ],
   };
+}
+
+function effortLevelsForDefinition(
+  catalogModel: BackendModelCatalog["models"][number],
+): ProjectBackendModelOptions["models"][number]["effortLevels"] {
+  const primary = catalogModel.parameters.find(
+    ({ prominence }) => prominence === "primary",
+  );
+  if (primary === undefined) return [];
+
+  return primary.values.flatMap(({ value }) => {
+    const parsed = effortLevelSchema.safeParse(value);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+function summarizeCatalogModels(
+  catalog: BackendModelCatalog,
+): ProjectBackendModelOptions["models"] {
+  return catalog.models.map((model) => ({
+    id: model.id,
+    label: model.label,
+    description: model.description ?? "",
+    effortLevels: effortLevelsForDefinition(model),
+  }));
+}
+
+function diagnosticFromError(error: unknown): ProjectModelCatalogDiagnostic {
+  if (error instanceof ModelSelectionPolicyError) {
+    const [issue] = error.issues;
+    return {
+      code: issue?.code ?? "model_selection_invalid",
+      message: error.message,
+      ...(issue?.modelId === undefined ? {} : { modelId: issue.modelId }),
+    };
+  }
+
+  if (error instanceof Error) {
+    const code =
+      "code" in error && typeof error.code === "string"
+        ? error.code
+        : "model_catalog_unavailable";
+    const modelId =
+      "modelId" in error && typeof error.modelId === "string"
+        ? error.modelId
+        : undefined;
+    return {
+      code,
+      message: error.message,
+      ...(modelId === undefined ? {} : { modelId }),
+    };
+  }
+
+  return {
+    code: "model_catalog_unavailable",
+    message: "The backend model catalog could not be loaded.",
+  };
+}
+
+async function catalogBackedOptions(
+  entry: BackendCatalogEntry,
+  projectPath: string,
+  deps: ProjectModelOptionsDeps,
+  facet: BackendModelCatalogFacet,
+): Promise<ProjectBackendModelOptions> {
+  try {
+    const configuredSelection = await deps.configuredSelection?.(entry.id);
+    const catalog = backendModelCatalogSchema.parse(
+      await facet.getCatalog({ projectPath, configuredSelection }),
+    );
+    if (catalog.backend !== entry.id) {
+      throw new Error(
+        `Backend "${entry.id}" returned a model catalog for "${catalog.backend}".`,
+      );
+    }
+
+    const candidate =
+      configuredSelection ??
+      defaultSelectionForModel(catalog, catalog.defaultModelId);
+    const validation = validateModelSelection(catalog, candidate);
+    if (!validation.valid) {
+      if (configuredSelection !== undefined) {
+        const issue = validation.issues[0];
+        logger.warn("model_selection.rejected", {
+          backend: entry.id,
+          modelId: issue?.modelId ?? configuredSelection.modelId,
+          code: issue?.code ?? "selection_invalid",
+          ...(issue?.parameterId === undefined
+            ? {}
+            : { parameterId: issue.parameterId }),
+          sourceLayer: "global_config",
+        });
+        return {
+          backend: entry.id,
+          models: summarizeCatalogModels(catalog),
+          defaultModelId: null,
+          source: deps.resolver(entry.id) === undefined ? "catalog" : "project",
+          modelCatalog: catalog,
+          defaultSelection: null,
+          diagnostics: [],
+        };
+      }
+      throw new ModelSelectionPolicyError(validation.issues);
+    }
+
+    return {
+      backend: entry.id,
+      models: summarizeCatalogModels(catalog),
+      defaultModelId: validation.selection.modelId,
+      source: deps.resolver(entry.id) === undefined ? "catalog" : "project",
+      modelCatalog: catalog,
+      defaultSelection: validation.selection,
+      diagnostics: [],
+    };
+  } catch (error) {
+    return {
+      backend: entry.id,
+      models: [],
+      defaultModelId: null,
+      source: deps.resolver(entry.id) === undefined ? "catalog" : "project",
+      modelCatalog: null,
+      defaultSelection: null,
+      diagnostics: [diagnosticFromError(error)],
+    };
+  }
 }
 
 export async function buildProjectModelOptions(
@@ -105,6 +252,11 @@ export async function buildProjectModelOptions(
 ): Promise<ProjectModelOptionsResponse> {
   const backends = await Promise.all(
     deps.entries().map(async (entry) => {
+      const catalogFacet = deps.catalogFacet?.(entry.id);
+      if (catalogFacet !== undefined) {
+        return catalogBackedOptions(entry, projectPath, deps, catalogFacet);
+      }
+
       const resolver = deps.resolver(entry.id);
       if (resolver === undefined) return catalogOptions(entry);
       return projectOptions(entry, await resolver({ projectPath }));

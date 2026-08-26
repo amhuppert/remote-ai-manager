@@ -4,14 +4,26 @@ import { documentFeedbackPayloadSchema } from "@/lib/conversations/message-conte
 import { queuedMessageViewSchema } from "@/lib/conversations/message-queue-schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import { collaborationAgentTwoRequestSchema } from "@/lib/workflows/collaboration/types";
 export const runPromptRequestSchema = z
   .object({
     prompt: z.string().trim(),
     submittedPendingPromptText: z.string().optional(),
-    modelId: z.string().trim().min(1).optional(),
-    effort: z.string().trim().min(1).optional(),
-    codexFastMode: z.boolean().optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    modelId: z
+      .never({ error: "Use the complete modelSelection instead of modelId." })
+      .optional(),
+    effort: z
+      .never({
+        error: "Put effort in the complete modelSelection parameters.",
+      })
+      .optional(),
+    codexFastMode: z
+      .never({
+        error: "Put fast mode in the complete modelSelection parameters.",
+      })
+      .optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
     backend: agentBackendSchema.optional(),
     documentFeedback: documentFeedbackPayloadSchema.optional(),
@@ -25,6 +37,7 @@ export const runPromptRequestSchema = z
       })
       .optional(),
   })
+  .strict()
   .refine(
     (data) =>
       data.prompt.length > 0 ||
@@ -50,7 +63,9 @@ export const queueEnqueueRequestSchema = z
     submittedPendingPromptText: z.string().optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
     documentFeedback: documentFeedbackPayloadSchema.optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
   })
+  .strict()
   .refine(
     (data) =>
       (data.text?.trim().length ?? 0) > 0 ||

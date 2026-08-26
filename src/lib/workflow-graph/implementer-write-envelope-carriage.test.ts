@@ -184,13 +184,17 @@ describe("hop 2 — the machine's turn claim and the executePrompt actor input",
 });
 
 describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
-  const alive = { status: "alive", modelId: "opus", reasoningEffort: "high" };
+  const selection = {
+    modelId: "opus",
+    parameters: { effort: "high" },
+  };
+  const alive = { status: "alive", modelSelection: selection };
 
   it("rebuilds a runtime that was created unrestricted when the turn carries a policy", () => {
     // The drop that matters most: reusing the unrestricted session would run
     // the confined turn outside its envelope, and nothing downstream could tell.
     expect(
-      shouldRecreateRuntime(alive, "opus", "high", undefined, null, POLICY),
+      shouldRecreateRuntime(alive, selection, undefined, null, POLICY),
     ).toBe(true);
   });
 
@@ -203,8 +207,7 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
     expect(
       shouldRecreateRuntime(
         { ...alive, fsWritePolicy: POLICY },
-        "opus",
-        "high",
+        selection,
         undefined,
         null,
         widened,
@@ -216,8 +219,7 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
     expect(
       shouldRecreateRuntime(
         { ...alive, fsWritePolicy: POLICY },
-        "opus",
-        "high",
+        selection,
         undefined,
         null,
         undefined,
@@ -231,8 +233,7 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
     expect(
       shouldRecreateRuntime(
         { ...alive, fsWritePolicy: POLICY },
-        "opus",
-        "high",
+        selection,
         undefined,
         null,
         { ...POLICY, allowWrite: [...POLICY.allowWrite] },

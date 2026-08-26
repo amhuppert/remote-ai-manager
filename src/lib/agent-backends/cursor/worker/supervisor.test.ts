@@ -204,9 +204,15 @@ const PREFLIGHT_DIAGNOSTICS = {
   model: "composer-2.5",
 };
 
+const MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: {},
+} as const;
+
 interface Harness {
   host: FakeProcessHost;
   transport: CursorWorkerTransport;
+  ownerToken: object;
   frames: CursorWorkerFrame[];
   exits: CursorWorkerExitInfo[];
   credentialReads: number;
@@ -217,6 +223,7 @@ function createHarness(overrides: Partial<CursorSupervisorDeps> = {}): Harness {
   const host = new FakeProcessHost();
   const harness: Harness = {
     host,
+    ownerToken: {},
     frames: [],
     exits: [],
     credentialReads: 0,
@@ -255,7 +262,8 @@ function startInput(harness: Harness) {
     target: TARGET,
     cwd: WORKTREE,
     storePath: STORE_PATH,
-    model: "composer-2.5",
+    modelSelection: MODEL_SELECTION,
+    ownerToken: harness.ownerToken,
     onFrame: (frame: CursorWorkerFrame) => harness.frames.push(frame),
     onExit: (info: CursorWorkerExitInfo) => harness.exits.push(info),
   };
@@ -473,6 +481,125 @@ describe("cursor worker spawn contract", () => {
     expect(harness.host.processes).toHaveLength(1);
     expect(harness.transport.find(CONVERSATION_ID)).toBe(session);
   });
+
+  it("refuses to reuse a conversation worker bound to a different parameter selection", async () => {
+    const harness = createHarness();
+    const session = await startReady(harness);
+
+    const changed = await harness.transport.start({
+      ...startInput(harness),
+      modelSelection: {
+        modelId: MODEL_SELECTION.modelId,
+        parameters: { effort: "high" },
+      },
+    });
+
+    expect(changed).toMatchObject({
+      kind: "binding_mismatch",
+      message: expect.stringContaining("different model selection"),
+    });
+    expect(harness.host.processes).toHaveLength(1);
+    expect(harness.transport.find(CONVERSATION_ID)).toBe(session);
+    expect(harness.preflightModels).toStrictEqual([MODEL_SELECTION.modelId]);
+  });
+
+  it("reserves the conversation while a worker starts and refuses a concurrent different selection", async () => {
+    const harness = createHarness();
+    const firstPending = harness.transport.start(startInput(harness));
+    const secondPending = harness.transport.start({
+      ...startInput(harness),
+      modelSelection: {
+        modelId: MODEL_SELECTION.modelId,
+        parameters: { effort: "high" },
+      },
+    });
+
+    await settle();
+    for (const child of harness.host.processes) {
+      child.emit(readyFrame(child.pid));
+    }
+    const [first, second] = await Promise.all([firstPending, secondPending]);
+
+    expect(first.kind).toBe("ready");
+    expect(second).toMatchObject({
+      kind: "binding_mismatch",
+      message: expect.stringContaining("different model selection"),
+    });
+    expect(harness.host.processes).toHaveLength(1);
+  });
+
+  it("shares one in-flight start for concurrent identical selections", async () => {
+    const harness = createHarness();
+    const firstPending = harness.transport.start(startInput(harness));
+    const secondPending = harness.transport.start(startInput(harness));
+
+    await settle();
+    for (const child of harness.host.processes) {
+      child.emit(readyFrame(child.pid));
+    }
+    const [first, second] = await Promise.all([firstPending, secondPending]);
+
+    expect(first.kind).toBe("ready");
+    expect(second.kind).toBe("already_active");
+    if (first.kind === "ready" && second.kind === "already_active") {
+      expect(second.session).toBe(first.session);
+    }
+    expect(harness.host.processes).toHaveLength(1);
+  });
+
+  it("refuses to share an in-flight worker with a different runtime owner", async () => {
+    const harness = createHarness();
+    const firstPending = harness.transport.start(startInput(harness));
+    const secondPending = harness.transport.start({
+      ...startInput(harness),
+      ownerToken: {},
+    });
+
+    await settle();
+    for (const child of harness.host.processes) {
+      child.emit(readyFrame(child.pid));
+    }
+    const [first, second] = await Promise.all([firstPending, secondPending]);
+
+    expect(first.kind).toBe("ready");
+    expect(second).toMatchObject({
+      kind: "binding_mismatch",
+      message: expect.stringContaining("different runtime owner"),
+    });
+    expect(harness.host.processes).toHaveLength(1);
+  });
+
+  it("reuses a conversation worker when parameter insertion order is the only difference", async () => {
+    const harness = createHarness();
+    const pending = harness.transport.start({
+      ...startInput(harness),
+      modelSelection: {
+        modelId: MODEL_SELECTION.modelId,
+        parameters: { effort: "high", context: "max" },
+      },
+    });
+    await settle();
+    const child = harness.host.last();
+    child.emit(readyFrame(child.pid));
+    const first = await pending;
+    if (first.kind !== "ready") {
+      throw new Error(`expected a ready worker, got ${first.kind}`);
+    }
+
+    const again = await harness.transport.start({
+      ...startInput(harness),
+      modelSelection: {
+        modelId: MODEL_SELECTION.modelId,
+        parameters: { context: "max", effort: "high" },
+      },
+    });
+
+    expect(again.kind).toBe("already_active");
+    if (again.kind === "already_active") {
+      expect(again.session).toBe(first.session);
+    }
+    expect(harness.host.processes).toHaveLength(1);
+  });
 });
 
 describe("cursor worker attach and turn framing", () => {
@@ -483,13 +610,13 @@ describe("cursor worker attach and turn framing", () => {
     session.attach({
       mode: "create",
       ref: null,
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {},
     });
     session.attach({
       mode: "resume",
       ref: "agent-ref-1",
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {
         fixture: { command: "node", args: ["mcp.mjs"], env: {} },
       },
@@ -522,13 +649,13 @@ describe("cursor worker attach and turn framing", () => {
     session.attach({
       mode: "create",
       ref: null,
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {},
     });
     session.attach({
       mode: "resume",
       ref: "agent-ref-1",
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {},
     });
 
@@ -561,7 +688,7 @@ describe("cursor worker attach and turn framing", () => {
     session.attach({
       mode: "create",
       ref: null,
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {},
     });
 
@@ -614,7 +741,7 @@ describe("cursor worker teardown ladder", () => {
       promptText: "hi",
       images: [],
       structuredOutputInstruction: null,
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {},
       forceExpirePersistedRun: false,
     });
@@ -795,6 +922,33 @@ describe("cursor worker teardown ladder", () => {
     expect(harness.transport.find(CONVERSATION_ID)).toBeNull();
     expect(harness.transport.find("conv-2")).toBeNull();
   });
+
+  it("waits for an in-flight start and closes its worker before closeAll settles", async () => {
+    const harness = createHarness();
+    const starting = harness.transport.start(startInput(harness));
+    await settle();
+    const child = harness.host.last();
+
+    let closeSettled = false;
+    const closing = harness.transport.closeAll().then(() => {
+      closeSettled = true;
+    });
+    await settle();
+    const settledBeforeReady = closeSettled;
+
+    child.emit(readyFrame(child.pid));
+    const started = await starting;
+    await closing;
+    const workerSurvivedClose =
+      harness.transport.find(CONVERSATION_ID) !== null;
+    if (started.kind === "ready" && workerSurvivedClose) {
+      await started.session.close();
+    }
+
+    expect(settledBeforeReady).toBe(false);
+    expect(workerSurvivedClose).toBe(false);
+    expect(child.running).toBe(false);
+  });
 });
 
 describe("cursor worker registry lifetime", () => {
@@ -822,7 +976,7 @@ describe("cursor worker registry lifetime", () => {
       promptText: "hi",
       images: [],
       structuredOutputInstruction: null,
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       mcpServers: {},
       forceExpirePersistedRun: false,
     });

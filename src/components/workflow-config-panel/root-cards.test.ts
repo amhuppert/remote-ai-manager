@@ -102,7 +102,7 @@ describe("blockSummaryParts", () => {
     const implementer = cascade.resolve("implementer").value;
     const expected = modelDisplayName(
       implementer.agent.backend,
-      implementer.agent.model,
+      implementer.agent.modelSelection.modelId,
     );
 
     expect(textOf(blockSummaryParts(cascade, "implementer"))).toContain(
@@ -122,8 +122,10 @@ describe("blockSummaryParts", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -134,8 +136,10 @@ describe("blockSummaryParts", () => {
             authority: "advisory",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -199,7 +203,7 @@ describe("blockSummaryParts", () => {
     const secondAgent = on.resolve("collaboration.secondAgent").value;
     expect(textOf(blockSummaryParts(on, "collaboration"))).toEqual([
       "on",
-      modelDisplayName(secondAgent.backend, secondAgent.model),
+      modelDisplayName(secondAgent.backend, secondAgent.modelSelection.modelId),
       "5 rounds",
       "major",
     ]);

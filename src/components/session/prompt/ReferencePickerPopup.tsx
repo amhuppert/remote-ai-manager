@@ -44,11 +44,11 @@ import type {
   SpecPickerSpec,
 } from "@/lib/prompt-editor/reference-registry";
 import { useProjectsQuery } from "@/lib/projects/queries";
-import {
-  specQueries,
-  type SpecDetailView,
-  type SpecSummaryView,
-} from "@/lib/specs/queries";
+import { specReferenceQueries } from "@/lib/specs/reference-queries";
+import type {
+  SpecPickerDetailView,
+  SpecSummaryView,
+} from "@/lib/specs/reference-view-schemas";
 import { useTicketListQuery } from "@/lib/tickets/queries";
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import { useOpenDocument } from "@/stores/session-detail.store";
@@ -684,7 +684,7 @@ function useSpecPickerSpecs({
   );
   const inventoryQueries = useQueries({
     queries: projectNames.map((projectName) =>
-      specQueries.inventory(projectName),
+      specReferenceQueries.inventory(projectName),
     ),
   });
   const summaries = useMemo(
@@ -705,7 +705,7 @@ function useSpecPickerSpecs({
       )
     : undefined;
   const detailQuery = useQuery({
-    ...specQueries.detail(
+    ...specReferenceQueries.pickerDetail(
       selected?.projectName ?? currentProjectName,
       selected?.summary.spec.slug ?? "unresolved-spec",
     ),
@@ -755,7 +755,7 @@ function useSpecPickerSpecs({
 export function toSpecPickerSpec(
   projectName: string,
   summary: SpecSummaryView,
-  detail: SpecDetailView | undefined,
+  detail: SpecPickerDetailView | undefined,
 ): SpecPickerSpec {
   return {
     projectName,
@@ -769,7 +769,7 @@ export function toSpecPickerSpec(
   };
 }
 
-function pickerElements(detail: SpecDetailView): SpecPickerElement[] {
+function pickerElements(detail: SpecPickerDetailView): SpecPickerElement[] {
   const elements = [
     ...revisionPickerElements(detail),
     ...detail.questions.map(
@@ -799,7 +799,9 @@ function pickerElements(detail: SpecDetailView): SpecPickerElement[] {
   );
 }
 
-function revisionPickerElements(detail: SpecDetailView): SpecPickerElement[] {
+function revisionPickerElements(
+  detail: SpecPickerDetailView,
+): SpecPickerElement[] {
   return (detail.currentRevision?.elements ?? []).flatMap(
     (row): SpecPickerElement[] => {
       const number = row.element.number;

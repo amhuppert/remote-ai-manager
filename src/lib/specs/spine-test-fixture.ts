@@ -42,6 +42,7 @@ import {
   createWorkflowExecution,
   makeProfileSnapshot,
   stubAssignmentSnapshotPreparation,
+  TEST_AGENT_BACKENDS_CONFIG,
 } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowRuntimeEditRouteHandlers } from "@/lib/workflow-graph/runtime-edit-route-handlers";
 import {
@@ -385,7 +386,13 @@ function spineLiveEditDeps(
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
         profileSnapshot: makeProfileSnapshot(),
-        agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+        agent: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
+        },
       },
       contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { commands: [] },
@@ -400,8 +407,10 @@ function spineLiveEditDeps(
         secondAgent: {
           value: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           source: "global",
         },
@@ -829,8 +838,10 @@ export function createSpecSpineWorld(
         caller: "spec-proposal",
         documentScope: { kind: "project", projectPath: spec.projectPath },
         workflowDefaults: {},
+        agentBackends: TEST_AGENT_BACKENDS_CONFIG,
         accountabilityGroups,
       }),
+    admitModelSelections: async ({ launch }) => ({ ok: true, launch }),
     nextId: () => newId("delivery-plan"),
     now,
   });

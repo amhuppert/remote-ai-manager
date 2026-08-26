@@ -121,17 +121,22 @@ describe("createFirstTurnDispatcher", () => {
     expect(deps.startDualRace).not.toHaveBeenCalled();
   });
 
-  it("threads the proposed model + reasoning effort into the first turn", async () => {
+  it("threads the complete model selection into the first turn", async () => {
     const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
     await dispatchFirstTurn({
       ...input("codex", "do the thing"),
-      model: "gpt-5.4",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { fast: "false", reasoning: "high" },
+      },
     });
     const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
       .calls[0]!;
-    expect(call[5]).toBe("gpt-5.4"); // modelId
-    expect(call[7]).toEqual({ backend: "codex", effort: "high" }); // options
+    expect(call[5]).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { fast: "false", reasoning: "high" },
+    });
+    expect(call[7]).toEqual({ backend: "codex" });
   });
 
   it("delivers ordered image payloads with the first turn", async () => {
@@ -167,13 +172,16 @@ describe("createFirstTurnDispatcher", () => {
     ]);
   });
 
-  it("omits the effort option when no reasoning effort is supplied", async () => {
+  it("forwards a complete parameterless model selection", async () => {
     const { dispatchFirstTurn } = createFirstTurnDispatcher(deps);
-    await dispatchFirstTurn({ ...input("claude", "go"), model: "opus" });
+    await dispatchFirstTurn({
+      ...input("claude", "go"),
+      modelSelection: { modelId: "haiku", parameters: {} },
+    });
     const call = (deps.executePromptStream as ReturnType<typeof vi.fn>).mock
       .calls[0]!;
-    expect(call[5]).toBe("opus");
-    expect(call[7]).toEqual({ backend: "claude" }); // no effort key
+    expect(call[5]).toEqual({ modelId: "haiku", parameters: {} });
+    expect(call[7]).toEqual({ backend: "claude" });
   });
 
   it("delivers a single turn for two concurrent dispatches (exactly once)", async () => {

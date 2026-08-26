@@ -1,16 +1,18 @@
 "use client";
 
 import BackendToggle from "@/components/BackendToggle";
-import ModelSelector from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import DebugModeToggle from "@/components/session/DebugModeToggle";
-import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
-import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
+import {
+  DesktopModelSelectionControls,
+  UnavailableModelSelectionControl,
+} from "@/components/session/prompt/ModelSelectionControls";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
 
@@ -36,14 +38,10 @@ export interface PromptDesktopToolbarProps {
   backendLocked: boolean;
   selectedBackend: AgentBackendId;
   onBackendChange: (backend: AgentBackendId) => void;
-  selectedModel: string;
-  onModelChange: (model: string) => void;
-  selectedEffort: EffortLevel;
-  onEffortChange: (effort: EffortLevel) => void;
-  codexFastMode: boolean;
-  onCodexFastModeChange: (enabled: boolean) => void;
-  availableEffortLevels: EffortLevel[];
-  effortSupported: boolean;
+  modelCatalog: BackendModelCatalog | null;
+  modelSelection: BackendModelSelection;
+  modelSelectionBlockedReason: string | null;
+  onModelSelectionChange(selection: BackendModelSelection): void;
   isReadOnly: boolean;
   sending: boolean;
   isRecording: boolean;
@@ -57,7 +55,8 @@ export interface PromptDesktopToolbarProps {
   sendButtonInner: React.ReactNode;
   onSendPrompt: () => void;
   onModelOpenChange?: (open: boolean) => void;
-  onEffortOpenChange?: (open: boolean) => void;
+  onPrimaryParameterOpenChange?: (open: boolean) => void;
+  onModelOptionsOpenChange?: (open: boolean) => void;
   onCapabilitiesOpenChange?: (open: boolean) => void;
 }
 
@@ -72,14 +71,10 @@ export default function PromptDesktopToolbar({
   backendLocked,
   selectedBackend,
   onBackendChange,
-  selectedModel,
-  onModelChange,
-  selectedEffort,
-  onEffortChange,
-  codexFastMode,
-  onCodexFastModeChange,
-  availableEffortLevels,
-  effortSupported,
+  modelCatalog,
+  modelSelection,
+  modelSelectionBlockedReason,
+  onModelSelectionChange,
   isReadOnly,
   sending,
   isRecording,
@@ -93,19 +88,10 @@ export default function PromptDesktopToolbar({
   sendButtonInner,
   onSendPrompt,
   onModelOpenChange,
-  onEffortOpenChange,
+  onPrimaryParameterOpenChange,
+  onModelOptionsOpenChange,
   onCapabilitiesOpenChange,
 }: PromptDesktopToolbarProps): React.JSX.Element {
-  // The composer always has project context, so the models it offers are the
-  // project's effective ones (spec D10) rather than the process-global
-  // catalog's. Null until the projection resolves, which reads as "unknown" —
-  // the selector then falls back to the catalog rather than showing an empty
-  // list the project never declared.
-  const projectModelOptions = useProjectBackendModelOptions(
-    projectName,
-    selectedBackend,
-  );
-
   return (
     <div className="prompt-toolbar flex items-center justify-between max-768:hidden">
       {/* Clicking an in-flow control keeps the literal editor focused (focus
@@ -145,31 +131,23 @@ export default function PromptDesktopToolbar({
           disabled={sending || isReadOnly}
           readOnly={backendLocked}
         />
-        <ModelSelector
-          value={selectedModel}
-          onChange={onModelChange}
-          disabled={sending || isReadOnly}
-          backend={selectedBackend}
-          projectOptions={projectModelOptions}
-          onOpenChange={onModelOpenChange}
-        />
-        <ReasoningLevelSelector
-          value={selectedEffort}
-          onChange={onEffortChange}
-          disabled={sending || isReadOnly || !effortSupported}
-          availableLevels={availableEffortLevels}
-          disabledTooltip={
-            !effortSupported
-              ? "The selected model does not support reasoning effort"
-              : undefined
-          }
-          onOpenChange={onEffortOpenChange}
-        />
-        {backendSupportsFastMode(selectedBackend) && (
-          <CodexSpeedToggle
-            fastMode={codexFastMode}
-            onFastModeChange={onCodexFastModeChange}
+        {modelCatalog === null ? (
+          <UnavailableModelSelectionControl
+            selection={modelSelection}
+            reason={
+              modelSelectionBlockedReason ?? "Model options are unavailable."
+            }
+          />
+        ) : (
+          <DesktopModelSelectionControls
+            catalog={modelCatalog}
+            selection={modelSelection}
+            onSelectionChange={onModelSelectionChange}
+            invalidReason={modelSelectionBlockedReason}
             disabled={sending || isReadOnly}
+            onModelOpenChange={onModelOpenChange}
+            onPrimaryOpenChange={onPrimaryParameterOpenChange}
+            onOptionsOpenChange={onModelOptionsOpenChange}
           />
         )}
         <DebugModeToggle

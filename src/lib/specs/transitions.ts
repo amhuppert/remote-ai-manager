@@ -3,6 +3,14 @@ import type {
   ApprovalApplicability,
   ApprovalRecord,
 } from "./approval-applicability";
+import {
+  activeAuthoringStages,
+  authoringStageForElement,
+  authoringStageIndex,
+  consultedAuthoringGates,
+  nextAuthoringStage,
+  type AuthoringGate,
+} from "./authoring-gates";
 import { draftHealth } from "./draft-health";
 import { elementApprovalBasis } from "./import-baseline";
 import {
@@ -26,9 +34,7 @@ import {
   rationaleForCode,
 } from "./refusal-rationale";
 import {
-  diffRevisions,
   type RevisionCitation,
-  type RevisionCitationDiffContext,
   type RevisionElement as DiffRevisionElement,
 } from "./revision-diff";
 import type {
@@ -40,7 +46,6 @@ import type {
   SpecAuthoringStage,
   SpecElementKind,
   SpecExecutionState,
-  SpecGate,
   SpecGatePolicy,
   SpecRevisionState,
 } from "./schemas";
@@ -49,6 +54,15 @@ import {
   type ExecutionScope,
   type ScopePlan,
 } from "./scope-validation";
+
+export {
+  activeAuthoringStages,
+  authoringStageIndex,
+  authoringStages,
+  consultedAuthoringGates,
+  nextAuthoringStage,
+  type AuthoringGate,
+} from "./authoring-gates";
 
 export type TransitionRefusal = Omit<Refusal, "findings"> & {
   findings?: LintFinding[];
@@ -210,38 +224,7 @@ function refused(
   };
 }
 
-export type AuthoringGate = Extract<
-  SpecGate,
-  "requirements" | "design" | "plan"
->;
 export type ResolvedAuthoringDials = Record<AuthoringGate, ResolvedGateDial>;
-
-export const authoringStages: readonly SpecAuthoringStage[] = [
-  "requirements",
-  "design",
-  "plan",
-];
-
-export const activeAuthoringStages: readonly SpecAuthoringStage[] = [
-  "requirements",
-  "design",
-];
-
-export function authoringStageIndex(stage: SpecAuthoringStage): number {
-  return authoringStages.indexOf(stage);
-}
-
-function stageForElement(
-  kind: SpecElementKind,
-  sectionRole?: SectionRole,
-): SpecAuthoringStage {
-  if (kind === "task") return "plan";
-  if (kind === "decision") return "design";
-  if (kind === "section" && sectionRole === "design_narrative") {
-    return "design";
-  }
-  return "requirements";
-}
 
 function elementLabel(
   kind: SpecElementKind,
@@ -269,7 +252,7 @@ export function admitDraftWrite(
   sectionRole: SectionRole | undefined,
   resolvedDials: ResolvedAuthoringDials,
 ): TransitionDecision {
-  const elementStage = stageForElement(elementKind, sectionRole);
+  const elementStage = authoringStageForElement(elementKind, sectionRole);
   if (authoringStageIndex(elementStage) <= authoringStageIndex(stage)) {
     return allowed();
   }
@@ -322,14 +305,6 @@ export function openDraftAuthoringStage(
     : "requirements";
 }
 
-export function nextAuthoringStage(
-  stage: SpecAuthoringStage,
-): SpecAuthoringStage | null {
-  const index = activeAuthoringStages.indexOf(stage);
-  if (index === -1) return null;
-  return activeAuthoringStages[index + 1] ?? null;
-}
-
 export function advanceAuthoringStage(
   stage: SpecAuthoringStage,
   policy: SpecGatePolicy,
@@ -348,48 +323,6 @@ export function advanceAuthoringStage(
     [`The ${stage} gate requires human sign-off before advancing.`],
     `Propose the ${stage} stage and obtain human sign-off instead of advancing it directly.`,
   );
-}
-
-/**
- * The gates a transition on this revision consults: the current authoring
- * stage, plus every earlier stage whose content differs from the GOVERNANCE
- * baseline — the nearest approved ancestor.
- *
- * The governance baseline rather than the immediate parent is what makes the
- * set cumulative. A change that entered through an attempt a human withdrew is
- * unchanged against that attempt, so an immediate-parent comparison drops the
- * gate and the follow-up revision inherits an admission it never earned.
- */
-export function consultedAuthoringGates(
-  stage: SpecAuthoringStage,
-  governanceBaseRows: DiffRevisionElement[],
-  revisionRows: DiffRevisionElement[],
-  citations: RevisionCitationDiffContext,
-): AuthoringGate[] {
-  const diff = diffRevisions(governanceBaseRows, revisionRows, citations);
-  const baseById = new Map(
-    governanceBaseRows.map((row) => [row.elementId, row]),
-  );
-  const revisionById = new Map(revisionRows.map((row) => [row.elementId, row]));
-  const consulted = new Set<AuthoringGate>([stage]);
-  const currentStageIndex = authoringStageIndex(stage);
-
-  for (const classification of diff.classifications) {
-    if (classification.classification === "unchanged") continue;
-    const row =
-      revisionById.get(classification.elementId) ??
-      baseById.get(classification.elementId);
-    if (row === undefined) continue;
-    const elementStage = stageForElement(
-      row.payload.kind,
-      row.payload.kind === "section" ? row.payload.role : undefined,
-    );
-    if (authoringStageIndex(elementStage) < currentStageIndex) {
-      consulted.add(elementStage);
-    }
-  }
-
-  return authoringStages.filter((candidate) => consulted.has(candidate));
 }
 
 function blockingFindings(

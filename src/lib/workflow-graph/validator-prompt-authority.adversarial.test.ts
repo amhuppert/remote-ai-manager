@@ -281,7 +281,16 @@ function seededValidator(
     ),
     strategy: "task",
     authority,
-    agent: { backend, model: "sonnet", reasoningEffort: "medium" },
+    agent: {
+      backend,
+      modelSelection:
+        backend === "claude"
+          ? { modelId: "sonnet", parameters: { effort: "medium" } }
+          : {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
+    },
     continuity: { enabled: true },
   } as SeededValidatorAssignment;
 }
@@ -328,8 +337,8 @@ function productionTaskRun(
       agentBackend: backend,
       backendRef: null,
       promptText: input.prompt,
-      modelId: input.modelId ?? null,
-      effort: input.effort ?? null,
+      modelSelection: input.modelSelection ?? null,
+      onModelSelectionResolved: async () => {},
       ...(input.outputFormat !== undefined
         ? { outputFormat: input.outputFormat }
         : {}),

@@ -13,6 +13,7 @@ import {
   CollaborationStartConflictError,
   type CollaborationManager,
 } from "@/lib/workflows/collaboration/manager";
+import { ModelSelectionValidationError } from "./sdk-driver";
 
 // ---------------------------------------------------------------------------
 // Mock deps (no vi.mock needed)
@@ -505,12 +506,15 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
   });
 
-  it("forwards the conversation's explicit Codex speed to prompt execution", async () => {
+  it("forwards the conversation's complete model selection to prompt execution", async () => {
     const response = await handlers.conversationPOST(
       makeRequest({
         prompt: "Hello",
         backend: "codex",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "true", reasoning: "high" },
+        },
       }),
       makeConvParams(),
     );
@@ -518,10 +522,11 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(response.status).toBe(200);
     await response.text();
     const callArgs = vi.mocked(deps.executePromptStream).mock.calls[0]!;
-    expect(callArgs[7]).toMatchObject({
-      backend: "codex",
-      codexFastMode: true,
+    expect(callArgs[5]).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { fast: "true", reasoning: "high" },
     });
+    expect(callArgs[7]).toMatchObject({ backend: "codex" });
   });
 
   // Submission is the user committing pendingPromptText into the conversation
@@ -581,6 +586,28 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(
       deps.clearConversationPendingPromptTextIfMatches,
     ).not.toHaveBeenCalled();
+  });
+
+  it("streams stable model-selection diagnostics to the client", async () => {
+    vi.mocked(deps.executePromptStream).mockRejectedValue(
+      new ModelSelectionValidationError({
+        code: "missing_parameter",
+        message: 'Parameter "fast" is required.',
+        modelId: "composer-2.5",
+        parameterId: "fast",
+      }),
+    );
+
+    const response = await handlers.conversationPOST(
+      makeRequest({ prompt: "run this" }),
+      makeConvParams(),
+    );
+
+    const stream = await response.text();
+    expect(stream).toContain('"code":"missing_parameter"');
+    expect(stream).toContain('"modelId":"composer-2.5"');
+    expect(stream).toContain('"parameterId":"fast"');
+    expect(stream).not.toContain("VALIDATION_ERROR");
   });
 
   it("clears conversation pendingPromptText after accepting a /collab brief", async () => {

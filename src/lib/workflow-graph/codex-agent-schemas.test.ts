@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createWorkflowDefinition } from "./test-fixtures";
 import type { GraphWorkflowExecutionContextDefinition } from "@/lib/workflow-graph/definition-schemas";
 describe("execution context implementer config with backend support", () => {
-  it("existing fixtures without backend field still produce valid definitions", () => {
+  it("preserves the complete model selection in fixture definitions", () => {
     const definition = createWorkflowDefinition();
-    expect(definition.executionContexts[0]!.implementer?.agent.model).toBe(
-      "opus",
-    );
     expect(
-      definition.executionContexts[0]!.implementer?.agent.reasoningEffort,
-    ).toBe("high");
+      definition.executionContexts[0]!.implementer?.agent.modelSelection,
+    ).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
   });
 
   it("accepts codex backend on execution context implementer", () => {
@@ -25,8 +25,10 @@ describe("execution context implementer config with backend support", () => {
             profile: { tier: "builtin", id: "general-implementer" },
             agent: {
               backend: "codex",
-              model: "gpt-5.4",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "high", fast: "false" },
+              },
             },
           } as GraphWorkflowExecutionContextDefinition["implementer"],
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -41,7 +43,10 @@ describe("execution context implementer config with backend support", () => {
 
     const ctx = definition.executionContexts[0]!;
     expect(ctx.implementer?.agent.backend).toBe("codex");
-    expect(ctx.implementer?.agent.model).toBe("gpt-5.4");
+    expect(ctx.implementer?.agent.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    });
   });
 
   it("backend field is accessible as a discriminator on implementer config", () => {

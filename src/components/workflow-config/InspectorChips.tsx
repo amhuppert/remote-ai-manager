@@ -1,4 +1,5 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { modelSelectionParametersLabel } from "@/components/model-selection-presentation";
 import {
   findBackendCatalogEntry,
   modelDisplayLabel,
@@ -160,19 +161,24 @@ function chipBackendLabel(id: string): string {
 // Config holds the SHORT model id; the chip shows the catalog's canonical long
 // name, matching every other surface that displays a model.
 function chipAgentLabel(config: GraphWorkflowAgentConfig): string {
-  return `${chipBackendLabel(config.backend)} ${modelDisplayLabel(config.backend, config.model)}`;
+  return `${chipBackendLabel(config.backend)} ${modelDisplayLabel(config.backend, config.modelSelection.modelId)}`;
+}
+
+function chipParameterLabel(config: GraphWorkflowAgentConfig): string {
+  return modelSelectionParametersLabel(config.modelSelection);
 }
 
 export function implementerChipLabel(config: GraphWorkflowAgentConfig): string {
-  const effort = config.reasoningEffort;
+  const parameters = chipParameterLabel(config);
   const agent = chipAgentLabel(config);
-  return effort ? `${agent} · ${effort}` : agent;
+  return parameters ? `${agent} · ${parameters}` : agent;
 }
 
 // The assignment id leads: with a cohort, "which reviewer" is the first thing
 // the chip has to answer, and two entries can share a backend and model.
 export function validatorChipLabel(validator: ValidatorAssignment): string {
-  return `${validator.id} · ${chipAgentLabel(validator.agent)}`;
+  const parameters = chipParameterLabel(validator.agent);
+  return `${validator.id} · ${chipAgentLabel(validator.agent)}${parameters ? ` · ${parameters}` : ""}`;
 }
 
 const CHIP_BASE =

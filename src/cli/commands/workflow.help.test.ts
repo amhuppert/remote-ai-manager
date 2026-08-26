@@ -40,6 +40,9 @@ describe("workflow live-edit assignment help", () => {
     expect(skill).toContain(
       '"profile": { "tier": "builtin", "id": "general-implementer" }',
     );
+    expect(skill).toMatch(
+      /"modelSelection": \{\s*#\s+"modelId": "opus", "parameters": \{ "effort": "high" \} \}/u,
+    );
     expect(skill).not.toContain(
       '"implementer": { "backend": "claude", "model": "opus", "reasoningEffort": "high" }',
     );

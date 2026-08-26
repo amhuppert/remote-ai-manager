@@ -4,9 +4,7 @@ import { selectLastUserTurnAgentSettings } from "./last-turn-agent-settings";
 
 function message(
   role: TranscriptMessage["role"],
-  settings: Partial<
-    Pick<TranscriptMessage, "model" | "effort" | "codexFastMode">
-  > = {},
+  settings: Pick<TranscriptMessage, "modelSelection"> = {},
 ): TranscriptMessage {
   return {
     role,
@@ -17,34 +15,65 @@ function message(
 }
 
 describe("selectLastUserTurnAgentSettings", () => {
-  it("returns the latest user turn's Codex speed together with model and effort", () => {
+  it("returns the latest complete model selection without reconstructing fields", () => {
+    const messages = [
+      {
+        ...message("user"),
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
+      },
+      message("assistant"),
+      {
+        ...message("user"),
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { fast: "true", reasoning: "ultra" },
+        },
+      },
+    ] as unknown as TranscriptMessage[];
+
+    expect(selectLastUserTurnAgentSettings(messages)).toEqual({
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
+    });
+  });
+
+  it("ignores assistant selections when finding the latest user selection", () => {
     expect(
       selectLastUserTurnAgentSettings([
         message("user", {
-          model: "gpt-5.4",
-          effort: "medium",
-          codexFastMode: false,
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "false", reasoning: "medium" },
+          },
         }),
-        message("assistant"),
+        message("assistant", {
+          modelSelection: {
+            modelId: "gpt-5.5",
+            parameters: { fast: "false", reasoning: "low" },
+          },
+        }),
         message("user", {
-          model: "gpt-5.6",
-          effort: "high",
-          codexFastMode: true,
+          modelSelection: {
+            modelId: "gpt-5.6-sol",
+            parameters: { fast: "true", reasoning: "high" },
+          },
         }),
         message("assistant"),
       ]),
     ).toEqual({
-      modelId: "gpt-5.6",
-      effort: "high",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "high" },
+      },
     });
   });
 
-  it("preserves an explicit Standard selection", () => {
-    expect(
-      selectLastUserTurnAgentSettings([
-        message("user", { codexFastMode: false }),
-      ]),
-    ).toEqual({ codexFastMode: false });
+  it("returns no partial settings for a user turn without a selection", () => {
+    expect(selectLastUserTurnAgentSettings([message("user")])).toEqual({});
   });
 });

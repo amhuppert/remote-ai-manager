@@ -70,7 +70,7 @@ export type AgentProfileAudience = z.infer<typeof agentProfileAudienceSchema>;
 
 /**
  * A profile is prompt identity only. `.strict()` is the enforcement of that
- * boundary, not a formality: runtime (backend/model/reasoningEffort) and policy
+ * boundary, not a formality: runtime (backend/modelSelection) and policy
  * (tools/mcp/skills/permissions/output schemas) keys must FAIL to parse so a
  * profile can never grow into a second, competing runtime or policy cascade.
  * The tier is likewise absent — it comes from the scope the record was read

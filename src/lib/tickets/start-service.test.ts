@@ -178,6 +178,18 @@ function makeService(overrides: Partial<TicketStartServiceDeps> = {}): {
     repo,
     lock: createTicketOperationLock(),
     runProjectTicketOperation: (_projectPath, operation) => operation(),
+    getDefaultAgentBackend() {
+      return Promise.resolve("claude");
+    },
+    admitModelSelection({ modelSelection }) {
+      return Promise.resolve({
+        ok: true,
+        modelSelection: modelSelection ?? {
+          modelId: "claude-default",
+          parameters: {},
+        },
+      });
+    },
     resolveProjectPath(projectName) {
       return Promise.resolve(
         projectName === PROJECT_NAME ? PROJECT_PATH : null,
@@ -293,6 +305,103 @@ describe("buildTicketSessionName", () => {
 });
 
 describe("start", () => {
+  it("rejects an invalid agent selection before the ticket operation or provisioning", async () => {
+    const ticket = await createTicket();
+    let ticketOperationCount = 0;
+    const { service, recorded } = makeService({
+      async runProjectTicketOperation(_projectPath, operation) {
+        ticketOperationCount += 1;
+        return operation();
+      },
+      admitModelSelection: vi.fn(async () => ({
+        ok: false as const,
+        code: "missing_parameter",
+        message: 'Parameter "fast" is required for model "composer-2.5".',
+        modelId: "composer-2.5",
+        parameterId: "fast",
+      })),
+    });
+
+    await expect(
+      service.start({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        mode: "agent",
+        backend: "cursor",
+        modelSelection: { modelId: "composer-2.5", parameters: {} },
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        code: "missing_parameter",
+        modelId: "composer-2.5",
+        parameterId: "fast",
+      }),
+    );
+    expect(ticketOperationCount).toBe(0);
+    expect(recorded.provisions).toEqual([]);
+    expect(recorded.materializations).toEqual([]);
+    expect(recorded.charters).toEqual([]);
+    expect(recorded.kickoffs).toEqual([]);
+    expect((await repo.find(PROJECT_PATH, ticket.number))?.status).toBe(
+      "not_started",
+    );
+  });
+
+  it("rejects a model selection in prepared mode instead of silently discarding it", async () => {
+    const ticket = await createTicket();
+    const { service, recorded } = makeService();
+
+    await expect(
+      service.start({
+        projectName: PROJECT_NAME,
+        number: ticket.number,
+        mode: "prepared",
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "model_selection_inapplicable",
+      modelId: "gpt-5.4",
+    });
+    expect(recorded.provisions).toEqual([]);
+  });
+
+  it("queues the canonical model selection admitted before provisioning", async () => {
+    const ticket = await createTicket();
+    const { service, recorded } = makeService({
+      admitModelSelection: vi.fn(async () => ({
+        ok: true as const,
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      })),
+    });
+
+    const result = await service.start({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      mode: "agent",
+      backend: "cursor",
+      modelSelection: {
+        modelId: "composer",
+        parameters: { fast: "true" },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(recorded.kickoffs[0]?.input).toMatchObject({
+      backend: "cursor",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+    });
+  });
+
   it("holds the project ticket-operation gate for the complete start", async () => {
     const ticket = await createTicket();
     const phases: string[] = [];
@@ -339,8 +448,10 @@ describe("start", () => {
       number: ticket.number,
       mode: "agent",
       backend: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
     });
 
     expect(result.ok).toBe(true);
@@ -371,8 +482,10 @@ describe("start", () => {
     expect(recorded.deletions).toEqual([]);
     expect(recorded.kickoffs[0]?.input).toMatchObject({
       backend: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
     });
 
     const persisted = await repo.find(PROJECT_PATH, ticket.number);

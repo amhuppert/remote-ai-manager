@@ -18,6 +18,7 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type {
   AgentFailureClassification,
@@ -60,10 +61,8 @@ export interface ExecuteWorkflowTaskRunInput {
    * turns always supply one; omitting it leaves the turn unrestricted.
    */
   fsWritePolicy?: FsWritePolicy;
-  /** Override the agent model on this turn. */
-  modelId?: string;
-  /** Override the agent reasoning effort / verbosity on this turn. */
-  effort?: string;
+  /** Override the complete model selection on this turn. */
+  modelSelection?: BackendModelSelection;
   /**
    * Pin the conversation actor to this worktree for the turn. Merge sub-turns
    * (conflict resolution, validation fixes) MUST pass the merge's feature
@@ -348,8 +347,9 @@ async function runOnce(
   actor.send({
     type: "SUBMIT_TASK_RUN",
     promptText: input.prompt,
-    ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-    ...(input.effort !== undefined ? { effort: input.effort } : {}),
+    ...(input.modelSelection !== undefined
+      ? { modelSelection: input.modelSelection }
+      : {}),
     ...(input.outputFormat !== undefined
       ? { outputFormat: input.outputFormat }
       : {}),

@@ -1,13 +1,15 @@
 import {
-  collaborationAgentModelSettingsMapSchema,
   collaborationAgentsMapSchema,
   collaborationArtifactSchema,
+  legacyReadOnlyCollaborationAgentModelSettingsMapSchema,
   type CollaborationAgent,
   type CollaborationArtifact,
   type CollaborationAutonomousResolutionThreshold,
   type CollaborationResolvedAgent,
 } from "@/lib/workflows/collaboration/types";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
 
 /**
  * One lane's display identity. The persisted `agents` entry carries the full
@@ -18,9 +20,7 @@ import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
  */
 export interface CollabAgentDisplay {
   backend: CollaborationAgent;
-  model: string;
-  effort?: string;
-  fastMode?: boolean;
+  modelSelection: BackendModelSelection;
   profileName?: string;
 }
 
@@ -37,9 +37,7 @@ function toAgentDisplay(agent: CollaborationResolvedAgent): CollabAgentDisplay {
     profile.id === "standard-agent";
   return {
     backend: agent.backend,
-    model: agent.model,
-    ...(agent.effort !== undefined ? { effort: agent.effort } : {}),
-    ...(agent.fastMode !== undefined ? { fastMode: agent.fastMode } : {}),
+    modelSelection: agent.modelSelection,
     ...(profile !== undefined && !isDefaultProfile
       ? { profileName: profile.name }
       : {}),
@@ -101,6 +99,13 @@ const VALID_AGENTS: ReadonlySet<CollaborationAgent> = new Set([
   "codex",
 ]);
 
+const LEGACY_EFFORT_PARAMETER_BY_AGENT: Readonly<
+  Record<CollaborationAgent, "effort" | "reasoning">
+> = {
+  claude: "effort",
+  codex: "reasoning",
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -153,23 +158,28 @@ function legacyAgentsView(
   record: Record<string, unknown>,
   primary: CollaborationAgent,
 ): CollabAgentsDisplayMap | undefined {
-  const legacy = collaborationAgentModelSettingsMapSchema.safeParse(
-    record["agentModelSettings"],
-  );
+  const legacy =
+    legacyReadOnlyCollaborationAgentModelSettingsMapSchema.safeParse(
+      record["agentModelSettings"],
+    );
   if (!legacy.success) return undefined;
-  const secondary: CollaborationAgent =
-    primary === "claude" ? "codex" : "claude";
+  const secondary = oppositeCollaborationBackend(primary);
   const codexFastMode = record["codexFastMode"];
   const entryFor = (backend: CollaborationAgent) => {
     const settings = legacy.data[backend];
+    const parameters: Record<string, string> = {};
+    if (settings.effort !== undefined) {
+      parameters[LEGACY_EFFORT_PARAMETER_BY_AGENT[backend]] = settings.effort;
+    }
+    if (
+      backendSupportsFastMode(backend) &&
+      typeof codexFastMode === "boolean"
+    ) {
+      parameters.fast = String(codexFastMode);
+    }
     return {
       backend,
-      model: settings.model,
-      ...(settings.effort !== undefined ? { effort: settings.effort } : {}),
-      // The legacy flag always described the codex lane, whichever agent ran it.
-      ...(backendSupportsFastMode(backend) && typeof codexFastMode === "boolean"
-        ? { fastMode: codexFastMode }
-        : {}),
+      modelSelection: { modelId: settings.model, parameters },
     };
   };
   return {

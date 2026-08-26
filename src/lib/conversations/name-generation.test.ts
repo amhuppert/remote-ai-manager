@@ -4,10 +4,6 @@ import type {
   AgentTaskResult,
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
-import {
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
-} from "@/lib/agent-backends/catalog";
 import { materializeGlobalConfig } from "@/lib/config/loader";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
@@ -55,8 +51,10 @@ function configWithNaming(
     conversationNaming: {
       enabled: true,
       backend: "claude",
-      model: "haiku",
-      effort: "low",
+      modelSelection: {
+        modelId: "haiku",
+        parameters: {},
+      },
       timeoutMs: null,
       ...overrides,
     },
@@ -186,13 +184,12 @@ describe("generateAndApplyConversationName", () => {
     expect(harness.requests).toHaveLength(1);
     expect(harness.requests[0]).toMatchObject({
       workingDirectory: PROJECT_PATH,
-      modelId: "haiku",
+      modelSelection: { modelId: "haiku", parameters: {} },
       timeoutMs: DEFAULT_NAMING_TIMEOUT_MS,
       executionProfile: "isolated-one-shot",
       autonomous: true,
       outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
     });
-    expect(harness.requests[0]?.reasoningEffort).toBeUndefined();
     expect(harness.requests[0]?.prompt).toContain(
       "Implement background conversation naming",
     );
@@ -383,27 +380,23 @@ describe("generateAndApplyConversationName", () => {
     });
   });
 
-  it("self-heals an incompatible model and clamps effort to the catalog", async () => {
+  it("forwards a configured selection as one exact value without clamping", async () => {
     const backend = "codex" as const;
-    const modelId = getDefaultModelForBackend(backend);
-    const supportedEfforts = getEffortLevelsForBackend(backend, modelId);
+    const modelSelection = {
+      modelId: "gpt-5.5",
+      parameters: { reasoning: "xhigh", fast: "true" },
+    };
     const harness = createHarness({
       config: configWithNaming({
         backend,
-        model: "opus",
-        effort: "minimal",
+        modelSelection,
       }),
     });
 
     await generateAndApplyConversationName(generationInput(), harness.deps);
 
     expect(harness.runnerBackends).toEqual([backend]);
-    expect(harness.requests[0]?.modelId).toBe(modelId);
-    if (supportedEfforts.length === 0) {
-      expect(harness.requests[0]?.reasoningEffort).toBeUndefined();
-    } else {
-      expect(supportedEfforts).toContain(harness.requests[0]?.reasoningEffort);
-    }
+    expect(harness.requests[0]?.modelSelection).toEqual(modelSelection);
   });
 });
 

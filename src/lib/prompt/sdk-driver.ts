@@ -10,9 +10,12 @@
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import type {
   BackgroundWaitSummary,
+  ConversationBackendFactory,
   WorkflowLaneIdentity,
 } from "@/lib/agent-backends/conversation";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -329,9 +332,7 @@ export interface PromptDeps {
     brief: string;
     negotiationRounds?: number;
     autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
-    modelId?: string;
-    effort?: string;
-    codexFastMode?: boolean;
+    modelSelection?: BackendModelSelection;
     agentTwo?: CollaborationAgentTwoRequest;
     images?: ImagePayload[];
   }): Promise<{ workflowId: string }>;
@@ -382,10 +383,8 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
         autonomousResolutionThreshold:
           input.autonomousResolutionThreshold ??
           DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
-        ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
-        ...(input.effort !== undefined ? { effort: input.effort } : {}),
-        ...(input.codexFastMode !== undefined
-          ? { codexFastMode: input.codexFastMode }
+        ...(input.modelSelection !== undefined
+          ? { modelSelection: input.modelSelection }
           : {}),
         ...(input.agentTwo !== undefined ? { agentTwo: input.agentTwo } : {}),
         ...(input.images?.length ? { images: input.images } : {}),
@@ -453,7 +452,7 @@ export function createPromptExecutor(deps: PromptDeps) {
       promptText: string,
       emit: (event: string, data: unknown) => void,
       conversationId?: string,
-      modelId?: string,
+      modelSelection?: BackendModelSelection,
       images?: ImagePayload[],
       options?: PromptStreamOptions,
     ) =>
@@ -463,7 +462,7 @@ export function createPromptExecutor(deps: PromptDeps) {
         promptText,
         emit,
         conversationId,
-        modelId,
+        modelSelection,
         images,
         options,
         deps,
@@ -473,9 +472,7 @@ export function createPromptExecutor(deps: PromptDeps) {
 
 export interface PromptStreamOptions {
   autonomous?: boolean;
-  effort?: string;
   backend?: AgentBackendId;
-  codexFastMode?: boolean;
   /**
    * Called once the prompt, command, or collaboration request has been
    * accepted by its execution owner. Failures are logged without changing the
@@ -644,7 +641,7 @@ export async function executePromptStream(
   promptText: string,
   emit: (event: string, data: unknown) => void,
   conversationId?: string,
-  modelId?: string,
+  modelSelection?: BackendModelSelection,
   images?: ImagePayload[],
   options?: PromptStreamOptions,
   deps?: PromptDeps,
@@ -660,8 +657,15 @@ export async function executePromptStream(
   const isCollab = hasCollabPrefix(promptText);
   const parsedCommand = parseConversationCommand(promptText);
 
-  // Get or create conversation, resolving backend along the way
+  // Command model admission must precede the transcript-owning dispatcher and
+  // the conversation/backend writes needed to address it.
   let resolvedBackend: AgentBackendId;
+  let backendAdoption:
+    | { conversationId: string; from: AgentBackendId; to: AgentBackendId }
+    | undefined;
+  let conversationCreation:
+    | { agentBackend: AgentBackendId; profile?: AgentProfileRef }
+    | undefined;
   if (conversationId) {
     const existing = await resolvedDeps.getConversation(
       projectPath,
@@ -685,18 +689,11 @@ export async function executePromptStream(
         });
         throw err;
       }
-      // No prompts yet — adopt the requested backend
-      await resolvedDeps.setConversationBackend(
-        projectPath,
-        session.sessionName,
-        conversationId,
-        options.backend,
-      );
-      logger.info("prompt.backend_adopted", {
+      backendAdoption = {
         conversationId,
         from: existing.agentBackend,
         to: options.backend,
-      });
+      };
     }
     resolvedBackend = options?.backend ?? existing.agentBackend;
   } else {
@@ -707,15 +704,42 @@ export async function executePromptStream(
       const config = await resolvedDeps.readConfig();
       resolvedBackend = config.defaultAgentBackend ?? DEFAULT_AGENT_BACKEND_ID;
     }
+    conversationCreation = {
+      agentBackend: resolvedBackend,
+      ...(options?.profile !== undefined ? { profile: options.profile } : {}),
+    };
+  }
+
+  const commandModelSelection = parsedCommand
+    ? modelSelection === undefined
+      ? undefined
+      : await admitExplicitModelSelection({
+          projectPath,
+          backend: resolvedBackend,
+          selection: modelSelection,
+          factory: resolvedDeps.getConversationBackendFactory(resolvedBackend),
+        })
+    : undefined;
+
+  if (backendAdoption !== undefined) {
+    await resolvedDeps.setConversationBackend(
+      projectPath,
+      session.sessionName,
+      backendAdoption.conversationId,
+      backendAdoption.to,
+    );
+    logger.info("prompt.backend_adopted", backendAdoption);
+  }
+  if (conversationCreation !== undefined) {
     const conversation = await resolvedDeps.createConversation(
       projectPath,
       session.sessionName,
-      {
-        agentBackend: resolvedBackend,
-        ...(options?.profile !== undefined ? { profile: options.profile } : {}),
-      },
+      conversationCreation,
     );
     conversationId = conversation.id;
+  }
+  if (conversationId === undefined) {
+    throw new Error("Conversation resolution did not produce an id");
   }
 
   if (parsedCommand) {
@@ -725,8 +749,7 @@ export async function executePromptStream(
       hintLength: parsedCommand.hint.length,
       ...scopeRef,
       conversationId,
-      modelId: modelId ?? null,
-      effort: options?.effort ?? null,
+      modelSelection: commandModelSelection ?? null,
     });
     if (!resolvedDeps.dispatchConversationCommand) {
       logger.error("prompt.command_dispatcher_unavailable", {
@@ -751,8 +774,9 @@ export async function executePromptStream(
         conversationId,
         parsed: parsedCommand,
         rawText: promptText,
-        ...(modelId !== undefined ? { modelId } : {}),
-        ...(options?.effort !== undefined ? { effort: options.effort } : {}),
+        ...(commandModelSelection !== undefined
+          ? { modelSelection: commandModelSelection }
+          : {}),
       });
       logger.info("prompt.command_complete", {
         command: parsedCommand.command,
@@ -837,11 +861,7 @@ export async function executePromptStream(
                 options.collab.autonomousResolutionThreshold,
             }
           : {}),
-        ...(modelId !== undefined ? { modelId } : {}),
-        ...(options?.effort !== undefined ? { effort: options.effort } : {}),
-        ...(options?.codexFastMode !== undefined
-          ? { codexFastMode: options.codexFastMode }
-          : {}),
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
         ...(options?.collab?.agentTwo !== undefined
           ? { agentTwo: options.collab.agentTwo }
           : {}),
@@ -878,54 +898,24 @@ export async function executePromptStream(
     }
   }
 
-  // Validate model/effort via the backend factory before execution
+  // Validate an explicit selection via the backend factory before execution.
   const factory = resolvedDeps.getConversationBackendFactory(resolvedBackend);
-  if (factory.validateModelAndEffort) {
-    try {
-      factory.validateModelAndEffort({
-        modelId: modelId ?? undefined,
-        reasoningEffort: options?.effort,
-      });
-    } catch (err) {
-      logger.warn("prompt.model_effort_validation_failed", {
-        backend: resolvedBackend,
-        modelId,
-        effort: options?.effort,
-        error: getErrorMessage(err),
-      });
-      throw new ModelEffortValidationError(
-        err instanceof Error
-          ? err.message
-          : "Invalid model or effort for backend",
-      );
-    }
-  }
-
-  // Project-scoped model check, for a backend whose selectable models come from
-  // the project's configuration. Refusing here keeps an unsupported selection
-  // from costing a worker or a billable turn, and reports it as a client error
-  // rather than as a failed turn.
-  if (factory.validateProjectModelSelection) {
-    const validation = await factory.validateProjectModelSelection({
-      projectPath,
-      ...(modelId != null ? { modelId } : {}),
-    });
-    if (!validation.ok) {
-      logger.warn("prompt.project_model_validation_failed", {
-        backend: resolvedBackend,
-        modelId,
-        conversationId,
-      });
-      throw new ModelEffortValidationError(validation.message);
-    }
-  }
+  const turnModelSelection =
+    modelSelection === undefined
+      ? undefined
+      : await admitExplicitModelSelection({
+          projectPath,
+          backend: resolvedBackend,
+          selection: modelSelection,
+          factory,
+        });
 
   const streamId = randomUUID();
 
   logger.info("prompt.submit", {
     ...scopeRef,
     promptLength: promptText.length,
-    model: modelId ?? "default",
+    modelSelection: turnModelSelection ?? null,
     backend: resolvedBackend,
     conversationId,
   });
@@ -991,9 +981,7 @@ export async function executePromptStream(
       promptText,
       images,
       backend: resolvedBackend,
-      modelId,
-      effort: options?.effort,
-      codexFastMode: options?.codexFastMode,
+      modelSelection: turnModelSelection,
       autonomous: options?.autonomous,
       outputFormat: options?.outputFormat,
       ...(options?.waitForBackgroundTasks
@@ -1066,12 +1054,103 @@ export class BackendMismatchError extends Error {
   }
 }
 
-export class ModelEffortValidationError extends Error {
+export interface ModelSelectionValidationErrorInput {
+  code: string;
+  message: string;
+  modelId: string;
+  parameterId?: string;
+}
+
+export class ModelSelectionValidationError extends Error {
   readonly statusCode = 400;
-  constructor(message: string) {
-    super(message);
-    this.name = "ModelEffortValidationError";
+  readonly code: string;
+  readonly modelId: string;
+  readonly parameterId?: string;
+
+  constructor(input: ModelSelectionValidationErrorInput) {
+    super(input.message);
+    this.name = "ModelSelectionValidationError";
+    this.code = input.code;
+    this.modelId = input.modelId;
+    this.parameterId = input.parameterId;
   }
+}
+
+function modelSelectionErrorDetails(
+  error: unknown,
+  selection: BackendModelSelection,
+): ModelSelectionValidationErrorInput {
+  if (error instanceof ModelSelectionPolicyError) {
+    const issue = error.issues[0];
+    return {
+      code: issue?.code ?? "selection_invalid",
+      message: error.message,
+      modelId: issue?.modelId ?? selection.modelId,
+      ...(issue?.parameterId !== undefined
+        ? { parameterId: issue.parameterId }
+        : {}),
+    };
+  }
+
+  return {
+    code: "selection_invalid",
+    message: getErrorMessage(error),
+    modelId: selection.modelId,
+  };
+}
+
+async function admitExplicitModelSelection(input: {
+  projectPath: string;
+  backend: AgentBackendId;
+  selection: BackendModelSelection;
+  factory: ConversationBackendFactory;
+}): Promise<BackendModelSelection> {
+  const { projectPath, backend, selection, factory } = input;
+
+  if (factory.validateModelSelection) {
+    try {
+      factory.validateModelSelection(selection);
+    } catch (error) {
+      const details = modelSelectionErrorDetails(error, selection);
+      logger.warn("model_selection.rejected", {
+        backend,
+        modelId: details.modelId,
+        code: details.code,
+        ...(details.parameterId !== undefined
+          ? { parameterId: details.parameterId }
+          : {}),
+      });
+      throw new ModelSelectionValidationError(details);
+    }
+  }
+
+  let canonicalSelection = selection;
+  if (factory.validateProjectModelSelection) {
+    const validation = await factory.validateProjectModelSelection({
+      projectPath,
+      modelSelection: selection,
+    });
+    if (!validation.ok) {
+      logger.warn("model_selection.rejected", {
+        backend,
+        modelId: validation.modelId,
+        code: validation.code,
+        ...(validation.parameterId !== undefined
+          ? { parameterId: validation.parameterId }
+          : {}),
+      });
+      throw new ModelSelectionValidationError(validation);
+    }
+    canonicalSelection = validation.modelSelection;
+  }
+
+  logger.debug("model_selection.resolved", {
+    backend,
+    modelId: canonicalSelection.modelId,
+    parameterIds: Object.keys(canonicalSelection.parameters).sort(),
+    sourceLayer: "request",
+  });
+  return canonicalSelection;
 }
 
 /**

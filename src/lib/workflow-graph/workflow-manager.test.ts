@@ -8824,8 +8824,10 @@ describe("graph workflow manager", () => {
               profileSnapshot: makeProfileSnapshot(),
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "medium" },
+                },
               },
             },
             contextValidator: { enabled: false, assignments: [] },
@@ -8854,8 +8856,10 @@ describe("graph workflow manager", () => {
               profileSnapshot: makeProfileSnapshot(),
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "medium" },
+                },
               },
             },
             contextValidator: { enabled: false, assignments: [] },
@@ -8884,8 +8888,10 @@ describe("graph workflow manager", () => {
               profileSnapshot: makeProfileSnapshot(),
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "medium" },
+                },
               },
             },
             contextValidator: { enabled: false, assignments: [] },
@@ -11898,8 +11904,10 @@ describe("graph workflow manager", () => {
                   profile: { tier: "builtin", id: "general-implementer" },
                   agent: {
                     backend: "claude",
-                    model: "opus",
-                    reasoningEffort: "medium",
+                    modelSelection: {
+                      modelId: "opus",
+                      parameters: { effort: "medium" },
+                    },
                   },
                 },
                 mutability: {
@@ -11922,8 +11930,10 @@ describe("graph workflow manager", () => {
                   profile: { tier: "builtin", id: "general-implementer" },
                   agent: {
                     backend: "claude",
-                    model: "opus",
-                    reasoningEffort: "medium",
+                    modelSelection: {
+                      modelId: "opus",
+                      parameters: { effort: "medium" },
+                    },
                   },
                 },
                 contextValidator: {
@@ -11936,8 +11946,10 @@ describe("graph workflow manager", () => {
                       authority: "blocking",
                       agent: {
                         backend: "codex",
-                        model: "gpt-5.4",
-                        reasoningEffort: "medium",
+                        modelSelection: {
+                          modelId: "gpt-5.4",
+                          parameters: { reasoning: "medium", fast: "false" },
+                        },
                       },
                       continuity: { enabled: true },
                     },

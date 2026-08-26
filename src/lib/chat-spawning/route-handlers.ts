@@ -9,6 +9,7 @@ import { getProjectConversation as defaultGetProjectConversation } from "@/lib/s
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { ModelSelectionAdmissionError } from "@/lib/agent-backends/model-selection-admission";
 import { spawnProposalSchema, type SpawnResult } from "./schemas";
 import {
   createChatSpawnService,
@@ -103,6 +104,28 @@ export function createSpawnRouteHandlers(
       });
       return NextResponse.json(result, { status: 200 });
     } catch (err) {
+      if (err instanceof ModelSelectionAdmissionError) {
+        logger.warn("model_selection.rejected", {
+          modelId: err.modelId,
+          code: err.code,
+          ...(err.parameterId !== undefined
+            ? { parameterId: err.parameterId }
+            : {}),
+          projectName,
+          conversationId,
+        });
+        return NextResponse.json(
+          {
+            error: err.message,
+            code: err.code,
+            modelId: err.modelId,
+            ...(err.parameterId !== undefined
+              ? { parameterId: err.parameterId }
+              : {}),
+          },
+          { status: 400 },
+        );
+      }
       logger.error("chat-spawning.route_failure", {
         projectName,
         conversationId,

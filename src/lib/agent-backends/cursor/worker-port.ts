@@ -1,4 +1,5 @@
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
+import type { BackendModelSelection } from "../schemas";
 import type {
   CursorPreflightDiagnostics,
   CursorPreflightFailureCode,
@@ -28,11 +29,16 @@ export interface CursorWorkerStartInput {
   /** Command Center-owned root for the SDK's local agent store. */
   storePath: string;
   /**
-   * The already-resolved model for this conversation. Validated against the
-   * project's supported list before start (D10); recorded here in the runtime
-   * preflight diagnostics and restated on each attach.
+   * The already-resolved complete model selection for this conversation.
+   * Validated against the project's effective catalog before start and
+   * restated on each attach.
    */
-  model: string;
+  modelSelection: BackendModelSelection;
+  /**
+   * Process-local identity of the runtime that owns this worker's callbacks.
+   * Stable across retries by one runtime and distinct across runtime instances.
+   */
+  ownerToken: object;
   /**
    * Every worker→parent frame, in arrival order. Registered at start rather
    * than subscribed afterwards so no frame can be missed in between.
@@ -60,6 +66,8 @@ export type CursorWorkerStartResult =
   | { kind: "ready"; session: CursorWorkerSession }
   /** A worker already serves this conversation; its session is returned. */
   | { kind: "already_active"; session: CursorWorkerSession }
+  /** The conversation slot is live under a different complete selection. */
+  | { kind: "binding_mismatch"; message: string }
   /**
    * Preflight layer 1 (D3): the static runtime checks that run in the server
    * before a process exists. Distinct from the credential layer below because
@@ -82,7 +90,7 @@ export interface CursorAttachInput {
   mode: "create" | "resume";
   /** Required for resume; ignored for create. */
   ref: string | null;
-  model: string;
+  modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
 }
 
@@ -91,7 +99,7 @@ export interface CursorTurnInput {
   promptText: string;
   images: readonly { data: string; mimeType: string }[];
   structuredOutputInstruction: string | null;
-  model: string;
+  modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
   /**
    * Expire the agent's active persisted run before this one starts. The

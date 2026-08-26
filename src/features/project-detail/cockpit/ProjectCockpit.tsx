@@ -565,6 +565,7 @@ export default function ProjectCockpit({
           conversationId: activeTabId,
           text: input.text,
           ...(input.images.length > 0 ? { images: input.images } : {}),
+          modelSelection: input.modelSelection,
         });
         return queued ? "accepted" : "rejected";
       }
@@ -577,11 +578,7 @@ export default function ProjectCockpit({
         text: input.text,
         images: input.images,
         backend: input.backend,
-        modelId: input.modelId,
-        ...(input.effort !== undefined ? { effort: input.effort } : {}),
-        ...(input.codexFastMode !== undefined
-          ? { codexFastMode: input.codexFastMode }
-          : {}),
+        modelSelection: input.modelSelection,
         // Only a create target has an identity to choose, and it is sent
         // explicitly — the picker's values are ours, so an unparseable one is
         // the default rather than a guess (R7.1).
@@ -653,9 +650,7 @@ export default function ProjectCockpit({
       busy={sender.isSending(composerTurnKey)}
       error={sender.errorFor(composerTurnKey)}
       onDismissError={handleDismissError}
-      lastUsedModelId={lastUserTurnAgentSettings.modelId}
-      lastUsedEffort={lastUserTurnAgentSettings.effort}
-      lastUsedCodexFastMode={lastUserTurnAgentSettings.codexFastMode}
+      lastUsedModelSelection={lastUserTurnAgentSettings.modelSelection}
       initialDocument={initialComposerDocument}
       onDocumentChange={handleComposerDocumentChange}
       onRunCommand={onRunCommand}
@@ -677,7 +672,7 @@ export default function ProjectCockpit({
   );
 
   // The next turn will create a conversation, so it is a construction site and
-  // states which profile it builds under. Runtime (backend/model/effort) stays
+  // states which profile it builds under. Runtime selection stays
   // where it is, inside the composer — two selections, never merged.
   const composer =
     activeTabId === null ? (

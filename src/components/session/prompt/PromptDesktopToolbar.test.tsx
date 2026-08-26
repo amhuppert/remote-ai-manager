@@ -1,12 +1,18 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, it, expect, vi, afterEach } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
-import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
-import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import PromptDesktopToolbar, {
   type PromptDesktopToolbarProps,
 } from "@/components/session/prompt/PromptDesktopToolbar";
+
+const defaultCatalog = getStaticBackendModelCatalog("claude");
+const defaultSelection = defaultSelectionForModel(
+  defaultCatalog,
+  defaultCatalog.defaultModelId,
+);
 
 function makeProps(
   overrides: Partial<PromptDesktopToolbarProps> = {},
@@ -22,14 +28,10 @@ function makeProps(
     backendLocked: false,
     selectedBackend: "claude",
     onBackendChange: vi.fn(),
-    selectedModel: "sonnet",
-    onModelChange: vi.fn(),
-    selectedEffort: "medium",
-    onEffortChange: vi.fn(),
-    codexFastMode: false,
-    onCodexFastModeChange: vi.fn(),
-    availableEffortLevels: ["low", "medium", "high"],
-    effortSupported: true,
+    modelCatalog: defaultCatalog,
+    modelSelection: defaultSelection,
+    modelSelectionBlockedReason: null,
+    onModelSelectionChange: vi.fn(),
     isReadOnly: false,
     sending: false,
     isRecording: false,
@@ -51,6 +53,36 @@ afterEach(() => {
 });
 
 describe("PromptDesktopToolbar", () => {
+  it("renders and applies the catalog-driven atomic controls", () => {
+    const modelCatalog = getStaticBackendModelCatalog("codex");
+    const modelSelection = defaultSelectionForModel(
+      modelCatalog,
+      modelCatalog.defaultModelId,
+    );
+    const onModelSelectionChange = vi.fn();
+    renderWithQuery(
+      <PromptDesktopToolbar
+        {...makeProps({
+          selectedBackend: "codex",
+          modelCatalog,
+          modelSelection,
+          onModelSelectionChange,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "Model" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Reasoning" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Model options" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Fast mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    expect(onModelSelectionChange).toHaveBeenCalledWith({
+      ...modelSelection,
+      parameters: { ...modelSelection.parameters, fast: "true" },
+    });
+  });
+
   it("invokes onAttachClick when the attachment button is clicked", () => {
     const onAttachClick = vi.fn();
     const { container } = renderWithQuery(
@@ -112,7 +144,7 @@ describe("PromptDesktopToolbar", () => {
     }
   });
 
-  it("disables the ModelSelector trigger when isReadOnly=true", () => {
+  it("disables the model trigger when isReadOnly=true", () => {
     const { container } = renderWithQuery(
       <PromptDesktopToolbar {...makeProps({ isReadOnly: true })} />,
     );
@@ -123,154 +155,19 @@ describe("PromptDesktopToolbar", () => {
     expect(trigger.disabled).toBe(true);
   });
 
-  it("shows the speed control only for Codex", () => {
-    const { unmount } = renderWithQuery(
-      <PromptDesktopToolbar {...makeProps({ selectedBackend: "claude" })} />,
-    );
-    expect(
-      screen.queryByRole("radiogroup", { name: "Codex speed" }),
-    ).toBeNull();
-
-    unmount();
-    renderWithQuery(
-      <PromptDesktopToolbar {...makeProps({ selectedBackend: "codex" })} />,
-    );
-    expect(
-      screen.getByRole("radiogroup", { name: "Codex speed" }),
-    ).toBeInTheDocument();
-  });
-
-  it("changes the conversation speed from the Codex control", () => {
-    const onCodexFastModeChange = vi.fn();
+  it("shows the validation reason on focus for a recoverable invalid selection", async () => {
+    const reason =
+      "Unsupported parameter combination. Catalog snapshot: Cursor.models.list, generated 2026-08-25T18:55:11.561Z, SDK 1.0.28.";
     renderWithQuery(
       <PromptDesktopToolbar
-        {...makeProps({
-          selectedBackend: "codex",
-          codexFastMode: false,
-          onCodexFastModeChange,
-        })}
+        {...makeProps({ modelSelectionBlockedReason: reason })}
       />,
     );
 
-    fireEvent.click(screen.getByRole("radio", { name: "Fast" }));
-    expect(onCodexFastModeChange).toHaveBeenCalledWith(true);
-  });
-
-  it.each([
-    { sending: true, isReadOnly: false },
-    { sending: false, isReadOnly: true },
-  ])(
-    "disables the Codex speed control when prompt controls are unavailable",
-    ({ sending, isReadOnly }) => {
-      renderWithQuery(
-        <PromptDesktopToolbar
-          {...makeProps({
-            selectedBackend: "codex",
-            sending,
-            isReadOnly,
-          })}
-        />,
-      );
-
-      for (const option of screen.getAllByRole("radio", {
-        name: /Standard|Fast/,
-      })) {
-        expect(option).toBeDisabled();
-      }
-    },
-  );
-});
-
-describe("PromptDesktopToolbar project-scoped model options", () => {
-  let api: FetchFixture;
-
-  beforeEach(() => {
-    api = installFetchFixture();
-    api.json("GET", "/api/agent-backends", {
-      backends: listBackendCatalogEntries(),
-    });
-  });
-
-  afterEach(() => api.restore());
-
-  function serveProjectOptions(
-    models: readonly string[],
-    defaultModelId: string | null,
-  ): void {
-    api.json("GET", "/api/projects/proj/model-options", {
-      backends: listBackendCatalogEntries().map((entry) =>
-        entry.id === "cursor"
-          ? {
-              backend: entry.id,
-              models: models.map((id) => ({
-                id,
-                label: id,
-                description: "Configured for this project.",
-                effortLevels: [],
-              })),
-              defaultModelId,
-              source: "project",
-            }
-          : {
-              backend: entry.id,
-              models: entry.models,
-              defaultModelId: entry.defaultModelId,
-              source: "catalog",
-            },
-      ),
-    });
-  }
-
-  it("offers the project's models rather than the descriptor catalog's", async () => {
-    serveProjectOptions(["composer-1"], "composer-1");
-    renderWithQuery(
-      <PromptDesktopToolbar
-        {...makeProps({
-          selectedBackend: "cursor",
-          selectedModel: "composer-1",
-        })}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
-        "composer-1",
-      );
-    });
-  });
-
-  it("marks a configured model outside the project's list as an invalid selection", async () => {
-    serveProjectOptions(["composer-1"], "composer-1");
-    renderWithQuery(
-      <PromptDesktopToolbar
-        {...makeProps({
-          selectedBackend: "cursor",
-          selectedModel: "composer-2.5",
-        })}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("model-selector-trigger")).toHaveAttribute(
-        "data-invalid-selection",
-        "true",
-      );
-    });
-  });
-
-  it("requires an explicit choice when the project's list permits nothing", async () => {
-    serveProjectOptions([], null);
-    renderWithQuery(
-      <PromptDesktopToolbar
-        {...makeProps({
-          selectedBackend: "cursor",
-          selectedModel: "composer-2.5",
-        })}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("model-selector-trigger")).toBeDisabled();
-    });
+    const trigger = screen.getByRole("combobox", { name: "Model" });
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    fireEvent.focus(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(trigger).toHaveAccessibleDescription(reason);
   });
 });

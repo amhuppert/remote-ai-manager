@@ -41,17 +41,26 @@ function makeConfig(): GlobalConfig {
     ignorePatterns: [],
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 3_600_000,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
         timeoutMs: null,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     defaultAgentBackend: "claude",
     pushNotification: {
@@ -122,6 +131,9 @@ function makeHost(
     async readConfig() {
       return makeConfig();
     },
+    async admitModelSelection({ modelSelection }) {
+      return { ok: true, modelSelection };
+    },
     startRun(input) {
       return startAgentRun(
         {
@@ -132,7 +144,7 @@ function makeHost(
           worktreePath: input.worktreePath,
           workingDirectory: input.workingDirectory,
           timeoutMs: input.timeoutMs,
-          ...(input.model !== undefined ? { model: input.model } : {}),
+          modelSelection: input.modelSelection,
         },
         {
           ensureDir: async () => {},

@@ -71,10 +71,10 @@ Which Cursor models this project's conversations may run. The list is a project/
 
 - **Omit the block** and the effective list is `["composer-2.5"]`, the Command Center default.
 - Writing `"cursor": {}` means the same thing: `supportedModels` defaults to `["composer-2.5"]`.
-- The **first** applicable value wins as the model for a turn: the model explicitly selected for the conversation, then the global `agentBackends.cursor.model` setting, then `composer-2.5`.
+- The **first** applicable complete selection wins for a turn: the selection explicitly chosen for the conversation, then the global `agentBackends.cursor.modelSelection`, then the generated catalog's default variant for `composer-2.5`.
 - Whatever that resolves to must be a member of this list. A model outside it is **refused** with a client error before any Cursor process starts or any billable turn runs — Command Center never quietly substitutes a different model. That includes the case where the list omits `composer-2.5` and nothing is explicitly selected.
 - A declared-empty list (`"supportedModels": []`) permits nothing, and every Cursor turn in the project is refused.
-- Only `supportedModels` is accepted here. A per-project `model`, `reasoningEffort`, or `apiKey` is rejected by name: the model default belongs to global settings, Cursor takes no reasoning effort, and the credential comes from the server's `CURSOR_API_KEY` environment variable and is never stored in a settings file.
+- Only `supportedModels` is accepted here. A per-project model, model parameter, or credential override is rejected: the complete default belongs in global `agentBackends.cursor.modelSelection`, while the credential comes from the server's `CURSOR_API_KEY` environment variable and is never stored in a settings file.
 
 Command Center's conversation-creation surfaces (the project composer, the session composer, ticket start, quick ticket) offer exactly this list. If the model configured in global settings is not on it, they show an explicit invalid-selection state and wait for you to choose — they do not pick one for you.
 

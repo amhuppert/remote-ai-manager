@@ -80,6 +80,9 @@ function makeEntry(
     attemptCount: overrides.attemptCount ?? 0,
     error: overrides.error ?? null,
     metadata: overrides.metadata ?? null,
+    ...(overrides.modelSelection
+      ? { modelSelection: overrides.modelSelection }
+      : {}),
   };
 }
 
@@ -108,6 +111,22 @@ describe("createPendingEntry", () => {
     });
     // Output is a valid persisted queue row.
     expect(() => pendingQueuedMessageSchema.parse(entry)).not.toThrow();
+  });
+
+  it("stores the complete enqueue-time model selection without rewriting it", () => {
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+
+    const entry = createPendingEntry({
+      id: "m1",
+      content: [textBlock("hi")],
+      now: NOW,
+      modelSelection,
+    });
+
+    expect(entry.modelSelection).toEqual(modelSelection);
   });
 });
 
@@ -169,6 +188,16 @@ describe("toQueuedMessageView", () => {
     expect(view).not.toHaveProperty("deliveryStartedAt");
     expect(view).not.toHaveProperty("deliveryAttemptId");
     expect(view).not.toHaveProperty("attemptCount");
+  });
+
+  it("keeps the complete model selection in the client-safe projection", () => {
+    const modelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { reasoning: "ultra", fast: "true" },
+    };
+    const entry = makeEntry({ id: "m1", modelSelection });
+
+    expect(toQueuedMessageView(entry).modelSelection).toEqual(modelSelection);
   });
 });
 
@@ -341,6 +370,58 @@ describe("claimNextTurnBatchTransform", () => {
     expect(next.find((e) => e.id === "done")?.status).toBe("delivered");
     // Input not mutated.
     expect(queue[0]?.status).toBe("pending");
+  });
+
+  it("stops before a different atomic model selection", () => {
+    const queue: PendingQueuedMessage[] = [
+      makeEntry({
+        id: "p1",
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { effort: "xhigh", thinking: "true" },
+        },
+      }),
+      makeEntry({
+        id: "p2",
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { thinking: "true", effort: "xhigh" },
+        },
+      }),
+      makeEntry({
+        id: "p3",
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { effort: "high", thinking: "true" },
+        },
+      }),
+    ];
+
+    const { queue: next, claimed } = claimNextTurnBatchTransform(
+      queue,
+      "attempt-B",
+      NOW,
+    );
+
+    expect(claimed.map((entry) => entry.id)).toEqual(["p1", "p2"]);
+    expect(next.find((entry) => entry.id === "p3")?.status).toBe("pending");
+  });
+
+  it("does not coalesce an unselected row with an explicitly selected row", () => {
+    const queue: PendingQueuedMessage[] = [
+      makeEntry({ id: "p1" }),
+      makeEntry({
+        id: "p2",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+      }),
+    ];
+
+    const { claimed } = claimNextTurnBatchTransform(queue, "attempt-B", NOW);
+
+    expect(claimed.map((entry) => entry.id)).toEqual(["p1"]);
   });
 
   it("returns an empty claim when there are no pending rows", () => {
@@ -723,6 +804,33 @@ describe("messageQueueService.enqueue", () => {
     expect(event.message?.status).toBe("pending");
   });
 
+  it("persists and broadcasts the complete enqueue-time model selection", async () => {
+    const store: FakeStore = { conversation: makeConversation() };
+    const { deps, broadcasts } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+    const modelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { reasoning: "ultra", fast: "true" },
+    };
+
+    await service.enqueue({
+      projectPath: "/repos/my-project",
+      sessionName: "csm/feature",
+      conversationId: "conv-1",
+      content: [textBlock("queued message")],
+      modelSelection,
+    });
+
+    expect(store.conversation?.pendingQueue[0]?.modelSelection).toEqual(
+      modelSelection,
+    );
+    const event = broadcasts[0];
+    expect(event?.type).toBe("message-queued");
+    if (event?.type !== "message-queued") throw new Error("wrong event type");
+    if (!event.message) throw new Error("missing queued message view");
+    expect(event.message.modelSelection).toEqual(modelSelection);
+  });
+
   it("does not fail the durable enqueue when broadcast throws", async () => {
     const store: FakeStore = { conversation: makeConversation() };
     const { deps } = makeDeps(store);
@@ -923,6 +1031,25 @@ describe("messageQueueService.claimNextTurnBatch", () => {
         e.type === "message-queue-updated" ? e.message.id : null,
       ),
     ).toEqual(ids);
+  });
+
+  it("returns the head row's complete model selection on the claimed batch", async () => {
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+    const store: FakeStore = {
+      conversation: conversationWith([
+        makeEntry({ id: "p1", modelSelection }),
+        makeEntry({ id: "p2", modelSelection }),
+      ]),
+    };
+    const { deps } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+
+    const batch = await service.claimNextTurnBatch(KEY);
+
+    expect(batch?.modelSelection).toEqual(modelSelection);
   });
 
   it("returns null when there are no pending rows", async () => {

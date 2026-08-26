@@ -28,6 +28,7 @@ import {
 } from "./conformance";
 import type { ConversationBackendCreateInput } from "./conversation";
 import type { AgentTaskRequest } from "./task";
+import type { BackendModelSelection } from "./schemas";
 import { createClaudeBackendDescriptor } from "./claude/descriptor";
 import { claudeConversationBackendFactory } from "./claude/conversation-runtime";
 import { createClaudeContinuityAdapter } from "./claude/continuity";
@@ -46,6 +47,10 @@ import { CursorConversationRuntime } from "./cursor/conversation-runtime";
 import { createCursorContinuityAdapter } from "./cursor/continuity";
 import { createCursorRuntimeConfigAdapter } from "./cursor/runtime-config";
 import { createCursorFailureClassifier } from "./cursor/failure-classifier";
+import {
+  createCursorModelCatalogFacet,
+  loadGeneratedCursorModelCatalog,
+} from "./cursor/model-catalog";
 import { createScriptedTransport } from "./cursor/testing/scripted-worker";
 import {
   claudeMcpCapabilities,
@@ -88,6 +93,7 @@ const STRUCTURED_OUTPUT_VALUE = { ok: true };
 
 function buildCreateInput(
   conversationId: string,
+  modelSelection: BackendModelSelection,
 ): ConversationBackendCreateInput {
   return {
     conversationId,
@@ -100,20 +106,42 @@ function buildCreateInput(
     ),
     worktreePath: "/conformance",
     persistedRef: null,
+    modelSelection,
     sessionInstructions: [],
     tooling: {},
   };
 }
 
-function buildTaskRequest(withSchema: boolean): AgentTaskRequest {
+function buildTaskRequest(
+  withSchema: boolean,
+  modelSelection: BackendModelSelection,
+): AgentTaskRequest {
   return {
     workingDirectory: "/conformance",
     prompt: "conformance task run",
+    modelSelection,
     timeoutMs: 0,
     autonomous: true,
     ...(withSchema ? { outputSchema: STRUCTURED_OUTPUT_SCHEMA } : {}),
   };
 }
+
+const CLAUDE_MODEL_SELECTION = {
+  modelId: "opus",
+  parameters: { effort: "medium" },
+} as const;
+const CODEX_MODEL_SELECTION = {
+  modelId: "gpt-5.4",
+  parameters: { reasoning: "medium", fast: "false" },
+} as const;
+const CURSOR_MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+} as const;
+const TESTFAKE_MODEL_SELECTION = {
+  modelId: "fake-1",
+  parameters: {},
+} as const;
 
 // ============================================================
 // Claude — real factory/runner over fake provider ports
@@ -157,7 +185,8 @@ describe("Claude structured output capability declaration", () => {
 describeBackendConformance(claudeDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
-    buildCreateInput: () => buildCreateInput("conformance-claude-conv"),
+    buildCreateInput: () =>
+      buildCreateInput("conformance-claude-conv", CLAUDE_MODEL_SELECTION),
     hangingPromptText: FAKE_CLAUDE_HANGING_PROMPT,
     queueHoldPromptText: FAKE_CLAUDE_QUEUE_HOLD_PROMPT,
     triggerExternalTurn: () => claudeSdk.pushExternalTurn(),
@@ -169,7 +198,7 @@ describeBackendConformance(claudeDescriptor, {
     },
   },
   task: {
-    buildRequest: () => buildTaskRequest(true),
+    buildRequest: () => buildTaskRequest(true, CLAUDE_MODEL_SELECTION),
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -212,7 +241,8 @@ const codexDescriptor = createCodexBackendDescriptor({
 describeBackendConformance(codexDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
-    buildCreateInput: () => buildCreateInput("conformance-codex-conv"),
+    buildCreateInput: () =>
+      buildCreateInput("conformance-codex-conv", CODEX_MODEL_SELECTION),
     hangingPromptText: FAKE_CODEX_HANGING_PROMPT,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
@@ -221,7 +251,7 @@ describeBackendConformance(codexDescriptor, {
     },
   },
   task: {
-    buildRequest: () => buildTaskRequest(true),
+    buildRequest: () => buildTaskRequest(true, CODEX_MODEL_SELECTION),
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
       expected: STRUCTURED_OUTPUT_VALUE,
@@ -251,6 +281,10 @@ const cursorTransport = createScriptedTransport({
 });
 
 const cursorDescriptor = createCursorBackendDescriptor({
+  modelCatalog: createCursorModelCatalogFacet({
+    loadCatalog: loadGeneratedCursorModelCatalog,
+    supportedModels: async () => null,
+  }),
   conversationFactory: {
     backend: "cursor",
     createRuntime: async (input) =>
@@ -259,9 +293,7 @@ const cursorDescriptor = createCursorBackendDescriptor({
         storePath: (conversationId) => `/state/cursor/${conversationId}`,
         resolveModel: async () => ({
           ok: true,
-          model: "composer-2.5",
-          source: "default",
-          supportedModels: ["composer-2.5"],
+          selection: CURSOR_MODEL_SELECTION,
         }),
         translatePortableMcpToCursor: () => ({
           servers: {},
@@ -281,7 +313,7 @@ const cursorDescriptor = createCursorBackendDescriptor({
       conversationId: "conformance-cursor-continuity",
       cwd: "/conformance",
       storePath: "/state/cursor/conformance",
-      model: "composer-2.5",
+      modelSelection: CURSOR_MODEL_SELECTION,
       mcpServers: {},
     }),
   }),
@@ -298,7 +330,8 @@ function lastCursorTurnPrompt(): string | undefined {
 describeBackendConformance(cursorDescriptor, {
   continuity: continuityHarness,
   conversationTurn: {
-    buildCreateInput: () => buildCreateInput("conformance-cursor-conv"),
+    buildCreateInput: () =>
+      buildCreateInput("conformance-cursor-conv", CURSOR_MODEL_SELECTION),
     hangingPromptText: CURSOR_HANGING_PROMPT,
     structuredOutput: {
       schema: STRUCTURED_OUTPUT_SCHEMA,
@@ -320,7 +353,8 @@ describeBackendConformance(cursorDescriptor, {
 const testfake = createTestFakeBackend();
 
 const testfakeTurnHarness: ConversationTurnConformanceHarness = {
-  buildCreateInput: () => buildCreateInput("conformance-testfake-conv"),
+  buildCreateInput: () =>
+    buildCreateInput("conformance-testfake-conv", TESTFAKE_MODEL_SELECTION),
   hangingPromptText: TESTFAKE_HANGING_PROMPT,
 };
 
@@ -328,7 +362,7 @@ describeBackendConformance(testfake.descriptor, {
   continuity: continuityHarness,
   conversationTurn: testfakeTurnHarness,
   task: {
-    buildRequest: () => buildTaskRequest(false),
+    buildRequest: () => buildTaskRequest(false, TESTFAKE_MODEL_SELECTION),
   },
 });
 

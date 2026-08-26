@@ -206,7 +206,6 @@ export function ImplementerScreen({
       <ConfigRowGroup label="Runtime">
         <ConfigAgentRuntimeRows
           rowPrefix="implementer"
-          agentLabel="the implementer"
           value={implementer.agent}
           onChange={(agent) => edit({ ...implementer, agent })}
           provenance={provenance}
@@ -260,7 +259,6 @@ export function CollaborationScreen({
       <ConfigRowGroup label="Second agent">
         <ConfigAgentRuntimeRows
           rowPrefix="collab-second-agent"
-          agentLabel="the second agent"
           value={secondAgent}
           onChange={(agent) =>
             editor.onEdit(cascade.set("collaboration.secondAgent", agent))

@@ -9,6 +9,7 @@
 
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "../schemas";
 import type { ConversationBackendTurnResult } from "../conversation";
 import {
   CodexConversationRuntime,
@@ -20,6 +21,11 @@ export const STALE_CODEX_RESUME_REF: AgentSessionRef = {
   backend: "codex",
   ref: "thread-gone",
 };
+
+const STALE_CODEX_MODEL_SELECTION = {
+  modelId: "gpt-5.4",
+  parameters: { reasoning: "high", fast: "false" },
+} satisfies BackendModelSelection;
 
 function makeStaleResumeDeps(): CodexConversationRuntimeDeps {
   const staleThread: CodexThreadLike = {
@@ -68,6 +74,7 @@ export async function runStaleCodexResumeTurn(identity: {
         identity.conversationId,
       ),
       persistedRef: STALE_CODEX_RESUME_REF,
+      modelSelection: STALE_CODEX_MODEL_SELECTION,
       sessionInstructions: [],
       tooling: {},
     },
@@ -77,6 +84,7 @@ export async function runStaleCodexResumeTurn(identity: {
     promptText: "Continue where we left off",
     imageRefs: [],
     sessionInstructions: [],
+    modelSelection: STALE_CODEX_MODEL_SELECTION,
     autonomous: false,
     signal: new AbortController().signal,
     onEvent: () => {},

@@ -8,6 +8,32 @@ import {
   resolveConversationNamingConfig,
 } from "./schemas";
 
+function normalizedAgentBackends() {
+  return {
+    claude: {
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+      timeoutMs: 60_000,
+    },
+    codex: {
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+      timeoutMs: null,
+    },
+    cursor: {
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
+      timeoutMs: null,
+    },
+  };
+}
+
 describe("commandCenterProjectName config", () => {
   it("is retained by the raw disk schema", () => {
     expect(
@@ -21,19 +47,7 @@ describe("commandCenterProjectName config", () => {
     const parsed = globalConfigSchema.parse({
       baseDir: "/projects",
       ignorePatterns: [],
-      agentBackends: {
-        claude: {
-          model: "opus",
-          reasoningEffort: "high",
-          timeoutMs: 60_000,
-        },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-        cursor: { model: "composer-2.5", timeoutMs: null },
-      },
+      agentBackends: normalizedAgentBackends(),
       commandCenterProjectName: "command-center",
     });
 
@@ -49,42 +63,63 @@ describe("commandCenterProjectName config", () => {
 
 describe("agent backend config", () => {
   it("accepts sparse raw backend profiles", () => {
-    expect(
-      rawGlobalConfigSchema.parse({
-        defaultAgentBackend: "codex",
-        agentBackends: {
-          claude: { model: "sonnet" },
-          codex: { fastMode: true, timeoutMs: null },
-          cursor: { model: "composer-2.5", timeoutMs: null },
-        },
-      }),
-    ).toEqual({
+    const input = {
       defaultAgentBackend: "codex",
       agentBackends: {
-        claude: { model: "sonnet" },
-        codex: { fastMode: true, timeoutMs: null },
-        cursor: { model: "composer-2.5", timeoutMs: null },
+        claude: {
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "high" },
+          },
+        },
+        codex: {
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "true" },
+          },
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+          timeoutMs: null,
+        },
       },
-    });
+    } as const;
+
+    expect(rawGlobalConfigSchema.parse(input)).toEqual(input);
   });
 
   it("accepts a sparse raw Cursor profile", () => {
-    expect(
-      rawGlobalConfigSchema.parse({
-        agentBackends: { cursor: { model: "composer-2.5" } },
-      }),
-    ).toEqual({ agentBackends: { cursor: { model: "composer-2.5" } } });
+    const input = {
+      agentBackends: {
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+        },
+      },
+    };
+
+    expect(rawGlobalConfigSchema.parse(input)).toEqual(input);
   });
 
-  it("rejects a malformed Cursor model", () => {
+  it("rejects a malformed Cursor model selection", () => {
     expect(
       rawGlobalConfigSchema.safeParse({
-        agentBackends: { cursor: { model: "" } },
+        agentBackends: {
+          cursor: { modelSelection: { modelId: "", parameters: {} } },
+        },
       }).success,
     ).toBe(false);
     expect(
       rawGlobalConfigSchema.safeParse({
-        agentBackends: { cursor: { model: 5 } },
+        agentBackends: {
+          cursor: { modelSelection: { modelId: 5, parameters: {} } },
+        },
       }).success,
     ).toBe(false);
     expect(
@@ -97,7 +132,7 @@ describe("agent backend config", () => {
   // Each of these would otherwise be stripped in silence, leaving an operator
   // believing they had configured something Command Center never reads.
   it.each([
-    ["fastMode", true, /fast mode/i],
+    ["fastMode", true, /modelSelection/i],
     ["pricing", { "composer-2.5": { inputPerMillion: 1 } }, /cost/i],
     ["apiKey", "sk-cursor-not-a-real-key", /CURSOR_API_KEY/],
   ])(
@@ -129,7 +164,15 @@ describe("agent backend config", () => {
     "sandbox",
   ])("rejects the unknown raw Cursor option %s, naming the key", (field) => {
     const result = rawGlobalConfigSchema.safeParse({
-      agentBackends: { cursor: { model: "composer-2.5", [field]: "value" } },
+      agentBackends: {
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+          [field]: "value",
+        },
+      },
     });
 
     expect(result.success).toBe(false);
@@ -145,7 +188,13 @@ describe("agent backend config", () => {
   it("names the unknown key without echoing its value", () => {
     const result = rawGlobalConfigSchema.safeParse({
       agentBackends: {
-        cursor: { model: "composer-2.5", token: "sk-cursor-not-a-real-key" },
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+          token: "sk-cursor-not-a-real-key",
+        },
       },
     });
 
@@ -156,15 +205,14 @@ describe("agent backend config", () => {
   });
 
   it("rejects an unknown option on the normalized Cursor profile too", () => {
+    const agentBackends = normalizedAgentBackends();
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
       ignorePatterns: [],
       agentBackends: {
-        claude: { model: "opus", reasoningEffort: "high", timeoutMs: 60_000 },
-        codex: { model: "gpt-5.4", reasoningEffort: "high", timeoutMs: null },
+        ...agentBackends,
         cursor: {
-          model: "composer-2.5",
-          timeoutMs: null,
+          ...agentBackends.cursor,
           unknownCursorOption: "anything",
         },
       },
@@ -173,44 +221,68 @@ describe("agent backend config", () => {
     expect(result.success).toBe(false);
   });
 
-  // Cursor fails closed because it is new: no shipped config file can already
-  // carry a stray key under it. Tightening the profiles that HAVE shipped
-  // tolerant is a separate migration decision, so this pins that the existing
-  // two are deliberately unchanged rather than accidentally missed.
   it.each(["claude", "codex"])(
-    "leaves the shipped %s profile's unknown-key tolerance unchanged",
+    "rejects an unknown %s profile option instead of stripping it",
     (backend) => {
       const result = rawGlobalConfigSchema.safeParse({
-        agentBackends: { [backend]: { unknownLegacyOption: "tolerated" } },
+        agentBackends: { [backend]: { thinking: "enabled" } },
       });
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
     },
   );
+
+  it.each(["model", "effort", "reasoning", "fast", "context", "thinking"])(
+    "rejects the misplaced top-level model parameter %s",
+    (field) => {
+      const result = rawGlobalConfigSchema.safeParse({ [field]: "value" });
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: [field] }),
+      );
+    },
+  );
+
+  it.each([
+    ["Claude profile", { agentBackends: { claude: { thinking: "true" } } }],
+    ["Codex profile", { agentBackends: { codex: { context: "max" } } }],
+    ["compaction block", { compaction: { fast: "true" } }],
+    ["naming block", { conversationNaming: { reasoning: "high" } }],
+  ])("rejects an unknown model parameter on the %s", (_label, input) => {
+    expect(rawGlobalConfigSchema.safeParse(input).success).toBe(false);
+  });
 
   it("normalizes a Cursor profile through the global schema", () => {
     const parsed = globalConfigSchema.parse({
       baseDir: "/projects",
       ignorePatterns: [],
-      agentBackends: {
-        claude: { model: "opus", reasoningEffort: "high", timeoutMs: 60_000 },
-        codex: { model: "gpt-5.4", reasoningEffort: "high", timeoutMs: null },
-        cursor: { model: "composer-2.5", timeoutMs: null },
-      },
+      agentBackends: normalizedAgentBackends(),
     });
 
     expect(parsed.agentBackends.cursor).toEqual({
-      model: "composer-2.5",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
       timeoutMs: null,
     });
     expect(parsed.agentBackends.cursor).not.toHaveProperty("fastMode");
     expect(parsed.agentBackends.cursor).not.toHaveProperty("pricing");
   });
 
-  it("rejects non-boolean Codex fast mode values", () => {
+  it("rejects non-string values inside an atomic Codex selection", () => {
     expect(
       rawGlobalConfigSchema.safeParse({
-        agentBackends: { codex: { fastMode: "fast" } },
+        agentBackends: {
+          codex: {
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: true },
+            },
+          },
+        },
       }).success,
     ).toBe(false);
   });
@@ -218,7 +290,12 @@ describe("agent backend config", () => {
   it("accepts custom Codex models with provider-valid effort", () => {
     const result = rawGlobalConfigSchema.safeParse({
       agentBackends: {
-        codex: { model: "custom-codex-model", reasoningEffort: "ultra" },
+        codex: {
+          modelSelection: {
+            modelId: "custom-codex-model",
+            parameters: { reasoning: "ultra", fast: "false" },
+          },
+        },
       },
     });
 
@@ -226,8 +303,8 @@ describe("agent backend config", () => {
   });
 
   it.each([
-    ["defaultModel", "agentBackends.claude.model"],
-    ["defaultEffort", "agentBackends.claude.reasoningEffort"],
+    ["defaultModel", "agentBackends.claude.modelSelection"],
+    ["defaultEffort", "agentBackends.claude.modelSelection.parameters"],
     ["claudeTimeoutMs", "agentBackends.claude.timeoutMs"],
     ["codex", "agentBackends.codex"],
   ])(
@@ -261,16 +338,12 @@ describe("agent backend config", () => {
     );
   });
 
-  it.each([
-    ["claude", "haiku", "high"],
-    ["claude", "sonnet", "xhigh"],
-    ["codex", "gpt-5.4", "ultra"],
-  ])(
-    "rejects an unsupported %s model and effort pair",
-    (backend, model, reasoningEffort) => {
+  it.each(["claude", "codex", "cursor"])(
+    "rejects an incomplete atomic %s selection",
+    (backend) => {
       const result = rawGlobalConfigSchema.safeParse({
         agentBackends: {
-          [backend]: { model, reasoningEffort },
+          [backend]: { modelSelection: { modelId: "model" } },
         },
       });
 
@@ -278,29 +351,23 @@ describe("agent backend config", () => {
       if (result.success) return;
       expect(result.error.issues).toContainEqual(
         expect.objectContaining({
-          path: ["agentBackends", backend, "reasoningEffort"],
-          message: expect.stringContaining(model),
+          path: ["agentBackends", backend, "modelSelection", "parameters"],
         }),
       );
     },
   );
 
-  it("rejects invalid pairs in effective config too", () => {
+  it("rejects a malformed selection in effective config too", () => {
+    const agentBackends = normalizedAgentBackends();
     const result = globalConfigSchema.safeParse({
       baseDir: "/projects",
       ignorePatterns: [],
       agentBackends: {
+        ...agentBackends,
         claude: {
-          model: "haiku",
-          reasoningEffort: "high",
-          timeoutMs: 60_000,
+          ...agentBackends.claude,
+          modelSelection: { modelId: "", parameters: {} },
         },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-        cursor: { model: "composer-2.5", timeoutMs: null },
       },
     });
 
@@ -382,19 +449,7 @@ describe("validation config composition", () => {
     const parsed = globalConfigSchema.parse({
       baseDir: "/projects",
       ignorePatterns: [],
-      agentBackends: {
-        claude: {
-          model: "opus",
-          reasoningEffort: "high",
-          timeoutMs: 60_000,
-        },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-        cursor: { model: "composer-2.5", timeoutMs: null },
-      },
+      agentBackends: normalizedAgentBackends(),
       validation: {},
     });
 
@@ -406,14 +461,13 @@ describe("validation config composition", () => {
 });
 
 describe("conversationNamingConfigSchema", () => {
-  it("materializes enabled/backend/model/effort defaults but leaves timeout unset", () => {
+  it("materializes an atomic model-selection default but leaves timeout unset", () => {
     const result = conversationNamingConfigSchema.parse({});
 
     expect(result).toEqual({
       enabled: true,
       backend: "claude",
-      model: "haiku",
-      effort: "low",
+      modelSelection: { modelId: "haiku", parameters: {} },
     });
     // No default timeout: the service resolves an unset timeout to 60s.
     expect(result.timeoutMs).toBeUndefined();
@@ -422,13 +476,18 @@ describe("conversationNamingConfigSchema", () => {
   it("keeps explicit fields while defaulting the rest", () => {
     const result = conversationNamingConfigSchema.parse({
       backend: "codex",
-      model: "gpt-5.4",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
     });
 
     expect(result.backend).toBe("codex");
-    expect(result.model).toBe("gpt-5.4");
+    expect(result.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    });
     expect(result.enabled).toBe(true);
-    expect(result.effort).toBe("low");
   });
 
   it("accepts an explicit numeric timeout and a null sentinel", () => {
@@ -440,48 +499,41 @@ describe("conversationNamingConfigSchema", () => {
     ).toBeNull();
   });
 
-  it("rejects invalid backend and effort values", () => {
+  it("rejects invalid backend and model-selection values", () => {
     expect(
       conversationNamingConfigSchema.safeParse({ backend: "gpt" }).success,
     ).toBe(false);
     expect(
-      conversationNamingConfigSchema.safeParse({ effort: "invalid" }).success,
+      conversationNamingConfigSchema.safeParse({
+        modelSelection: { modelId: "", parameters: {} },
+      }).success,
     ).toBe(false);
   });
 
   it("is retained partially by the raw disk schema without materializing defaults", () => {
+    const modelSelection = {
+      modelId: "sonnet",
+      parameters: { effort: "high" },
+    };
     expect(
       rawGlobalConfigSchema.parse({
-        conversationNaming: { model: "sonnet" },
+        conversationNaming: { modelSelection },
       }),
-    ).toEqual({ conversationNaming: { model: "sonnet" } });
+    ).toEqual({ conversationNaming: { modelSelection } });
   });
 
   it("is accepted by the normalized global schema", () => {
     const parsed = globalConfigSchema.parse({
       baseDir: "/projects",
       ignorePatterns: [],
-      agentBackends: {
-        claude: {
-          model: "opus",
-          reasoningEffort: "high",
-          timeoutMs: 60_000,
-        },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-        cursor: { model: "composer-2.5", timeoutMs: null },
-      },
+      agentBackends: normalizedAgentBackends(),
       conversationNaming: { enabled: false },
     });
 
     expect(parsed.conversationNaming).toEqual({
       enabled: false,
       backend: "claude",
-      model: "haiku",
-      effort: "low",
+      modelSelection: { modelId: "haiku", parameters: {} },
     });
   });
 
@@ -489,26 +541,13 @@ describe("conversationNamingConfigSchema", () => {
     const config = globalConfigSchema.parse({
       baseDir: "/projects",
       ignorePatterns: [],
-      agentBackends: {
-        claude: {
-          model: "opus",
-          reasoningEffort: "high",
-          timeoutMs: 60_000,
-        },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-        cursor: { model: "composer-2.5", timeoutMs: null },
-      },
+      agentBackends: normalizedAgentBackends(),
     });
 
     expect(resolveConversationNamingConfig(config)).toEqual({
       enabled: true,
       backend: "claude",
-      model: "haiku",
-      effort: "low",
+      modelSelection: { modelId: "haiku", parameters: {} },
     });
   });
 
@@ -525,14 +564,19 @@ describe("conversationNamingConfigSchema", () => {
 });
 
 describe("compactionConfigSchema", () => {
-  it("materializes backend/model/effort defaults but leaves timeout unset", () => {
+  it("materializes atomic model-selection defaults but leaves timeout unset", () => {
     const result = compactionConfigSchema.parse({});
 
     expect(result).toEqual({
       backend: "claude",
-      conversationModel: "sonnet",
-      messageModel: "sonnet",
-      effort: "medium",
+      conversationModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
+      messageModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     });
     // No default timeout: an unset timeout means "no timeout applied".
     expect(result.timeoutMs).toBeUndefined();
@@ -548,14 +592,27 @@ describe("compactionConfigSchema", () => {
   });
 
   it("keeps explicit fields while defaulting the rest", () => {
-    const result = compactionConfigSchema.parse({ messageModel: "haiku" });
+    const result = compactionConfigSchema.parse({
+      messageModelSelection: { modelId: "haiku", parameters: {} },
+    });
 
-    expect(result.messageModel).toBe("haiku");
-    expect(result.conversationModel).toBe("sonnet");
+    expect(result.messageModelSelection).toEqual({
+      modelId: "haiku",
+      parameters: {},
+    });
+    expect(result.conversationModelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    });
   });
 
-  it("rejects an invalid effort value", () => {
-    const result = compactionConfigSchema.safeParse({ effort: "invalid" });
+  it("rejects a malformed model-selection parameter value", () => {
+    const result = compactionConfigSchema.safeParse({
+      conversationModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: 5 },
+      },
+    });
 
     expect(result.success).toBe(false);
   });

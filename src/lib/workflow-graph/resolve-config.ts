@@ -37,8 +37,10 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
     profile: { tier: "builtin", id: "general-implementer" },
     agent: {
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "medium" },
+      },
     },
   },
   // Exactly one reviewer: the cohort is an ordered set, but the seeded default
@@ -56,8 +58,10 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
         authority: "blocking",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         continuity: { enabled: true },
       },
@@ -82,8 +86,10 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
     enabled: false,
     secondAgent: {
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     },
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",

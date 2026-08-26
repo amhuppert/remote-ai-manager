@@ -32,8 +32,10 @@ function resolvedContext(
     implementer: seedAssignment(
       makeImplementerAssignment({
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       }),
     ),
     contextValidator: makeSeededValidatorCohort({

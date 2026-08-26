@@ -6,6 +6,7 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type {
@@ -62,11 +63,11 @@ export interface ConversationTurnActive {
   promptText: string;
   images: ImagePayload[];
   backend: AgentBackendId;
-  modelId: string | null;
-  effort: string | null;
-  codexFastMode: boolean | null;
+  modelSelection: BackendModelSelection | null;
   autonomous: boolean;
   startedAt: string | null;
+  /** Correlates actor reports to one execution attempt. Rotated on retry. */
+  executionAttemptId?: string;
   streamId: string | null;
   outputFormat?: StructuredOutputFormat;
   /**
@@ -105,9 +106,10 @@ export interface TaskRunActive {
   kind: "task_run";
   promptText: string;
   backend: AgentBackendId;
-  modelId: string | null;
-  effort: string | null;
+  modelSelection: BackendModelSelection | null;
   startedAt: string | null;
+  /** See {@link ConversationTurnActive.executionAttemptId}. */
+  executionAttemptId?: string;
   outputFormat?: StructuredOutputFormat;
   systemInstructions?: string;
   tooling?: PortableMcpConfig;
@@ -211,9 +213,7 @@ export type ConversationEvent =
       promptText: string;
       images?: ImagePayload[];
       backend?: AgentBackendId;
-      modelId?: string;
-      effort?: string;
-      codexFastMode?: boolean;
+      modelSelection?: BackendModelSelection;
       autonomous?: boolean;
       streamId: string;
       outputFormat?: StructuredOutputFormat;
@@ -228,8 +228,7 @@ export type ConversationEvent =
       type: "SUBMIT_TASK_RUN";
       promptText: string;
       backend?: AgentBackendId;
-      modelId?: string;
-      effort?: string;
+      modelSelection?: BackendModelSelection;
       outputFormat?: StructuredOutputFormat;
       systemInstructions?: string;
       tooling?: PortableMcpConfig;
@@ -247,6 +246,13 @@ export type ConversationEvent =
   | { type: "CLEAR_PENDING_QUESTION" }
   | { type: "PROMPT_COMPLETED"; result: PromptActorResult }
   | { type: "PROMPT_FAILED"; error: string }
+  | {
+      type: "MODEL_SELECTION_RESOLVED";
+      modelSelection: BackendModelSelection;
+      executionAttemptId: string;
+      acknowledge(): void;
+      reject(error: Error): void;
+    }
   | { type: "ABORT_TURN"; reason: "timeout" | "user" | "shutdown" }
   // The debug workflow's single machine entry point: the debug adapter maps
   // its lifecycle methods onto commands, and the machine applies them with
@@ -412,9 +418,12 @@ export interface ExecutePromptInput {
   promptText: string;
   images: ImagePayload[];
   streamId: string | null;
-  modelId: string | null;
-  effort: string | null;
-  codexFastMode: boolean | null;
+  modelSelection: BackendModelSelection | null;
+  /** Report the final admitted selection before provider dispatch so the
+   *  machine can make restart replay independent of mutable defaults. */
+  onModelSelectionResolved(
+    modelSelection: BackendModelSelection,
+  ): Promise<void>;
   autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
   outputFormat?: StructuredOutputFormat;
@@ -471,8 +480,11 @@ export interface RunTaskRunInput {
    *  continuity / Claude session continuity across calls. */
   backendRef: AgentSessionRef | null;
   promptText: string;
-  modelId: string | null;
-  effort: string | null;
+  modelSelection: BackendModelSelection | null;
+  /** See {@link ExecutePromptInput.onModelSelectionResolved}. */
+  onModelSelectionResolved(
+    modelSelection: BackendModelSelection,
+  ): Promise<void>;
   outputFormat?: StructuredOutputFormat;
   systemInstructions?: string;
   tooling?: PortableMcpConfig;

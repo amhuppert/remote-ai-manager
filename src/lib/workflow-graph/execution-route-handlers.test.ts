@@ -17,6 +17,7 @@ import {
   createWorkflowDefinition,
   createWorkflowExecution,
   createWorkflowLayout,
+  makeImplementerAssignment,
   makeProfileSnapshot,
 } from "./test-fixtures";
 import {
@@ -137,17 +138,23 @@ function makeGlobalConfig(): GlobalConfig {
     ignorePatterns: [],
     agentBackends: {
       claude: {
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
         timeoutMs: 45_000,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: 60_000,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     defaultAgentBackend: "claude",
   };
@@ -3862,8 +3869,10 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
           profileSnapshot: makeProfileSnapshot(),
           agent: {
             backend: "codex",
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.4-mini",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
           },
         },
         contextValidator: { enabled: false, assignments: [] },
@@ -3982,8 +3991,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           executionId: input.executionId,
           contextId: input.contextId,
           backend: input.backend,
-          model: input.model,
-          reasoningEffort: input.reasoningEffort,
+          modelSelection: input.modelSelection,
           toolServer: input.toolServer,
           placement: { lane: "build", mode: "full" },
         });
@@ -4005,7 +4013,10 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
       expect.anything(), // prompt
       expect.anything(), // emit
       expect.anything(), // conversationId
-      "gpt-5.4-mini", // modelId
+      {
+        modelId: "gpt-5.4-mini",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
       undefined, // images
       expect.objectContaining({ backend: "codex", autonomous: true }),
     );
@@ -4061,8 +4072,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           executionId: input.executionId,
           contextId: input.contextId,
           backend: input.backend,
-          model: input.model,
-          reasoningEffort: input.reasoningEffort,
+          modelSelection: input.modelSelection,
           toolServer: input.toolServer,
           placement: { lane: "build", mode: "full" },
         });
@@ -4089,7 +4099,10 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
         expect.anything(),
         expect.anything(),
         expect.anything(),
-        "gpt-5.4-mini",
+        {
+          modelId: "gpt-5.4-mini",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
         undefined,
         expect.objectContaining({ backend: "codex", autonomous: true }),
       );
@@ -5118,6 +5131,46 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     });
   });
 
+  it("refuses a catalog-invalid inline model selection before creating an execution", async () => {
+    runExecution.mockResolvedValue({
+      execution: createWorkflowExecution({
+        id: "execution-invalid-model",
+        status: "running",
+        origin: { kind: "one_off", planName: "Inline analysis" },
+      }),
+      awaitingDefinitionApproval: false,
+    });
+    const definition = createWorkflowDefinition();
+    const plan = makePlan({
+      ...definition,
+      workflowConfig: {
+        ...definition.workflowConfig,
+        implementer: makeImplementerAssignment({
+          backend: "codex",
+          modelSelection: {
+            modelId: "unconfigured-custom-codex",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        }),
+      },
+    });
+
+    const response = await post({ plan });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "workflow_model_selection_invalid",
+      issues: [
+        expect.objectContaining({
+          code: "unknown_model",
+          modelId: "unconfigured-custom-codex",
+          path: "definition.workflowConfig.implementer.agent.modelSelection.modelId",
+        }),
+      ],
+    });
+    expect(runExecution).not.toHaveBeenCalled();
+  });
+
   it("appends committed-source warnings after synchronous plan warnings without refusing the run", async () => {
     const committedWarning = {
       path: "definition.charter.sourcesOfTruth.0.locator",
@@ -5271,7 +5324,7 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         markRunning,
         awaitingDefinitionApproval,
         readRepoConfig: async () => null,
-        readConfig: async () => ({}) as never,
+        readConfig: async () => makeGlobalConfig(),
         verifyConversationCapability: async (request: Request) =>
           verifyConversationCapability(
             request.headers.get(CONVERSATION_CAPABILITY_HEADER),
@@ -5504,7 +5557,7 @@ describe("graph workflow RUN route — inline one-off launch", () => {
         markRunning,
         awaitingDefinitionApproval,
         readRepoConfig: async () => null,
-        readConfig: async () => ({}) as never,
+        readConfig: async () => makeGlobalConfig(),
         auth: { validateOptionalToken: async () => ({ kind: transport }) },
         verifyConversationCapability: async (request: Request) =>
           verifyConversationCapability(

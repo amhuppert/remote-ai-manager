@@ -148,8 +148,10 @@ const OUTLINE_BODY = {
           revision: 2,
           resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
         },
         validators: [
           {
@@ -160,8 +162,10 @@ const OUTLINE_BODY = {
             resolvedInstructionHash: `sha256:${"e".repeat(64)}`,
             strategy: "conversation",
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         ],
         validatorCohortEnabled: true,
@@ -179,8 +183,10 @@ const OUTLINE_BODY = {
           revision: 2,
           resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
         },
         validators: [
           {
@@ -191,8 +197,10 @@ const OUTLINE_BODY = {
             resolvedInstructionHash: `sha256:${"e".repeat(64)}`,
             strategy: "conversation",
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         ],
         validatorCohortEnabled: true,
@@ -214,8 +222,10 @@ const OUTLINE_BODY = {
           revision: 7,
           resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
         // A disabled cohort that retains a seeded assignment: it does not run,
         // but the execution holds it and a live edit can enable it.
@@ -229,8 +239,10 @@ const OUTLINE_BODY = {
             resolvedInstructionHash: `sha256:${"f".repeat(64)}`,
             strategy: "task",
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "low",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "low", fast: "false" },
+            },
           },
         ],
         scriptValidator: { commands: [] },
@@ -362,16 +374,16 @@ describe("cctl workflow live get", () => {
               2 impl-ui     running    "Build inspector UI"  (1.8k chars)
               3 impl-tests  pending    "Add tests"           (704 chars)
       config:
-        plan    claude opus medium; validator general conversation claude sonnet medium; script off
-        impl    claude opus medium; validator general conversation claude sonnet medium; script typecheck+test; roles implementer all-except format, validator none; approval on
-        verify  codex gpt-5.4 high; validator off; script off
+        plan    claude opus effort=medium; validator general conversation claude sonnet effort=medium; script off
+        impl    claude opus effort=medium; validator general conversation claude sonnet effort=medium; script typecheck+test; roles implementer all-except format, validator none; approval on
+        verify  codex gpt-5.4 fast=false reasoning=high; validator off; script off
       staffing (snapshots):
-        plan    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus medium
-        plan    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet medium
-        impl    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus medium
-        impl    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet medium
-        verify  implementer  implementer       project:house-implementer@7    #dddddddddddd  codex gpt-5.4 high  focus "state-store"
-        verify  validator    dormant-security  global:house-reviewer@3        #ffffffffffff  task codex gpt-5.4 low  (cohort disabled)
+        plan    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus effort=medium
+        plan    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet effort=medium
+        impl    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus effort=medium
+        impl    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet effort=medium
+        verify  implementer  implementer       project:house-implementer@7    #dddddddddddd  codex gpt-5.4 fast=false reasoning=high  focus "state-store"
+        verify  validator    dormant-security  global:house-reviewer@3        #ffffffffffff  task codex gpt-5.4 fast=false reasoning=low  (cohort disabled)
       "
     `);
   });
@@ -398,7 +410,7 @@ describe("cctl workflow live get", () => {
     expect(staffing?.[0]).toContain("builtin:general-implementer@2");
     expect(staffing?.[0]).toContain("#cccccccccccc");
     expect(staffing?.[1]).toContain("builtin:general-reviewer@5");
-    expect(staffing?.[1]).toContain("conversation claude sonnet medium");
+    expect(staffing?.[1]).toContain("conversation claude sonnet effort=medium");
     expect(staffing?.[4]).toContain('focus "state-store"');
     // The short hash is a prefix of the digest, never the whole 64-char one.
     expect(result.stdout).not.toContain("c".repeat(64));
@@ -465,7 +477,7 @@ describe("cctl workflow live get", () => {
     expect(staffing?.[1]).not.toContain("(cohort disabled)");
     // The runtime line is unchanged: nothing in this cohort is invoked.
     expect(result.stdout).toContain(
-      "verify  codex gpt-5.4 high; validator off",
+      "verify  codex gpt-5.4 fast=false reasoning=high; validator off",
     );
   });
 
@@ -650,8 +662,10 @@ describe("cctl workflow live get", () => {
             profile: { tier: "builtin", id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "medium" },
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },

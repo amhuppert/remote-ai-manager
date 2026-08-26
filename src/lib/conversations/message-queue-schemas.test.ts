@@ -120,6 +120,50 @@ describe("pendingQueuedMessageSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("persists one complete model selection with the queued message", () => {
+    const result = pendingQueuedMessageSchema.parse({
+      ...basePending,
+      modelSelection: {
+        modelId: "claude-opus-5",
+        parameters: { effort: "xhigh", thinking: "true" },
+      },
+    });
+
+    expect(result.modelSelection).toEqual({
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    });
+  });
+
+  it("rejects an incomplete queued model selection", () => {
+    expect(
+      pendingQueuedMessageSchema.safeParse({
+        ...basePending,
+        modelSelection: { modelId: "claude-opus-5" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ["model", "claude-opus-5"],
+    ["modelId", "claude-opus-5"],
+    ["reasoningEffort", "high"],
+    ["effort", "high"],
+    ["fastMode", true],
+    ["codexFastMode", true],
+  ])("rejects the retired durable selection field %s", (field, value) => {
+    expect(
+      pendingQueuedMessageSchema.safeParse({
+        ...basePending,
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { effort: "high" },
+        },
+        [field]: value,
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects an entry with an unknown status", () => {
     const result = pendingQueuedMessageSchema.safeParse({
       ...basePending,
@@ -175,6 +219,21 @@ describe("queuedMessageViewSchema", () => {
     if (result.success) {
       expect(result.data.error).toBe("backend rejected input");
     }
+  });
+
+  it("exposes the complete enqueue-time model selection", () => {
+    const result = queuedMessageViewSchema.parse({
+      ...baseView,
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "true", reasoning: "ultra" },
+      },
+    });
+
+    expect(result.modelSelection).toEqual({
+      modelId: "gpt-5.6-sol",
+      parameters: { fast: "true", reasoning: "ultra" },
+    });
   });
 
   it("rejects a view with an unknown status", () => {

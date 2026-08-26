@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import {
   CURSOR_MCP_FIXTURE_MARKER_VAR,
   CURSOR_MCP_FIXTURE_TOOL,
@@ -18,6 +17,7 @@ import {
 } from "./evidence";
 import { captureProcessBoundaries, openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -106,12 +106,12 @@ async function attachedWith(
 ): Promise<LiveConversation> {
   const live = await harness.startReady({
     sessionName,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
   });
   live.attach({
     mode: "create",
     ref: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers,
   });
   expect(
@@ -151,7 +151,7 @@ describe("live inline stdio MCP", () => {
         `then reply with only the tool's returned text and nothing else.`,
       images: [],
       structuredOutputInstruction: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: { [ECHO_SERVER_ID]: echoServer() },
       forceExpirePersistedRun: false,
     });
@@ -225,7 +225,7 @@ describe("cancelling a long-running inline MCP call", () => {
         `Do not give up and do not call any other tool.`,
       images: [],
       structuredOutputInstruction: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: { [BLOCKING_SERVER_ID]: blockingServer(marker) },
       forceExpirePersistedRun: false,
     });

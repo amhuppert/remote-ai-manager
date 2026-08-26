@@ -1467,8 +1467,10 @@ describe("cctl ticket start", () => {
         "codex",
         "--model",
         "gpt-5.6-sol",
-        "--effort",
-        "ultra",
+        "--model-param",
+        "reasoning=ultra",
+        "--model-param",
+        "fast=true",
       ],
       baseEnv,
       host,
@@ -1482,12 +1484,50 @@ describe("cctl ticket start", () => {
     expect(JSON.parse(String(req?.init.body))).toEqual({
       mode: "agent",
       backend: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "ultra", fast: "true" },
+      },
     });
     expect(result.stdout).toContain("cc#12");
     expect(result.stdout).toContain("ticket-12-fix-the-flaky-gate-1");
     expect(result.stdout).toContain("agent");
+  });
+
+  it.each([
+    {
+      label: "a parameter without a model",
+      args: ["--model-param", "fast=true"],
+      message: "--model-param requires --model",
+    },
+    {
+      label: "a malformed parameter",
+      args: ["--model", "gpt-5.6-sol", "--model-param", "fast"],
+      message: 'invalid --model-param "fast"',
+    },
+    {
+      label: "a duplicate parameter",
+      args: [
+        "--model",
+        "gpt-5.6-sol",
+        "--model-param",
+        "fast=true",
+        "--model-param",
+        "fast=false",
+      ],
+      message: 'duplicate --model-param "fast"',
+    },
+  ])("rejects $label before sending a request", async ({ args, message }) => {
+    const host = makeHost(() => jsonResponse(startOutput));
+    const result = await runCli(
+      ["ticket", "start", "12", "--mode", "agent", ...args],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(message);
+    expect(host.requests).toHaveLength(0);
   });
 
   it("names the conversation snapshots still capturing after the start returns", async () => {

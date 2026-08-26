@@ -33,6 +33,7 @@ import {
   ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
 } from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
+import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import {
   cancelQueuedMessage,
   enqueueQueuedMessage,
@@ -60,6 +61,7 @@ export interface QueueRouteDeps extends QueueOperationDeps {
 }
 
 const defaultDeps: QueueRouteDeps = {
+  admitModelSelection: admitConfiguredModelSelection,
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,

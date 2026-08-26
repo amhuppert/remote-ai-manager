@@ -25,7 +25,10 @@ const BINDING: CursorContinuityBinding = {
   conversationId: "continuity-probe",
   cwd: "/repo/.worktrees/s1",
   storePath: "/state/cursor/continuity-probe",
-  model: "composer-2.5",
+  modelSelection: {
+    modelId: "claude-opus-5",
+    parameters: { effort: "xhigh", thinking: "true", cyber: "false" },
+  },
   mcpServers: {},
 };
 
@@ -85,7 +88,7 @@ describe("cursor continuity start", () => {
     expect(transport.startInputs[0]).toMatchObject({
       cwd: BINDING.cwd,
       storePath: BINDING.storePath,
-      model: BINDING.model,
+      modelSelection: BINDING.modelSelection,
     });
   });
 
@@ -214,6 +217,59 @@ describe("cursor fork", () => {
 });
 
 describe("busy-agent force-expiry policy", () => {
+  it("makes the scripted transport enforce the production model-selection binding", async () => {
+    const transport = createScriptedTransport({});
+    const input = {
+      conversationId: "conv-1",
+      target: {
+        scope: "project" as const,
+        projectName: "repo",
+        conversationId: "conv-1",
+      },
+      cwd: "/repo",
+      storePath: "/state",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { context: "max", effort: "high" },
+      },
+      ownerToken: {},
+      onFrame: () => {},
+      onExit: () => {},
+    };
+    const first = await transport.start(input);
+    if (first.kind !== "ready") throw new Error("expected a ready worker");
+
+    const reordered = await transport.start({
+      ...input,
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { effort: "high", context: "max" },
+      },
+    });
+    const changed = await transport.start({
+      ...input,
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { effort: "low" },
+      },
+    });
+    const differentOwner = await transport.start({
+      ...input,
+      ownerToken: {},
+    });
+
+    expect(reordered.kind).toBe("already_active");
+    expect(changed).toMatchObject({
+      kind: "binding_mismatch",
+      message: expect.stringContaining("different model selection"),
+    });
+    expect(differentOwner).toMatchObject({
+      kind: "binding_mismatch",
+      message: expect.stringContaining("different runtime owner"),
+    });
+    expect(transport.workers).toHaveLength(1);
+  });
+
   it("refuses force-expiry while another live worker owns the conversation", async () => {
     const transport = createScriptedTransport({});
     await transport.start({
@@ -225,7 +281,11 @@ describe("busy-agent force-expiry policy", () => {
       },
       cwd: "/repo",
       storePath: "/state",
-      model: "composer-2.5",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: {},
+      },
+      ownerToken: {},
       onFrame: () => {},
       onExit: () => {},
     });
@@ -248,7 +308,11 @@ describe("busy-agent force-expiry policy", () => {
       },
       cwd: "/repo",
       storePath: "/state",
-      model: "composer-2.5",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: {},
+      },
+      ownerToken: {},
       onFrame: () => {},
       onExit: () => {},
     });

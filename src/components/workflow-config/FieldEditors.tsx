@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { modelSelectionParametersLabel } from "@/components/model-selection-presentation";
+import { modelDisplayLabel } from "@/lib/agent-backends/catalog";
 import { CheckboxField } from "@/components/ui/Checkbox";
 import {
   SegmentedControl,
@@ -293,7 +295,7 @@ export function PlanRepairEditor({
         hint={
           value.agent
             ? undefined
-            : `Off — uses the default repair agent (${PLAN_REPAIR_DEFAULT_AGENT.model}, ${PLAN_REPAIR_DEFAULT_AGENT.reasoningEffort} reasoning)`
+            : `Off — uses the default repair agent (${modelDisplayLabel(PLAN_REPAIR_DEFAULT_AGENT.backend, PLAN_REPAIR_DEFAULT_AGENT.modelSelection.modelId)}, ${modelSelectionParametersLabel(PLAN_REPAIR_DEFAULT_AGENT.modelSelection)})`
         }
       >
         <ToggleControl

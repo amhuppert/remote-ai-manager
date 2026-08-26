@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentBackendDescriptor } from "@/lib/agent-backends/descriptor";
 import { createStubFailureClassifier } from "@/lib/agent-backends/errors";
 import { claudeMcpCapabilities } from "@/lib/mcp/backend-capabilities";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import {
   capabilityViewForBackend,
   capabilityViewFromDescriptor,
@@ -50,6 +51,9 @@ describe("capabilityViewFromDescriptor", () => {
         ],
         defaultModelId: "m",
         defaultTimeoutMs: null,
+      },
+      modelCatalog: {
+        getCatalog: async () => getStaticBackendModelCatalog("claude"),
       },
       tasks: {
         runner: {

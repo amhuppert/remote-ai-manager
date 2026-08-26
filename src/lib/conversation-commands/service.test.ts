@@ -521,6 +521,24 @@ describe("createConversationCommandService eligible path", () => {
     expect(taskRunInput?.prompt).toContain(" M src/api/routes.ts");
   });
 
+  it("forwards the admitted complete model selection to command message generation", async () => {
+    const deps = makeDeps();
+    const service = createConversationCommandService(deps);
+    const modelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { fast: "true", reasoning: "ultra" },
+    };
+
+    await service.run({
+      ...makeInput({ parsed: { command: "commit", hint: "" } }),
+      modelSelection,
+    });
+
+    expect(deps.executeWorkflowTaskRun).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSelection }),
+    );
+  });
+
   it("runs merge message generation with the merge structured-output schema", async () => {
     const deps = makeDeps();
     const service = createConversationCommandService(deps);
@@ -867,6 +885,20 @@ describe("/align command", () => {
     expectNoAgentOrDispatch(h.deps);
   });
 
+  it("carries the admitted complete model selection onto the authoring turn", async () => {
+    const h = makeAlignHarness("normal");
+    harnesses.push(h.fixture);
+    const service = createConversationCommandService(h.deps);
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+
+    await service.run(alignInput({ modelSelection }));
+
+    expect(h.enqueuedAuthoringTurns[0]).toMatchObject({ modelSelection });
+  });
+
   it("forwards the command's guidance hint into the enqueued authoring turn", async () => {
     const h = makeAlignHarness("normal");
     harnesses.push(h.fixture);
@@ -1036,9 +1068,16 @@ describe("/ticket command", () => {
   it("runs the ticket command for an eligible session conversation", async () => {
     const deps = makeDeps();
     const service = createConversationCommandService(deps);
+    const modelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { fast: "true", reasoning: "ultra" },
+    };
 
     const outcome = await service.run(
-      makeInput({ parsed: { command: "ticket", hint: "retry bug" } }),
+      makeInput({
+        parsed: { command: "ticket", hint: "retry bug" },
+        modelSelection,
+      }),
     );
 
     expect(outcome).toEqual({
@@ -1052,6 +1091,7 @@ describe("/ticket command", () => {
       sessionName: "my-session",
       conversationId: "conv-1",
       hint: "retry bug",
+      modelSelection,
     });
     expect(deps.appendNotice).not.toHaveBeenCalled();
   });

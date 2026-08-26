@@ -27,12 +27,7 @@ import {
   listNativeCodexMcpServers,
   type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
-import {
-  codexReasoningEffortSchema,
-  getDefaultCodexModel,
-  type CodexPricingTable,
-  type CodexReasoningEffort,
-} from "@/lib/agent-backends/schemas";
+import { type CodexPricingTable } from "@/lib/agent-backends/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import {
   estimateCodexCostUsd,
@@ -56,6 +51,11 @@ import {
   type CodexManagedSkillsBridgeResult,
 } from "./managed-skills-bridge";
 import { buildCodexFsWriteEnvelope } from "./fs-write-envelope";
+import {
+  projectAdmittedCodexModelSelection,
+  type ResolvedCodexModelSelection,
+} from "./model-selection";
+import { ModelSelectionPolicyError } from "../model-selection";
 
 const logger = createLogger("codex:task-runner");
 const codexFailureClassifier = createCodexFailureClassifier();
@@ -306,31 +306,31 @@ export class CodexTaskRunner implements AgentTaskRunner {
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
     const isolatedOneShot = input.executionProfile === "isolated-one-shot";
 
-    let validatedReasoningEffort: CodexReasoningEffort | undefined;
-    if (input.reasoningEffort !== undefined) {
-      const effortResult = codexReasoningEffortSchema.safeParse(
-        input.reasoningEffort,
+    let resolvedModelSelection: ResolvedCodexModelSelection;
+    try {
+      resolvedModelSelection = projectAdmittedCodexModelSelection(
+        input.modelSelection,
       );
-      if (!effortResult.success) {
-        const error = `Invalid Codex reasoning effort: "${input.reasoningEffort}"`;
-        logger.error("codex-task-runner.invalid_reasoning_effort", {
-          workingDirectory: input.workingDirectory,
-          reasoningEffort: input.reasoningEffort,
-        });
-        return {
-          ...classifiedContinuation(
-            !isolatedOneShot && input.resumeRef?.backend === "codex"
-              ? input.resumeRef
-              : null,
-            error,
-          ),
-          text: null,
-          usage: null,
+    } catch (cause) {
+      const error = getErrorMessage(cause);
+      logger.error("codex-task-runner.invalid_model_selection", {
+        workingDirectory: input.workingDirectory,
+        modelId: input.modelSelection.modelId,
+        issues:
+          cause instanceof ModelSelectionPolicyError ? cause.issues : null,
+      });
+      return {
+        ...classifiedContinuation(
+          !isolatedOneShot && input.resumeRef?.backend === "codex"
+            ? input.resumeRef
+            : null,
           error,
-          timedOut: false,
-        };
-      }
-      validatedReasoningEffort = effortResult.data;
+        ),
+        text: null,
+        usage: null,
+        error,
+        timedOut: false,
+      };
     }
 
     // The isolated one-shot profile is already read-only, which forbids strictly
@@ -400,14 +400,10 @@ export class CodexTaskRunner implements AgentTaskRunner {
         : {}),
       // Always pin a model. With no model the Codex SDK falls back to its own
       // built-in default, which is rejected for ChatGPT-account auth.
-      model: input.modelId ?? getDefaultCodexModel(),
-      ...(validatedReasoningEffort
-        ? {
-            modelReasoningEffort: toSdkModelReasoningEffort(
-              validatedReasoningEffort,
-            ),
-          }
-        : {}),
+      model: resolvedModelSelection.modelId,
+      modelReasoningEffort: toSdkModelReasoningEffort(
+        resolvedModelSelection.reasoningEffort,
+      ),
     };
 
     logger.info("codex-task-runner.start", {
@@ -420,7 +416,8 @@ export class CodexTaskRunner implements AgentTaskRunner {
       skipGitRepoCheck: threadOptions.skipGitRepoCheck,
       executionProfile: input.executionProfile ?? "standard",
       hasCcSessionScope: input.ccSessionScope !== undefined,
-      codexFastModeOverride: input.codexFastMode ?? null,
+      modelId: resolvedModelSelection.modelId,
+      fastMode: resolvedModelSelection.fastMode,
       fsWriteRestricted: restricted !== null,
     });
 
@@ -503,11 +500,11 @@ export class CodexTaskRunner implements AgentTaskRunner {
       else externalSignal.addEventListener("abort", onExternalAbort);
     }
 
-    const codexFastMode = input.codexFastMode ?? false;
+    const codexFastMode = resolvedModelSelection.fastMode;
     logger.debug("codex-task-runner.fast_mode_resolved", {
       workingDirectory: input.workingDirectory,
       codexFastMode,
-      source: input.codexFastMode === undefined ? "task_default" : "request",
+      source: "model_selection",
     });
 
     let mcpServersConfig: Record<string, unknown> | undefined;
@@ -744,7 +741,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
           outputTokens: turn.usage.output_tokens,
           costUsd: estimateCodexCostUsd(
             turn.usage,
-            input.modelId ?? getDefaultCodexModel(),
+            resolvedModelSelection.modelId,
             pricingOverrides,
           ),
         };

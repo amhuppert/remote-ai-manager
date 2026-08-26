@@ -46,7 +46,10 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
     profileSnapshot: makeProfileSnapshot(),
-    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+    },
   },
   contextValidator: { enabled: false, assignments: [] },
   scriptValidator: { commands: [] },
@@ -59,7 +62,10 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   collaboration: {
     enabled: { value: true, source: "global" },
     secondAgent: {
-      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      value: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
       source: "global",
     },
     negotiationRounds: { value: 3, source: "global" },
@@ -470,8 +476,10 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
         },
         scriptValidator: { commands: [] },
@@ -486,9 +494,50 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     );
     expect(context?.title).toBe("Implement carefully");
     expect(context?.description).toBeUndefined();
-    expect(context?.implementer.agent.reasoningEffort).toBe("high");
+    expect(context?.implementer.agent.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
     expect(context?.mutability.allowAgentTaskAdd).toBe(true);
     expect(result.affectedContextIds).toContain("context-implement");
+  });
+
+  it("preserves an admitted custom Codex model while validating an unrelated live edit", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const execution = createWorkflowExecution({
+      status: "paused",
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-implement"
+              ? {
+                  ...context,
+                  implementer: {
+                    ...context.implementer,
+                    agent: {
+                      backend: "codex" as const,
+                      modelSelection: {
+                        modelId: "company-codex-model",
+                        parameters: { reasoning: "high", fast: "false" },
+                      },
+                    },
+                  },
+                }
+              : context,
+        ),
+      },
+    });
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        title: "Implement with the configured model",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
   });
 
   it("disables a context validator by setting it to null", () => {
@@ -513,8 +562,10 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
                         authority: "blocking",
                         agent: {
                           backend: "claude",
-                          model: "sonnet",
-                          reasoningEffort: "medium",
+                          modelSelection: {
+                            modelId: "sonnet",
+                            parameters: { effort: "medium" },
+                          },
                         },
                         continuity: { enabled: true },
                       },
@@ -982,8 +1033,10 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     // context-plan resolves to claude/opus/high; the explicit iterationPolicy wins.
     expect(context?.implementer.agent).toEqual({
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
     });
     expect(context?.iterationPolicy.maxIterations).toBe(7);
     // context-plan carries no resolved collaboration, so it falls back to defaults.
@@ -1206,7 +1259,7 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     expect(result.code).toBe("invalid_edit");
   });
 
-  it("rejects an implementer whose Codex reasoning effort is unsupported by the model", () => {
+  it("rejects an implementer whose model selection has unsupported parameters", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(execution, [
       {
@@ -1217,8 +1270,10 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "minimal",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "minimal", fast: "false" },
+            },
           },
         },
       },
@@ -1228,9 +1283,88 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     expect(result.code).toBe("invalid_edit");
     expect(
       result.issues.some(
-        (issue) => issue.code === "implementer-effort-unsupported",
+        (issue) => issue.code === "implementer-model-selection-invalid",
       ),
     ).toBe(true);
+  });
+
+  it("stores canonical complete selections for every editable assignment role", () => {
+    const nonCanonicalCodexSelection = () => ({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    });
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        implementer: {
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "codex",
+            modelSelection: nonCanonicalCodexSelection(),
+          },
+        },
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              authority: "blocking",
+              agent: {
+                backend: "codex",
+                modelSelection: nonCanonicalCodexSelection(),
+              },
+              continuity: { enabled: true },
+            },
+          ],
+        },
+        planRepair: {
+          enabled: true,
+          maxAttemptsPerContext: 2,
+          agent: {
+            backend: "codex",
+            modelSelection: nonCanonicalCodexSelection(),
+          },
+        },
+        collaboration: {
+          enabled: { value: true, source: "per-node" },
+          secondAgent: {
+            value: {
+              backend: "codex",
+              modelSelection: nonCanonicalCodexSelection(),
+            },
+            source: "per-node",
+          },
+          negotiationRounds: { value: 3, source: "per-node" },
+          autonomousResolutionThreshold: {
+            value: "major",
+            source: "per-node",
+          },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    expect(context).toBeDefined();
+    if (context === undefined) return;
+
+    const storedSelections = [
+      context.implementer.agent.modelSelection,
+      context.contextValidator.assignments[0]!.agent.modelSelection,
+      context.planRepair.agent!.modelSelection,
+      context.collaboration!.secondAgent.value.modelSelection,
+    ];
+    for (const selection of storedSelections) {
+      expect(Object.keys(selection.parameters)).toEqual(["fast", "reasoning"]);
+    }
   });
 
   it("allows selecting a registered script-validator command", () => {
@@ -1267,7 +1401,7 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     expect(context?.title).toBe("Replan");
   });
 
-  it("rejects an update-context that sets a Codex validator whose effort the model rejects", () => {
+  it("rejects an update-context with an invalid validator model selection", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(execution, [
       {
@@ -1283,8 +1417,10 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "minimal",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "minimal", fast: "false" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1297,12 +1433,12 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     expect(result.code).toBe("invalid_edit");
     expect(
       result.issues.some(
-        (issue) => issue.code === "validator-effort-unsupported",
+        (issue) => issue.code === "validator-model-selection-invalid",
       ),
     ).toBe(true);
   });
 
-  it("rejects an add-context whose validator effort is unsupported by the model", () => {
+  it("rejects an add-context with an invalid validator model selection", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(execution, [
       {
@@ -1320,8 +1456,10 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "minimal",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "minimal", fast: "false" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1334,7 +1472,7 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     expect(result.code).toBe("invalid_edit");
     expect(
       result.issues.some(
-        (issue) => issue.code === "validator-effort-unsupported",
+        (issue) => issue.code === "validator-model-selection-invalid",
       ),
     ).toBe(true);
   });
@@ -4016,8 +4154,10 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
         executionId: reloaded.id,
         contextId: "context-plan",
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
         toolServer: { servers: [] },
         placement,
       });
@@ -4122,8 +4262,10 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
         executionId: reloaded.id,
         contextId: "context-plan",
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
         toolServer: { servers: [] },
         placement,
       });

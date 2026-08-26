@@ -304,6 +304,10 @@ describe("chat spawn conversation-created broadcast", () => {
         "deadbeefcafedeadbeefcafedeadbeefcafe0000",
       setSessionSpawnedFrom: async () => {},
       addPlcSpawnedSessionIds: async () => {},
+      admitModelSelection: async ({ modelSelection }) => ({
+        ok: true,
+        modelSelection: modelSelection ?? { modelId: "sonnet", parameters: {} },
+      }),
       dispatchFirstTurn: async () => ({ dispatched: true }),
       broadcast: (event) => {
         broadcasts.push(event);

@@ -1,4 +1,4 @@
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
 import { parseAgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -9,9 +9,7 @@ import {
 
 export interface AgentTwoStartRequestDraft {
   backend: AgentBackendId;
-  model?: string;
-  effort?: string;
-  fastMode?: boolean;
+  modelSelection?: BackendModelSelection;
   profile?: string;
 }
 
@@ -35,15 +33,14 @@ export function buildAgentTwoStartRequest(
       : null;
   const candidate = {
     backend: draft.backend,
-    ...(draft.model !== undefined ? { model: draft.model } : {}),
-    ...(draft.effort !== undefined ? { reasoningEffort: draft.effort } : {}),
-    ...(backendSupportsFastMode(draft.backend) && draft.fastMode !== undefined
-      ? { fastMode: draft.fastMode }
+    ...(draft.modelSelection !== undefined
+      ? { modelSelection: draft.modelSelection }
       : {}),
     ...(profileRef !== null ? { profile: profileRef } : {}),
   };
   const parsed = collaborationAgentTwoRequestSchema.safeParse(candidate);
   if (parsed.success) return parsed.data;
+  if (draft.modelSelection !== undefined) return null;
 
   const fallback = collaborationAgentTwoRequestSchema.safeParse({
     backend: draft.backend,

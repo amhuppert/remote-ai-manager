@@ -286,7 +286,10 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
           id: "ctx-1",
           title: "Plan",
           acceptanceCriteria: "Plan is documented",
-          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+          agent: {
+            backend: "claude",
+            modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -324,7 +327,10 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
           id: "ctx-1",
           title: "Plan",
           acceptanceCriteria: "Plan is documented",
-          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+          agent: {
+            backend: "claude",
+            modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -1626,7 +1632,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     });
   });
 
-  it("throws GraphWorkflowValidationError when resolved implementer uses an unsupported reasoning effort", async () => {
+  it("throws GraphWorkflowValidationError when the resolved implementer selection is invalid", async () => {
     const { repo } = createInMemoryRepo();
     const baseline = createWorkflowDefinition();
     const definition = {
@@ -1639,8 +1645,10 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "codex" as const,
-              model: "gpt-5.4" as const,
-              reasoningEffort: "minimal" as const,
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "minimal", fast: "false" },
+              },
             },
           },
         },

@@ -114,9 +114,7 @@ function conversationTurnFromEvent(
     promptText: event.promptText,
     images: event.images ?? [],
     backend: event.backend ?? context.agentBackend,
-    modelId: event.modelId ?? null,
-    effort: event.effort ?? null,
-    codexFastMode: event.codexFastMode ?? null,
+    modelSelection: event.modelSelection ?? null,
     autonomous: event.autonomous ?? false,
     startedAt: new Date().toISOString(),
     streamId: event.streamId,
@@ -142,8 +140,7 @@ function taskRunFromEvent(
     kind: "task_run",
     promptText: event.promptText,
     backend: event.backend ?? context.agentBackend,
-    modelId: event.modelId ?? null,
-    effort: event.effort ?? null,
+    modelSelection: event.modelSelection ?? null,
     startedAt: new Date().toISOString(),
     ...(event.outputFormat !== undefined
       ? { outputFormat: event.outputFormat }
@@ -161,6 +158,29 @@ function taskRunFromEvent(
       : {}),
     ...(event.origin !== undefined ? { origin: event.origin } : {}),
   };
+}
+
+type ModelSelectionResolvedEvent = Extract<
+  ConversationEvent,
+  { type: "MODEL_SELECTION_RESOLVED" }
+>;
+
+function createModelSelectionResolutionReporter(
+  send: (event: ModelSelectionResolvedEvent) => void,
+  executionAttemptId: string,
+): (
+  modelSelection: ModelSelectionResolvedEvent["modelSelection"],
+) => Promise<void> {
+  return (modelSelection) =>
+    new Promise<void>((acknowledge, reject) => {
+      send({
+        type: "MODEL_SELECTION_RESOLVED",
+        modelSelection,
+        executionAttemptId,
+        acknowledge,
+        reject,
+      });
+    });
 }
 
 /**
@@ -239,6 +259,21 @@ export const conversationMachine = setup({
     markReadOnUserTurnStart: () => {},
     triggerAutoNaming: () => {},
     drainPendingQueue: () => {},
+    rejectInactiveModelSelectionResolution: ({ context, event }) => {
+      if (event.type !== "MODEL_SELECTION_RESOLVED") return;
+      logger.warn("conversation.model_selection_resolution_stale", {
+        conversationId: context.conversationId,
+        modelId: event.modelSelection.modelId,
+        currentExecutionAttemptId:
+          context.activeTurn?.executionAttemptId ?? null,
+        reportedExecutionAttemptId: event.executionAttemptId,
+      });
+      event.reject(
+        new Error(
+          "Resolved model selection belongs to an inactive execution attempt.",
+        ),
+      );
+    },
     cancelDebugCleanupVerification: ({ context }) => {
       const runtime = getConversationRuntime(
         conversationRuntimeKey(
@@ -461,6 +496,12 @@ export const conversationMachine = setup({
 
   initial: "idle",
 
+  on: {
+    MODEL_SELECTION_RESOLVED: {
+      actions: "rejectInactiveModelSelectionResolution",
+    },
+  },
+
   states: {
     // ========================================================
     // IDLE — waiting for prompt or debug mode entry
@@ -560,6 +601,13 @@ export const conversationMachine = setup({
         assign({
           status: "running" as const,
           lastActivityAt: () => new Date().toISOString(),
+          activeTurn: ({ context }) =>
+            context.activeTurn === null
+              ? null
+              : {
+                  ...context.activeTurn,
+                  executionAttemptId: randomUUID(),
+                },
         }),
         "syncDerivedFields",
         "broadcastConversationStatus",
@@ -662,6 +710,31 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
+        MODEL_SELECTION_RESOLVED: [
+          {
+            guard: ({ context, event }) =>
+              context.activeTurn?.executionAttemptId ===
+              event.executionAttemptId,
+            actions: [
+              assign({
+                activeTurn: ({ context, event }) => {
+                  const activeTurn = context.activeTurn;
+                  if (activeTurn === null) return null;
+                  return {
+                    ...activeTurn,
+                    modelSelection: event.modelSelection,
+                  };
+                },
+              }),
+              "syncDerivedFields",
+              "persistSnapshot",
+              ({ event }) => event.acknowledge(),
+            ],
+          },
+          {
+            actions: "rejectInactiveModelSelectionResolution",
+          },
+        ],
       },
 
       states: {
@@ -703,11 +776,16 @@ export const conversationMachine = setup({
 
           invoke: {
             src: "executePrompt",
-            input: ({ context }): ExecutePromptInput => {
+            input: ({ context, self }): ExecutePromptInput => {
               const activeTurn = context.activeTurn;
               if (activeTurn?.kind !== "conversation_turn") {
                 throw new Error(
                   "executePrompt requires an active conversation_turn",
+                );
+              }
+              if (activeTurn.executionAttemptId === undefined) {
+                throw new Error(
+                  "executePrompt requires an active execution attempt",
                 );
               }
 
@@ -736,9 +814,12 @@ export const conversationMachine = setup({
                 promptText: activeTurn.promptText,
                 images: activeTurn.images,
                 streamId: activeTurn.streamId,
-                modelId: activeTurn.modelId,
-                effort: activeTurn.effort,
-                codexFastMode: activeTurn.codexFastMode,
+                modelSelection: activeTurn.modelSelection,
+                onModelSelectionResolved:
+                  createModelSelectionResolutionReporter(
+                    (event) => self.send(event),
+                    activeTurn.executionAttemptId,
+                  ),
                 autonomous: activeTurn.autonomous,
                 debugMode: context.debugMode,
                 outputFormat,
@@ -779,10 +860,15 @@ export const conversationMachine = setup({
         taskRun: {
           invoke: {
             src: "runTaskRun",
-            input: ({ context }): RunTaskRunInput => {
+            input: ({ context, self }): RunTaskRunInput => {
               const activeTurn = context.activeTurn;
               if (activeTurn?.kind !== "task_run") {
                 throw new Error("runTaskRun requires an active task_run");
+              }
+              if (activeTurn.executionAttemptId === undefined) {
+                throw new Error(
+                  "runTaskRun requires an active execution attempt",
+                );
               }
               return {
                 persistence: context.transient ? "ephemeral" : "durable",
@@ -794,8 +880,12 @@ export const conversationMachine = setup({
                 agentBackend: activeTurn.backend,
                 backendRef: context.backendRef,
                 promptText: activeTurn.promptText,
-                modelId: activeTurn.modelId,
-                effort: activeTurn.effort,
+                modelSelection: activeTurn.modelSelection,
+                onModelSelectionResolved:
+                  createModelSelectionResolutionReporter(
+                    (event) => self.send(event),
+                    activeTurn.executionAttemptId,
+                  ),
                 ...(activeTurn.outputFormat !== undefined
                   ? { outputFormat: activeTurn.outputFormat }
                   : {}),

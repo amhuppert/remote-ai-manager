@@ -164,8 +164,10 @@ function makeAcceptingClaudeRuntime(): {
   const runtime: ConversationBackendRuntime = {
     backend: "claude",
     status: "alive",
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     outputFormat: undefined,
     alignmentVersion: null,
     sendTurn: vi.fn(async () => {

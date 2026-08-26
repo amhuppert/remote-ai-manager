@@ -186,8 +186,10 @@ describe("durable workflow wiring through production factory", () => {
     const agents = {
       agent_one: {
         backend: "claude",
-        model: "fable",
-        effort: "max",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
         profileSnapshot: buildAgentProfileSnapshot({
           tier: "project",
           id: "conversation-reviewer",
@@ -199,9 +201,10 @@ describe("durable workflow wiring through production factory", () => {
       },
       agent_two: {
         backend: "codex",
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-        fastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "xhigh", fast: "true" },
+        },
         profileSnapshot: buildAgentProfileSnapshot({
           tier: "global",
           id: "critic",

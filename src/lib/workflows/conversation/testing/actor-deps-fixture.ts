@@ -27,8 +27,10 @@ export function createMockBackendRuntime(
     status: "alive",
     // Callers that want a specific backend's model pass it explicitly; deriving
     // one from the backend id here would just be another identity branch.
-    modelId: "opus",
-    reasoningEffort: "high",
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     outputFormat: undefined,
     capabilities: {
       queueWhileRunning: false,
@@ -57,7 +59,7 @@ export function createActorImplementationDepsFixture(
   const factory = {
     backend: "claude" as const,
     createRuntime: vi.fn(async () => backendRuntime),
-    validateModelAndEffort: vi.fn(),
+    validateModelSelection: vi.fn(),
   };
 
   return {
@@ -67,13 +69,24 @@ export function createActorImplementationDepsFixture(
     readConfig: vi.fn(async () => ({
       agentBackends: {
         claude: {
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
           timeoutMs: 300_000,
         },
         codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { fast: "false", reasoning: "high" },
+          },
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
           timeoutMs: null,
         },
       },
@@ -99,6 +112,10 @@ export function createActorImplementationDepsFixture(
     ),
     getNextImageIndex: vi.fn(async () => 1),
     getConversationBackendFactory: vi.fn(() => factory),
+    admitConfiguredModelSelection: vi.fn(async ({ modelSelection }) => ({
+      ok: true as const,
+      modelSelection,
+    })),
     getConversationCapabilities: vi.fn(() => ({
       queue: {
         acceptsWhileRunning: true,

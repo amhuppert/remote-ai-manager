@@ -14,6 +14,7 @@ import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { StartTicketOutput, TicketError } from "./schemas";
 import type { StartTicketServiceInput } from "./start-service";
 import { createTicketStartRouteHandlers } from "./start-route-handlers";
+import { ModelSelectionAdmissionError } from "@/lib/agent-backends/model-selection-admission";
 
 const PROJECT_NAME = "command-center";
 
@@ -119,8 +120,10 @@ describe("POST /api/projects/:name/tickets/:number/start", () => {
       request({
         mode: "agent",
         backend: "codex",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "ultra",
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { fast: "true", reasoning: "ultra" },
+        },
       }),
       context(),
     );
@@ -135,8 +138,10 @@ describe("POST /api/projects/:name/tickets/:number/start", () => {
         number: 12,
         mode: "agent",
         backend: "codex",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "ultra",
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { fast: "true", reasoning: "ultra" },
+        },
       },
     ]);
   });
@@ -160,6 +165,41 @@ describe("POST /api/projects/:name/tickets/:number/start", () => {
     expect(calls[0]?.mode).toBe("prepared");
   });
 
+  it("returns a bounded stable diagnostic for a model admission refusal", async () => {
+    const { handlers } = makeHandlers({
+      start: async () => {
+        throw new ModelSelectionAdmissionError({
+          code: "unsupported_combination",
+          message:
+            'The selected parameter combination is not supported for model "claude-opus-5".',
+          modelId: "claude-opus-5",
+          parameterId: "thinking",
+        });
+      },
+    });
+
+    const response = await handlers.startPOST(
+      request({
+        mode: "agent",
+        backend: "claude",
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { effort: "max", thinking: "false" },
+        },
+      }),
+      context(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error:
+        'The selected parameter combination is not supported for model "claude-opus-5".',
+      code: "unsupported_combination",
+      modelId: "claude-opus-5",
+      parameterId: "thinking",
+    });
+  });
+
   it("rejects an invalid mode with 400 before reaching the service", async () => {
     const { handlers, calls } = makeHandlers();
 
@@ -173,6 +213,27 @@ describe("POST /api/projects/:name/tickets/:number/start", () => {
     expect(body.code).toBe("validation_failed");
     expect(calls).toEqual([]);
   });
+
+  it.each([
+    ["effort", "high"],
+    ["reasoning", "high"],
+    ["fast", "true"],
+    ["context", "max"],
+    ["thinking", "enabled"],
+  ])(
+    "rejects a top-level %s model parameter instead of silently dropping it",
+    async (field, value) => {
+      const { handlers, calls } = makeHandlers();
+
+      const response = await handlers.startPOST(
+        request({ mode: "agent", backend: "cursor", [field]: value }),
+        context(),
+      );
+
+      expect(response.status).toBe(400);
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("rejects a non-object body with 400", async () => {
     const { handlers, calls } = makeHandlers();

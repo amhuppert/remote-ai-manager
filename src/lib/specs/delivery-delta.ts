@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { elementHandleInSnapshot } from "./review-state";
+import { elementHandleInSnapshot } from "./revision-handles";
 import {
   specCriterionDispositionSchema,
   specElementKindSchema,

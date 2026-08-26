@@ -147,11 +147,7 @@ import {
   type GraphWorkflowLaunchOutcome,
   type GraphWorkflowResumeOptions,
 } from "@/lib/workflow-graph/workflow-manager";
-import {
-  validateWorkflowPlan,
-  type WorkflowPlanIssue,
-} from "@/lib/workflows/plan-validation";
-import { createValidationCommandPreflight } from "@/lib/validation/preflight";
+import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
 import { buildGraphWorkflowExecutionDeepLink } from "./execution-deep-link";
 import type { GraphWorkflowBoundaryResultProjection } from "./execution-result-projection";
@@ -206,6 +202,7 @@ import {
   createRegisteredGraphExecutionContract,
   GraphExecutionContractViolationError,
 } from "./execution-contract-port";
+import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -606,8 +603,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       executionId: input.executionId,
       contextId: input.contextId,
       backend: input.backend,
-      model: input.model,
-      reasoningEffort: input.reasoningEffort,
+      modelSelection: input.modelSelection,
       toolServer: input.toolServer,
       executionTarget: input.executionTarget,
       askUserQuestionsEnabled: input.askUserQuestionsEnabled,
@@ -2198,11 +2194,13 @@ export function createGraphWorkflowExecutionRouteHandlers(
       (deps.readRepoConfig ?? defaultReadRepoConfig)(projectPath),
       (deps.readConfig ?? readConfig)(),
     ]);
-    const validation = validateWorkflowPlan(body.data.plan, {
-      validationCommandPreflight: createValidationCommandPreflight(
-        repoConfig?.validation,
-        globalConfig.validation,
-      ),
+    const validation = await admitAuthoredWorkflowLaunch(body.data.plan, {
+      caller: "project-run",
+      documentScope: { kind: "project", projectPath },
+      projectValidation: repoConfig?.validation ?? null,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: globalConfig.workflowDefaults,
+      agentBackends: globalConfig.agentBackends,
     });
     if (!validation.ok) {
       logger.info("graph-workflow.run.plan_rejected", {
@@ -2240,7 +2238,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       outcome = await deps.runExecution({
         projectPath,
         sessionName,
-        plan: validation.draft,
+        plan: validation.launch,
         ...(body.data.inputs !== undefined ? { inputs: body.data.inputs } : {}),
         ...(ownerConversationId !== null ? { ownerConversationId } : {}),
       });

@@ -20,6 +20,10 @@ import { readRepoConfig } from "@/lib/projects/repo-config";
 
 import type { ConversationBackendFactory } from "../conversation";
 import type { BackendContinuityAdapter } from "../continuity";
+import {
+  backendModelSelectionSchema,
+  type BackendModelSelection,
+} from "../schemas";
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import {
   createCursorContinuityAdapter,
@@ -31,9 +35,13 @@ import {
 } from "./conversation-runtime";
 import { translatePortableMcpToCursor } from "./mcp-translation";
 import {
+  createCursorModelCatalogFacet,
+  loadGeneratedCursorModelCatalog,
+} from "./model-catalog";
+import {
   createCursorSupportedModelsReader,
-  resolveCursorModelForProject,
-  type CursorModelResolution,
+  validateCursorModelSelectionForProject,
+  type CursorModelSelectionResolution,
 } from "./model-policy";
 import { createProductionCursorWorkerTransport } from "./worker/supervisor";
 import type { CursorWorkerTransport } from "./worker-port";
@@ -62,13 +70,12 @@ export function cursorAgentStorePath(conversationId: string): string {
 }
 
 /**
- * The global Cursor profile's configured model, or null when none is set.
- * Read per resolution rather than cached: the profile is editable at runtime.
+ * The global Cursor profile's complete selection. Read per validation rather
+ * than cached because the profile is editable at runtime.
  */
-async function globalProfileModel(): Promise<string | null> {
+async function globalProfileSelection(): Promise<BackendModelSelection> {
   const config = await readConfig();
-  const model = config.agentBackends.cursor.model.trim();
-  return model.length > 0 ? model : null;
+  return config.agentBackends.cursor.modelSelection;
 }
 
 /**
@@ -83,16 +90,20 @@ async function globalProfileModel(): Promise<string | null> {
 const projectSupportedModels =
   createCursorSupportedModelsReader(readRepoConfig);
 
+export const cursorModelCatalog = createCursorModelCatalogFacet({
+  loadCatalog: loadGeneratedCursorModelCatalog,
+  supportedModels: projectSupportedModels,
+});
+
 export function resolveCursorModelForProduction(
   projectPath: string,
-  explicitSelection: string | null,
-): Promise<CursorModelResolution> {
-  return resolveCursorModelForProject(
-    { projectPath, explicitSelection },
-    {
-      supportedModels: projectSupportedModels,
-      globalProfileModel,
-    },
+  selection: BackendModelSelection,
+): Promise<CursorModelSelectionResolution> {
+  return globalProfileSelection().then((configuredSelection) =>
+    validateCursorModelSelectionForProject(
+      { projectPath, selection, configuredSelection },
+      { modelCatalog: cursorModelCatalog },
+    ),
   );
 }
 
@@ -100,42 +111,38 @@ export const cursorConversationBackendFactory: ConversationBackendFactory = {
   backend: CURSOR_BACKEND_ID,
 
   /**
-   * Shape only. Membership in the project's supported-model list is the model
-   * policy's to answer and needs the project path, which this synchronous hook
-   * does not receive — `validateProjectModelSelection` is the one that decides.
-   * Rejecting an unlisted ID here would need a project-blind list, which is the
-   * static CC catalog D10 rejected.
-   *
-   * Cursor's Composer takes no reasoning-effort parameter, so an effort value
-   * is accepted and ignored rather than refused: it reaches the adapter from
-   * shared surfaces that carry one for every backend, and failing a turn over a
-   * field Cursor never reads would refuse valid work.
+   * Shape only. Exact variant and project-allowlist validation needs the
+   * project-effective catalog and therefore belongs to the asynchronous hook.
    */
-  validateModelAndEffort(input: { modelId?: string }): void {
-    if (input.modelId !== undefined && input.modelId.trim().length === 0) {
-      throw new Error("Cursor model must be a non-empty model ID.");
-    }
+  validateModelSelection(selection): void {
+    backendModelSelectionSchema.parse(selection);
   },
 
   async validateProjectModelSelection(input) {
     const resolution = await resolveCursorModelForProduction(
       input.projectPath,
-      input.modelId ?? null,
+      input.modelSelection,
     );
-    if (resolution.ok) return { ok: true };
+    if (resolution.ok) {
+      return { ok: true, modelSelection: resolution.selection };
+    }
 
-    logger.info("cursor-factory.model_selection_refused", {
+    logger.warn("model_selection.rejected", {
+      backend: CURSOR_BACKEND_ID,
       code: resolution.code,
-      requestedModel: input.modelId ?? null,
-      supportedModelCount: resolution.supportedModels.length,
+      modelId: resolution.modelId,
+      ...(resolution.parameterId !== undefined
+        ? { parameterId: resolution.parameterId }
+        : {}),
     });
     return {
       ok: false,
-      message: `${resolution.message}${
-        resolution.supportedModels.length > 0
-          ? ` Supported models: ${resolution.supportedModels.join(", ")}.`
-          : ""
-      }`,
+      code: resolution.code,
+      message: resolution.message,
+      modelId: resolution.modelId,
+      ...(resolution.parameterId !== undefined
+        ? { parameterId: resolution.parameterId }
+        : {}),
     };
   },
 
@@ -146,27 +153,32 @@ export const cursorConversationBackendFactory: ConversationBackendFactory = {
    * than the descriptor's — the creation surface then has to ask.
    */
   async resolveProjectModelOptions(input) {
-    const resolution = await resolveCursorModelForProduction(
-      input.projectPath,
-      null,
-    );
-    return {
-      models: resolution.supportedModels,
-      defaultModelId: resolution.ok ? resolution.model : null,
-    };
+    const configuredSelection = await globalProfileSelection();
+    try {
+      const catalog = await cursorModelCatalog.getCatalog({
+        projectPath: input.projectPath,
+        configuredSelection,
+      });
+      return {
+        models: catalog.models.map(({ id }) => id),
+        defaultModelId: catalog.defaultModelId,
+      };
+    } catch {
+      return { models: [], defaultModelId: null };
+    }
   },
 
   async createRuntime(input) {
     logger.info("cursor-factory.create_runtime", {
       conversationId: input.conversationId,
-      modelId: input.modelId,
+      modelId: input.modelSelection.modelId,
     });
 
     return new CursorConversationRuntime(input, {
       transport: productionTransport(),
       storePath: cursorAgentStorePath,
-      resolveModel: (explicitSelection) =>
-        resolveCursorModelForProduction(input.projectPath, explicitSelection),
+      resolveModel: (selection) =>
+        resolveCursorModelForProduction(input.projectPath, selection),
       translatePortableMcpToCursor,
       newRunId: () => randomUUID(),
       now: () => Date.now(),

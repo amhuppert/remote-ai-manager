@@ -1,6 +1,7 @@
 import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,
+  BackendModelCatalogFacet,
   BackendConversationCapabilities,
   BackendConversationTranscriptProjection,
 } from "../descriptor";
@@ -114,6 +115,7 @@ export const cursorConversationFsWriteRestriction = "unsupported" as const;
 
 export interface CursorDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
+  modelCatalog: BackendModelCatalogFacet;
   /** `createCursorContinuityAdapter(...)` in production; injected so the
    *  conformance suite can drive it against a scripted worker transport. */
   continuity: BackendContinuityAdapter;
@@ -130,6 +132,7 @@ export function createCursorBackendDescriptor(
   return {
     id: CURSOR_BACKEND_ID,
     metadata: cursorBackendMetadata,
+    modelCatalog: deps.modelCatalog,
     conversation: {
       factory: deps.conversationFactory,
       continuity: deps.continuity,

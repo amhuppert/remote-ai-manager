@@ -6,7 +6,11 @@ import type { BackendRuntimeConfigAdapter } from "./runtime-config";
 import type { AgentTaskRunner } from "./task";
 import type { AgentFailureClassifier } from "./errors";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
-import type { EffortLevel } from "./schemas";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+  EffortLevel,
+} from "./schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 
 export const queueDeliveryTimingSchema = z.enum(["in_turn", "next_turn"]);
@@ -153,6 +157,17 @@ export interface BackendModelInfo {
   effortLevels: readonly EffortLevel[];
 }
 
+/**
+ * Supplies the complete valid model variants available at the current project
+ * boundary. Static and discovered providers share this one neutral contract.
+ */
+export interface BackendModelCatalogFacet {
+  getCatalog(input: {
+    projectPath?: string;
+    configuredSelection?: BackendModelSelection;
+  }): Promise<BackendModelCatalog>;
+}
+
 export const skillTriggerPrefixSchema = z.enum(["/", "$"]);
 export type SkillTriggerPrefix = z.infer<typeof skillTriggerPrefixSchema>;
 
@@ -218,6 +233,7 @@ export interface AgentBackendTaskFacet {
 export interface AgentBackendDescriptor {
   id: AgentBackendId;
   metadata: AgentBackendMetadata;
+  modelCatalog: BackendModelCatalogFacet;
   conversation?: AgentBackendConversationFacet;
   tasks?: AgentBackendTaskFacet;
   managedSkills: AgentBackendManagedSkills;

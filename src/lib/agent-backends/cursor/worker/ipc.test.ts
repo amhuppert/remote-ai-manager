@@ -331,7 +331,10 @@ describe("cursor IPC frames", () => {
     type: "attachAgent",
     mode: "resume",
     ref: "agent-ref-1",
-    model: "composer-2.5",
+    modelSelection: {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true", cyber: "false" },
+    },
     disallowedTools: ["askQuestion", "await"],
     sandboxEnabled: false,
     autoReview: false,
@@ -349,10 +352,17 @@ describe("cursor IPC frames", () => {
     promptText: "hello",
     images: [{ data: "iVBORw0KGgo=", mimeType: "image/png" }],
     structuredOutputInstruction: null,
-    model: "composer-2.5",
+    modelSelection: {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true", cyber: "false" },
+    },
     mcpServers: {},
     forceExpirePersistedRun: false,
   };
+
+  it("uses protocol version 2 for the atomic model selection contract", () => {
+    expect(CURSOR_IPC_CODEC_VERSION).toBe(2);
+  });
 
   it("accepts every parent frame in the contract", () => {
     for (const frame of [
@@ -368,6 +378,17 @@ describe("cursor IPC frames", () => {
       if (!parsed.ok) continue;
       expect(parsed.frame.type).toBe(frame.type);
     }
+  });
+
+  it("rejects the legacy string model field at the worker trust boundary", () => {
+    const { modelSelection: _selection, ...withoutSelection } = attachFrame;
+    expect(
+      parseParentFrame({ ...withoutSelection, model: "composer-2.5" }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid_frame",
+      frameType: "attachAgent",
+    });
   });
 
   it("accepts every worker frame in the contract", () => {

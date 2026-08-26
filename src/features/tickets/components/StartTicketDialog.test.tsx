@@ -8,15 +8,39 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ticketKeys } from "@/lib/tickets/query-keys";
 import type { TicketDetail } from "@/lib/tickets/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import type { BackendModelCatalog } from "@/lib/agent-backends/schemas";
 import StartTicketDialog from "./StartTicketDialog";
 
 const routerPush = vi.fn();
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
+
+function projectModelOptions(defaults: BackendSelectionDefaultsById) {
+  const catalogs: Record<"claude" | "codex" | "cursor", BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex", defaults.codex),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return (["claude", "codex", "cursor"] as const).map((backend) => ({
+    backend,
+    models: [],
+    defaultModelId: defaults[backend].modelId,
+    source: "catalog" as const,
+    modelCatalog: catalogs[backend],
+    defaultSelection: defaults[backend],
+    diagnostics: [],
+  }));
+}
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -35,6 +59,10 @@ function renderDialog(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  queryClient.setQueryData(
+    backendCatalogKeys.projectModelOptions("command-center"),
+    projectModelOptions(backendDefaults),
+  );
   render(
     <QueryClientProvider client={queryClient}>
       <StartTicketDialog
@@ -83,6 +111,10 @@ function renderDeferredStart() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  queryClient.setQueryData(
+    backendCatalogKeys.projectModelOptions("command-center"),
+    projectModelOptions(BACKEND_DEFAULTS),
+  );
 
   function Harness(): React.JSX.Element {
     const [open, setOpen] = useState(false);
@@ -162,7 +194,7 @@ describe("StartTicketDialog", () => {
     await user.click(
       await screen.findByRole("option", { name: /GPT-5.6 Sol/ }),
     );
-    await user.click(screen.getByTestId("effort-selector-trigger"));
+    await user.click(screen.getByRole("combobox", { name: "Reasoning" }));
     await user.click(await screen.findByRole("option", { name: /Ultra/ }));
     await user.click(screen.getByRole("button", { name: "Start work" }));
 
@@ -170,8 +202,10 @@ describe("StartTicketDialog", () => {
       expect(requestBody).toEqual({
         mode: "agent",
         backend: "codex",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "ultra",
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "ultra", fast: "false" },
+        },
         // Identity travels beside the runtime triple, never inside it.
         profile: { tier: "builtin", id: "standard-agent" },
       }),
@@ -179,7 +213,7 @@ describe("StartTicketDialog", () => {
   });
 
   // R7.1: the ticket kickoff path shows the picker on its Standard Agent
-  // default, alongside — not merged into — the backend/model/effort controls.
+  // default, alongside — not merged into — the runtime controls.
   it("offers a Standard-Agent-defaulted profile picker beside the kickoff runtime controls", () => {
     renderDialog();
 
@@ -187,7 +221,9 @@ describe("StartTicketDialog", () => {
       screen.getByRole("combobox", { name: /agent profile/i }),
     ).toHaveTextContent("Standard Agent");
     expect(screen.getByTestId("model-selector-trigger")).toBeInTheDocument();
-    expect(screen.getByTestId("effort-selector-trigger")).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Effort" }),
+    ).toBeInTheDocument();
   });
 
   it("submits the configured default backend profile without requiring edits", async () => {
@@ -213,8 +249,10 @@ describe("StartTicketDialog", () => {
       expect(requestBody).toEqual({
         mode: "agent",
         backend: "codex",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "ultra",
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "ultra", fast: "false" },
+        },
         // Identity travels beside the runtime triple, never inside it.
         profile: { tier: "builtin", id: "standard-agent" },
       }),
@@ -236,9 +274,11 @@ describe("StartTicketDialog", () => {
       },
     );
     renderDialog(vi.fn(), "codex", {
-      claude: { modelId: "sonnet", effort: "medium" },
-      codex: { modelId: "custom-codex-model", effort: "ultra" },
-      cursor: { modelId: "composer-2.5", effort: "high" },
+      ...BACKEND_DEFAULTS,
+      codex: {
+        modelId: "custom-codex-model",
+        parameters: { reasoning: "ultra", fast: "false" },
+      },
     });
     const user = userEvent.setup();
 
@@ -251,8 +291,10 @@ describe("StartTicketDialog", () => {
       expect(requestBody).toEqual({
         mode: "agent",
         backend: "codex",
-        model: "custom-codex-model",
-        reasoningEffort: "ultra",
+        modelSelection: {
+          modelId: "custom-codex-model",
+          parameters: { reasoning: "ultra", fast: "false" },
+        },
         // Identity travels beside the runtime triple, never inside it.
         profile: { tier: "builtin", id: "standard-agent" },
       }),
@@ -270,7 +312,7 @@ describe("StartTicketDialog", () => {
       screen.queryByTestId("model-selector-trigger"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("effort-selector-trigger"),
+      screen.queryByRole("combobox", { name: "Effort" }),
     ).not.toBeInTheDocument();
   });
 

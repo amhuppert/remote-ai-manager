@@ -48,7 +48,7 @@ Agents escalate cheapest-first; a full-transcript `Read` should effectively neve
 | Transcript entries + reader | `src/lib/prompt/transcript.ts` (`TranscriptEntry` :38, `readConversationMessagesWithSeq()` :645, parsed cache :609, `getNextAppendSeq()` :178) | Source of truth for messages + coordinates |
 | Content blocks | `src/lib/conversations/message-content-schemas.ts:54` (`text/thinking/tool_use/tool_result/command/image*/debug_structured/document_feedback`) | Normalizer input |
 | `#` mention → XML | `src/lib/prompt-editor/conversation-mention-node.ts:6` (attrs), `serializer.ts:117` (`renderConversationRefXml` :142), `conversation-ref-parser.ts` | Ref enrichment |
-| One-shot structured LLM call | `src/lib/workflows/conversation/execute-workflow-task-run.ts:127` (`ExecuteWorkflowTaskRunInput`: `kind:"task_run"`, `prompt`, `outputFormat`, `timeoutMs`, `modelId`, `effort`; returns `TaskRunResult` with `structuredOutput`) ; `src/lib/agent-backends/claude/task-runner.ts:40` | Generation call |
+| One-shot structured LLM call | `src/lib/workflows/conversation/execute-workflow-task-run.ts` (`ExecuteWorkflowTaskRunInput`: `kind:"task_run"`, `prompt`, `outputFormat`, `timeoutMs`, atomic `modelSelection`; returns `TaskRunResult` with `structuredOutput`) ; `src/lib/agent-backends/claude/task-runner.ts` | Generation call |
 | Structured-output template | `src/lib/conversation-commands/` (commit-message generation: Zod schema + JSON schema + `safeParse`) | Prompt/validation pattern |
 | Background jobs | `src/lib/jobs/` (`backgroundJobSchema` schemas.ts:24 requires `sessionName`/`branchName`) | Session-shaped — explicitly **not** reused; see §7.2 |
 | SSE | `src/lib/events/publication.ts` (`publishEvent`/`PublishFn`), `src/lib/api/sse-events.ts` (`SSEEvent` union) | Typed event through the canonical publication seam |
@@ -279,9 +279,8 @@ CREATE TABLE IF NOT EXISTS context_artifacts (
   source_hash                TEXT NOT NULL,
   status                     TEXT NOT NULL,             -- pending | complete | failed
   error                      TEXT,
-  model_provider             TEXT NOT NULL,             -- claude | codex
-  model                      TEXT NOT NULL,
-  effort                     TEXT,
+  backend                    TEXT NOT NULL,             -- registered backend id
+  model_selection_json       TEXT NOT NULL CHECK (json_valid(model_selection_json)),
   schema_version             INTEGER NOT NULL,
   prompt_version             TEXT NOT NULL,
   normalizer_version         TEXT NOT NULL,
@@ -328,7 +327,7 @@ trigger (UI button | cctl conversation compact | future workflow hook)
        → renderCompactTranscript(fullOrDeltaWindow, compactionRenderOpts)
        → redact(renderedText)                       (§7.5)
        → build prompt (previous envelope for delta; §7.3)
-       → executeWorkflowTaskRun({ kind:"task_run", prompt, outputFormat:{type:"json_schema",schema}, modelId, effort, timeoutMs })
+       → executeWorkflowTaskRun({ kind:"task_run", prompt, outputFormat:{type:"json_schema",schema}, modelSelection, timeoutMs })
        → compactionEnvelopeSchema.safeParse(result.structuredOutput)   (retry once on schema failure)
        → deterministic guards (§7.3)
        → redact(envelope)                           (defense in depth)
@@ -380,9 +379,14 @@ Extend `globalConfigSchema` (`src/lib/config/schemas.ts`):
 ```ts
 compaction: z.object({
   backend: agentBackendSchema.default("claude"),
-  conversationModel: z.string().default("sonnet"),   // canonical conversation compaction
-  messageModel: z.string().default("sonnet"),        // may drop to haiku after evals (§13)
-  effort: z.string().default("medium"),
+  conversationModelSelection: backendModelSelectionSchema.default({
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  }),
+  messageModelSelection: backendModelSelectionSchema.default({
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  }),
   timeoutMs: z.number().int().default(180_000),
 }).default({ …defaults })
 ```
@@ -393,8 +397,8 @@ Merged via `mergeConfigWithDefaults()`; per-project override via the existing ca
 
 - **Default:** Claude with the configured high-recall model remains the product default. Generation nevertheless uses the neutral task-runner boundary and supports any registered backend selected by `compaction.backend`.
 - **Schema safety:** the authoritative schema is shared. Claude projects unsupported JSON Schema keywords inside its adapter immediately before SDK handoff; Codex receives the unmodified schema; Zod validates the returned artifact for both.
-- **Not provider-locked:** `backend` is config; `model_provider/model/effort/prompt_version/normalizer_version` are stamped on every artifact so eval comparisons are attributable. A default backend/model change still requires the §13 recall evaluation.
-- **Never** default canonical artifacts to a cheap model before the eval exists; a cheaper `messageModel` (e.g. Haiku) is adopted only after evals show it preserves decisions/files/commands/blockers + source refs.
+- **Not provider-locked:** `backend` plus the complete `modelSelection`, `prompt_version`, and `normalizer_version` are stamped on every artifact so eval comparisons are attributable. A default backend/model change still requires the §13 recall evaluation.
+- **Never** default canonical artifacts to a cheap model before the eval exists; a cheaper `messageModelSelection` (e.g. a complete Haiku selection) is adopted only after evals show it preserves decisions/files/commands/blockers + source refs.
 - **Never** use a provider's opaque native compaction as the user-facing artifact.
 
 ---
@@ -456,7 +460,7 @@ Server-backed cross-conversation read/compact APIs are a stronger capability tha
    - `GET …/read`, `GET …/context-artifacts`, `GET …/context-artifacts/[aid]` — **browser-facing, un-gated**: the same trust boundary as the existing conversation messages endpoint, which already serves full transcripts to the UI un-gated; gating these would break UI consumption while protecting nothing new. When a bearer token *is* present (cctl always sends one), it is validated — invalid → 401 — and the caller identity feeds the audit log.
    - `POST …/context-artifacts`, `DELETE …/context-artifacts/[aid]` — same shape as the existing UI-facing job-dispatch routes: un-gated for the UI; agent calls arrive with the bearer token plus caller-conversation fields, which are validated and stamped into provenance (`created_by=agent`, `created_by_conversation_id`).
    - If a hard agent/UI split is ever needed (e.g. multi-user), add dedicated token-gated agent routes then; v1 stays consistent with the codebase's actual boundary.
-2. **Provenance:** every artifact stamps `created_by` (`user`|`agent`), `created_by_conversation_id`, `model_provider/model/effort`, `prompt_version`, `normalizer_version`.
+2. **Provenance:** every artifact stamps `created_by` (`user`|`agent`), `created_by_conversation_id`, `backend`, the exact `modelSelection`, `prompt_version`, and `normalizer_version`.
 3. **Audit log:** structured events for cross-conversation access — `audit.conversation_read` and `audit.compaction_triggered` with `{ callerConversationId, targetConversationId, window, trigger }` via `createLogger("context-artifacts.audit")`.
 4. **Archived conversations:** readable and compactable (archived ≠ secret); the UI viewer shows the archived badge.
 5. **Cross-project references:** allowed (parity with the `#` mention, which already spans projects); audit-logged with both project names.

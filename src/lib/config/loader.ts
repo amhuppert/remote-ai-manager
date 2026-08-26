@@ -11,12 +11,16 @@ import {
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
-import {
-  clampEffortToModel,
-  getCodexReasoningLevelsForModel,
-  type CodexReasoningEffort,
-} from "@/lib/agent-backends/schemas";
 import { CURSOR_DEFAULT_MODEL } from "@/lib/agent-backends/cursor/model-policy";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import {
+  ModelSelectionPolicyError,
+  validateModelSelection,
+} from "@/lib/agent-backends/model-selection";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
@@ -130,21 +134,27 @@ function defaultConfig(): GlobalConfig {
     ],
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 3_600_000,
       },
       codex: {
-        fastMode: false,
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
         timeoutMs: null,
       },
       // The evidence-backed Cursor default (spec D10). Stated explicitly rather
       // than left to provider auto-selection, so what a run uses is what
       // Command Center chose.
       cursor: {
-        model: CURSOR_DEFAULT_MODEL,
+        modelSelection: {
+          modelId: CURSOR_DEFAULT_MODEL,
+          parameters: { fast: "true" },
+        },
         timeoutMs: null,
       },
     },
@@ -159,9 +169,14 @@ function defaultConfig(): GlobalConfig {
     workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),
     compaction: {
       backend: "claude",
-      conversationModel: "sonnet",
-      messageModel: "sonnet",
-      effort: "medium",
+      conversationModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
+      messageModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
       timeoutMs: 180_000,
     },
     validation: {
@@ -171,47 +186,219 @@ function defaultConfig(): GlobalConfig {
     conversationNaming: {
       enabled: true,
       backend: "claude",
-      model: "haiku",
-      effort: "low",
+      modelSelection: { modelId: "haiku", parameters: {} },
       timeoutMs: null,
     },
   };
-}
-
-function resolveDefaultCodexEffort(
-  model: string,
-): CodexReasoningEffort | undefined {
-  const supported = getCodexReasoningLevelsForModel(model);
-  if (supported === null || supported.includes("high")) return "high";
-  return supported.at(-1);
 }
 
 export function materializeGlobalConfig(
   rawConfig: RawGlobalConfig,
 ): GlobalConfig {
   const merged = mergeConfigWithDefaults(defaultConfig(), rawConfig);
-  const rawClaude = rawConfig.agentBackends?.claude;
-  const rawCodex = rawConfig.agentBackends?.codex;
-
-  if (rawClaude?.reasoningEffort === undefined) {
-    const effort = clampEffortToModel(
-      "high",
-      merged.agentBackends.claude.model,
-    );
-    if (effort === undefined) {
-      delete merged.agentBackends.claude.reasoningEffort;
-    } else {
-      merged.agentBackends.claude.reasoningEffort = effort;
+  for (const backend of ["claude", "codex", "cursor"] as const) {
+    const explicit = rawConfig.agentBackends?.[backend]?.modelSelection;
+    if (explicit !== undefined) {
+      merged.agentBackends[backend].modelSelection = structuredClone(explicit);
     }
   }
-
-  if (rawCodex?.reasoningEffort === undefined) {
-    merged.agentBackends.codex.reasoningEffort = resolveDefaultCodexEffort(
-      merged.agentBackends.codex.model,
+  const rawCompaction = rawConfig.compaction;
+  if (rawCompaction?.conversationModelSelection !== undefined) {
+    merged.compaction!.conversationModelSelection = structuredClone(
+      rawCompaction.conversationModelSelection,
+    );
+  }
+  if (rawCompaction?.messageModelSelection !== undefined) {
+    merged.compaction!.messageModelSelection = structuredClone(
+      rawCompaction.messageModelSelection,
+    );
+  }
+  if (rawConfig.conversationNaming?.modelSelection !== undefined) {
+    merged.conversationNaming!.modelSelection = structuredClone(
+      rawConfig.conversationNaming.modelSelection,
+    );
+  }
+  const rawWorkflowDefaults = rawConfig.workflowDefaults;
+  if (rawWorkflowDefaults?.implementer?.agent.modelSelection !== undefined) {
+    merged.workflowDefaults!.implementer.agent.modelSelection = structuredClone(
+      rawWorkflowDefaults.implementer.agent.modelSelection,
+    );
+  }
+  if (rawWorkflowDefaults?.contextValidator?.assignments !== undefined) {
+    for (const [
+      index,
+      assignment,
+    ] of rawWorkflowDefaults.contextValidator.assignments.entries()) {
+      merged.workflowDefaults!.contextValidator.assignments[
+        index
+      ]!.agent.modelSelection = structuredClone(
+        assignment.agent.modelSelection,
+      );
+    }
+  }
+  if (rawWorkflowDefaults?.collaboration?.secondAgent !== undefined) {
+    merged.workflowDefaults!.collaboration.secondAgent.modelSelection =
+      structuredClone(
+        rawWorkflowDefaults.collaboration.secondAgent.modelSelection,
+      );
+  }
+  if (rawWorkflowDefaults?.planRepair?.agent !== undefined) {
+    merged.workflowDefaults!.planRepair.agent!.modelSelection = structuredClone(
+      rawWorkflowDefaults.planRepair.agent.modelSelection,
     );
   }
 
-  return globalConfigSchema.parse(merged);
+  const config = globalConfigSchema.parse(merged);
+  canonicalizeGlobalModelSelections(config);
+  return config;
+}
+
+function canonicalSelection(
+  catalog: BackendModelCatalog,
+  selection: BackendModelSelection,
+): BackendModelSelection {
+  const validation = validateModelSelection(catalog, selection);
+  if (!validation.valid) {
+    throw new ModelSelectionPolicyError(validation.issues);
+  }
+  return validation.selection;
+}
+
+function canonicalizeGlobalModelSelections(config: GlobalConfig): void {
+  const catalogs = Object.fromEntries(
+    (["claude", "codex", "cursor"] as const).map((backend) => [
+      backend,
+      getConfiguredBackendModelCatalog(
+        backend,
+        config.agentBackends[backend].modelSelection,
+      ),
+    ]),
+  ) as Record<"claude" | "codex" | "cursor", BackendModelCatalog>;
+
+  for (const backend of ["claude", "codex", "cursor"] as const) {
+    config.agentBackends[backend].modelSelection = canonicalSelection(
+      catalogs[backend],
+      config.agentBackends[backend].modelSelection,
+    );
+  }
+
+  if (config.compaction !== undefined) {
+    const catalog = catalogs[config.compaction.backend];
+    config.compaction.conversationModelSelection = canonicalSelection(
+      catalog,
+      config.compaction.conversationModelSelection,
+    );
+    config.compaction.messageModelSelection = canonicalSelection(
+      catalog,
+      config.compaction.messageModelSelection,
+    );
+  }
+
+  if (config.conversationNaming !== undefined) {
+    config.conversationNaming.modelSelection = canonicalSelection(
+      catalogs[config.conversationNaming.backend],
+      config.conversationNaming.modelSelection,
+    );
+  }
+
+  const workflowDefaults = config.workflowDefaults;
+  if (workflowDefaults === undefined) return;
+  const workflowAgents = [
+    workflowDefaults.implementer.agent,
+    ...workflowDefaults.contextValidator.assignments.map(
+      (assignment) => assignment.agent,
+    ),
+    workflowDefaults.collaboration.secondAgent,
+    ...(workflowDefaults.planRepair.agent === undefined
+      ? []
+      : [workflowDefaults.planRepair.agent]),
+  ];
+  for (const agent of workflowAgents) {
+    agent.modelSelection = canonicalSelection(
+      catalogs[agent.backend],
+      agent.modelSelection,
+    );
+  }
+}
+
+/**
+ * Canonicalize every explicitly persisted selection while preserving the raw
+ * config's explicit-only shape.
+ */
+export function canonicalizeRawGlobalConfig(
+  rawConfig: RawGlobalConfig,
+): RawGlobalConfig {
+  const config = materializeGlobalConfig(rawConfig);
+  const canonical = structuredClone(rawConfig);
+
+  for (const backend of ["claude", "codex", "cursor"] as const) {
+    if (canonical.agentBackends?.[backend]?.modelSelection === undefined) {
+      continue;
+    }
+    canonical.agentBackends[backend]!.modelSelection = structuredClone(
+      config.agentBackends[backend].modelSelection,
+    );
+  }
+
+  if (canonical.compaction?.conversationModelSelection !== undefined) {
+    canonical.compaction.conversationModelSelection = structuredClone(
+      config.compaction!.conversationModelSelection,
+    );
+  }
+  if (canonical.compaction?.messageModelSelection !== undefined) {
+    canonical.compaction.messageModelSelection = structuredClone(
+      config.compaction!.messageModelSelection,
+    );
+  }
+  if (canonical.conversationNaming?.modelSelection !== undefined) {
+    canonical.conversationNaming.modelSelection = structuredClone(
+      config.conversationNaming!.modelSelection,
+    );
+  }
+
+  const rawWorkflowDefaults = canonical.workflowDefaults;
+  const workflowDefaults = config.workflowDefaults;
+  if (
+    rawWorkflowDefaults?.implementer?.agent.modelSelection !== undefined &&
+    workflowDefaults !== undefined
+  ) {
+    rawWorkflowDefaults.implementer.agent.modelSelection = structuredClone(
+      workflowDefaults.implementer.agent.modelSelection,
+    );
+  }
+  if (
+    rawWorkflowDefaults?.contextValidator?.assignments !== undefined &&
+    workflowDefaults !== undefined
+  ) {
+    for (const [
+      index,
+      assignment,
+    ] of rawWorkflowDefaults.contextValidator.assignments.entries()) {
+      assignment.agent.modelSelection = structuredClone(
+        workflowDefaults.contextValidator.assignments[index]!.agent
+          .modelSelection,
+      );
+    }
+  }
+  if (
+    rawWorkflowDefaults?.collaboration?.secondAgent !== undefined &&
+    workflowDefaults !== undefined
+  ) {
+    rawWorkflowDefaults.collaboration.secondAgent.modelSelection =
+      structuredClone(
+        workflowDefaults.collaboration.secondAgent.modelSelection,
+      );
+  }
+  if (
+    rawWorkflowDefaults?.planRepair?.agent !== undefined &&
+    workflowDefaults?.planRepair.agent !== undefined
+  ) {
+    rawWorkflowDefaults.planRepair.agent.modelSelection = structuredClone(
+      workflowDefaults.planRepair.agent.modelSelection,
+    );
+  }
+
+  return canonical;
 }
 
 /* ------------------------------------------------------------------ */
@@ -335,20 +522,23 @@ export function createConfigReader(configDir: string): ConfigReader {
 
     async writeConfig(config: GlobalConfig): Promise<void> {
       await ensureDir();
+      const canonical = globalConfigSchema.parse(structuredClone(config));
+      canonicalizeGlobalModelSelections(canonical);
       // Atomic temp-then-rename, not a truncating write: this file is read
       // concurrently by every other Command Center process, and a plain
       // `writeFile` leaves a window where a reader observes it truncated and
       // fails on `JSON.parse("")`.
-      await atomicWriteJson(configFile, config);
+      await atomicWriteJson(configFile, canonical);
       configCache = null;
     },
 
     async writeRawConfig(config: RawGlobalConfig): Promise<void> {
       await ensureDir();
-      await atomicWriteJson(configFile, config);
+      const canonical = canonicalizeRawGlobalConfig(config);
+      await atomicWriteJson(configFile, canonical);
       configCache = null;
       log.info("config.raw_write", {
-        fieldCount: Object.keys(config).length,
+        fieldCount: Object.keys(canonical).length,
         configDir,
       });
     },

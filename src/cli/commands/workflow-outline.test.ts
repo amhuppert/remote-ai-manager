@@ -345,8 +345,10 @@ describe("workflow outline", () => {
             profile: { tier: "builtin", id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           },
         },
@@ -360,8 +362,10 @@ describe("workflow outline", () => {
               focus: "state-store",
               agent: {
                 backend: "codex",
-                model: "gpt-5.6",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "gpt-5.6",
+                  parameters: { reasoning: "high", fast: "false" },
+                },
               },
             },
             contextValidator: {
@@ -373,8 +377,10 @@ describe("workflow outline", () => {
                   strategy: "task",
                   agent: {
                     backend: "codex",
-                    model: "gpt-5.6",
-                    reasoningEffort: "high",
+                    modelSelection: {
+                      modelId: "gpt-5.6",
+                      parameters: { reasoning: "high", fast: "false" },
+                    },
                   },
                   continuity: { enabled: true },
                 },
@@ -384,8 +390,10 @@ describe("workflow outline", () => {
                   strategy: "conversation",
                   agent: {
                     backend: "claude",
-                    model: "sonnet",
-                    reasoningEffort: "medium",
+                    modelSelection: {
+                      modelId: "sonnet",
+                      parameters: { effort: "medium" },
+                    },
                   },
                   continuity: { enabled: true },
                 },
@@ -407,7 +415,7 @@ describe("workflow outline", () => {
           profile: "builtin:general-implementer",
           focus: null,
           strategy: null,
-          runtime: "claude opus high",
+          runtime: "claude opus effort=high",
         },
         {
           scope: "impl",
@@ -416,7 +424,7 @@ describe("workflow outline", () => {
           profile: "project:house-implementer",
           focus: "state-store",
           strategy: null,
-          runtime: "codex gpt-5.6 high",
+          runtime: "codex gpt-5.6 fast=false reasoning=high",
         },
         {
           scope: "impl",
@@ -425,7 +433,7 @@ describe("workflow outline", () => {
           profile: "global:security-reviewer",
           focus: null,
           strategy: "task",
-          runtime: "codex gpt-5.6 high",
+          runtime: "codex gpt-5.6 fast=false reasoning=high",
         },
         {
           scope: "impl",
@@ -434,7 +442,7 @@ describe("workflow outline", () => {
           profile: "builtin:general-reviewer",
           focus: null,
           strategy: "conversation",
-          runtime: "claude sonnet medium",
+          runtime: "claude sonnet effort=medium",
         },
       ]);
     });
@@ -447,7 +455,7 @@ describe("workflow outline", () => {
         "workflow  implementer  implementer  builtin:general-implementer",
       );
       expect(text).toContain("global:security-reviewer");
-      expect(text).toContain("task codex gpt-5.6 high");
+      expect(text).toContain("task codex gpt-5.6 fast=false reasoning=high");
       expect(text).toContain('focus "state-store"');
       // A reference has no seeded revision and no resolved hash. Both spellings
       // belong to `live get` alone — that IS the two-shape distinction.
@@ -493,7 +501,7 @@ describe("workflow outline", () => {
         "general",
       ]);
       expect(renderOutline(parseOutlineRecord(withDormant)!)).toMatch(
-        /impl\s+validator\s+security\s+global:security-reviewer\s+task codex gpt-5\.6 high\s+\(cohort disabled\)/,
+        /impl\s+validator\s+security\s+global:security-reviewer\s+task codex gpt-5\.6 fast=false reasoning=high\s+\(cohort disabled\)/,
       );
     });
   });

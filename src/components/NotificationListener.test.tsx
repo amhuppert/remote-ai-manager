@@ -695,7 +695,7 @@ describe("NotificationListener", () => {
     });
   });
 
-  it("uses the latest explicit settings when merging user appends and preserves them across metadata-less appends", async () => {
+  it("uses the latest explicit selection when merging user appends and preserves it across metadata-less appends", async () => {
     const client = makeClient();
     const key = conversationKeys.messages("proj", "sess", "conv-1");
     client.setQueryData(key, [
@@ -703,9 +703,10 @@ describe("NotificationListener", () => {
         role: "user",
         content: [{ type: "text", text: "failed attempt" }],
         timestamp: null,
-        model: "opus",
-        effort: "high",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         seq: 0,
       },
     ]);
@@ -726,8 +727,10 @@ describe("NotificationListener", () => {
         role: "user",
         content: [{ type: "text", text: "successful retry" }],
         timestamp: null,
-        model: "gpt-5.6-luna",
-        codexFastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.6-luna",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
     });
 
@@ -736,18 +739,20 @@ describe("NotificationListener", () => {
         Array<{
           seq: number;
           content: unknown[];
-          model?: string;
-          effort?: string;
-          codexFastMode?: boolean;
+          modelSelection?: {
+            modelId: string;
+            parameters: Record<string, string>;
+          };
         }>
       >(key);
       expect(cached).toHaveLength(1);
       expect(cached?.[0]).toMatchObject({
         seq: 1,
-        model: "gpt-5.6-luna",
-        codexFastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.6-luna",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       });
-      expect(cached?.[0]?.effort).toBeUndefined();
       expect(cached?.[0]?.content).toHaveLength(2);
     });
 
@@ -770,18 +775,20 @@ describe("NotificationListener", () => {
         Array<{
           seq: number;
           content: unknown[];
-          model?: string;
-          effort?: string;
-          codexFastMode?: boolean;
+          modelSelection?: {
+            modelId: string;
+            parameters: Record<string, string>;
+          };
         }>
       >(key);
       expect(cached).toHaveLength(1);
       expect(cached?.[0]).toMatchObject({
         seq: 2,
-        model: "gpt-5.6-luna",
-        codexFastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.6-luna",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       });
-      expect(cached?.[0]?.effort).toBeUndefined();
       expect(cached?.[0]?.content).toHaveLength(3);
     });
   });
@@ -2079,9 +2086,11 @@ describe("NotificationListener", () => {
       sourceHash: "hash",
       status: "pending",
       error: null,
-      modelProvider: "claude",
-      model: "claude-sonnet-4-5",
-      effort: null,
+      backend: "claude",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
       schemaVersion: 1,
       promptVersion: "v1",
       normalizerVersion: "v1",

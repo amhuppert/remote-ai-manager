@@ -22,9 +22,11 @@ import {
   seedDeliveryPlanParents,
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { _createTestDb } from "@/lib/state-store/state-db";
+import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
 
 import {
   canonicalDeliveryPlanEnvelopeBytes,
+  deliveryPlanDocumentSchema,
   type DeliveryPlanDocument,
 } from "./delivery-plan";
 import {
@@ -165,6 +167,7 @@ function serviceWith(
         covered: group.claimantContextIds.length > 0,
       })),
     }),
+    admitModelSelections: async ({ launch }) => ({ ok: true, launch }),
     nextId: () => `plan-service-${++sequence}`,
     now: () => NOW,
     ...overrides,
@@ -194,6 +197,14 @@ function openAttempt(
     occurredAt: NOW,
     actor: AGENT,
   });
+}
+
+function requiredWorkflowImplementer(launch: WorkflowDefinitionDraft) {
+  const implementer = launch.definition.workflowConfig.implementer;
+  if (implementer === undefined) {
+    throw new Error("Fixture launch requires a workflow implementer.");
+  }
+  return implementer;
 }
 
 describe("delivery-plan service draft health", () => {
@@ -301,6 +312,101 @@ describe("delivery-plan service draft health", () => {
     expect(edited.value.previousHealth).toEqual({ total: 2, blocking: 2 });
     expect(edited.value.health.blocking).toBe(0);
   });
+
+  it("refuses an invalid model selection before persisting draft bytes", async () => {
+    const repos = createDeliveryPlanTestRepos(db);
+    const original = maximalPlanDocument();
+    openAttempt(repos, { id: "attempt-model-selection", document: original });
+    const invalid = maximalPlanDocument();
+    requiredWorkflowImplementer(invalid.launch).agent.modelSelection = {
+      modelId: "unknown-model",
+      parameters: { effort: "high" },
+    };
+    let admittedLaunch: WorkflowDefinitionDraft | null = null;
+    const service = serviceWith(db, repos, {
+      admitModelSelections: async ({ launch }) => {
+        admittedLaunch = launch;
+        return {
+          ok: false,
+          issues: [
+            {
+              path: "definition.workflowConfig.implementer.agent.modelSelection.modelId",
+              message:
+                "implementer claude model selection is invalid: Unknown model unknown-model.",
+              code: "unknown_model",
+              modelId: "unknown-model",
+            },
+          ],
+        };
+      },
+    });
+
+    const edited = await service.edit({
+      spec: SPEC,
+      expectedDraftRevision: 1,
+      document: invalid,
+      actor: AGENT,
+    });
+
+    expect(admittedLaunch).toEqual(invalid.launch);
+    expect(edited.ok).toBe(false);
+    if (edited.ok) return;
+    expect(edited.refusal).toMatchObject({
+      code: "validation",
+      unmetConditions: [
+        "definition.workflowConfig.implementer.agent.modelSelection.modelId: implementer claude model selection is invalid: Unknown model unknown-model.",
+      ],
+    });
+    const persisted = repos.plans.findAttemptById("attempt-model-selection");
+    expect(persisted?.draft_revision).toBe(1);
+    expect(persisted?.content_json).toBe(
+      canonicalDeliveryPlanEnvelopeBytes(original),
+    );
+  });
+
+  it("persists the canonical launch returned by model admission", async () => {
+    const repos = createDeliveryPlanTestRepos(db);
+    openAttempt(repos, {
+      id: "attempt-canonical-model-selection",
+      document: maximalPlanDocument(),
+    });
+    const editedDocument = maximalPlanDocument();
+    requiredWorkflowImplementer(
+      editedDocument.launch,
+    ).agent.modelSelection.modelId = "opus-alias";
+    const service = serviceWith(db, repos, {
+      admitModelSelections: async ({ launch }) => {
+        const canonicalLaunch = structuredClone(launch);
+        requiredWorkflowImplementer(
+          canonicalLaunch,
+        ).agent.modelSelection.modelId = "opus";
+        return { ok: true, launch: canonicalLaunch };
+      },
+    });
+
+    const edited = await service.edit({
+      spec: SPEC,
+      expectedDraftRevision: 1,
+      document: editedDocument,
+      actor: AGENT,
+    });
+
+    expect(edited.ok).toBe(true);
+    const persisted = repos.plans.findAttemptById(
+      "attempt-canonical-model-selection",
+    );
+    const persistedDocument = deliveryPlanDocumentSchema.parse(
+      JSON.parse(persisted?.content_json ?? "null"),
+    );
+    expect(
+      requiredWorkflowImplementer(persistedDocument.launch).agent.modelSelection
+        .modelId,
+    ).toBe("opus");
+    expect(
+      requiredWorkflowImplementer(editedDocument.launch).agent.modelSelection
+        .modelId,
+    ).toBe("opus-alias");
+  });
 });
 
 describe("delivery-plan service preview", () => {
@@ -359,10 +465,11 @@ describe("delivery-plan service seeding", () => {
 
   async function abandonedProposal(
     repos: ReturnType<typeof createDeliveryPlanTestRepos>,
+    document: DeliveryPlanDocument = maximalPlanDocument(),
   ): Promise<void> {
     openAttempt(repos, {
       id: "attempt-prior",
-      document: maximalPlanDocument(),
+      document,
     });
     const service = serviceWith(db, repos);
     const proposed = await service.propose({ spec: SPEC, actor: AGENT });
@@ -468,6 +575,122 @@ describe("delivery-plan service seeding", () => {
       expect(opened.refusal.code).toBe("plan_status_conflict");
     },
   );
+
+  it("admits the copied launch before opening and persists the canonical launch", async () => {
+    const repos = createDeliveryPlanTestRepos(db);
+    const source = maximalPlanDocument();
+    requiredWorkflowImplementer(source.launch).agent.modelSelection.modelId =
+      "opus-alias";
+    await abandonedProposal(repos, source);
+    const admissions: Array<{
+      spec: Spec;
+      launch: WorkflowDefinitionDraft;
+    }> = [];
+    let admissionCompleted = false;
+    let openedAfterAdmission = false;
+    const service = serviceWith(db, repos, {
+      plans: {
+        ...repos.plans,
+        open(input) {
+          openedAfterAdmission = admissionCompleted;
+          return repos.plans.open(input);
+        },
+      },
+      admitModelSelections: async ({ spec, launch }) => {
+        admissions.push({ spec, launch });
+        const canonicalLaunch = structuredClone(launch);
+        requiredWorkflowImplementer(
+          canonicalLaunch,
+        ).agent.modelSelection.modelId = "opus";
+        admissionCompleted = true;
+        return { ok: true, launch: canonicalLaunch };
+      },
+    });
+
+    const opened = await service.open({
+      spec: SPEC,
+      seedFromLast: true,
+      actor: AGENT,
+    });
+
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]?.spec).toBe(SPEC);
+    expect(
+      requiredWorkflowImplementer(admissions[0]!.launch).agent.modelSelection
+        .modelId,
+    ).toBe("opus-alias");
+    expect(openedAfterAdmission).toBe(true);
+    expect(
+      requiredWorkflowImplementer(opened.value.document.launch).agent
+        .modelSelection.modelId,
+    ).toBe("opus");
+    const persisted = repos.plans.findAttemptById(opened.value.attempt.id);
+    const persistedDocument = deliveryPlanDocumentSchema.parse(
+      JSON.parse(persisted?.content_json ?? "null"),
+    );
+    expect(
+      requiredWorkflowImplementer(persistedDocument.launch).agent.modelSelection
+        .modelId,
+    ).toBe("opus");
+  });
+
+  it("refuses a rejected copied launch without opening an attempt", async () => {
+    const repos = createDeliveryPlanTestRepos(db);
+    const source = maximalPlanDocument();
+    requiredWorkflowImplementer(source.launch).agent.modelSelection.modelId =
+      "retired-model";
+    await abandonedProposal(repos, source);
+    const attemptIdsBefore = repos.plans
+      .findAttemptsBySpecId(SPEC_ID)
+      .map((attempt) => attempt.id);
+    const openedEventsBefore = repos.countEvents("spec-delivery-plan-opened");
+    let openCalls = 0;
+    const service = serviceWith(db, repos, {
+      plans: {
+        ...repos.plans,
+        open(input) {
+          openCalls += 1;
+          return repos.plans.open(input);
+        },
+      },
+      admitModelSelections: async () => ({
+        ok: false,
+        issues: [
+          {
+            path: "definition.workflowConfig.implementer.agent.modelSelection.modelId",
+            message:
+              "implementer claude model selection is invalid: Unknown model retired-model.",
+            code: "unknown_model",
+            modelId: "retired-model",
+          },
+        ],
+      }),
+    });
+
+    const opened = await service.open({
+      spec: SPEC,
+      seedFromLast: true,
+      actor: AGENT,
+    });
+
+    expect(opened.ok).toBe(false);
+    if (opened.ok) return;
+    expect(opened.refusal).toMatchObject({
+      code: "validation",
+      unmetConditions: [
+        "definition.workflowConfig.implementer.agent.modelSelection.modelId: implementer claude model selection is invalid: Unknown model retired-model.",
+      ],
+    });
+    expect(openCalls).toBe(0);
+    expect(
+      repos.plans.findAttemptsBySpecId(SPEC_ID).map((attempt) => attempt.id),
+    ).toEqual(attemptIdsBefore);
+    expect(repos.countEvents("spec-delivery-plan-opened")).toBe(
+      openedEventsBefore,
+    );
+  });
 
   it("derives seeded dispositions from the delivery delta", async () => {
     const repos = createDeliveryPlanTestRepos(db);

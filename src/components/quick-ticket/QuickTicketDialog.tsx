@@ -21,9 +21,12 @@ import {
 } from "@/components/agent-profiles/agent-profile-picker-state";
 import BackendToggle from "@/components/BackendToggle";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
-import ModelSelector from "@/components/ModelSelector";
-import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import {
+  DesktopModelSelectionControls,
+  UnavailableModelSelectionControl,
+} from "@/components/session/prompt/ModelSelectionControls";
+import { validateModelSelection } from "@/lib/agent-backends/model-selection";
+import { useProjectModelOptionsQuery } from "@/lib/agent-backends/queries";
 import { ChatIcon, ChevronRightIcon, CloseIcon } from "@/components/icons";
 import {
   MultilinePrimaryActionScope,
@@ -61,7 +64,7 @@ import { Switch } from "@/components/ui/Switch";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 import { resolveConfiguredBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { readCapturedClientErrors } from "@/lib/client-errors/ring-buffer";
 import { useFullConfigQuery } from "@/lib/config/queries";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
@@ -328,19 +331,54 @@ export default function QuickTicketDialog({
           backendDefaults: kickoffDefaults,
         });
 
-  // The kickoff turn runs inside the project the draft names, so its model
-  // choices are that project's effective ones (spec D10). Null before a project
-  // is chosen, which reads as "unknown" and leaves the catalog in place.
-  const kickoffProjectModelOptions = useProjectBackendModelOptions(
+  // The kickoff turn runs inside the project the draft names, so its complete
+  // variants come from that project's effective catalog (spec D10).
+  const kickoffProjectModelOptionsQuery = useProjectModelOptionsQuery(
     draft !== null && draft.projectName.length > 0 ? draft.projectName : null,
-    kickoffSelection?.backend ?? DEFAULT_AGENT_BACKEND_ID,
   );
+  const kickoffProjectModelOptions = kickoffProjectModelOptionsQuery.data?.find(
+    (entry) =>
+      entry.backend === (kickoffSelection?.backend ?? DEFAULT_AGENT_BACKEND_ID),
+  );
+  const kickoffModelCatalog = kickoffProjectModelOptions?.modelCatalog ?? null;
+  const kickoffSelectionValidation =
+    kickoffSelection === null || kickoffModelCatalog === null
+      ? null
+      : validateModelSelection(
+          kickoffModelCatalog,
+          kickoffSelection.modelSelection,
+        );
+  let kickoffSelectionBlockedReason: string | null = null;
+  if (kickoffSelection !== null) {
+    if (kickoffProjectModelOptionsQuery.isPending) {
+      kickoffSelectionBlockedReason = "Loading model options…";
+    } else if (kickoffProjectModelOptionsQuery.isError) {
+      kickoffSelectionBlockedReason = "Model options could not be loaded.";
+    } else if (kickoffProjectModelOptions === undefined) {
+      kickoffSelectionBlockedReason = `Model options are unavailable for ${kickoffSelection.backend}.`;
+    } else if (kickoffProjectModelOptions.diagnostics.length > 0) {
+      kickoffSelectionBlockedReason = kickoffProjectModelOptions.diagnostics
+        .map(({ message }) => message)
+        .join(" ");
+    } else if (
+      kickoffSelectionValidation !== null &&
+      !kickoffSelectionValidation.valid
+    ) {
+      kickoffSelectionBlockedReason = kickoffSelectionValidation.issues
+        .map(({ message }) => message)
+        .join(" ");
+    } else if (kickoffModelCatalog === null) {
+      kickoffSelectionBlockedReason = "Model options are unavailable.";
+    }
+  }
 
   const patchKickoff = (selection: ResolvedKickoffSelection) => {
     useQuickTicketStore.getState().updateQuickTicketDraft({
       kickoffBackend: selection.backend,
-      kickoffModel: selection.model,
-      kickoffReasoningEffort: selection.reasoningEffort ?? null,
+      kickoffModelSelection: {
+        modelId: selection.modelSelection.modelId,
+        parameters: { ...selection.modelSelection.parameters },
+      },
     });
   };
 
@@ -350,8 +388,10 @@ export default function QuickTicketDialog({
       resolveKickoffSelection({
         draft: {
           kickoffBackend: backend,
-          kickoffModel: null,
-          kickoffReasoningEffort: null,
+          kickoffModelSelection:
+            kickoffProjectModelOptionsQuery.data?.find(
+              (entry) => entry.backend === backend,
+            )?.defaultSelection ?? null,
         },
         defaultBackend: backend,
         backendDefaults: kickoffDefaults,
@@ -359,24 +399,11 @@ export default function QuickTicketDialog({
     );
   };
 
-  const changeKickoffModel = (model: string) => {
-    if (kickoffSelection === null || kickoffDefaults === null) return;
-    patchKickoff(
-      resolveKickoffSelection({
-        draft: {
-          kickoffBackend: kickoffSelection.backend,
-          kickoffModel: model,
-          kickoffReasoningEffort: kickoffSelection.reasoningEffort ?? null,
-        },
-        defaultBackend: kickoffSelection.backend,
-        backendDefaults: kickoffDefaults,
-      }),
-    );
-  };
-
-  const changeKickoffEffort = (effort: EffortLevel) => {
+  const changeKickoffModelSelection = (
+    modelSelection: BackendModelSelection,
+  ) => {
     if (kickoffSelection === null) return;
-    patchKickoff({ ...kickoffSelection, reasoningEffort: effort });
+    patchKickoff({ ...kickoffSelection, modelSelection });
   };
 
   const invalidateCapture = useCallback(() => {
@@ -630,10 +657,7 @@ export default function QuickTicketDialog({
             ? {}
             : {
                 backend: kickoff.backend,
-                model: kickoff.model,
-                ...(kickoff.reasoningEffort === undefined
-                  ? {}
-                  : { reasoningEffort: kickoff.reasoningEffort }),
+                modelSelection: kickoff.modelSelection,
               }),
         }),
       refetchLinks: () =>
@@ -756,6 +780,14 @@ export default function QuickTicketDialog({
 
   const submit = async () => {
     if (draft === null || pending) return;
+    if (
+      draft.autoStart &&
+      kickoffSelection !== null &&
+      kickoffSelectionBlockedReason !== null
+    ) {
+      setSubmitError(kickoffSelectionBlockedReason);
+      return;
+    }
     const invalidProject = draft.projectName.length === 0;
     const invalidTitle = draft.title.trim().length === 0;
     const projectNeedsDiscovery =
@@ -1579,7 +1611,7 @@ export default function QuickTicketDialog({
                   description={
                     draft.autoStart && kickoffSelection !== null
                       ? "Creates a session and sends the ticket kickoff prompt with the agent configured below."
-                      : "Creates a session and sends the ticket kickoff prompt using the project's configured backend, model, and effort defaults."
+                      : "Creates a session and sends the ticket kickoff prompt using the project's configured backend and model selection defaults."
                   }
                   checked={draft.autoStart}
                   disabled={pending}
@@ -1624,24 +1656,23 @@ export default function QuickTicketDialog({
                       <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
                         Model
                       </span>
-                      <ModelSelector
-                        backend={kickoffSelection.backend}
-                        value={kickoffSelection.model}
-                        onChange={changeKickoffModel}
-                        disabled={pending}
-                        projectOptions={kickoffProjectModelOptions}
-                      />
-                    </div>
-                    <div className="flex flex-col gap-2xs">
-                      <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
-                        Reasoning
-                      </span>
-                      <ReasoningLevelSelector
-                        value={kickoffSelection.reasoningEffort ?? "high"}
-                        onChange={changeKickoffEffort}
-                        availableLevels={kickoffSelection.effortLevels}
-                        disabled={pending}
-                      />
+                      {kickoffModelCatalog === null ? (
+                        <UnavailableModelSelectionControl
+                          selection={kickoffSelection.modelSelection}
+                          reason={
+                            kickoffSelectionBlockedReason ??
+                            "Model options are unavailable."
+                          }
+                        />
+                      ) : (
+                        <DesktopModelSelectionControls
+                          catalog={kickoffModelCatalog}
+                          selection={kickoffSelection.modelSelection}
+                          onSelectionChange={changeKickoffModelSelection}
+                          disabled={pending}
+                          selectContentLayer="popover"
+                        />
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -1681,7 +1712,11 @@ export default function QuickTicketDialog({
                     variant="primary"
                     loading={pending}
                     disabled={
-                      draft.projectName.length === 0 && projectSelectionBlocked
+                      (draft.projectName.length === 0 &&
+                        projectSelectionBlocked) ||
+                      (draft.autoStart &&
+                        kickoffSelection !== null &&
+                        kickoffSelectionBlockedReason !== null)
                     }
                   >
                     {bugMode ? "File bug report" : "Create ticket"}

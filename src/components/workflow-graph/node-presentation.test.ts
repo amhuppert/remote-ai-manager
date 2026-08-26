@@ -26,7 +26,13 @@ function context(
     implementer: {
       id: "implementer",
       profile: { tier: "project", id: "checkout-impl" },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+      },
     },
     contextValidator: {
       enabled: true,
@@ -36,8 +42,10 @@ function context(
           profile: { tier: "global", id: "security-reviewer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "high" },
+            },
           },
           strategy: "conversation",
           authority: "blocking",
@@ -48,8 +56,10 @@ function context(
           profile: { tier: "project", id: "style-reviewer" },
           agent: {
             backend: "codex",
-            model: "gpt-5.6-luna",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.6-luna",
+              parameters: { effort: "medium" },
+            },
           },
           strategy: "task",
           authority: "advisory",
@@ -149,16 +159,42 @@ describe("ownedPathsText", () => {
 });
 
 describe("contextNodeCrew", () => {
-  it("shows the implementer's long model name, backend and effort", () => {
+  it("shows the implementer's long model name, backend, and complete parameters", () => {
     const crew = contextNodeCrew(context());
 
     expect(crew.implementer).toMatchObject({
       backend: "claude",
       // The catalog's canonical long name, never the short selector id.
       modelLabel: "Opus 5",
-      effort: "high",
+      parametersLabel: "effort=high",
     });
     expect(crew.implementer?.modelLabel).not.toBe("opus");
+  });
+
+  it("presents every model parameter without privileging provider-specific keys", () => {
+    const baseImplementer = context().implementer!;
+    const crew = contextNodeCrew(
+      context({
+        implementer: {
+          ...baseImplementer,
+          agent: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "opus",
+              parameters: {
+                thinking: "enabled",
+                effort: "high",
+                context: "max",
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect(crew.implementer?.parametersLabel).toBe(
+      "context=max, effort=high, thinking=enabled",
+    );
   });
 
   it("lists every validator seat with its authority and backend", () => {
@@ -170,12 +206,14 @@ describe("contextNodeCrew", () => {
         authority: "blocking",
         backend: "claude",
         modelLabel: "Sonnet",
+        parametersLabel: "effort=high",
       },
       {
         seatId: "style",
         authority: "advisory",
         backend: "codex",
         modelLabel: "GPT-5.6 Luna",
+        parametersLabel: "effort=medium",
       },
     ]);
   });
@@ -204,7 +242,7 @@ describe("contextNodeAriaLabel", () => {
 
   it("names status, lane, grade, paths, tasks and the implementer", () => {
     expect(contextNodeAriaLabel(base)).toBe(
-      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 effort=high, inherited",
     );
   });
 
@@ -226,7 +264,7 @@ describe("contextNodeAriaLabel", () => {
     });
 
     expect(label).toBe(
-      "Implement checkout — Running, lane delivery, owning, implementer Opus 5 high, inherited",
+      "Implement checkout — Running, lane delivery, owning, implementer Opus 5 effort=high, inherited",
     );
   });
 });

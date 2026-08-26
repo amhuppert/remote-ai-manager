@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import { backendModelSelectionSchema } from "../../schemas";
+
 /**
  * The Cursor worker IPC contract: versioned Zod-validated frames plus the
  * lossless tagged encoding applied to native SDK payloads before Node's fork
@@ -12,7 +14,7 @@ import { z } from "zod";
  * the channel already destroyed.
  */
 
-export const CURSOR_IPC_CODEC_VERSION = 1;
+export const CURSOR_IPC_CODEC_VERSION = 2;
 
 /**
  * Reserved wrapper key. An application object that already owns this key is
@@ -558,7 +560,7 @@ const attachAgentFrameSchema = z
     type: z.literal("attachAgent"),
     mode: z.enum(["create", "resume"]),
     ref: z.string().min(1).nullable(),
-    model: z.string().min(1),
+    modelSelection: backendModelSelectionSchema,
     disallowedTools: z.array(z.string().min(1)),
     sandboxEnabled: z.literal(false),
     autoReview: z.literal(false),
@@ -571,34 +573,37 @@ const attachAgentFrameSchema = z
     enableAgentRetries: z.boolean(),
     mcpServers: mcpServerMapSchema,
   })
+  .strict()
   .refine((frame) => frame.mode === "create" || frame.ref !== null, {
     message: "resume requires a ref",
   });
 
-const startTurnFrameSchema = z.object({
-  v: versionSchema,
-  type: z.literal("startTurn"),
-  runId: z.string().min(1),
-  promptText: z.string(),
-  /**
-   * Already in the SDK's `SDKImage` base64 shape and already bounds-checked
-   * parent-side (D15), so the worker passes these through without translating
-   * or re-validating — the bounds must hold before a turn starts.
-   */
-  images: z.array(
-    z.object({ data: z.string().min(1), mimeType: z.string().min(1) }),
-  ),
-  structuredOutputInstruction: z.string().nullable(),
-  model: z.string().min(1),
-  mcpServers: mcpServerMapSchema,
-  /**
-   * The SDK's per-send force-expiry option (`local.force`): expire the agent's
-   * currently active persisted run before starting this one. Recovery for an
-   * agent left wedged by a crashed process, and admitted only when the
-   * supervisor's registry proves no live local worker owns the ref (D12).
-   */
-  forceExpirePersistedRun: z.boolean(),
-});
+const startTurnFrameSchema = z
+  .object({
+    v: versionSchema,
+    type: z.literal("startTurn"),
+    runId: z.string().min(1),
+    promptText: z.string(),
+    /**
+     * Already in the SDK's `SDKImage` base64 shape and already bounds-checked
+     * parent-side (D15), so the worker passes these through without translating
+     * or re-validating — the bounds must hold before a turn starts.
+     */
+    images: z.array(
+      z.object({ data: z.string().min(1), mimeType: z.string().min(1) }),
+    ),
+    structuredOutputInstruction: z.string().nullable(),
+    modelSelection: backendModelSelectionSchema,
+    mcpServers: mcpServerMapSchema,
+    /**
+     * The SDK's per-send force-expiry option (`local.force`): expire the agent's
+     * currently active persisted run before starting this one. Recovery for an
+     * agent left wedged by a crashed process, and admitted only when the
+     * supervisor's registry proves no live local worker owns the ref (D12).
+     */
+    forceExpirePersistedRun: z.boolean(),
+  })
+  .strict();
 
 const cancelFrameSchema = z.object({
   v: versionSchema,

@@ -75,7 +75,13 @@ function makeInvocation(
     conversationId: "__plan_repair__:exec-1:ctx-1:1",
     worktreePath,
     prompt: "diagnose this halt",
-    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    agent: {
+      backend: "claude",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    },
     timeoutMs: 900_000,
     ...overrides,
   };
@@ -114,8 +120,10 @@ describe("plan-repair agent runner", () => {
 
     const call = calls[0]!;
     expect(call.kind).toBe("task_run");
-    expect(call.modelId).toBe("opus");
-    expect(call.effort).toBe("high");
+    expect(call.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
     expect(call.timeoutMs).toBe(900_000);
     expect(call.outputFormat?.type).toBe("json_schema");
     const schema = call.outputFormat?.schema as {

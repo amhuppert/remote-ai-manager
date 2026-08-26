@@ -3,13 +3,16 @@ import { createActor, fromPromise, type AnyActorRef } from "xstate";
 import { conversationMachine } from "./machine";
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import type {
+  ConversationContext,
   ConversationInput,
   PrepareTurnInput,
   PrepareTurnOutput,
   ExecutePromptInput,
   PromptActorResult,
+  RunTaskRunInput,
   VerifyCleanupOutput,
 } from "./types";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 // ============================================================
 // Helpers
@@ -108,8 +111,8 @@ function makeTestMachine(overrides?: {
   runTaskRun?: any;
   verifyCleanup?: () => Promise<VerifyCleanupOutput>;
   drainPendingQueue?: () => void;
-  persistSnapshot?: () => void;
-  syncDerivedFields?: () => void;
+  persistSnapshot?: (args: { context: ConversationContext }) => void;
+  syncDerivedFields?: (args: { context: ConversationContext }) => void;
 }) {
   /* eslint-enable @typescript-eslint/no-explicit-any */
   const fakeVerifyCleanup =
@@ -1700,7 +1703,7 @@ describe("conversationMachine", () => {
   });
 
   describe("turn configuration threading", () => {
-    it("preserves an explicit Standard Codex speed in executePrompt input", async () => {
+    it("preserves an explicit complete Codex selection in executePrompt input", async () => {
       let capturedInput: ExecutePromptInput | null = null;
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
         async ({ input }) => {
@@ -1719,14 +1722,274 @@ describe("conversationMachine", () => {
         type: "SUBMIT_PROMPT",
         promptText: "Use Standard speed",
         streamId: "standard-speed",
-        codexFastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
       });
 
       await waitForState(actor, "executing");
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(capturedInput).not.toBeNull();
-      expect(capturedInput!.codexFastMode).toBe(false);
+      expect(capturedInput!.modelSelection).toEqual({
+        modelId: "gpt-5.4",
+        parameters: { fast: "false", reasoning: "high" },
+      });
+    });
+
+    it("persists a resolved conversation selection on the active turn before dispatch continues", async () => {
+      const canonicalSelection: BackendModelSelection = {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      };
+      const order: string[] = [];
+      let actorReported!: () => void;
+      const reported = new Promise<void>((resolve) => {
+        actorReported = resolve;
+      });
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          await input.onModelSelectionResolved(canonicalSelection);
+          order.push("dispatch");
+          actorReported();
+          return await new Promise<PromptActorResult>(() => {});
+        },
+      );
+      const persistSnapshot = vi.fn(
+        ({ context }: { context: ConversationContext }) => {
+          if (context.activeTurn?.modelSelection === canonicalSelection) {
+            order.push("persist");
+          }
+        },
+      );
+      const syncedSelections: Array<BackendModelSelection | null> = [];
+      const syncDerivedFields = vi.fn(
+        ({ context }: { context: ConversationContext }) => {
+          syncedSelections.push(context.activeTurn?.modelSelection ?? null);
+        },
+      );
+      const actor = createActor(
+        makeTestMachine({
+          executePrompt,
+          persistSnapshot,
+          syncDerivedFields,
+        }),
+        { input: defaultInput },
+      );
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Continue on the inherited selection",
+        streamId: "resolved-conversation-selection",
+      });
+
+      await reported;
+
+      expect(actor.getSnapshot().context.activeTurn?.modelSelection).toEqual(
+        canonicalSelection,
+      );
+      expect(order).toEqual(["persist", "dispatch"]);
+      expect(syncedSelections).toContainEqual(canonicalSelection);
+    });
+
+    it("persists a resolved task-run selection on the active turn before dispatch continues", async () => {
+      const configuredSelection: BackendModelSelection = {
+        modelId: "gpt-5.6-sol",
+        parameters: { fast: "false", reasoning: "ultra" },
+      };
+      const order: string[] = [];
+      let actorReported!: () => void;
+      const reported = new Promise<void>((resolve) => {
+        actorReported = resolve;
+      });
+      const runTaskRun = fromPromise<PromptActorResult, RunTaskRunInput>(
+        async ({ input }) => {
+          await input.onModelSelectionResolved(configuredSelection);
+          order.push("dispatch");
+          actorReported();
+          return await new Promise<PromptActorResult>(() => {});
+        },
+      );
+      const persistSnapshot = vi.fn(
+        ({ context }: { context: ConversationContext }) => {
+          if (context.activeTurn?.modelSelection === configuredSelection) {
+            order.push("persist");
+          }
+        },
+      );
+      const actor = createActor(
+        makeTestMachine({ runTaskRun, persistSnapshot }),
+        { input: defaultInput },
+      );
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_TASK_RUN",
+        promptText: "Run with the configured default",
+        backend: "codex",
+      });
+
+      await reported;
+
+      expect(actor.getSnapshot().context.activeTurn?.modelSelection).toEqual(
+        configuredSelection,
+      );
+      expect(order).toEqual(["persist", "dispatch"]);
+    });
+
+    it("rejects a stale selection report without mutating the current active turn", async () => {
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async () => await new Promise<PromptActorResult>(() => {}),
+      );
+      const actor = createActor(makeTestMachine({ executePrompt }), {
+        input: defaultInput,
+      });
+      activeActors.push(actor);
+      actor.start();
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Current turn",
+        streamId: "current-turn",
+      });
+      await waitForState(actor, "conversationTurn");
+
+      const acknowledge = vi.fn();
+      const reject = vi.fn();
+      actor.send({
+        type: "MODEL_SELECTION_RESOLVED",
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { fast: "false", reasoning: "ultra" },
+        },
+        executionAttemptId: "stale-attempt",
+        acknowledge,
+        reject,
+      });
+
+      expect(reject).toHaveBeenCalledWith(expect.any(Error));
+      expect(acknowledge).not.toHaveBeenCalled();
+      expect(actor.getSnapshot().context.activeTurn?.modelSelection).toBeNull();
+    });
+
+    it("rejects a selection report from the prior attempt after a debug retry", async () => {
+      const resolvedSelection: BackendModelSelection = {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      };
+      let invocationCount = 0;
+      let firstReporter:
+        | ExecutePromptInput["onModelSelectionResolved"]
+        | undefined;
+      let secondReporter:
+        | ExecutePromptInput["onModelSelectionResolved"]
+        | undefined;
+      let resolveSecondStarted!: () => void;
+      const secondStarted = new Promise<void>((resolve) => {
+        resolveSecondStarted = resolve;
+      });
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          invocationCount += 1;
+          if (invocationCount === 1) {
+            firstReporter = input.onModelSelectionResolved;
+            return successResult({ structuredOutput: undefined });
+          }
+          secondReporter = input.onModelSelectionResolved;
+          resolveSecondStarted();
+          return await new Promise<PromptActorResult>(() => {});
+        },
+      );
+      const actor = createActor(makeTestMachine({ executePrompt }), {
+        input: defaultInput,
+      });
+      activeActors.push(actor);
+      actor.start();
+      actor.send({
+        type: "DEBUG_COMMAND",
+        command: {
+          kind: "enter",
+          logFilePath: "/tmp/logs.jsonl",
+          debugSessionId: "debug-session-selection-attempt",
+        },
+      });
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Investigate",
+        streamId: "selection-attempt",
+      });
+      await vi.waitFor(() => {
+        expect(actor.getSnapshot().context.debugMode?.lastTurnFailed).toBe(
+          true,
+        );
+      });
+
+      actor.send({
+        type: "DEBUG_COMMAND",
+        command: { kind: "retry_turn" },
+      });
+      await secondStarted;
+
+      expect(firstReporter).toBeTypeOf("function");
+      await expect(firstReporter!(resolvedSelection)).rejects.toThrow(
+        "inactive",
+      );
+      expect(actor.getSnapshot().context.activeTurn?.modelSelection).toBeNull();
+
+      expect(secondReporter).toBeTypeOf("function");
+      await expect(secondReporter!(resolvedSelection)).resolves.toBeUndefined();
+      expect(actor.getSnapshot().context.activeTurn?.modelSelection).toEqual(
+        resolvedSelection,
+      );
+    });
+
+    it("rejects a late selection report after the attempt is aborted", async () => {
+      const resolvedSelection: BackendModelSelection = {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      };
+      let reporter: ExecutePromptInput["onModelSelectionResolved"] | undefined;
+      let resolveReporterCaptured!: () => void;
+      const reporterCaptured = new Promise<void>((resolve) => {
+        resolveReporterCaptured = resolve;
+      });
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          reporter = input.onModelSelectionResolved;
+          resolveReporterCaptured();
+          return await new Promise<PromptActorResult>(() => {});
+        },
+      );
+      const actor = createActor(makeTestMachine({ executePrompt }), {
+        input: defaultInput,
+      });
+      activeActors.push(actor);
+      actor.start();
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Abort before selection resolution",
+        streamId: "late-selection",
+      });
+      await reporterCaptured;
+
+      actor.send({ type: "ABORT_TURN", reason: "user" });
+      await waitForState(actor, "idle");
+
+      expect(reporter).toBeTypeOf("function");
+      const outcome = await Promise.race([
+        reporter!(resolvedSelection).then(
+          () => "resolved" as const,
+          () => "rejected" as const,
+        ),
+        new Promise<"pending">((resolve) => {
+          setTimeout(() => resolve("pending"), 100);
+        }),
+      ]);
+      expect(outcome).toBe("rejected");
+      expect(actor.getSnapshot().context.activeTurn).toBeNull();
     });
   });
 

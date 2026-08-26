@@ -52,7 +52,7 @@ import {
   CollaborationConversationOwnershipError,
   CollaborationNotStoppableError,
   CollaborationResumeTokenMismatchError,
-  CollaborationModelEffortValidationError,
+  CollaborationModelSelectionValidationError,
   CollaborationProfileResolutionError,
   CollaborationSessionNotFoundError,
   CollaborationStartConflictError,
@@ -437,11 +437,11 @@ export function createCollaborationRouteHandlers(
             { status: 400 },
           );
         }
-        if (err instanceof CollaborationModelEffortValidationError) {
+        if (err instanceof CollaborationModelSelectionValidationError) {
           return NextResponse.json(
             {
               error: err.message,
-              code: "COLLABORATION_INVALID_MODEL_EFFORT",
+              code: "COLLABORATION_INVALID_MODEL_SELECTION",
             } satisfies ApiError,
             { status: 400 },
           );

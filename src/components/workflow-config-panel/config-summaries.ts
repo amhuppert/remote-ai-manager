@@ -1,4 +1,5 @@
 import { lintOutputSchemaText } from "@/components/workflow-config/OutputSchemaField";
+import { modelSelectionParametersLabel } from "@/components/model-selection-presentation";
 import { getModelsForBackend } from "@/lib/agent-backends/catalog";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowAgentConfig } from "@/lib/workflow-graph/config-schemas";
@@ -50,12 +51,12 @@ export interface OutputSchemaCounts {
  */
 export function modelDisplayName(
   backend: AgentBackendId,
-  model: string,
+  modelId: string,
 ): string {
   const listed = getModelsForBackend(backend).find(
-    (option) => option.id === model,
+    (option) => option.id === modelId,
   );
-  return listed?.label ?? model;
+  return listed?.label ?? modelId;
 }
 
 /**
@@ -67,9 +68,15 @@ export function agentModelChip(
   agent: GraphWorkflowAgentConfig,
 ): ConfigValuePart {
   return chipPart(
-    modelDisplayName(agent.backend, agent.model),
+    modelDisplayName(agent.backend, agent.modelSelection.modelId),
     backendChipTone(agent.backend),
   );
+}
+
+export function modelSelectionParameterSummary(
+  agent: GraphWorkflowAgentConfig,
+): string {
+  return modelSelectionParametersLabel(agent.modelSelection);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -121,7 +128,7 @@ export function blockSummaryParts(
       const value = cascade.resolve("implementer").value;
       return [
         agentModelChip(value.agent),
-        textPart(value.agent.reasoningEffort),
+        textPart(modelSelectionParameterSummary(value.agent)),
         textPart(value.profile.id, "dim"),
       ];
     }

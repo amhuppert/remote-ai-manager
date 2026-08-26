@@ -73,6 +73,10 @@ const PROMPT = "ping-42";
 const EXPECTED_REPLY = cursorMcpFixtureReply(MARKER, PROMPT);
 const FIXTURE_SERVER_ID = "fixture";
 const FIXTURE_QUALIFIED_TOOL = `mcp_${FIXTURE_SERVER_ID}_${CURSOR_MCP_FIXTURE_TOOL}`;
+const MODEL_SELECTION = {
+  modelId: CURSOR_DEFAULT_MODEL,
+  parameters: { fast: "true" },
+} as const;
 
 const TARGET: ConversationTarget = {
   scope: "session",
@@ -517,6 +521,7 @@ async function driveTurn(options: {
         options.persistedRef === null
           ? null
           : { backend: CURSOR_BACKEND_ID, ref: options.persistedRef },
+      modelSelection: MODEL_SELECTION,
       sessionInstructions: [],
       tooling: { portableMcp: portable },
     },
@@ -524,11 +529,9 @@ async function driveTurn(options: {
       transport,
       storePath: (conversationId) =>
         path.join(options.worktree, "store", conversationId),
-      resolveModel: async () => ({
+      resolveModel: async (selection) => ({
         ok: true,
-        model: CURSOR_DEFAULT_MODEL,
-        source: "default",
-        supportedModels: [CURSOR_DEFAULT_MODEL],
+        selection,
       }),
       translatePortableMcpToCursor,
       newRunId: () => `run-${++runCounter}`,
@@ -542,6 +545,7 @@ async function driveTurn(options: {
     promptText: PROMPT,
     imageRefs: [],
     sessionInstructions: [],
+    modelSelection: MODEL_SELECTION,
     autonomous: false,
     signal: new AbortController().signal,
     onEvent: (event) => {

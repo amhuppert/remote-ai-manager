@@ -39,7 +39,10 @@ export const ClaudeFromFixture = {
 export const WithModelSettings = {
   args: {
     ...fromFinalAnswerFixture(makeFinalAnswer(), "claude"),
-    modelSettings: { model: "fable", effort: "max" },
+    modelSettings: {
+      modelId: "fable",
+      parameters: { effort: "max" },
+    },
   },
 } satisfies Story;
 

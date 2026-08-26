@@ -51,6 +51,7 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 const logger = createLogger("conversation-manager");
 
@@ -69,9 +70,7 @@ export interface ConversationTurnRequest {
   promptText: string;
   images?: ImagePayload[];
   backend: AgentBackendId;
-  modelId?: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection?: BackendModelSelection;
   autonomous?: boolean;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   waitForBackgroundTasks?: boolean;
@@ -775,9 +774,7 @@ export async function executeConversationTurn(
       promptText: input.turn.promptText,
       images: input.turn.images,
       backend: input.turn.backend,
-      modelId: input.turn.modelId,
-      effort: input.turn.effort,
-      codexFastMode: input.turn.codexFastMode,
+      modelSelection: input.turn.modelSelection,
       autonomous: input.turn.autonomous,
       streamId: input.streamId,
       outputFormat: input.turn.outputFormat,

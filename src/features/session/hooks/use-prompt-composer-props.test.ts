@@ -3,6 +3,11 @@ import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { useRef } from "react";
 import { usePromptComposerProps } from "./use-prompt-composer-props";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+
+const modelCatalog = getStaticBackendModelCatalog("claude");
+const modelSelection = defaultSelectionForModel(modelCatalog, "sonnet");
 
 describe("usePromptComposerProps", () => {
   it("returns a composer props bundle and rewires callbacks (onCollabDismiss strips /collab prefix)", () => {
@@ -48,30 +53,36 @@ describe("usePromptComposerProps", () => {
         backendLocked: false,
         selectedBackend: "claude",
         handleBackendChange: () => {},
-        codexFastMode: true,
-        setCodexFastMode: vi.fn(),
-        selectedModel: "sonnet",
-        handleModelChange: () => {},
-        selectedEffort: "medium",
-        setSelectedEffort: () => {},
-        availableEffortLevels: ["low", "medium", "high"],
-        effortSupported: true,
+        modelCatalog,
+        modelCatalogs: {
+          claude: modelCatalog,
+          codex: null,
+          cursor: null,
+        },
+        modelSelection,
+        modelSelectionBlockedReason: null,
+        setModelSelection: vi.fn(),
         hasCollabChip: true,
         effectiveCollabConfig: {
-          agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+          agentTwo: {
+            backend: "codex",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
+          },
           negotiationRounds: 2,
           autonomousResolutionThreshold: "minor",
         },
         originatingCollabAgent: "claude",
         setCollabConfigDraft: () => {},
         collabBackendDefaults: {
-          claude: { modelId: "opus", effort: "high" as const },
+          claude: { modelId: "opus", parameters: { effort: "high" } },
           codex: {
             modelId: "gpt-5.4",
-            effort: "high" as const,
-            codexFastMode: false,
+            parameters: { reasoning: "high", fast: "false" },
           },
-          cursor: { modelId: "composer-2.5", effort: "high" },
+          cursor: { modelId: "composer-2.5", parameters: {} },
         },
         clearCollabConfigDraft,
         debugToggleMutation: { isPending: false, mutate: debugToggleMutate },
@@ -81,9 +92,9 @@ describe("usePromptComposerProps", () => {
     expect(result.current.projectName).toBe("p");
     expect(result.current.isWorkflowManagedConversation).toBe(true);
     expect(result.current.selectedBackend).toBe("claude");
-    expect(result.current.codexFastMode).toBe(true);
-    expect(result.current.selectedModel).toBe("sonnet");
-    expect(result.current.selectedEffort).toBe("medium");
+    expect(result.current.modelCatalog).toBe(modelCatalog);
+    expect(result.current.modelCatalogs.claude).toBe(modelCatalog);
+    expect(result.current.modelSelection).toEqual(modelSelection);
     expect(typeof result.current.onSendPrompt).toBe("function");
 
     act(() => result.current.onCollabDismiss());

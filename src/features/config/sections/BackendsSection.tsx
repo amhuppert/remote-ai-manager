@@ -1,15 +1,16 @@
 import {
-  backendSupportsFastMode,
-  effortLevelsForCatalogEntry,
-  modelOptionsForCatalogEntry,
+  getConfiguredBackendModelCatalog,
   type BackendCatalogEntry,
 } from "@/lib/agent-backends/catalog";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import {
+  CatalogModelSelect,
+  ModelOptionsEditor,
+} from "@/components/session/prompt/ModelSelectionControls";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
-import { ConfigToggle } from "../components/ConfigToggle";
 import { SettingsPage } from "../components/SettingsPage";
 import { SettingsSubSection } from "../components/SettingsSubSection";
 import type { ConfigFormController } from "./types";
@@ -23,45 +24,8 @@ import type { ConfigFormController } from "./types";
  * (spec R12.2).
  */
 interface BackendProfile {
-  model: string;
-  reasoningEffort?: EffortLevel;
-  fastMode?: boolean;
+  modelSelection: BackendModelSelection;
   timeoutMs: number | null;
-}
-
-/** Codex's own speed default — the one backend that declares a fast mode. */
-function CodexFastModeField({
-  controller,
-  fieldPath,
-  fastMode,
-}: {
-  controller: ConfigFormController;
-  fieldPath: string;
-  fastMode: boolean;
-}): React.JSX.Element {
-  const { handleChange, isDefault, isModified } = controller;
-  return (
-    <ConfigField
-      label="Codex fast mode"
-      fieldPath={fieldPath}
-      isDefault={isDefault(fieldPath)}
-      isModified={isModified(fieldPath)}
-      hint="Sets the initial speed for new Codex conversations. Fast mode uses more credits."
-    >
-      <ConfigToggle
-        label="Codex fast mode"
-        value={fastMode}
-        onChange={(value) => handleChange(fieldPath, value)}
-      />
-    </ConfigField>
-  );
-}
-
-function fallbackEffort(
-  options: readonly EffortLevel[],
-): EffortLevel | undefined {
-  if (options.includes("high")) return "high";
-  return options.at(-1);
 }
 
 function BackendProfileFields({
@@ -76,75 +40,52 @@ function BackendProfileFields({
   const {
     formRevision,
     handleChange,
-    handleChangeMulti,
     handleValidityChange,
     isDefault,
     isModified,
   } = controller;
   const pathPrefix = `agentBackends.${entry.id}`;
-  const modelPath = `${pathPrefix}.model`;
-  const effortPath = `${pathPrefix}.reasoningEffort`;
-  const fastModePath = `${pathPrefix}.fastMode`;
+  const modelSelectionPath = `${pathPrefix}.modelSelection`;
   const timeoutPath = `${pathPrefix}.timeoutMs`;
-  const modelOptions = modelOptionsForCatalogEntry(entry, profile.model);
-  const effortOptions = effortLevelsForCatalogEntry(entry, profile.model);
-  const displayedEffort =
-    profile.reasoningEffort ?? fallbackEffort(effortOptions);
-
-  const handleModelChange = (model: string) => {
-    const nextOptions = effortLevelsForCatalogEntry(entry, model);
-    const currentEffort = profile.reasoningEffort;
-    const nextEffort =
-      currentEffort && nextOptions.includes(currentEffort)
-        ? currentEffort
-        : fallbackEffort(nextOptions);
-
-    handleChangeMulti([
-      [modelPath, model],
-      [effortPath, nextEffort],
-    ]);
+  const catalog = getConfiguredBackendModelCatalog(
+    entry.id,
+    profile.modelSelection,
+  );
+  const selectedModel = catalog.models.find(
+    ({ id, aliases }) =>
+      id === profile.modelSelection.modelId ||
+      aliases.includes(profile.modelSelection.modelId),
+  );
+  const hasConfigurableParameters = selectedModel?.parameters.some(
+    ({ prominence, values }) => prominence !== "hidden" && values.length > 1,
+  );
+  const applySelection = (selection: BackendModelSelection): void => {
+    handleChange(modelSelectionPath, selection);
   };
 
   return (
     <>
       <ConfigField
-        label={`${entry.label} model`}
-        fieldPath={modelPath}
-        isDefault={isDefault(modelPath)}
-        isModified={isModified(modelPath)}
+        label={`${entry.label} model selection`}
+        fieldPath={modelSelectionPath}
+        isDefault={isDefault(modelSelectionPath)}
+        isModified={isModified(modelSelectionPath)}
       >
-        <ConfigPillGroup
-          value={profile.model}
-          options={modelOptions.map((model) => model.id)}
-          getOptionLabel={(model) =>
-            modelOptions.find((option) => option.id === model)?.label ?? model
-          }
-          onChange={handleModelChange}
-          aria-labelledby={`${modelPath}-label`}
+        <CatalogModelSelect
+          catalog={catalog}
+          selection={profile.modelSelection}
+          onSelectionChange={applySelection}
         />
+        {hasConfigurableParameters ? (
+          <div className="mt-md max-w-[420px]">
+            <ModelOptionsEditor
+              catalog={catalog}
+              selection={profile.modelSelection}
+              onApply={applySelection}
+            />
+          </div>
+        ) : null}
       </ConfigField>
-      {effortOptions.length > 0 && displayedEffort ? (
-        <ConfigField
-          label={`${entry.label} effort`}
-          fieldPath={effortPath}
-          isDefault={isDefault(effortPath)}
-          isModified={isModified(effortPath)}
-        >
-          <ConfigPillGroup
-            value={displayedEffort}
-            options={effortOptions}
-            onChange={(value) => handleChange(effortPath, value)}
-            aria-labelledby={`${effortPath}-label`}
-          />
-        </ConfigField>
-      ) : null}
-      {backendSupportsFastMode(entry.id) ? (
-        <CodexFastModeField
-          controller={controller}
-          fieldPath={fastModePath}
-          fastMode={profile.fastMode ?? false}
-        />
-      ) : null}
       <ConfigField
         label={`${entry.label} timeout`}
         fieldPath={timeoutPath}

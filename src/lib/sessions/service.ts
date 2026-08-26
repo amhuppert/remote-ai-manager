@@ -453,7 +453,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const result = await runner.run({
       workingDirectory: projectPath,
       prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
-      modelId: "haiku",
+      modelSelection: { modelId: "haiku", parameters: {} },
       timeoutMs: 60_000,
       executionProfile: "isolated-one-shot",
       autonomous: true,

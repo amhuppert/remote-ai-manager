@@ -43,7 +43,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
-    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+    },
   },
   contextValidator: {
     enabled: true,
@@ -55,8 +58,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
         authority: "blocking",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         continuity: { enabled: true },
       },
@@ -73,8 +78,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
     enabled: false,
     secondAgent: {
       backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     },
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
@@ -101,17 +108,20 @@ const GLOBAL_CONFIG: GlobalConfig = {
   ignorePatterns: [],
   agentBackends: {
     claude: {
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: { modelId: "opus", parameters: { effort: "high" } },
       timeoutMs: 3_600_000,
     },
     codex: {
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-      fastMode: false,
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       timeoutMs: null,
     },
-    cursor: { model: "composer-2.5", timeoutMs: null },
+    cursor: {
+      modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
+      timeoutMs: null,
+    },
   },
   defaultAgentBackend: "claude",
   workflowDefaults: GLOBAL_DEFAULTS,
@@ -122,7 +132,10 @@ const VALIDATOR: ValidatorAssignment = {
   profile: { tier: "builtin", id: "general-reviewer" },
   strategy: "conversation",
   authority: "blocking",
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  agent: {
+    backend: "claude",
+    modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+  },
   continuity: { enabled: true },
 };
 

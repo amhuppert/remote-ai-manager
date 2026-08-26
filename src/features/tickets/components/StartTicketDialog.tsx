@@ -9,9 +9,12 @@ import {
   STANDARD_AGENT_PROFILE_VALUE,
 } from "@/components/agent-profiles/agent-profile-picker-state";
 import BackendToggle from "@/components/BackendToggle";
-import ModelSelector from "@/components/ModelSelector";
-import { useProjectBackendModelOptions } from "@/lib/agent-backends/queries";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import {
+  DesktopModelSelectionControls,
+  UnavailableModelSelectionControl,
+} from "@/components/session/prompt/ModelSelectionControls";
+import { validateModelSelection } from "@/lib/agent-backends/model-selection";
+import { useProjectModelOptionsQuery } from "@/lib/agent-backends/queries";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,9 +34,8 @@ import { FormError, FormGroup } from "@/components/ui/FormField";
 import { RadioGroup, RadioGroupOption } from "@/components/ui/RadioGroup";
 import { Spinner } from "@/components/ui/Spinner";
 import { useDialogRequestGeneration } from "@/hooks/use-dialog-request-generation";
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { useStartTicketMutation } from "@/lib/tickets/mutations";
 import type { TicketStartMode } from "@/lib/tickets/schemas";
@@ -41,22 +43,20 @@ import { useOpenerFocus } from "@/hooks/use-opener-focus";
 
 import FieldGroupLabel from "./FieldGroupLabel";
 
-function defaultEffort(backend: AgentBackendId, model: string): EffortLevel {
-  const levels = getEffortLevelsForBackend(backend, model);
-  if (levels.includes("high")) return "high";
-  return levels[levels.length - 1] ?? "high";
+function cloneSelection(
+  selection: BackendModelSelection,
+): BackendModelSelection {
+  return {
+    modelId: selection.modelId,
+    parameters: { ...selection.parameters },
+  };
 }
 
-function profileDefaults(
+function profileDefault(
   backend: AgentBackendId,
   backendDefaults: BackendSelectionDefaultsById,
-): { model: string; effort: EffortLevel } {
-  const configured = backendDefaults[backend];
-  const levels = getEffortLevelsForBackend(backend, configured.modelId);
-  const effort = levels.includes(configured.effort)
-    ? configured.effort
-    : defaultEffort(backend, configured.modelId);
-  return { model: configured.modelId, effort };
+): BackendModelSelection {
+  return cloneSelection(backendDefaults[backend]);
 }
 
 export interface StartTicketDialogProps {
@@ -77,19 +77,40 @@ export default function StartTicketDialog({
   backendDefaults,
 }: StartTicketDialogProps): React.JSX.Element {
   const router = useRouter();
-  const initialDefaults = profileDefaults(defaultBackend, backendDefaults);
+  const initialSelection = profileDefault(defaultBackend, backendDefaults);
   const [mode, setMode] = useState<TicketStartMode>("agent");
   const [backend, setBackend] = useState<AgentBackendId>(defaultBackend);
-  const [model, setModel] = useState(initialDefaults.model);
-  const [reasoningEffort, setReasoningEffort] = useState<EffortLevel>(
-    initialDefaults.effort,
-  );
+  const [modelSelection, setModelSelection] =
+    useState<BackendModelSelection>(initialSelection);
   // A ticket always starts inside a project, so the models offered are the
   // project's effective ones (spec D10), not the process-global catalog's.
-  const projectModelOptions = useProjectBackendModelOptions(
-    projectName,
-    backend,
+  const projectModelOptionsQuery = useProjectModelOptionsQuery(projectName);
+  const projectModelOptions = projectModelOptionsQuery.data?.find(
+    (entry) => entry.backend === backend,
   );
+  const modelCatalog = projectModelOptions?.modelCatalog ?? null;
+  const selectionValidation =
+    modelCatalog === null
+      ? null
+      : validateModelSelection(modelCatalog, modelSelection);
+  let modelSelectionBlockedReason: string | null = null;
+  if (projectModelOptionsQuery.isPending) {
+    modelSelectionBlockedReason = "Loading model options…";
+  } else if (projectModelOptionsQuery.isError) {
+    modelSelectionBlockedReason = "Model options could not be loaded.";
+  } else if (projectModelOptions === undefined) {
+    modelSelectionBlockedReason = `Model options are unavailable for ${backend}.`;
+  } else if (projectModelOptions.diagnostics.length > 0) {
+    modelSelectionBlockedReason = projectModelOptions.diagnostics
+      .map(({ message }) => message)
+      .join(" ");
+  } else if (selectionValidation !== null && !selectionValidation.valid) {
+    modelSelectionBlockedReason = selectionValidation.issues
+      .map(({ message }) => message)
+      .join(" ");
+  } else if (modelCatalog === null) {
+    modelSelectionBlockedReason = "Model options are unavailable.";
+  }
   const [profileValue, setProfileValue] = useState(
     STANDARD_AGENT_PROFILE_VALUE,
   );
@@ -117,10 +138,8 @@ export default function StartTicketDialog({
     if (!nextOpen) {
       requestGeneration.invalidate();
       setMode("agent");
-      const defaults = profileDefaults(defaultBackend, backendDefaults);
       setBackend(defaultBackend);
-      setModel(defaults.model);
-      setReasoningEffort(defaults.effort);
+      setModelSelection(profileDefault(defaultBackend, backendDefaults));
       setProfileValue(STANDARD_AGENT_PROFILE_VALUE);
       setError(null);
       setPreparedSessionName(null);
@@ -131,7 +150,6 @@ export default function StartTicketDialog({
   const submit = () => {
     setError(null);
     const generation = requestGeneration.capture();
-    const effortLevels = getEffortLevelsForBackend(backend, model);
     const profile = parseAgentProfilePickerValue(profileValue) ?? undefined;
     startMutation.mutate(
       {
@@ -144,10 +162,7 @@ export default function StartTicketDialog({
         ...(mode === "agent"
           ? {
               backend,
-              model,
-              ...(effortLevels.includes(reasoningEffort)
-                ? { reasoningEffort }
-                : {}),
+              modelSelection: cloneSelection(modelSelection),
             }
           : {}),
       },
@@ -173,18 +188,13 @@ export default function StartTicketDialog({
   };
 
   const changeBackend = (nextBackend: AgentBackendId) => {
-    const defaults = profileDefaults(nextBackend, backendDefaults);
     setBackend(nextBackend);
-    setModel(defaults.model);
-    setReasoningEffort(defaults.effort);
-  };
-
-  const changeModel = (nextModel: string) => {
-    const levels = getEffortLevelsForBackend(backend, nextModel);
-    setModel(nextModel);
-    if (!levels.includes(reasoningEffort)) {
-      setReasoningEffort(defaultEffort(backend, nextModel));
-    }
+    const effectiveDefault = projectModelOptionsQuery.data?.find(
+      (entry) => entry.backend === nextBackend,
+    )?.defaultSelection;
+    setModelSelection(
+      cloneSelection(effectiveDefault ?? backendDefaults[nextBackend]),
+    );
   };
 
   const openPreparedSession = () => {
@@ -273,27 +283,23 @@ export default function StartTicketDialog({
                     <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
                       Model
                     </span>
-                    <ModelSelector
-                      backend={backend}
-                      value={model}
-                      onChange={changeModel}
-                      disabled={pending}
-                      projectOptions={projectModelOptions}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2xs">
-                    <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
-                      Reasoning
-                    </span>
-                    <ReasoningLevelSelector
-                      value={reasoningEffort}
-                      onChange={setReasoningEffort}
-                      availableLevels={getEffortLevelsForBackend(
-                        backend,
-                        model,
-                      )}
-                      disabled={pending}
-                    />
+                    {modelCatalog === null ? (
+                      <UnavailableModelSelectionControl
+                        selection={modelSelection}
+                        reason={
+                          modelSelectionBlockedReason ??
+                          "Model options are unavailable."
+                        }
+                      />
+                    ) : (
+                      <DesktopModelSelectionControls
+                        catalog={modelCatalog}
+                        selection={modelSelection}
+                        onSelectionChange={setModelSelection}
+                        disabled={pending}
+                        selectContentLayer="popover"
+                      />
+                    )}
                   </div>
                 </div>
               </FormGroup>
@@ -307,7 +313,14 @@ export default function StartTicketDialog({
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" disabled={pending} onClick={submit}>
+              <Button
+                variant="primary"
+                disabled={
+                  pending ||
+                  (mode === "agent" && modelSelectionBlockedReason !== null)
+                }
+                onClick={submit}
+              >
                 {pending ? (
                   <>
                     <Spinner size="sm" tone="inherit" />

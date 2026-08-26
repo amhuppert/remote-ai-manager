@@ -5,10 +5,7 @@ import {
   graphWorkflowPlanRepairPolicySchema,
 } from "@/lib/workflow-graph/config-schemas";
 import { SEEDED_WORKFLOW_DEFAULTS as canonicalSeededDefaults } from "@/lib/workflow-graph/resolve-config";
-import {
-  backendSupportsFastMode,
-  listBackendCatalogEntries,
-} from "@/lib/agent-backends/catalog";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import {
   ALL_FIELD_PATHS,
   SEEDED_WORKFLOW_DEFAULTS,
@@ -83,12 +80,9 @@ describe("ALL_FIELD_PATHS", () => {
   it("tracks the normalized default selector and each backend profile field", () => {
     for (const path of [
       "defaultAgentBackend",
-      "agentBackends.claude.model",
-      "agentBackends.claude.reasoningEffort",
+      "agentBackends.claude.modelSelection",
       "agentBackends.claude.timeoutMs",
-      "agentBackends.codex.model",
-      "agentBackends.codex.reasoningEffort",
-      "agentBackends.codex.fastMode",
+      "agentBackends.codex.modelSelection",
       "agentBackends.codex.timeoutMs",
     ]) {
       expect(ALL_FIELD_PATHS).toContain(path);
@@ -112,16 +106,21 @@ describe("ALL_FIELD_PATHS", () => {
   // silently unsaved — zero dirty fields, and the edit dropped from the PUT.
   it("tracks a profile field for every registered backend the settings section renders", () => {
     for (const entry of listBackendCatalogEntries()) {
-      expect(ALL_FIELD_PATHS).toContain(`agentBackends.${entry.id}.model`);
+      expect(ALL_FIELD_PATHS).toContain(
+        `agentBackends.${entry.id}.modelSelection`,
+      );
       expect(ALL_FIELD_PATHS).toContain(`agentBackends.${entry.id}.timeoutMs`);
     }
   });
 
-  it("tracks fastMode only for the backend that declares one", () => {
+  it("does not split model parameters into independently persisted fields", () => {
     for (const entry of listBackendCatalogEntries()) {
-      expect(
-        ALL_FIELD_PATHS.includes(`agentBackends.${entry.id}.fastMode`),
-      ).toBe(backendSupportsFastMode(entry.id));
+      expect(ALL_FIELD_PATHS).not.toContain(
+        `agentBackends.${entry.id}.reasoningEffort`,
+      );
+      expect(ALL_FIELD_PATHS).not.toContain(
+        `agentBackends.${entry.id}.fastMode`,
+      );
     }
   });
 
@@ -130,9 +129,8 @@ describe("ALL_FIELD_PATHS", () => {
     // as dirty nor written by buildSavePayload.
     for (const path of [
       "compaction.backend",
-      "compaction.conversationModel",
-      "compaction.messageModel",
-      "compaction.effort",
+      "compaction.conversationModelSelection",
+      "compaction.messageModelSelection",
       "compaction.timeoutMs",
     ]) {
       expect(ALL_FIELD_PATHS).toContain(path);
@@ -167,8 +165,7 @@ describe("ALL_FIELD_PATHS", () => {
     for (const path of [
       "conversationNaming.enabled",
       "conversationNaming.backend",
-      "conversationNaming.model",
-      "conversationNaming.effort",
+      "conversationNaming.modelSelection",
       "conversationNaming.timeoutMs",
     ]) {
       expect(ALL_FIELD_PATHS).toContain(path);

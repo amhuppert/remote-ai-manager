@@ -121,6 +121,16 @@ const MATRIX: readonly MatrixCase[] = [
     disposition: "retain",
   },
   {
+    label: "worker model-binding mismatch",
+    error: new CursorLocalFailure(
+      "binding_mismatch",
+      "worker uses another selection",
+    ),
+    kind: "backend_error",
+    retryable: false,
+    disposition: "retain",
+  },
+  {
     label: "invalid ref (corrupt / cross-cwd)",
     error: new CursorLocalFailure("invalid_ref", "ref not valid for this cwd"),
     kind: "stale_resume_ref",
@@ -261,6 +271,20 @@ describe("cursor failure classifier", () => {
       sdkCode: null,
       sdkStatus: null,
       localKind: "stream_stall",
+    });
+  });
+
+  it("preserves a worker model-binding mismatch in local diagnostics", () => {
+    expect(
+      cursorFailureDiagnostics(
+        new CursorLocalFailure(
+          "binding_mismatch",
+          "worker uses another selection",
+        ),
+      ),
+    ).toMatchObject({
+      sdkErrorName: "CursorLocalFailure",
+      localKind: "binding_mismatch",
     });
   });
 

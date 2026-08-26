@@ -40,8 +40,10 @@ function makeValidDefinitionRecord() {
             profile: { tier: "builtin", id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false },
@@ -94,8 +96,10 @@ function makeValidExecution() {
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },
@@ -652,8 +656,10 @@ describe("post-cutover refusal of legacy singleton agent shapes", () => {
           strategy: "conversation",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true },
         },

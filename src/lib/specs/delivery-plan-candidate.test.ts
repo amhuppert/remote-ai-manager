@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
 import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
+import { TEST_AGENT_BACKENDS_CONFIG } from "@/lib/workflow-graph/test-fixtures";
 
 import {
   canonicalDeliveryPlanCandidateBytes,
@@ -186,11 +187,13 @@ describe("canonical delivery-plan candidate", () => {
         caller: "project-create",
         documentScope: { kind: "project", projectPath: "/repo" },
         workflowDefaults: undefined,
+        agentBackends: TEST_AGENT_BACKENDS_CONFIG,
       }),
       admitAuthoredWorkflowLaunch(launch, {
         caller: "spec-proposal",
         documentScope: { kind: "project", projectPath: "/repo" },
         workflowDefaults: undefined,
+        agentBackends: TEST_AGENT_BACKENDS_CONFIG,
       }),
     ]);
 
@@ -269,6 +272,7 @@ describe("canonical delivery-plan candidate", () => {
         caller: "spec-proposal",
         documentScope: { kind: "project", projectPath: "/repo" },
         workflowDefaults: undefined,
+        agentBackends: TEST_AGENT_BACKENDS_CONFIG,
       },
     );
 

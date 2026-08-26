@@ -12,12 +12,18 @@ import { stripCollabPrefix } from "@/lib/conversation-commands/parse";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import type {
   CollabConfigDraft,
   EffectiveCollabConfig,
 } from "@/stores/collaboration.store";
-import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import type {
+  BackendSelectionDefaultsById,
+  BackendValueMap,
+} from "@/lib/agent-backends/catalog";
 import type {
   ImageAttachment,
   AddImageResult,
@@ -60,14 +66,11 @@ export interface UsePromptComposerPropsArgs {
   backendLocked: boolean;
   selectedBackend: AgentBackendId;
   handleBackendChange: (backend: AgentBackendId) => void;
-  codexFastMode: boolean;
-  setCodexFastMode: (enabled: boolean) => void;
-  selectedModel: string;
-  handleModelChange: (model: string) => void;
-  selectedEffort: EffortLevel;
-  setSelectedEffort: (effort: EffortLevel) => void;
-  availableEffortLevels: EffortLevel[];
-  effortSupported: boolean;
+  modelCatalog: BackendModelCatalog | null;
+  modelCatalogs: BackendValueMap<BackendModelCatalog | null>;
+  modelSelection: BackendModelSelection;
+  modelSelectionBlockedReason: string | null;
+  setModelSelection(selection: BackendModelSelection): void;
   hasCollabChip: boolean;
   effectiveCollabConfig: EffectiveCollabConfig;
   /** Null when the conversation's backend cannot take a collaboration lane. */
@@ -128,14 +131,11 @@ export function usePromptComposerProps(
     backendLocked,
     selectedBackend,
     handleBackendChange,
-    codexFastMode,
-    setCodexFastMode,
-    selectedModel,
-    handleModelChange,
-    selectedEffort,
-    setSelectedEffort,
-    availableEffortLevels,
-    effortSupported,
+    modelCatalog,
+    modelCatalogs,
+    modelSelection,
+    modelSelectionBlockedReason,
+    setModelSelection,
     hasCollabChip,
     effectiveCollabConfig,
     originatingCollabAgent,
@@ -179,14 +179,11 @@ export function usePromptComposerProps(
       backendLocked,
       selectedBackend,
       onBackendChange: handleBackendChange,
-      codexFastMode,
-      onCodexFastModeChange: setCodexFastMode,
-      selectedModel,
-      onModelChange: handleModelChange,
-      selectedEffort,
-      onEffortChange: setSelectedEffort,
-      availableEffortLevels,
-      effortSupported,
+      modelCatalog,
+      modelCatalogs,
+      modelSelection,
+      modelSelectionBlockedReason,
+      onModelSelectionChange: setModelSelection,
       hasCollabChip,
       effectiveCollabConfig,
       originatingCollabAgent,
@@ -237,14 +234,11 @@ export function usePromptComposerProps(
       backendLocked,
       selectedBackend,
       handleBackendChange,
-      codexFastMode,
-      setCodexFastMode,
-      selectedModel,
-      handleModelChange,
-      selectedEffort,
-      setSelectedEffort,
-      availableEffortLevels,
-      effortSupported,
+      modelCatalog,
+      modelCatalogs,
+      modelSelection,
+      modelSelectionBlockedReason,
+      setModelSelection,
       hasCollabChip,
       effectiveCollabConfig,
       originatingCollabAgent,

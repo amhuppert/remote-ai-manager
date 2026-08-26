@@ -184,6 +184,31 @@ describe("queueMessage next_turn", () => {
     expect(result.entry.id).toBe("msg-1");
   });
 
+  it("passes the complete model selection into durable enqueue", async () => {
+    queueCapabilityForBackendMock.mockReturnValue({
+      acceptsWhileRunning: true,
+      deliveryTiming: "next_turn",
+    });
+    const modelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { reasoning: "ultra", fast: "true" },
+    };
+
+    await queueMessage({
+      ...baseParams,
+      text: "follow up",
+      backend: "codex",
+      modelSelection,
+      deps,
+    });
+
+    expect(enqueueMock).toHaveBeenCalledWith({
+      ...baseParams,
+      content: [{ type: "text", text: "follow up" }],
+      modelSelection,
+    });
+  });
+
   it("persists a document_feedback block (and no duplicate prose block) for a feedback message", async () => {
     queueCapabilityForBackendMock.mockReturnValue({
       acceptsWhileRunning: true,
@@ -265,6 +290,27 @@ describe("queueMessage in_turn", () => {
       text: "The user approved the decisions.",
       backend: "claude",
       deliveryPolicy: "next_turn",
+      deps,
+    });
+
+    expect(result.deliveryTiming).toBe("next_turn");
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(queueUserInputMock).not.toHaveBeenCalled();
+    expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("defers an explicit model selection instead of live-delivering under the active runtime selection", async () => {
+    const queueUserInputMock = vi.fn();
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "use these model options",
+      backend: "claude",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "max" },
+      },
       deps,
     });
 

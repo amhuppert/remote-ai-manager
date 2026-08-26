@@ -46,17 +46,12 @@ function snapshotOwnerFor(sessionName: string): ConversationSnapshotOwner {
 // ============================================================
 
 /**
- * Canonicalize every session ref in the snapshot before it is persisted. The
- * live actor snapshot is already canonical, so this is a no-op unless the tree
- * carries a legacy ref (e.g. from an unmigrated child snapshot). The walk is
- * recursive because refs live beyond the root context: an active XState child
- * snapshot carries `input.backendRef` (and `input.forkedFrom`). Clones on
- * rewrite — the live actor snapshot stays untouched.
+ * Canonicalize every session ref retained in the persisted resume token. The
+ * root context is normally canonical, so this is a no-op unless a legacy ref
+ * survives there (for example in `backendRef` or `forkedFrom`). The walk clones
+ * on rewrite, leaving the projected input untouched.
  */
-function withCanonicalRefs(
-  conversationId: string,
-  snapshot: Snapshot<unknown>,
-): Snapshot<unknown> {
+function withCanonicalRefs<T>(conversationId: string, snapshot: T): T {
   const { value, rewrittenRefs } =
     canonicalizeSessionRefsForStorageDeep(snapshot);
   if (rewrittenRefs > 0) {
@@ -297,16 +292,15 @@ async function writeSnapshot(
   snapshot: Snapshot<unknown>,
 ): Promise<void> {
   try {
-    // Canonicalize the root refs first (a no-op unless a legacy ref rode in),
-    // then project to the resume token — the projection drops the `children`
-    // subtree and `lastResult.contentBlocks`, so only the retained root context
-    // (backendRef / forkedFrom) needs canonical bytes.
-    const canonical = withCanonicalRefs(conversationId, snapshot);
-    const projected = toPersistedConversationSnapshot(canonical);
+    // XState child inputs can contain callbacks that structuredClone cannot
+    // clone. They are outside the durable resume contract, so project them out
+    // before canonicalizing the refs retained in the root context.
+    const projected = toPersistedConversationSnapshot(snapshot);
+    const canonical = withCanonicalRefs(conversationId, projected);
     await getDeps().upsertConversationMachineSnapshot(
       snapshotOwnerFor(sessionName),
       conversationId,
-      projected,
+      canonical,
     );
 
     logger.debug("conversation-persistence.snapshot_saved", {

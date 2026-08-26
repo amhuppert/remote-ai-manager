@@ -38,8 +38,7 @@ import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-voc
 
 /**
  * Both flow agents' lane configs with the default backend pairing
- * (agent_one=claude, agent_two=codex) and concrete models — the production
- * caller requires a resolved model per lane. Per-test overrides layer the
+ * (agent_one=claude, agent_two=codex) and complete selections. Per-test overrides layer the
  * settings the test asserts on.
  */
 function collabAgents(
@@ -51,12 +50,18 @@ function collabAgents(
   return {
     agent_one: {
       backend: "claude",
-      model: "claude-lane-model",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      },
       ...overrides.agent_one,
     },
     agent_two: {
       backend: "codex",
-      model: "codex-lane-model",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       ...overrides.agent_two,
     },
   };
@@ -103,8 +108,7 @@ function makeRecordingClaudeFactory(
       return {
         backend: "claude",
         status: "alive",
-        modelId: input.modelId,
-        reasoningEffort: input.reasoningEffort,
+        modelSelection: input.modelSelection,
         outputFormat: input.outputFormat,
         alignmentVersion: input.alignmentVersion ?? null,
         applyPortableMcpConfig: async () => ({
@@ -160,8 +164,7 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          modelId: undefined,
-          reasoningEffort: undefined,
+          modelSelection: input.modelSelection,
           outputFormat: undefined,
           alignmentVersion: null,
           applyPortableMcpConfig: async () => ({
@@ -250,8 +253,7 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          modelId: undefined,
-          reasoningEffort: undefined,
+          modelSelection: input.modelSelection,
           outputFormat: undefined,
           alignmentVersion: null,
           applyPortableMcpConfig: async () => ({
@@ -346,8 +348,7 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          modelId: undefined,
-          reasoningEffort: undefined,
+          modelSelection: input.modelSelection,
           outputFormat: input.outputFormat,
           alignmentVersion: input.alignmentVersion ?? null,
           applyPortableMcpConfig: async () => ({
@@ -596,8 +597,7 @@ describe("createCollaborationProductionCallAgent", () => {
         const runtime: ConversationBackendRuntime = {
           backend: "claude",
           status: "alive",
-          modelId: undefined,
-          reasoningEffort: undefined,
+          modelSelection: input.modelSelection,
           outputFormat: undefined,
           alignmentVersion: null,
           applyPortableMcpConfig: async () => ({
@@ -740,8 +740,10 @@ describe("createCollaborationProductionCallAgent", () => {
       laneService,
       agents: collabAgents({
         agent_two: {
-          model: "gpt-5.5",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.5",
+            parameters: { reasoning: "high", fast: "false" },
+          },
           timeoutMs: 75_000,
           stallTimeoutMs: 25_000,
         },
@@ -762,8 +764,10 @@ describe("createCollaborationProductionCallAgent", () => {
         >,
     });
 
-    expect(taskRequests[0]?.modelId).toBe("gpt-5.5");
-    expect(taskRequests[0]?.reasoningEffort).toBe("high");
+    expect(taskRequests[0]?.modelSelection).toEqual({
+      modelId: "gpt-5.5",
+      parameters: { reasoning: "high", fast: "false" },
+    });
     expect(taskRequests[0]?.timeoutMs).toBe(75_000);
     expect(taskRequests[0]?.stallTimeoutMs).toBe(25_000);
   });
@@ -815,7 +819,17 @@ describe("createCollaborationProductionCallAgent", () => {
         sessionKey: "/projects/example::sess-1",
         originatingConversationId: "test-originating-conv",
         laneService,
-        agents: collabAgents({ agent_two: { fastMode: codexFastMode } }),
+        agents: collabAgents({
+          agent_two: {
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: {
+                reasoning: "high",
+                fast: String(codexFastMode),
+              },
+            },
+          },
+        }),
         getTaskRunner: () => runner,
       });
 
@@ -835,7 +849,8 @@ describe("createCollaborationProductionCallAgent", () => {
       expect(taskRequests).toHaveLength(2);
       expect(
         taskRequests.every(
-          (request) => request.codexFastMode === codexFastMode,
+          (request) =>
+            request.modelSelection.parameters.fast === String(codexFastMode),
         ),
       ).toBe(true);
     },
@@ -895,10 +910,10 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     expect(taskRequests).toHaveLength(1);
-    expect(taskRequests[0]?.codexFastMode).toBeUndefined();
+    expect(taskRequests[0]?.modelSelection.parameters.fast).toBe("false");
   });
 
-  it("prefers an explicit request modelId over the configured codex model", async () => {
+  it("prefers an explicit whole selection over the configured Codex selection", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-codex-model-override",
@@ -940,7 +955,10 @@ describe("createCollaborationProductionCallAgent", () => {
       laneService,
       agents: collabAgents({
         agent_two: {
-          model: "gpt-5.5",
+          modelSelection: {
+            modelId: "gpt-5.5",
+            parameters: { reasoning: "high", fast: "false" },
+          },
           timeoutMs: 75_000,
           stallTimeoutMs: 25_000,
         },
@@ -952,7 +970,10 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "task_run",
       backend: "codex",
       prompt: "round 1",
-      modelId: "gpt-5.4",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "xhigh", fast: "true" },
+      },
       timeoutMs: 5_000,
       laneRef: { workflowId: "wf-codex-model-override", laneId: "agent_two" },
       writeCapability: "write_capable",
@@ -963,7 +984,10 @@ describe("createCollaborationProductionCallAgent", () => {
         >,
     });
 
-    expect(taskRequests[0]?.modelId).toBe("gpt-5.4");
+    expect(taskRequests[0]?.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "xhigh", fast: "true" },
+    });
     expect(taskRequests[0]?.timeoutMs).toBe(5_000);
     expect(taskRequests[0]?.stallTimeoutMs).toBe(25_000);
   });
@@ -992,12 +1016,11 @@ describe("createCollaborationProductionCallAgent", () => {
       });
       const factory: ConversationBackendFactory = {
         backend: "claude",
-        async createRuntime(): Promise<ConversationBackendRuntime> {
+        async createRuntime(input): Promise<ConversationBackendRuntime> {
           return {
             backend: "claude",
             status: "alive",
-            modelId: undefined,
-            reasoningEffort: undefined,
+            modelSelection: input.modelSelection,
             outputFormat: undefined,
             alignmentVersion: null,
             async sendTurn(
@@ -1093,7 +1116,12 @@ describe("createCollaborationProductionCallAgent", () => {
       originatingConversationId: "test-originating-conv",
       laneService,
       agents: collabAgents({
-        agent_one: { model: "opus", reasoningEffort: "xhigh" },
+        agent_one: {
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "xhigh" },
+          },
+        },
       }),
       getConversationBackendFactory: () => factory,
     });
@@ -1111,11 +1139,13 @@ describe("createCollaborationProductionCallAgent", () => {
         >,
     });
 
-    expect(createRuntimeInputs[0]?.modelId).toBe("opus");
-    expect(createRuntimeInputs[0]?.reasoningEffort).toBe("xhigh");
+    expect(createRuntimeInputs[0]?.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "xhigh" },
+    });
   });
 
-  it("prefers an explicit request modelId over the configured claude model", async () => {
+  it("prefers an explicit whole selection over the configured Claude selection", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-model-override",
@@ -1141,7 +1171,14 @@ describe("createCollaborationProductionCallAgent", () => {
       sessionKey: "/projects/example::sess-1",
       originatingConversationId: "test-originating-conv",
       laneService,
-      agents: collabAgents({ agent_one: { model: "opus" } }),
+      agents: collabAgents({
+        agent_one: {
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        },
+      }),
       getConversationBackendFactory: () => factory,
     });
 
@@ -1149,7 +1186,10 @@ describe("createCollaborationProductionCallAgent", () => {
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
-      modelId: "sonnet",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "low" },
+      },
       laneRef: { workflowId: "wf-claude-model-override", laneId: "agent_one" },
       writeCapability: "write_capable",
       outputSchema:
@@ -1159,7 +1199,10 @@ describe("createCollaborationProductionCallAgent", () => {
         >,
     });
 
-    expect(createRuntimeInputs[0]?.modelId).toBe("sonnet");
+    expect(createRuntimeInputs[0]?.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "low" },
+    });
   });
 
   it("runs a prose work turn (no schema) then a JSON format turn (schema) on the same lane, returning the format turn's structured output", async () => {
@@ -1405,8 +1448,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
         return {
           backend: "claude",
           status: "alive",
-          modelId: input.modelId,
-          reasoningEffort: input.reasoningEffort,
+          modelSelection: input.modelSelection,
           outputFormat: input.outputFormat,
           alignmentVersion: input.alignmentVersion ?? null,
           applyPortableMcpConfig: async () => ({

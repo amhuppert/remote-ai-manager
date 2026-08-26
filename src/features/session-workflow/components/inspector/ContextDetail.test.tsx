@@ -1459,7 +1459,7 @@ describe("ContextDetail — brief markdown + focus modal", () => {
     expect(strip).not.toBeNull();
     // The catalog's canonical long name, not the short id the config holds.
     expect(strip!.textContent).toContain(
-      `Claude ${modelDisplayLabel("claude", "opus")} · high`,
+      `Claude ${modelDisplayLabel("claude", "opus")} · effort=high`,
     );
     expect(strip!.textContent).toContain("Approval");
     // Disabled gates render no chip.
@@ -1626,8 +1626,10 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
           strategy: "task",
           agent: {
             backend: "codex",
-            model: "gpt-5.6-sol",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.6-sol",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
         }),
         {
@@ -1723,8 +1725,10 @@ describe("ContextDetail — per-assignment cohort inspector (R12.3)", () => {
                 implementer: seedAssignment(
                   makeImplementerAssignment({
                     backend: "claude",
-                    model: "opus",
-                    reasoningEffort: "high",
+                    modelSelection: {
+                      modelId: "opus",
+                      parameters: { effort: "high" },
+                    },
                   }),
                   { name: "General Implementer", revision: 3 },
                 ),

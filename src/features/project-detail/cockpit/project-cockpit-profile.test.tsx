@@ -35,6 +35,9 @@ import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import type { BackendModelCatalog } from "@/lib/agent-backends/schemas";
 
 vi.mock(
   "next/link",
@@ -42,10 +45,54 @@ vi.mock(
 );
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
+
+function projectModelOptionsResponse() {
+  const catalogs: Record<AgentBackendId, BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex", BACKEND_DEFAULTS.codex),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return {
+    backends: (["claude", "codex", "cursor"] as const).map((backend) => {
+      const catalog = catalogs[backend];
+      return {
+        backend,
+        models: catalog.models.map((model) => ({
+          id: model.id,
+          label: model.label,
+          description: model.description ?? model.label,
+          effortLevels: [],
+        })),
+        defaultModelId: BACKEND_DEFAULTS[backend].modelId,
+        source: "catalog" as const,
+        modelCatalog: catalog,
+        defaultSelection: BACKEND_DEFAULTS[backend],
+        diagnostics: [],
+      };
+    }),
+  };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function profileFetchResponse(input: RequestInfo | URL): Response {
+  if (String(input) === "/api/projects/proj/model-options") {
+    return jsonResponse(projectModelOptionsResponse());
+  }
+  return jsonResponse({ profiles: [], diagnostics: [] });
+}
 
 const session: SessionListItem = {
   sessionName: "auth",
@@ -250,13 +297,7 @@ describe("project create-and-send profile selection", () => {
   it("offers a Standard-Agent-defaulted picker beside the separate runtime controls when no conversation is open", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ profiles: [], diagnostics: [] }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-      ),
+      vi.fn(async (input: RequestInfo | URL) => profileFetchResponse(input)),
     );
     renderCockpit([]);
 
@@ -274,10 +315,7 @@ describe("project create-and-send profile selection", () => {
       if (url === "/api/projects/proj/prompt") {
         return sseResponse(["event: done\ndata: {}\n\n"]);
       }
-      return new Response(JSON.stringify({ profiles: [], diagnostics: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return profileFetchResponse(input);
     });
     vi.stubGlobal("fetch", fetchSpy);
     renderCockpit([]);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { effortLevelSchema } from "@/lib/agent-backends/schemas";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 
@@ -34,19 +34,27 @@ export type SpawnMode = z.infer<typeof spawnModeSchema>;
  * agent omits it; `initialPrompt` is the optional first user turn, dropped when
  * empty after trim.
  */
-export const proposedSessionSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  target: z.string().trim().min(1).max(200).default("main"),
-  agent: spawnAgentSchema,
-  mode: spawnModeSchema,
-  initialPrompt: z.string().trim().min(1).optional(),
-  images: z.array(imagePayloadSchema).max(5).optional(),
-  // User-set in the spawn card (never agent-proposed). Apply to a single-backend
-  // agent only — the `dual` race omits both and runs each participant at its
-  // backend default. They drive the spawned session's first turn.
-  model: z.string().trim().min(1).max(100).optional(),
-  reasoningEffort: effortLevelSchema.optional(),
-});
+export const proposedSessionSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    target: z.string().trim().min(1).max(200).default("main"),
+    agent: spawnAgentSchema,
+    mode: spawnModeSchema,
+    initialPrompt: z.string().trim().min(1).optional(),
+    images: z.array(imagePayloadSchema).max(5).optional(),
+    // User-set in the spawn card (never agent-proposed). Apply to a single-backend
+    // agent only; the `dual` race runs each participant at its backend default.
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: z
+      .never({ error: "Use the complete modelSelection instead of model." })
+      .optional(),
+    reasoningEffort: z
+      .never({
+        error: "Put reasoning effort in modelSelection.parameters.",
+      })
+      .optional(),
+  })
+  .strict();
 export type ProposedSession = z.infer<typeof proposedSessionSchema>;
 
 /**
@@ -54,9 +62,11 @@ export type ProposedSession = z.infer<typeof proposedSessionSchema>;
  * validates before offering Create. At least one proposed session; capped at 20
  * so a malformed/runaway proposal cannot request an unbounded batch.
  */
-export const spawnProposalSchema = z.object({
-  sessions: z.array(proposedSessionSchema).min(1).max(20),
-});
+export const spawnProposalSchema = z
+  .object({
+    sessions: z.array(proposedSessionSchema).min(1).max(20),
+  })
+  .strict();
 export type SpawnProposal = z.infer<typeof spawnProposalSchema>;
 
 /**

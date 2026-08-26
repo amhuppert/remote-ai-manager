@@ -90,6 +90,10 @@ describe("graph workflow output capture runner", () => {
     // Lane continuity: the format turn reuses the context's work conversation.
     expect(dispatched.conversationId).toBe("conversation-lane");
     expect(dispatched.kind).toBe("task_run");
+    expect(dispatched.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
     expect(dispatched.fsWritePolicy).toBeUndefined();
     expect(dispatched.prompt).toContain('"summary"');
     expect(dispatched.prompt).toContain("JSON object ONLY");

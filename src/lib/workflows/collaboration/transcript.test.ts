@@ -22,9 +22,10 @@ describe("buildCollaborationUserTranscriptEntry", () => {
             base64Data: "strip",
           },
         ],
-        modelId: "gpt-5.6",
-        effort: "xhigh",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.6",
+          parameters: { reasoning: "xhigh", fast: "true" },
+        },
       }),
     ).toEqual({
       timestamp: "2026-07-13T12:00:00.000Z",
@@ -43,9 +44,10 @@ describe("buildCollaborationUserTranscriptEntry", () => {
           imagePath: "/images/1.png",
         },
       ],
-      model: "gpt-5.6",
-      effort: "xhigh",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.6",
+        parameters: { reasoning: "xhigh", fast: "true" },
+      },
     });
   });
 });

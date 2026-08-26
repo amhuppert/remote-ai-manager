@@ -1,6 +1,8 @@
 import path from "node:path";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
-import { createLiveHarness } from "./live-worker";
+import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
+  createLiveHarness,
+} from "./live-worker";
 
 /**
  * A stand-in Command Center server for the orphan-lifetime acceptance case
@@ -37,7 +39,7 @@ async function main(): Promise<void> {
   });
   const live = await harness.startReady({
     sessionName,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
   });
 
   process.stdout.write(`${JSON.stringify({ workerPid: live.session.pid })}\n`);

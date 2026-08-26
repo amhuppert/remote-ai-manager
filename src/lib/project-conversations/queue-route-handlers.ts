@@ -31,6 +31,7 @@ import {
   ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
 } from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
+import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { createProjectConversationService } from "./service";
 import { resolveProjectConversationRoute } from "./route-resolution";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -48,6 +49,7 @@ export interface ProjectQueueRouteDeps extends QueueOperationDeps {
 function defaultDeps(): ProjectQueueRouteDeps {
   const service = createProjectConversationService();
   return {
+    admitModelSelection: admitConfiguredModelSelection,
     resolveProjectPath: defaultResolveProjectPath,
     getProjectDisplayName: defaultGetProjectDisplayName,
     getProjectConversation: (projectPath, id) =>

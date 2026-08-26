@@ -26,8 +26,10 @@ function makeContext(
       profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
     },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -667,8 +669,10 @@ export const ValidatorsClaudeAgent: Story = {
               authority: "blocking",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -697,8 +701,10 @@ export const ValidatorsCodexAgent: Story = {
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "gpt-5.5",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -728,8 +734,10 @@ export const ValidatorsScriptPlusClaude: Story = {
               authority: "blocking",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -760,8 +768,10 @@ export const ValidatorsInheritedClaude: Story = {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         contextValidator: {
@@ -774,8 +784,10 @@ export const ValidatorsInheritedClaude: Story = {
               authority: "blocking",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -813,8 +825,10 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         contextValidator: {
@@ -827,8 +841,10 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "gpt-5.5",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -895,8 +911,10 @@ export const ApprovalGateWithValidators: Story = {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         contextValidator: {
@@ -909,8 +927,10 @@ export const ApprovalGateWithValidators: Story = {
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.5",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "gpt-5.5",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -941,8 +961,10 @@ export const ImplementerCodex: Story = {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "codex",
-            model: "gpt-5.5",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.5",
+              parameters: { effort: "medium" },
+            },
           },
         },
       }),
@@ -1133,8 +1155,10 @@ export const ValidatorCohort: Story = {
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.6-sol",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "gpt-5.6-sol",
+                  parameters: { effort: "high" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1145,8 +1169,10 @@ export const ValidatorCohort: Story = {
               authority: "advisory",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: false },
             },

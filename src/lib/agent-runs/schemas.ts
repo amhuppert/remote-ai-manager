@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 import { agentBackendSchema } from "@/lib/shared/schemas";
-import { effortLevelSchema } from "@/lib/agent-backends/schemas";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 
 /**
  * Agent run job schemas: a one-shot backend task run as a job. POST creates a
@@ -21,17 +21,23 @@ export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 
 /**
  * POST body. `backend` selects the task runner and is required — the server
- * never coerces a run onto a default backend. The snake_case
- * `reasoning_effort` matches the original `run_codex` tool input key.
+ * never coerces a run onto a default backend.
  */
-export const agentRunRequestSchema = z.object({
-  backend: agentBackendSchema,
-  prompt: z.string().trim().min(1),
-  model: z.string().trim().min(1).optional(),
-  reasoning_effort: effortLevelSchema.optional(),
-  workingDirectory: z.string().trim().min(1).optional(),
-  timeoutMs: z.number().int().positive().optional(),
-});
+export const agentRunRequestSchema = z
+  .object({
+    backend: agentBackendSchema,
+    prompt: z.string().trim().min(1),
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: z
+      .never({ error: "Use the complete modelSelection instead of model." })
+      .optional(),
+    reasoning_effort: z
+      .never({ error: "Put reasoning effort in modelSelection.parameters." })
+      .optional(),
+    workingDirectory: z.string().trim().min(1).optional(),
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  .strict();
 export type AgentRunRequest = z.infer<typeof agentRunRequestSchema>;
 
 export const agentRunReferenceDocumentSchema = z.object({

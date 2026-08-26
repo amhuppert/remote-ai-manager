@@ -23,7 +23,10 @@ import { cursorMcpCapabilities } from "@/lib/mcp/backend-capabilities";
 import { createCursorFailureClassifier } from "./failure-classifier";
 import { claudeBackendMetadata } from "../claude/descriptor";
 import { codexBackendMetadata } from "../codex/descriptor";
-import type { AgentBackendDescriptor } from "../descriptor";
+import type {
+  AgentBackendDescriptor,
+  BackendModelCatalogFacet,
+} from "../descriptor";
 import type { ConversationBackendFactory } from "../conversation";
 import type { BackendContinuityAdapter } from "../continuity";
 import type { BackendRuntimeConfigAdapter } from "../runtime-config";
@@ -52,10 +55,34 @@ function inertRuntimeConfig(): BackendRuntimeConfigAdapter {
   };
 }
 
+const modelCatalog: BackendModelCatalogFacet = {
+  getCatalog: async () => ({
+    backend: "cursor",
+    defaultModelId: "composer-2.5",
+    models: [
+      {
+        id: "composer-2.5",
+        label: "Composer 2.5",
+        aliases: [],
+        parameters: [],
+        variants: [
+          {
+            selection: { modelId: "composer-2.5", parameters: {} },
+            label: "Composer 2.5",
+            isDefault: true,
+          },
+        ],
+      },
+    ],
+    provenance: { source: "test" },
+  }),
+};
+
 function descriptor(): AgentBackendDescriptor {
   return createCursorBackendDescriptor({
     conversationFactory: inertFactory(),
     continuity: inertContinuity(),
+    modelCatalog,
     runtimeConfig: inertRuntimeConfig(),
     mcp: cursorMcpCapabilities,
     failureClassifier: createCursorFailureClassifier(),
@@ -68,6 +95,16 @@ describe("cursor descriptor — facets", () => {
     expect(cursor.id).toBe("cursor");
     expect(cursor.conversation).toBeDefined();
     expect(cursor.tasks).toBeUndefined();
+  });
+
+  it("publishes the injected generated model catalog facet", async () => {
+    expect(descriptor().modelCatalog).toBe(modelCatalog);
+    await expect(
+      descriptor().modelCatalog.getCatalog({}),
+    ).resolves.toMatchObject({
+      backend: "cursor",
+      defaultModelId: "composer-2.5",
+    });
   });
 
   it("declares filesystem write confinement unsupported on the conversation facet", () => {

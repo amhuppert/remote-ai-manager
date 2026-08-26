@@ -21,6 +21,7 @@ import {
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
+import { TEST_AGENT_BACKENDS_CONFIG } from "@/lib/workflow-graph/test-fixtures";
 import {
   MAXIMAL_GRAPH_AFTER_ENVELOPE_CANARY,
   createMaximalAuthoredWorkflowLaunchFixture,
@@ -247,6 +248,7 @@ describe("delivery-plan candidate service identity", () => {
           },
         ],
       }),
+      admitModelSelections: async ({ launch }) => ({ ok: true, launch }),
       nextId: () => `candidate-service-${++sequence}`,
       now: () => NOW,
     });
@@ -359,6 +361,7 @@ describe("delivery-plan candidate service identity", () => {
             ],
           };
         },
+        admitModelSelections: async ({ launch }) => ({ ok: true, launch }),
         nextId: () => {
           order.push("allocate");
           return "candidate-binding-order";
@@ -539,11 +542,13 @@ describe("delivery-plan candidate service identity", () => {
           caller: "spec-proposal",
           documentScope: { kind: "project", projectPath: spec.projectPath },
           workflowDefaults: undefined,
+          agentBackends: TEST_AGENT_BACKENDS_CONFIG,
           accountabilityGroups,
         });
         if (result.ok) admissionStages.push(structuredClone(result.launch));
         return result;
       },
+      admitModelSelections: async ({ launch }) => ({ ok: true, launch }),
       nextId: () => `candidate-canary-${++sequence}`,
       now: () => NOW,
     });

@@ -40,7 +40,7 @@ import {
   useDiscardPreparedMergeMutation,
 } from "@/lib/git/mutations";
 import { useNotificationJobs } from "@/stores/notification.store";
-import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
+import { useGenericArchiveSessionMutation } from "@/lib/sessions/generic-archive-mutation";
 import { copyConversationContextToClipboard } from "@/lib/conversations/copy-context-client";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import {

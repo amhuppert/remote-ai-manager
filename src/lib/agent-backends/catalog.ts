@@ -16,7 +16,21 @@ import {
   type QueueCapability,
   type SkillTriggerPrefix,
 } from "./descriptor";
-import { effortLevelSchema, type EffortLevel } from "./schemas";
+import {
+  backendModelCatalogSchema,
+  effortLevelSchema,
+  type BackendModelCatalog,
+  type BackendModelDefinition,
+  type BackendModelParameterDefinition,
+  type BackendModelSelection,
+  type EffortLevel,
+} from "./schemas";
+import { defaultSelectionForModel } from "./model-selection";
+import {
+  ModelSelectionPolicyError,
+  validateModelSelection,
+} from "./model-selection";
+import { readGeneratedCursorModelCatalog } from "./cursor/generated-model-catalog-artifact";
 import {
   claudeBackendMetadata,
   claudeConversationCapabilities,
@@ -316,11 +330,16 @@ export function getModelsForBackend(
 export function isSelectableModelForBackend(
   backend: AgentBackendId,
   model: string,
+  configuredModel?: string,
 ): boolean {
   if (model.trim().length === 0) return false;
   const entry = getBackendCatalogEntry(backend);
   if (entry.models.some((option) => option.id === model)) return true;
-  return entry.id === "codex" && isModelCompatibleWithBackend(backend, model);
+  return (
+    entry.id === "codex" &&
+    configuredModel === model &&
+    isModelCompatibleWithBackend(backend, model)
+  );
 }
 
 export function getDefaultModelForBackend(backend: AgentBackendId): string {
@@ -384,16 +403,13 @@ export function effortLevelsForCatalogEntry(
   return [...effortLevelSchema.options];
 }
 
-export interface BackendSelectionDefaults {
-  modelId: string;
-  /** UI preference retained even when the selected model hides effort input. */
-  effort: EffortLevel;
-  codexFastMode?: boolean;
-}
+export type BackendValueMap<Value> = Readonly<{
+  [Backend in AgentBackendId]: Value;
+}>;
 
-export type BackendSelectionDefaultsById = Readonly<
-  Record<AgentBackendId, BackendSelectionDefaults>
->;
+export type BackendSelectionDefaultsById =
+  BackendValueMap<BackendModelSelection>;
+export type BackendSelectionDefaults = BackendModelSelection;
 
 /**
  * The per-backend profile fields that selection defaults derive from — the
@@ -405,9 +421,7 @@ export interface ConfiguredBackendSelectionProfiles {
     Record<
       AgentBackendId,
       {
-        model: string;
-        reasoningEffort?: string | undefined;
-        fastMode?: boolean | undefined;
+        modelSelection: BackendModelSelection;
       }
     >
   >;
@@ -419,20 +433,17 @@ export function resolveConfiguredBackendSelectionDefaults(
 ): BackendSelectionDefaultsById {
   return Object.fromEntries(
     agentBackendSchema.options.map((backend) => {
-      const profile = config.agentBackends[backend];
-      const parsed = effortLevelSchema.safeParse(profile.reasoningEffort);
       return [
         backend,
         {
-          modelId: profile.model,
-          effort: parsed.success ? parsed.data : "high",
-          ...(backend === "codex"
-            ? { codexFastMode: profile.fastMode ?? false }
-            : {}),
+          modelId: config.agentBackends[backend].modelSelection.modelId,
+          parameters: {
+            ...config.agentBackends[backend].modelSelection.parameters,
+          },
         },
       ];
     }),
-  ) as Record<AgentBackendId, BackendSelectionDefaults>;
+  ) as Record<AgentBackendId, BackendModelSelection>;
 }
 
 export function backendLabel(backend: AgentBackendId): string {
@@ -463,20 +474,14 @@ export function modelDisplayLabel(
 export function catalogBackendSelectionDefaults(): BackendSelectionDefaultsById {
   return Object.fromEntries(
     agentBackendSchema.options.map((backend) => {
-      const entry = getBackendCatalogEntry(backend);
-      const levels = getEffortLevelsForBackend(backend, entry.defaultModelId);
-      return [
-        backend,
-        {
-          modelId: entry.defaultModelId,
-          effort: levels.includes("high")
-            ? ("high" as const)
-            : (levels[levels.length - 1] ?? ("high" as const)),
-          ...(backend === "codex" ? { codexFastMode: false } : {}),
-        },
-      ];
+      const catalog = getConfiguredBackendModelCatalog(backend);
+      const selection = defaultSelectionForModel(
+        catalog,
+        catalog.defaultModelId,
+      );
+      return [backend, selection];
     }),
-  ) as Record<AgentBackendId, BackendSelectionDefaults>;
+  ) as Record<AgentBackendId, BackendModelSelection>;
 }
 
 export function backendToneToken(backend: AgentBackendId): string {
@@ -491,4 +496,177 @@ export function skillTriggerPrefixForBackend(
   backend: AgentBackendId,
 ): SkillTriggerPrefix {
   return getBackendCatalogEntry(backend).skillTriggerPrefix;
+}
+
+function parameterValueLabel(value: string): string {
+  if (value === "xhigh") return "Extra high";
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function effortParameter(
+  id: "effort" | "reasoning",
+  levels: readonly string[],
+): BackendModelParameterDefinition {
+  return {
+    id,
+    label: id === "effort" ? "Effort" : "Reasoning",
+    values: levels.map((value) => ({
+      value,
+      label: parameterValueLabel(value),
+    })),
+    prominence: "primary",
+  };
+}
+
+function defaultEffort(levels: readonly string[]): string {
+  return levels.includes("high") ? "high" : levels[levels.length - 1]!;
+}
+
+function claudeModelDefinition(
+  model: BackendModelInfo,
+): BackendModelDefinition {
+  if (model.effortLevels.length === 0) {
+    return {
+      id: model.id,
+      label: model.label,
+      description: model.description,
+      aliases: [],
+      parameters: [],
+      variants: [
+        {
+          selection: { modelId: model.id, parameters: {} },
+          label: model.label,
+          isDefault: true,
+        },
+      ],
+    };
+  }
+
+  const defaultValue = defaultEffort(model.effortLevels);
+  return {
+    id: model.id,
+    label: model.label,
+    description: model.description,
+    aliases: [],
+    parameters: [effortParameter("effort", model.effortLevels)],
+    variants: model.effortLevels.map((effort) => ({
+      selection: { modelId: model.id, parameters: { effort } },
+      label: parameterValueLabel(effort),
+      isDefault: effort === defaultValue,
+    })),
+  };
+}
+
+const FAST_PARAMETER: BackendModelParameterDefinition = {
+  id: "fast",
+  label: "Fast mode",
+  values: [
+    { value: "false", label: "Off" },
+    { value: "true", label: "On" },
+  ],
+  prominence: "advanced",
+};
+
+function codexModelDefinition(
+  model: Omit<BackendModelInfo, "effortLevels"> & {
+    effortLevels: readonly string[];
+  },
+): BackendModelDefinition {
+  const defaultValue = defaultEffort(model.effortLevels);
+  return {
+    id: model.id,
+    label: model.label,
+    description: model.description,
+    aliases: [],
+    parameters: [
+      effortParameter("reasoning", model.effortLevels),
+      FAST_PARAMETER,
+    ],
+    variants: model.effortLevels.flatMap((reasoning) =>
+      ["false", "true"].map((fast) => ({
+        selection: {
+          modelId: model.id,
+          parameters: { reasoning, fast },
+        },
+        label: `${parameterValueLabel(reasoning)} · ${fast === "true" ? "Fast" : "Standard"}`,
+        isDefault: reasoning === defaultValue && fast === "false",
+      })),
+    ),
+  };
+}
+
+function customCodexModelDefinition(
+  configuredSelection: BackendModelSelection | undefined,
+  knownModels: readonly BackendModelInfo[],
+): BackendModelDefinition | null {
+  const id = configuredSelection?.modelId;
+  if (
+    id === undefined ||
+    knownModels.some((model) => model.id === id) ||
+    isModelOwnedByAnotherBackend("codex", id)
+  ) {
+    return null;
+  }
+
+  return codexModelDefinition({
+    id,
+    label: id,
+    description: "Custom Codex model configured globally.",
+    effortLevels: effortLevelSchema.options,
+  });
+}
+
+/** Static complete-variant catalog for backends whose models ship with CC. */
+export function getStaticBackendModelCatalog(
+  backend: "claude" | "codex",
+  configuredSelection?: BackendModelSelection,
+): BackendModelCatalog {
+  const entry = getBackendCatalogEntry(backend);
+  const customModel =
+    backend === "codex"
+      ? customCodexModelDefinition(configuredSelection, entry.models)
+      : null;
+  const models =
+    backend === "claude"
+      ? entry.models.map(claudeModelDefinition)
+      : [
+          ...entry.models.map(codexModelDefinition),
+          ...(customModel === null ? [] : [customModel]),
+        ];
+
+  return backendModelCatalogSchema.parse({
+    backend,
+    defaultModelId: entry.defaultModelId,
+    models,
+    provenance: { source: "Command Center static catalog" },
+  });
+}
+
+type ConfiguredCatalogLoader = (
+  selection?: BackendModelSelection,
+) => BackendModelCatalog;
+
+const CONFIGURED_CATALOG_LOADERS = {
+  claude: (selection) => getStaticBackendModelCatalog("claude", selection),
+  codex: (selection) => getStaticBackendModelCatalog("codex", selection),
+  cursor: () => readGeneratedCursorModelCatalog(),
+} satisfies { [Backend in AgentBackendId]: ConfiguredCatalogLoader };
+
+/**
+ * Complete checked-in catalog for one configured backend profile.
+ *
+ * Provider sourcing and custom-model admission stay below this boundary; UI
+ * consumers render only catalogs and complete selections.
+ */
+export function getConfiguredBackendModelCatalog(
+  backend: AgentBackendId,
+  configuredSelection?: BackendModelSelection,
+): BackendModelCatalog {
+  const catalog = CONFIGURED_CATALOG_LOADERS[backend](configuredSelection);
+  if (configuredSelection === undefined) return catalog;
+  const validation = validateModelSelection(catalog, configuredSelection);
+  if (!validation.valid) {
+    throw new ModelSelectionPolicyError(validation.issues);
+  }
+  return catalog;
 }

@@ -34,9 +34,11 @@ function makeListItem(
     sourceHash: "hash",
     status: "complete",
     error: null,
-    modelProvider: "claude",
-    model: "claude-sonnet-4-5",
-    effort: null,
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
     schemaVersion: CONTEXT_ARTIFACT_SCHEMA_VERSION,
     promptVersion: "v1",
     normalizerVersion: "v1",
@@ -239,7 +241,10 @@ describe("useCompactMutation", () => {
     });
 
     result.current.mutate({ kind: "conversation_compaction" });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      expect(result.current.error).toBeNull();
+      expect(result.current.isSuccess).toBe(true);
+    });
 
     const cached = client.getQueryData<ContextArtifactListItem[]>(listKey);
     expect(cached?.[0]?.coveredEndSeq).toBe(99);

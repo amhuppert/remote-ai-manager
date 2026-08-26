@@ -14,16 +14,13 @@ import {
   hasCollabPrefix,
   stripCollabPrefix,
 } from "@/lib/conversation-commands/parse";
-import {
-  backendSupportsFastMode,
-  queueCapabilityForBackend as defaultQueueCapabilityForBackend,
-} from "@/lib/agent-backends/catalog";
+import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { CollaborationAgentTwoRequest } from "@/lib/workflows/collaboration/types";
@@ -75,25 +72,21 @@ export interface UsePromptSubmissionArgs {
     conversation: string,
   ) => void;
   messagesLength: number;
-  selectedModel: string;
-  selectedEffort: EffortLevel;
-  effortSupported: boolean;
+  selectedModelSelection: BackendModelSelection;
   selectedBackend: AgentBackendId;
-  selectedCodexFastMode?: boolean;
   sendPrompt: (
     prompt: string,
     messageCount: number,
-    model: string,
+    modelSelection: BackendModelSelection,
     images: ImagePayload[] | undefined,
-    effort: EffortLevel | undefined,
     backend: AgentBackendId,
     submittedPendingPromptText?: string,
-    codexFastMode?: boolean,
   ) => Promise<void>;
   queueMessage: (
     text: string,
     images?: ImagePayload[],
     submittedPendingPromptText?: string,
+    modelSelection?: BackendModelSelection,
   ) => Promise<void>;
   queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
   collaborationStartMutation: {
@@ -105,9 +98,7 @@ export interface UsePromptSubmissionArgs {
         autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
         conversationId: string;
         backend?: AgentBackendId;
-        modelId?: string;
-        effort?: string;
-        codexFastMode?: boolean;
+        modelSelection?: BackendModelSelection;
         images?: ImagePayload[];
         agentTwo?: CollaborationAgentTwoRequest;
       },
@@ -153,11 +144,8 @@ export function usePromptSubmission({
   effectiveCollabConfig,
   clearCollabConfigDraft,
   messagesLength,
-  selectedModel,
-  selectedEffort,
-  effortSupported,
+  selectedModelSelection,
   selectedBackend,
-  selectedCodexFastMode = false,
   sendPrompt,
   queueMessage,
   queueCapabilityForBackend = defaultQueueCapabilityForBackend,
@@ -189,22 +177,17 @@ export function usePromptSubmission({
       await sendPrompt(
         text,
         messagesLength,
-        selectedModel,
+        selectedModelSelection,
         images.length > 0 ? images : undefined,
-        effortSupported ? selectedEffort : undefined,
         selectedBackend,
         submittedPendingPromptText,
-        selectedCodexFastMode,
       );
     },
     [
       sendPrompt,
       messagesLength,
-      selectedModel,
-      effortSupported,
-      selectedEffort,
+      selectedModelSelection,
       selectedBackend,
-      selectedCodexFastMode,
       clearImages,
       suppressPendingPromptAutosaveAfterSubmit,
       editorRef,
@@ -237,11 +220,7 @@ export function usePromptSubmission({
             effectiveCollabConfig.autonomousResolutionThreshold,
           conversationId: collabConversationId,
           backend: selectedBackend,
-          modelId: selectedModel,
-          ...(effortSupported ? { effort: selectedEffort } : {}),
-          ...(backendSupportsFastMode(selectedBackend)
-            ? { codexFastMode: selectedCodexFastMode }
-            : {}),
+          modelSelection: selectedModelSelection,
           ...(agentTwoPayload !== null ? { agentTwo: agentTwoPayload } : {}),
           ...(hasImages ? { images: serialized.images } : {}),
         },
@@ -301,6 +280,7 @@ export function usePromptSubmission({
         trimmedPrompt,
         imagePayloads.length > 0 ? imagePayloads : undefined,
         serialized.prompt,
+        selectedModelSelection,
       );
       return;
     }
@@ -336,10 +316,7 @@ export function usePromptSubmission({
     editorRef,
     setPromptText,
     selectedBackend,
-    selectedCodexFastMode,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
+    selectedModelSelection,
     collaborationStartMutation,
     effectiveCollabConfig,
     clearCollabConfigDraft,
@@ -368,20 +345,12 @@ export function usePromptSubmission({
       sendPrompt(
         text,
         messagesLength,
-        selectedModel,
-        undefined,
+        selectedModelSelection,
         undefined,
         selectedBackend,
         undefined,
-        selectedCodexFastMode,
       ),
-    [
-      sendPrompt,
-      messagesLength,
-      selectedModel,
-      selectedBackend,
-      selectedCodexFastMode,
-    ],
+    [sendPrompt, messagesLength, selectedModelSelection, selectedBackend],
   );
 
   return {

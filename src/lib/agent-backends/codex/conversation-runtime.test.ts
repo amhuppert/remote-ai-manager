@@ -31,6 +31,7 @@ vi.mock("@/lib/logging", () => ({
 import {
   CodexConversationRuntime,
   codexConversationBackendFactory,
+  createCodexConversationBackendFactory,
   type CodexConversationRuntimeDeps,
   type CodexThreadLike,
 } from "./conversation-runtime";
@@ -44,7 +45,7 @@ import {
   sessionConversationTarget,
 } from "@/lib/conversations/conversation-target";
 import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
-import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { turnContinuationSchema } from "../errors";
 import {
   buildAgentProfileSnapshot,
@@ -62,6 +63,14 @@ import type {
 // ============================================================
 // Helpers
 // ============================================================
+
+function modelSelection(
+  modelId: string,
+  reasoning = "high",
+  fast = "false",
+): BackendModelSelection {
+  return { modelId, parameters: { reasoning, fast } };
+}
 
 function makeCreateInput(
   overrides?: Partial<ConversationBackendCreateInput> & {
@@ -83,6 +92,7 @@ function makeCreateInput(
     ),
     worktreePath: "/test/worktree",
     persistedRef: null,
+    modelSelection: modelSelection("gpt-5.4"),
     sessionInstructions: ["Be helpful"],
     tooling: {},
     ...rest,
@@ -96,6 +106,7 @@ function makeTurnInput(
     promptText: "Do the thing",
     imageRefs: [],
     sessionInstructions: [],
+    modelSelection: modelSelection("gpt-5.4"),
     autonomous: true,
     signal: new AbortController().signal,
     onEvent: vi.fn(),
@@ -463,11 +474,13 @@ describe("CodexConversationRuntime", () => {
     it("passes thread options matching the task runner defaults", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(
-        makeCreateInput({ modelId: "o3-pro", reasoningEffort: "high" }),
+        makeCreateInput({ modelSelection: modelSelection("o3-pro") }),
         deps,
       );
 
-      await runtime.sendTurn(makeTurnInput());
+      await runtime.sendTurn(
+        makeTurnInput({ modelSelection: modelSelection("o3-pro") }),
+      );
 
       expect(startThreadFn).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -482,15 +495,15 @@ describe("CodexConversationRuntime", () => {
       );
     });
 
-    it("defaults model to the global default codex model and omits effort when not set", async () => {
+    it("passes every parameter from the complete selection", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
 
       await runtime.sendTurn(makeTurnInput());
 
       const threadOpts = startThreadFn.mock.calls[0]![0];
-      expect(threadOpts.model).toBe(getDefaultCodexModel());
-      expect(threadOpts).not.toHaveProperty("modelReasoningEffort");
+      expect(threadOpts.model).toBe("gpt-5.4");
+      expect(threadOpts.modelReasoningEffort).toBe("high");
     });
 
     it("requests detailed reasoning summaries for conversation thinking blocks", async () => {
@@ -1754,7 +1767,7 @@ describe("CodexConversationRuntime", () => {
 
   describe("sendTurn — cost estimation", () => {
     it("estimates costUsd from turn usage at the effective model's default rates", async () => {
-      // No modelId → default model (gpt-5.4: $2.50/$0.25/$15 per 1M);
+      // gpt-5.4: $2.50/$0.25/$15 per 1M;
       // fixture usage: 100 input (10 cached), 50 output.
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
@@ -1766,12 +1779,15 @@ describe("CodexConversationRuntime", () => {
 
     it("returns null costUsd for a model with no known rates", async () => {
       setupThread(minimalSuccessEvents());
+      const selectedModel = modelSelection("o3-pro");
       const runtime = new CodexConversationRuntime(
-        makeCreateInput({ modelId: "o3-pro" }),
+        makeCreateInput({ modelSelection: selectedModel }),
         deps,
       );
 
-      const result = await runtime.sendTurn(makeTurnInput());
+      const result = await runtime.sendTurn(
+        makeTurnInput({ modelSelection: selectedModel }),
+      );
 
       expect(result.costUsd).toBeNull();
     });
@@ -2198,23 +2214,21 @@ describe("CodexConversationRuntime", () => {
   });
 
   describe("Codex fast mode", () => {
-    it("rebuilds SDK options from the speed selected for each turn", async () => {
+    it("builds SDK options from fast mode in the complete selection", async () => {
       setupThread(minimalSuccessEvents());
-      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const selectedFastMode = modelSelection("gpt-5.4", "high", "true");
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ modelSelection: selectedFastMode }),
+        deps,
+      );
 
-      await runtime.sendTurn(makeTurnInput({ codexFastMode: false }));
-      setupThread(minimalSuccessEvents("thread-123"));
-      await runtime.sendTurn(makeTurnInput({ codexFastMode: true }));
+      await runtime.sendTurn(
+        makeTurnInput({ modelSelection: selectedFastMode }),
+      );
 
       const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
         .mock.calls;
       expect(createCodexCalls[0]![0].config).toEqual({
-        model_reasoning_summary: "detailed",
-        hide_agent_reasoning: false,
-        service_tier: "default",
-        features: { fast_mode: false },
-      });
-      expect(createCodexCalls[1]![0].config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
         service_tier: "fast",
@@ -2222,7 +2236,7 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
-    it("defaults omitted speed settings to standard", async () => {
+    it("uses standard mode when the complete selection disables fast mode", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
 
@@ -2360,54 +2374,111 @@ describe("CodexConversationRuntime", () => {
 // ============================================================
 
 describe("codexConversationBackendFactory", () => {
-  describe("validateModelAndEffort", () => {
-    it("accepts valid reasoning effort", () => {
+  describe("validateModelSelection", () => {
+    it("accepts a valid complete selection", () => {
       expect(() =>
-        codexConversationBackendFactory.validateModelAndEffort!({
-          reasoningEffort: "high",
-        }),
+        codexConversationBackendFactory.validateModelSelection!(
+          modelSelection("gpt-5.4"),
+        ),
       ).not.toThrow();
     });
 
-    it("rejects invalid reasoning effort", () => {
+    it("rejects an invalid reasoning value", () => {
       expect(() =>
-        codexConversationBackendFactory.validateModelAndEffort!({
-          reasoningEffort: "turbo",
-        }),
+        codexConversationBackendFactory.validateModelSelection!(
+          modelSelection("gpt-5.4", "turbo"),
+        ),
       ).toThrow();
     });
 
-    it("rejects known-model with unsupported reasoning effort", () => {
+    it("rejects a known model with unsupported reasoning effort", () => {
       // gpt-5.4 supports: low, medium, high, xhigh (not minimal)
       expect(() =>
-        codexConversationBackendFactory.validateModelAndEffort!({
-          modelId: "gpt-5.4",
-          reasoningEffort: "minimal",
-        }),
+        codexConversationBackendFactory.validateModelSelection!(
+          modelSelection("gpt-5.4", "minimal"),
+        ),
       ).toThrow();
     });
 
     it("rejects Spark at a level outside its low→xhigh range", () => {
       expect(() =>
-        codexConversationBackendFactory.validateModelAndEffort!({
-          modelId: "gpt-5.3-codex-spark",
-          reasoningEffort: "ultra",
-        }),
+        codexConversationBackendFactory.validateModelSelection!(
+          modelSelection("gpt-5.3-codex-spark", "ultra"),
+        ),
       ).toThrow();
     });
 
-    it("allows unknown model with valid reasoning effort", () => {
+    it("allows a configured custom model with a complete selection", () => {
       expect(() =>
-        codexConversationBackendFactory.validateModelAndEffort!({
-          modelId: "unknown-model-42",
-          reasoningEffort: "high",
-        }),
+        codexConversationBackendFactory.validateModelSelection!(
+          modelSelection("unknown-model-42"),
+        ),
       ).not.toThrow();
+    });
+
+    it("rejects incomplete selections", () => {
+      expect(() =>
+        codexConversationBackendFactory.validateModelSelection!({
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high" },
+        }),
+      ).toThrow(/Parameter "fast" is required/);
+    });
+  });
+
+  describe("validateProjectModelSelection", () => {
+    const configuredCustom = modelSelection(
+      "company-codex-model",
+      "high",
+      "false",
+    );
+
+    it("accepts the globally configured custom Codex selection", async () => {
+      const factory = createCodexConversationBackendFactory(async () =>
+        structuredClone(configuredCustom),
+      );
+
+      await expect(
+        factory.validateProjectModelSelection!({
+          projectPath: "/test/project",
+          modelSelection: configuredCustom,
+        }),
+      ).resolves.toEqual({
+        ok: true,
+        modelSelection: {
+          modelId: "company-codex-model",
+          parameters: { fast: "false", reasoning: "high" },
+        },
+      });
+    });
+
+    it("rejects a different request-supplied custom model", async () => {
+      const factory = createCodexConversationBackendFactory(async () =>
+        structuredClone(configuredCustom),
+      );
+
+      await expect(
+        factory.validateProjectModelSelection!({
+          projectPath: "/test/project",
+          modelSelection: modelSelection(
+            "request-supplied-model",
+            "high",
+            "false",
+          ),
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        code: "unknown_model",
+        message:
+          'Model "request-supplied-model" is not present in this backend catalog.',
+        modelId: "request-supplied-model",
+      });
     });
   });
 
   describe("createRuntime", () => {
-    it("creates a runtime with the right model and effort", async () => {
+    it("exposes the validated complete model selection", async () => {
+      const selectedModel = modelSelection("o3-pro");
       const runtime = await codexConversationBackendFactory.createRuntime({
         conversationId: "conv-1",
         projectPath: "/p",
@@ -2415,14 +2486,12 @@ describe("codexConversationBackendFactory", () => {
         conversationTarget: sessionConversationTarget("proj", "sess", "conv-1"),
         worktreePath: "/w",
         persistedRef: null,
-        modelId: "o3-pro",
-        reasoningEffort: "high",
+        modelSelection: selectedModel,
         sessionInstructions: [],
         tooling: {},
       });
 
-      expect(runtime.modelId).toBe("o3-pro");
-      expect(runtime.reasoningEffort).toBe("high");
+      expect(runtime.modelSelection).toEqual(selectedModel);
     });
   });
 });

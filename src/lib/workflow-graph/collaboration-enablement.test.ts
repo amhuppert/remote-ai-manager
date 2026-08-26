@@ -7,8 +7,10 @@ import {
 
 const agent = {
   backend: "claude" as const,
-  model: "sonnet" as const,
-  reasoningEffort: "medium" as const,
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  },
 };
 
 describe("graph workflow collaboration enablement schemas", () => {

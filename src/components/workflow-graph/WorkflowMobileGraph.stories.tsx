@@ -32,8 +32,10 @@ function node(
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },

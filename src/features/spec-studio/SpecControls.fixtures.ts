@@ -2,8 +2,8 @@ import { emptyApprovalLedger } from "@/lib/specs/approval-ledger";
 import { remainingAuthoringSequence } from "@/lib/specs/authoring-sequence";
 import { liveProposalProjection } from "@/lib/specs/proposal-integrity";
 import type { SpecDetailView } from "@/lib/specs/queries";
-import { toDiffRows } from "@/lib/specs/review-state";
-import { consultedAuthoringGates } from "@/lib/specs/transitions";
+import { toDiffRows } from "@/lib/specs/revision-diff-projections";
+import { consultedAuthoringGates } from "@/lib/specs/authoring-gates";
 import type { SpecAuthoringStage, SpecRevision } from "@/lib/specs/schemas";
 import {
   specDetailViewSchema,

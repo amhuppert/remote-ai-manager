@@ -132,8 +132,7 @@ describe("collaboration structured-output repair contract", () => {
         return {
           backend: "claude",
           status: "alive",
-          modelId: input.modelId,
-          reasoningEffort: input.reasoningEffort,
+          modelSelection: input.modelSelection,
           outputFormat: input.outputFormat,
           alignmentVersion: input.alignmentVersion ?? null,
           async sendTurn(turnInput): Promise<ConversationBackendTurnResult> {
@@ -214,8 +213,20 @@ describe("collaboration structured-output repair contract", () => {
       originatingConversationId: "originating-conversation",
       laneService,
       agents: {
-        agent_one: { backend: "claude", model: "claude-repair-model" },
-        agent_two: { backend: "codex", model: "codex-repair-model" },
+        agent_one: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "claude-repair-model",
+            parameters: { effort: "high" },
+          },
+        },
+        agent_two: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "codex-repair-model",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
       },
       getConversationBackendFactory: () => claudeFactory,
       getTaskRunner: () => codexRunner,

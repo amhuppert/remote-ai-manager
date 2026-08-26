@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import { ambientCredentialKeys } from "../worker/credential-env";
 import type { CredentialSecret } from "./credential-scan";
 import {
@@ -18,6 +17,7 @@ import {
 import { captureProcessBoundaries } from "./harness";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   waitUntil,
@@ -102,11 +102,11 @@ beforeAll(async () => {
   [first, second] = await Promise.all([
     harness.startReady({
       sessionName: "isolation-a",
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     }),
     harness.startReady({
       sessionName: "isolation-b",
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     }),
   ]);
 
@@ -114,7 +114,7 @@ beforeAll(async () => {
     live.attach({
       mode: "create",
       ref: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
     });
   }

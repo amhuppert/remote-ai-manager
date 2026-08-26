@@ -14,10 +14,8 @@
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import {
-  backendSupportsFastMode,
-  type BackendSelectionDefaultsById,
-} from "@/lib/agent-backends/catalog";
+import { type BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
 
@@ -31,15 +29,13 @@ type CollabAutonomousResolutionThreshold =
 
 /**
  * Agent Two's draft configuration. Fully concrete once the config row seeds
- * it (backend defaults to the opposite of Agent One's; model/effort/fastMode
- * seed from the global per-backend selection defaults), so what the user sees
- * is exactly what the start request sends.
+ * it (backend defaults to the opposite of Agent One's and the whole selection
+ * seeds from the global per-backend default), so what the user sees is exactly
+ * what the start request sends.
  */
 export interface CollabAgentTwoDraft {
   backend: CollabAgent;
-  model?: string;
-  effort?: string;
-  fastMode?: boolean;
+  modelSelection?: BackendModelSelection;
   /** Compact `tier:id` agent-profile selection. */
   profile?: string;
 }
@@ -129,11 +125,10 @@ export function seedAgentTwoDraft(
   const defaults = backendDefaults[backend];
   return {
     backend,
-    model: defaults.modelId,
-    effort: defaults.effort,
-    ...(backendSupportsFastMode(backend)
-      ? { fastMode: defaults.codexFastMode ?? false }
-      : {}),
+    modelSelection: {
+      modelId: defaults.modelId,
+      parameters: { ...defaults.parameters },
+    },
   };
 }
 

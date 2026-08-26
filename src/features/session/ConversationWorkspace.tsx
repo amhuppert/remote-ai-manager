@@ -19,12 +19,11 @@ import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import ConversationWorkspaceView from "@/features/session/ConversationWorkspaceView";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
-import { useBackendModelEffort } from "@/features/session/hooks/use-backend-model-effort";
+import { useBackendModelSelection } from "@/features/session/hooks/use-backend-model-selection";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import { useDevServers } from "@/hooks/use-dev-servers";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
-import { useCodexFastMode } from "@/hooks/use-codex-fast-mode";
 import { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page-display";
@@ -184,26 +183,19 @@ export default function ConversationWorkspace({
   );
   const {
     selectedBackend,
-    selectedModel,
-    selectedEffort,
-    availableEffortLevels,
-    effortSupported,
+    modelCatalog,
+    modelCatalogs,
+    modelSelection,
+    modelSelectionBlockedReason,
     backendLocked,
-    setSelectedEffort,
+    setModelSelection,
     handleBackendChange,
-    handleModelChange,
-  } = useBackendModelEffort({
+  } = useBackendModelSelection({
+    projectName,
     conversationId,
     activeConversation,
     backendDefaults,
-    lastUsedModelId: lastUserTurnAgentSettings.modelId,
-    lastUsedEffort: lastUserTurnAgentSettings.effort,
-  });
-  const { codexFastMode, setCodexFastMode } = useCodexFastMode({
-    conversationId,
-    promptCount: activeConversation?.promptCount ?? 0,
-    defaultValue: backendDefaults.codex.codexFastMode ?? false,
-    lastUsedValue: lastUserTurnAgentSettings.codexFastMode,
+    lastUsedSelection: lastUserTurnAgentSettings.modelSelection,
   });
 
   // Stable identity required: the draft hook's flush and beacon effects key off
@@ -394,11 +386,8 @@ export default function ConversationWorkspace({
     local,
     isBusy,
     messagesLength: rawMessages.length,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
+    selectedModelSelection: modelSelection,
     selectedBackend,
-    selectedCodexFastMode: codexFastMode,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,
@@ -467,18 +456,15 @@ export default function ConversationWorkspace({
       clearCollabConfigDraft,
       backendDefaults,
     },
-    backendModelEffort: {
+    backendModelSelection: {
       backendLocked,
       selectedBackend,
-      codexFastMode,
-      setCodexFastMode,
-      selectedModel,
-      selectedEffort,
-      availableEffortLevels,
-      effortSupported,
-      setSelectedEffort,
       handleBackendChange,
-      handleModelChange,
+      modelCatalog,
+      modelCatalogs,
+      modelSelection,
+      modelSelectionBlockedReason,
+      setModelSelection,
     },
     voice: {
       isRecording,

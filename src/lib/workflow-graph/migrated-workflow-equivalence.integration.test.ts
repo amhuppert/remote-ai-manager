@@ -70,6 +70,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { generalizedModelSelection } from "@/lib/state-store/migrations/0035-generalized-model-selection";
 import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
 import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
 import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
@@ -123,6 +124,14 @@ const LEGACY_VALIDATOR_AGENT = {
   backend: "claude",
   model: "sonnet",
   reasoningEffort: "high",
+} as const;
+
+const CURRENT_VALIDATOR_AGENT = {
+  backend: "claude",
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "high" },
+  },
 } as const;
 
 /** Likewise non-default, so an invented continuity policy is visible. */
@@ -218,7 +227,11 @@ function legacyDefinitionRecord(): Record<string, unknown> {
     const legacy: Record<string, unknown> = {
       ...context,
       // Pre-`backend` implementer triples, as the field existed pre-cutover.
-      implementer: { backend: "claude", model: "opus", reasoningEffort: "max" },
+      implementer: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "max",
+      },
       contextValidator: {
         kind: "use",
         value: {
@@ -291,9 +304,10 @@ async function migrateAndResolve(
 ): Promise<ResolvedWorkflowSemanticDefinition> {
   const applied = await runMigrations(
     { db: disk.db, configDir: disk.configDir },
-    [workflowAgentAssignments],
+    [workflowAgentAssignments, generalizedModelSelection],
   );
   expect(applied).toContain("0011-workflow-agent-assignments");
+  expect(applied).toContain("0035-generalized-model-selection");
 
   const rawConfig = rawGlobalConfigSchema.parse(
     JSON.parse(
@@ -427,7 +441,7 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
       // verification is the seeded blocking one — the migrated legacy validator
       // must land on it rather than on the advisory default.
       authority: "blocking",
-      agent: { ...LEGACY_VALIDATOR_AGENT },
+      agent: { ...CURRENT_VALIDATOR_AGENT },
       continuity: { ...LEGACY_VALIDATOR_CONTINUITY },
     });
     const migrated = migratedCohort(definition);
@@ -464,7 +478,7 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
       tier: "builtin",
       id: "general-reviewer",
     });
-    expect(dispatched.agent).toEqual(LEGACY_VALIDATOR_AGENT);
+    expect(dispatched.agent).toEqual(CURRENT_VALIDATOR_AGENT);
   });
 
   it("charges one consecutive failure and no iteration for a rejected round", async () => {

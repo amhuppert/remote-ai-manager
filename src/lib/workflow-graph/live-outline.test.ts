@@ -34,8 +34,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
         },
       },
       contextValidator: {
@@ -51,8 +53,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
             strategy: "conversation",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -76,8 +80,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
         },
       },
       contextValidator: {
@@ -93,8 +99,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
             strategy: "conversation",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -118,8 +126,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
       },
       // A DISABLED cohort that retains its assignment: the shape disabling
@@ -142,8 +152,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
             strategy: "task",
             agent: {
               backend: "codex",
-              model: "gpt-5.4",
-              reasoningEffort: "low",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "low", fast: "false" },
+              },
             },
             continuity: { enabled: false },
           },
@@ -465,8 +477,10 @@ describe("projectLiveOutline — config summaries", () => {
     expect(byId["plan"]).toMatchObject({
       implementer: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
       validators: [
         {
@@ -474,8 +488,10 @@ describe("projectLiveOutline — config summaries", () => {
           profile: "builtin:general-reviewer",
           strategy: "conversation",
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       ],
       scriptValidator: { commands: [] },
@@ -493,8 +509,10 @@ describe("projectLiveOutline — config summaries", () => {
     expect(byId["verify"]).toMatchObject({
       implementer: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
       validatorCohortEnabled: false,
       validators: [{ assignmentId: "dormant-security", strategy: "task" }],
@@ -738,8 +756,10 @@ describe("projectLiveOutline — section selectors", () => {
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
       },
       // The raw section returns the resolved cohort verbatim, dormant

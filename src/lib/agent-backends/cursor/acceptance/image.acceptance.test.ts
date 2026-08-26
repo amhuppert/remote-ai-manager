@@ -15,9 +15,8 @@ import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-us
 import type { ConversationImageRef } from "../../conversation";
 import { conversationTranscriptFrame } from "../../transcript";
 import { translateCursorImages } from "../image-input";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import { projectCursorNativeEvent } from "../transcript-projections";
-import { decodeNativePayload } from "../worker/ipc";
+import { decodeNativePayload, type CursorWorkerFrame } from "../worker/ipc";
 import type { CredentialSecret } from "./credential-scan";
 import { solidColorPng } from "./deterministic-image";
 import {
@@ -27,6 +26,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -40,12 +40,14 @@ import {
  *
  * The capability is only worth declaring if the image reaches the model, so
  * this case does not check that the SDK accepted an image field — it checks
- * that the answer depends on the image's content. A solid green field has one
- * right answer, and a model that never received the bytes cannot give it.
+ * that the answer depends on the image's content. A saturated green field
+ * confines a truthful one-word answer to the narrow set accepted below, and a
+ * model that never received the bytes cannot give one reliably.
  */
 
 const IMAGE_SIZE = 128;
 const IMAGE_COLOR = { red: 0, green: 200, blue: 0 };
+const GREEN_IMAGE_ANSWER = /\b(?:green|lime)\b|#00[89a-f][0-9a-f]00\b/i;
 
 let store: AcceptanceEvidenceStore;
 let secret: CredentialSecret;
@@ -58,13 +60,28 @@ let imageRef: ConversationImageRef;
 let rawArtifact: RawArtifact;
 const runId = randomUUID();
 
-function nativeText(
-  events: readonly { eventType: string; payload: string }[],
+function visibleAssistantText(
+  events: readonly Extract<CursorWorkerFrame, { type: "nativeEvent" }>[],
 ): string {
   return events
-    .map((event) => decodeNativePayload(event.eventType, event.payload))
-    .map((result) => (result.ok ? JSON.stringify(result.value) : ""))
-    .join("");
+    .flatMap((event) => {
+      const decoded = decodeNativePayload(event.eventType, event.payload);
+      if (!decoded.ok) return [];
+      return projectCursorNativeEvent(
+        {
+          runId: event.runId,
+          eventIndex: event.eventIndex,
+          eventType: event.eventType,
+          tagged: decoded.tagged,
+          decoded: decoded.value,
+        },
+        {
+          conversationId: live.conversationId,
+          timestamp: new Date(0).toISOString(),
+        },
+      ).blocks.flatMap((block) => (block.type === "text" ? [block.text] : []));
+    })
+    .join(" ");
 }
 
 beforeAll(async () => {
@@ -80,7 +97,7 @@ beforeAll(async () => {
 
   live = await harness.startReady({
     sessionName: `image-${randomUUID()}`,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
   });
   const imagePath = path.join(live.workspace.cwd, "acceptance-image.png");
   writeFileSync(imagePath, png, { mode: 0o600 });
@@ -102,7 +119,7 @@ beforeAll(async () => {
   live.attach({
     mode: "create",
     ref: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
   });
   expect(
@@ -119,7 +136,7 @@ beforeAll(async () => {
       "Reply with exactly one word: that colour's common English name. Do not use any tools.",
     images: translated.images,
     structuredOutputInstruction: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
     forceExpirePersistedRun: false,
   });
@@ -143,10 +160,8 @@ describe("image-bearing Cursor turn", () => {
   });
 
   it("produces an answer that reflects the image's content", () => {
-    const text = nativeText(framesOfType(live.frames, "nativeEvent"));
-    // Only the assistant's own words are searched, and only for the one answer
-    // the fixture colour admits.
-    expect(text.toLowerCase()).toContain("green");
+    const text = visibleAssistantText(framesOfType(live.frames, "nativeEvent"));
+    expect(text).toMatch(GREEN_IMAGE_ANSWER);
   });
 
   it("emits ordered native events under the image turn's run", () => {
@@ -257,12 +272,13 @@ describe("image-bearing Cursor turn", () => {
 
     const assistantText = reloaded
       .filter((message) => message.role === "assistant")
-      .map((message) => JSON.stringify(message.content))
-      .join("");
+      .flatMap((message) => message.content)
+      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+      .join(" ");
     expect(
-      assistantText.toLowerCase(),
+      assistantText,
       "the image-derived answer did not survive the reload",
-    ).toContain("green");
+    ).toMatch(GREEN_IMAGE_ANSWER);
 
     // Exactly once despite the duplicate append: the run-scoped id is the key.
     const persistedIds = (await readFile(transcriptPath, "utf8"))

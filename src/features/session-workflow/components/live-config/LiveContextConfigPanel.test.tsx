@@ -50,7 +50,13 @@ function context(
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
       profileSnapshot: makeProfileSnapshot(),
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+      },
     },
     contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { commands: [] },
@@ -531,8 +537,10 @@ describe("LiveContextConfigPanel — what only the host can wire", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true, contextLimitTokens: 50000 },
           },

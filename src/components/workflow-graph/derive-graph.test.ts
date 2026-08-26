@@ -104,8 +104,10 @@ describe("deriveNodes", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -141,8 +143,10 @@ describe("deriveNodes", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -159,8 +163,10 @@ describe("deriveNodes", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -195,8 +201,10 @@ describe("deriveNodes", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -258,8 +266,10 @@ describe("deriveNodes", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -340,8 +350,10 @@ describe("deriveNodes wait state attachment", () => {
         profile: { tier: "builtin" as const, id: "general-implementer" },
         agent: {
           backend: "claude" as const,
-          model: "sonnet" as const,
-          reasoningEffort: "medium" as const,
+          modelSelection: {
+            modelId: "sonnet" as const,
+            parameters: { effort: "medium" as const },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -653,8 +665,10 @@ describe("getDisplayValidators", () => {
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       contextValidator: { enabled: false, assignments: [] },
@@ -682,8 +696,10 @@ describe("getDisplayValidators", () => {
         profile: { tier: "builtin" as const, id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -730,8 +746,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -757,8 +775,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "codex",
-              model: "gpt-5.4",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { effort: "high" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -784,8 +804,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -812,8 +834,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -838,8 +862,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -864,8 +890,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "codex",
-              model: "gpt-5.5",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "gpt-5.5",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -890,8 +918,10 @@ describe("getDisplayValidators", () => {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
             continuity: { enabled: true },
           },
@@ -930,8 +960,10 @@ describe("getDisplayApprovalGate", () => {
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       contextValidator: { enabled: false, assignments: [] },
@@ -966,8 +998,10 @@ describe("getDisplayApprovalGate", () => {
         profile: { tier: "builtin" as const, id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -1573,8 +1607,10 @@ describe("deriveNodes — context-tier config overrides", () => {
             profile: { tier: "builtin" as const, id: "general-implementer" },
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           },
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -1626,8 +1662,10 @@ describe("deriveNodes — context-tier config overrides", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
         },
         contextValidator: {
@@ -1640,8 +1678,10 @@ describe("deriveNodes — context-tier config overrides", () => {
               authority: "blocking",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1731,8 +1771,10 @@ describe("deriveNodes — context-tier config overrides", () => {
       profile: { tier: "builtin" as const, id: "general-implementer" },
       agent: {
         backend: "claude" as const,
-        model: "sonnet" as const,
-        reasoningEffort: "medium" as const,
+        modelSelection: {
+          modelId: "sonnet" as const,
+          parameters: { effort: "medium" as const },
+        },
       },
     };
     const authored = makeDefinition({
@@ -1754,7 +1796,13 @@ describe("deriveNodes — context-tier config overrides", () => {
         makeD4Context("ctx-1", {
           implementer: {
             ...workflowImplementer,
-            agent: { ...workflowImplementer.agent, model: "opus" },
+            agent: {
+              backend: "claude",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "medium" },
+              },
+            },
             profileSnapshot:
               createResolvedWorkflowDefinition().executionContexts[0]!
                 .implementer.profileSnapshot,
@@ -1782,8 +1830,10 @@ describe("deriveNodes — context-tier config overrides", () => {
       profile: { tier: "builtin" as const, id: "general-implementer" },
       agent: {
         backend: "claude" as const,
-        model: "sonnet" as const,
-        reasoningEffort: "medium" as const,
+        modelSelection: {
+          modelId: "sonnet" as const,
+          parameters: { effort: "medium" as const },
+        },
       },
     };
     const authored = makeDefinition({

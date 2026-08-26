@@ -7,6 +7,7 @@ import {
   registerTrustedSchema,
 } from "@/lib/shared/parse-trusted";
 import { jsonOrNull } from "@/lib/state-store/serialization";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import {
   compactionEnvelopeSchema,
   contextArtifactRowSchema,
@@ -102,9 +103,8 @@ const contextArtifactsTableRowSchema = registerTrustedSchema(
     source_hash: z.string(),
     status: z.string(),
     error: z.string().nullable(),
-    model_provider: z.string(),
-    model: z.string(),
-    effort: z.string().nullable(),
+    backend: z.string(),
+    model_selection_json: z.string(),
     schema_version: z.number().int(),
     prompt_version: z.string(),
     normalizer_version: z.string(),
@@ -169,11 +169,10 @@ function serializeColumns(
   if (partial.sourceHash !== undefined) out.source_hash = partial.sourceHash;
   if (partial.status !== undefined) out.status = partial.status;
   if (partial.error !== undefined) out.error = partial.error;
-  if (partial.modelProvider !== undefined) {
-    out.model_provider = partial.modelProvider;
+  if (partial.backend !== undefined) out.backend = partial.backend;
+  if (partial.modelSelection !== undefined) {
+    out.model_selection_json = JSON.stringify(partial.modelSelection);
   }
-  if (partial.model !== undefined) out.model = partial.model;
-  if (partial.effort !== undefined) out.effort = partial.effort;
   if (partial.schemaVersion !== undefined) {
     out.schema_version = partial.schemaVersion;
   }
@@ -217,6 +216,24 @@ function parsePayload(row: ContextArtifactsTableRow): {
   return { payload: result.data, corrupt: false };
 }
 
+function parseModelSelection(
+  row: ContextArtifactsTableRow,
+): ContextArtifactRow["modelSelection"] {
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(row.model_selection_json);
+  } catch {
+    return logAndThrowValidationFailure(row.id, [
+      { path: ["modelSelection"], message: "stored JSON is invalid" },
+    ]);
+  }
+  const result = backendModelSelectionSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowValidationFailure(row.id, result.error.issues);
+  }
+  return result.data;
+}
+
 function rowToDomain(rawRow: unknown): ContextArtifactRow {
   const fallbackId =
     typeof rawRow === "object" &&
@@ -232,6 +249,7 @@ function rowToDomain(rawRow: unknown): ContextArtifactRow {
   );
 
   const { payload, corrupt } = parsePayload(row);
+  const modelSelection = parseModelSelection(row);
   if (corrupt) {
     logger.warn("state-store.context-artifacts.payload_parse_failure", {
       id: row.id,
@@ -254,9 +272,8 @@ function rowToDomain(rawRow: unknown): ContextArtifactRow {
     sourceHash: row.source_hash,
     status: corrupt ? "failed" : row.status,
     error: corrupt ? "payload_json failed validation" : row.error,
-    modelProvider: row.model_provider,
-    model: row.model,
-    effort: row.effort,
+    backend: row.backend,
+    modelSelection,
     schemaVersion: row.schema_version,
     promptVersion: row.prompt_version,
     normalizerVersion: row.normalizer_version,
@@ -322,9 +339,8 @@ const ALL_COLUMNS = [
   "source_hash",
   "status",
   "error",
-  "model_provider",
-  "model",
-  "effort",
+  "backend",
+  "model_selection_json",
   "schema_version",
   "prompt_version",
   "normalizer_version",

@@ -20,8 +20,10 @@ function createContext(id: string, title = id): GraphWorkflowResolvedContext {
       profileSnapshot: makeProfileSnapshot(),
       agent: {
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
     },
     contextValidator: { enabled: false, assignments: [] },

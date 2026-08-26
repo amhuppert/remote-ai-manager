@@ -20,13 +20,17 @@ const fullConfig = {
   ignorePatterns: ["node_modules", ".next"],
   agentBackends: {
     claude: {
-      model: "opus" as const,
-      reasoningEffort: "high" as const,
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       timeoutMs: 3_600_000,
     },
     codex: {
-      model: "gpt-5.4",
-      reasoningEffort: "high" as const,
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       timeoutMs: null,
     },
   },
@@ -116,7 +120,9 @@ describe("GET /api/config", () => {
     const body = await response.json();
 
     expect(body.config).toEqual(fullConfig);
-    expect(body.config.agentBackends.claude.model).toBe("opus");
+    expect(body.config.agentBackends.claude.modelSelection.modelId).toBe(
+      "opus",
+    );
     expect(body.config.ignorePatterns).toEqual(["node_modules", ".next"]);
   });
 
@@ -203,8 +209,10 @@ describe("PUT /api/config", () => {
           profile: { tier: "builtin" as const, id: "general-implementer" },
           agent: {
             backend: "claude" as const,
-            model: "sonnet" as const,
-            reasoningEffort: "medium" as const,
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
       },
@@ -280,8 +288,10 @@ describe("PUT /api/config", () => {
         profile,
         agent: {
           backend: "claude" as const,
-          model: "sonnet" as const,
-          reasoningEffort: "medium" as const,
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       };
     }
@@ -315,8 +325,10 @@ describe("PUT /api/config", () => {
                   strategy: "conversation",
                   agent: {
                     backend: "claude",
-                    model: "sonnet",
-                    reasoningEffort: "medium",
+                    modelSelection: {
+                      modelId: "sonnet",
+                      parameters: { effort: "medium" },
+                    },
                   },
                   continuity: { enabled: true },
                 },
@@ -367,14 +379,22 @@ describe("PUT /api/config", () => {
   // carries their setting.
   it.each([
     ["unknownCursorOption", "anything", /unknownCursorOption/],
-    ["fastMode", true, /fast mode/i],
+    ["fastMode", true, /complete modelSelection/i],
     ["pricing", { "composer-2.5": { inputPerMillion: 1 } }, /cost/i],
   ])(
     "rejects the Cursor option %s with a bounded 400 and persists nothing",
     async (field, value, reasonPattern) => {
       const response = await handlers.PUT(
         makePutRequest({
-          agentBackends: { cursor: { model: "composer-2.5", [field]: value } },
+          agentBackends: {
+            cursor: {
+              modelSelection: {
+                modelId: "composer-2.5",
+                parameters: { fast: "true" },
+              },
+              [field]: value,
+            },
+          },
         }),
       );
 
@@ -389,7 +409,13 @@ describe("PUT /api/config", () => {
     const response = await handlers.PUT(
       makePutRequest({
         agentBackends: {
-          cursor: { model: "composer-2.5", token: "sk-cursor-not-a-real-key" },
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+            token: "sk-cursor-not-a-real-key",
+          },
         },
       }),
     );
@@ -404,12 +430,101 @@ describe("PUT /api/config", () => {
   it("accepts a well-formed Cursor profile", async () => {
     const response = await handlers.PUT(
       makePutRequest({
-        agentBackends: { cursor: { model: "composer-2.5", timeoutMs: null } },
+        agentBackends: {
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: { fast: "true" },
+            },
+            timeoutMs: null,
+          },
+        },
       }),
     );
 
     expect(response.status).toBe(200);
     expect(deps.writeRawConfig).toHaveBeenCalled();
+  });
+
+  it("persists canonical model ids instead of accepted aliases", async () => {
+    const aliasSelection = {
+      modelId: "composer-latest",
+      parameters: { fast: "true" },
+    };
+    const response = await handlers.PUT(
+      makePutRequest({
+        agentBackends: {
+          cursor: {
+            modelSelection: aliasSelection,
+          },
+        },
+        compaction: {
+          backend: "cursor",
+          conversationModelSelection: aliasSelection,
+          messageModelSelection: aliasSelection,
+          timeoutMs: 180_000,
+        },
+        conversationNaming: {
+          enabled: true,
+          backend: "cursor",
+          modelSelection: aliasSelection,
+          timeoutMs: null,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.writeRawConfig).toHaveBeenCalledWith({
+      agentBackends: {
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+        },
+      },
+      compaction: {
+        backend: "cursor",
+        conversationModelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        messageModelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: 180_000,
+      },
+      conversationNaming: {
+        enabled: true,
+        backend: "cursor",
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
+    });
+  });
+
+  it("rejects a Cursor selection that is not a complete catalog variant", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({
+        agentBackends: {
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: {},
+            },
+          },
+        },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain('Parameter "fast" is required');
+    expect(deps.writeRawConfig).not.toHaveBeenCalled();
   });
 
   it("rejects a legacy path with its normalized replacement", async () => {
@@ -432,7 +547,7 @@ describe("PUT /api/config", () => {
     expect(body.error).toMatch(/Codex is always available/);
   });
 
-  it("rejects unsupported model and effort pairs", async () => {
+  it("rejects retired split Codex model and effort fields", async () => {
     const response = await handlers.PUT(
       makePutRequest({
         agentBackends: {
@@ -443,10 +558,40 @@ describe("PUT /api/config", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toMatch(/not supported by Codex model "gpt-5\.4"/);
+    expect(body.error).toContain("agentBackends.codex.model");
+    expect(body.error).toContain("agentBackends.codex.reasoningEffort");
+    expect(body.error).toContain("complete modelSelection");
+    expect(deps.writeRawConfig).not.toHaveBeenCalled();
   });
 
-  it("rejects an effort incompatible with the materialized default model before writing", async () => {
+  it.each(["model", "effort", "reasoning", "fast", "context", "thinking"])(
+    "rejects the misplaced top-level model parameter %s before writing",
+    async (field) => {
+      const response = await handlers.PUT(makePutRequest({ [field]: "value" }));
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toContain(field);
+      expect(deps.writeRawConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["Claude profile", { agentBackends: { claude: { thinking: "true" } } }],
+    ["Codex profile", { agentBackends: { codex: { context: "max" } } }],
+    ["compaction block", { compaction: { fast: "true" } }],
+    ["naming block", { conversationNaming: { reasoning: "high" } }],
+  ])(
+    "rejects an unknown model parameter on the %s before writing",
+    async (_label, input) => {
+      const response = await handlers.PUT(makePutRequest(input));
+
+      expect(response.status).toBe(400);
+      expect(deps.writeRawConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a retired effort-only Codex override before writing", async () => {
     const response = await handlers.PUT(
       makePutRequest({
         agentBackends: { codex: { reasoningEffort: "ultra" } },
@@ -455,7 +600,8 @@ describe("PUT /api/config", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.error).toMatch(/not supported by Codex model "gpt-5\.4"/);
+    expect(body.error).toContain("agentBackends.codex.reasoningEffort");
+    expect(body.error).toContain("complete modelSelection");
     expect(deps.writeRawConfig).not.toHaveBeenCalled();
   });
 

@@ -187,8 +187,7 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         kind: "task_run",
         prompt,
         outputFormat: { type: "json_schema", schema: outputSchema },
-        modelId: context.implementer.agent.model,
-        effort: context.implementer.agent.reasoningEffort,
+        modelSelection: context.implementer.agent.modelSelection,
         ...(writeEnvelope !== null
           ? { fsWritePolicy: writeEnvelope.policy }
           : {}),

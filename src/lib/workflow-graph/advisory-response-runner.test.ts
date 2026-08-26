@@ -104,6 +104,10 @@ describe("advisory-response turn", () => {
       schema: buildAdvisoryDispositionsOutputSchema(ADVISORIES),
     });
     expect(dispatched.conversationId).toBe("conversation-impl");
+    expect(dispatched.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
   });
 
   it("retains a confined implementer's write envelope on the response turn", async () => {

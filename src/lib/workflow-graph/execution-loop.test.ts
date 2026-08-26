@@ -82,8 +82,10 @@ function createSingleContextDefinition(
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -497,8 +499,10 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -516,8 +520,10 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },

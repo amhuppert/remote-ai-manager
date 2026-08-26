@@ -50,8 +50,10 @@ function makeRuntime(
   return {
     backend: "claude",
     status: "alive",
-    modelId: "opus",
-    reasoningEffort: undefined,
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     outputFormat: undefined,
     alignmentVersion: null,
     async sendTurn() {
@@ -67,6 +69,10 @@ function makeTurnInput(): ConversationBackendTurnInput {
     promptText: "hi",
     imageRefs: [],
     sessionInstructions: [],
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     autonomous: false,
     signal: new AbortController().signal,
     onEvent: () => {},
@@ -450,8 +456,18 @@ describe("withRuntimeReplacementRetry", () => {
   });
 
   it("delegates identity members to the live runtime across replacement", async () => {
-    const first = makeRuntime({ modelId: "opus" });
-    const second = makeRuntime({ modelId: "sonnet" });
+    const first = makeRuntime({
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
+    const second = makeRuntime({
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      },
+    });
     let current = first;
 
     const wrapped = withRuntimeReplacementRetry({
@@ -463,9 +479,15 @@ describe("withRuntimeReplacementRetry", () => {
       log: createCapturingLogger(),
     });
 
-    expect(wrapped.modelId).toBe("opus");
+    expect(wrapped.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
     current = second;
-    expect(wrapped.modelId).toBe("sonnet");
+    expect(wrapped.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "high" },
+    });
     expect(wrapped.backend).toBe("claude");
   });
 });

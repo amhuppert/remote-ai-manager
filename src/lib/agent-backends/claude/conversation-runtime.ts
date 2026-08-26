@@ -56,10 +56,7 @@ import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
-import {
-  claudeModelSchema,
-  claudeEffortLevelSchema,
-} from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { type McpDiscoveredTool } from "@/lib/mcp/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
 import { createPortableMcpFilterLookup } from "./portable-mcp-filter";
@@ -75,6 +72,11 @@ import {
 } from "../structured-output-prompt";
 import { createClaudeFailureClassifier } from "./failure-classifier";
 import { getErrorMessage } from "@/lib/shared/errors";
+import {
+  resolveClaudeModelSelection,
+  type ResolvedClaudeModelSelection,
+} from "./model-selection";
+import { modelSelectionKey } from "../model-selection";
 
 const logger = createLogger("claude:conversation-runtime");
 
@@ -151,9 +153,6 @@ export function resolveIdleTtlMs(
     : undefined;
 }
 
-const KNOWN_CLAUDE_MODELS = claudeModelSchema.options;
-const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
-
 function resolveClaudeContinuation(
   backendRef: AgentSessionRef | null,
   error: unknown | null,
@@ -185,8 +184,7 @@ class ClaudeConversationRuntime
   implements ConversationBackendRuntime, ClaudeCapabilityApplyTarget
 {
   readonly backend: AgentBackendId = "claude";
-  readonly modelId: string | undefined;
-  readonly reasoningEffort: string | undefined;
+  readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
@@ -206,8 +204,7 @@ class ClaudeConversationRuntime
   constructor(
     querySession: QuerySession,
     opts: {
-      modelId?: string;
-      reasoningEffort?: string;
+      resolvedModelSelection: ResolvedClaudeModelSelection;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
       alignmentVersion?: number | null;
       fsWritePolicy?: FsWritePolicy;
@@ -225,8 +222,7 @@ class ClaudeConversationRuntime
     },
   ) {
     this.querySession = querySession;
-    this.modelId = opts.modelId;
-    this.reasoningEffort = opts.reasoningEffort;
+    this.modelSelection = opts.resolvedModelSelection.modelSelection;
     this.outputFormat = opts.outputFormat;
     this.alignmentVersion = opts.alignmentVersion ?? null;
     this.fsWritePolicy = opts.fsWritePolicy;
@@ -236,7 +232,7 @@ class ClaudeConversationRuntime
 
     logger.info("claude-runtime.created", {
       conversationId: querySession.conversationId,
-      modelId: opts.modelId,
+      modelId: this.modelSelection.modelId,
     });
   }
 
@@ -372,6 +368,18 @@ class ClaudeConversationRuntime
     };
 
     try {
+      const turnModelSelection = resolveClaudeModelSelection(
+        input.modelSelection,
+      );
+      if (
+        modelSelectionKey(turnModelSelection.modelSelection) !==
+        modelSelectionKey(this.modelSelection)
+      ) {
+        throw new Error(
+          "Claude model selection changed without recreating the conversation runtime.",
+        );
+      }
+
       const turnResult: TurnResult = await this.querySession.sendPrompt(
         prompt,
         emit,
@@ -720,13 +728,16 @@ const claudeConversationBackendFactory = {
   async createRuntime(
     input: ConversationBackendCreateInput,
   ): Promise<ConversationBackendRuntime> {
+    const resolvedModelSelection = resolveClaudeModelSelection(
+      input.modelSelection,
+    );
     const ccScopeConversationId =
       input.ccScopeConversationId ?? input.conversationId;
 
     logger.info("claude-factory.create_runtime", {
       ...conversationTargetLogFields(input.conversationTarget),
       ccScopeConversationId,
-      modelId: input.modelId,
+      modelId: resolvedModelSelection.modelId,
     });
 
     // Mutable portable-config holder — reflects the resolver's current
@@ -865,8 +876,8 @@ const claudeConversationBackendFactory = {
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
       cwd: input.worktreePath,
-      model: input.modelId,
-      effort: input.reasoningEffort as QuerySessionOptions["effort"],
+      model: resolvedModelSelection.modelId,
+      effort: resolvedModelSelection.effort as QuerySessionOptions["effort"],
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
@@ -930,8 +941,7 @@ const claudeConversationBackendFactory = {
     const querySession = createQuerySession(sessionOptions);
 
     const runtime = new ClaudeConversationRuntime(querySession, {
-      modelId: input.modelId,
-      reasoningEffort: input.reasoningEffort,
+      resolvedModelSelection,
       outputFormat: input.outputFormat,
       alignmentVersion: input.alignmentVersion ?? null,
       ...(input.fsWritePolicy !== undefined
@@ -972,27 +982,13 @@ const claudeConversationBackendFactory = {
     return runtime;
   },
 
-  validateModelAndEffort(input: {
-    modelId?: string;
-    reasoningEffort?: string;
-  }): void {
-    if (input.modelId) {
-      const result = claudeModelSchema.safeParse(input.modelId);
-      if (!result.success) {
-        throw new Error(
-          `Invalid Claude model: "${input.modelId}". Must be one of: ${KNOWN_CLAUDE_MODELS.join(", ")}.`,
-        );
-      }
-    }
+  validateModelSelection(selection: BackendModelSelection): void {
+    resolveClaudeModelSelection(selection);
+  },
 
-    if (input.reasoningEffort) {
-      const result = claudeEffortLevelSchema.safeParse(input.reasoningEffort);
-      if (!result.success) {
-        throw new Error(
-          `Invalid reasoning effort: "${input.reasoningEffort}". Must be one of: ${KNOWN_EFFORT_LEVELS.join(", ")}.`,
-        );
-      }
-    }
+  async validateProjectModelSelection({ modelSelection }) {
+    const resolved = resolveClaudeModelSelection(modelSelection);
+    return { ok: true, modelSelection: resolved.modelSelection };
   },
 } satisfies ConversationBackendFactory;
 

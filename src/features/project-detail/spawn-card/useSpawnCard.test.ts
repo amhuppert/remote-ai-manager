@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyPromptDocument,
   setSessionImages,
+  setSessionModelSelection,
   toEditableSessions,
   updateEditableSession,
   setSessionIncluded,
@@ -13,9 +14,12 @@ import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
 
 const proposal: SpawnProposal = {
@@ -43,8 +47,10 @@ function editable(overrides: Partial<EditableSession> = {}): EditableSession {
     agent: "claude",
     mode: "normal",
     initialPrompt: "",
-    model: "opus",
-    reasoningEffort: "high",
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     included: true,
     ...overrides,
   };
@@ -53,30 +59,27 @@ function editable(overrides: Partial<EditableSession> = {}): EditableSession {
 describe("toEditableSessions", () => {
   it("defaults each row from the configured profile for its backend", () => {
     const rows = toEditableSessions(proposal, BACKEND_DEFAULTS);
-    expect(rows[0]).toMatchObject({
-      model: "sonnet",
-      reasoningEffort: "medium",
-    });
-    expect(rows[1]).toMatchObject({
-      model: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
-    });
+    expect(rows[0]!.modelSelection).toEqual(BACKEND_DEFAULTS.claude);
+    expect(rows[1]!.modelSelection).toEqual(BACKEND_DEFAULTS.codex);
   });
 
   it("preserves a custom Codex profile model through the submitted proposal", () => {
     const rows = toEditableSessions(proposal, {
-      claude: { modelId: "sonnet", effort: "medium" },
-      codex: { modelId: "custom-codex-model", effort: "ultra" },
-      cursor: { modelId: "composer-2.5", effort: "high" },
+      claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+      codex: {
+        modelId: "custom-codex-model",
+        parameters: { reasoning: "ultra", fast: "false" },
+      },
+      cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
     });
 
-    expect(rows[1]).toMatchObject({
-      model: "custom-codex-model",
-      reasoningEffort: "ultra",
+    expect(rows[1]!.modelSelection).toEqual({
+      modelId: "custom-codex-model",
+      parameters: { reasoning: "ultra", fast: "false" },
     });
-    expect(toSpawnProposal(rows).sessions[1]).toMatchObject({
-      model: "custom-codex-model",
-      reasoningEffort: "ultra",
+    expect(toSpawnProposal(rows).sessions[1]!.modelSelection).toEqual({
+      modelId: "custom-codex-model",
+      parameters: { reasoning: "ultra", fast: "false" },
     });
   });
 
@@ -97,17 +100,19 @@ describe("toEditableSessions", () => {
     expect("branch" in rows[0]!).toBe(false);
   });
 
-  it("defaults model + effort from each row's agent backend", () => {
+  it("defaults a complete model variant from each row's agent backend", () => {
     const rows = toEditableSessions(proposal);
-    // claude → opus / high
-    expect(rows[0]!.model).toBe("opus");
-    expect(rows[0]!.reasoningEffort).toBe("high");
-    // codex → gpt-5.4 / high
-    expect(rows[1]!.model).toBe("gpt-5.4");
-    expect(rows[1]!.reasoningEffort).toBe("high");
+    expect(rows[0]!.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
+    expect(rows[1]!.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    });
   });
 
-  it("honors a model + effort already present on the proposal", () => {
+  it("honors a complete selection already present on the proposal", () => {
     const rows = toEditableSessions({
       sessions: [
         {
@@ -115,19 +120,23 @@ describe("toEditableSessions", () => {
           target: "main",
           agent: "codex",
           mode: "normal",
-          model: "gpt-5.4-mini",
-          reasoningEffort: "low",
+          modelSelection: {
+            modelId: "gpt-5.4-mini",
+            parameters: { reasoning: "low", fast: "false" },
+          },
         },
       ],
     });
-    expect(rows[0]!.model).toBe("gpt-5.4-mini");
-    expect(rows[0]!.reasoningEffort).toBe("low");
+    expect(rows[0]!.modelSelection).toEqual({
+      modelId: "gpt-5.4-mini",
+      parameters: { reasoning: "low", fast: "false" },
+    });
   });
 });
 
 describe("updateEditableSession", () => {
-  it("resets model and effort to the configured profile on agent change", () => {
-    const rows = [editable({ agent: "claude", model: "opus" })];
+  it("resets the whole selection to the configured profile on agent change", () => {
+    const rows = [editable({ agent: "claude" })];
     const next = updateEditableSession(
       rows,
       0,
@@ -135,11 +144,8 @@ describe("updateEditableSession", () => {
       "codex",
       BACKEND_DEFAULTS,
     );
-    expect(next[0]).toMatchObject({
-      agent: "codex",
-      model: "gpt-5.6-sol",
-      reasoningEffort: "ultra",
-    });
+    expect(next[0]!.agent).toBe("codex");
+    expect(next[0]!.modelSelection).toEqual(BACKEND_DEFAULTS.codex);
   });
 
   it("updates one field at one index without mutating the input", () => {
@@ -150,30 +156,29 @@ describe("updateEditableSession", () => {
     expect(next[1]).toEqual(rows[1]); // other rows unchanged
   });
 
-  it("resets model + effort to the new backend's defaults on an agent change", () => {
-    const rows = [editable({ agent: "claude", model: "opus" })];
+  it("resets the complete selection to the new backend's catalog default", () => {
+    const rows = [editable({ agent: "claude" })];
     const next = updateEditableSession(rows, 0, "agent", "codex");
     expect(next[0]!.agent).toBe("codex");
-    expect(next[0]!.model).toBe("gpt-5.4"); // codex default, not stale opus
-    expect(next[0]!.reasoningEffort).toBe("high");
+    expect(next[0]!.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    });
   });
 
-  it("clamps the effort to the new model's supported levels on a model change", () => {
-    // sonnet supports only [low, medium, high]; xhigh must clamp down to high.
-    const rows = [
-      editable({ agent: "claude", model: "opus", reasoningEffort: "xhigh" }),
-    ];
-    const next = updateEditableSession(rows, 0, "model", "sonnet");
-    expect(next[0]!.model).toBe("sonnet");
-    expect(next[0]!.reasoningEffort).toBe("high");
-  });
-
-  it("keeps a still-supported effort across a model change", () => {
-    const rows = [
-      editable({ agent: "claude", model: "opus", reasoningEffort: "medium" }),
-    ];
-    const next = updateEditableSession(rows, 0, "model", "sonnet");
-    expect(next[0]!.reasoningEffort).toBe("medium");
+  it("replaces a selection atomically without retaining old parameters", () => {
+    const rows = [editable()];
+    const selection = {
+      modelId: "sonnet",
+      parameters: { effort: "low" },
+    };
+    const next = setSessionModelSelection(rows, 0, selection);
+    expect(next[0]!.modelSelection).toEqual(selection);
+    expect(next[0]!.modelSelection).not.toBe(selection);
+    expect(rows[0]!.modelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
   });
 });
 
@@ -268,30 +273,43 @@ describe("toSpawnProposal", () => {
     expect(result.sessions[0]!.initialPrompt).toBe("go");
   });
 
-  it("emits model + reasoningEffort for a single-backend agent", () => {
+  it("emits one whole model selection for a single-backend agent", () => {
     const rows = [
-      editable({ agent: "codex", model: "gpt-5.4", reasoningEffort: "medium" }),
+      editable({
+        agent: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
+      }),
     ];
     const result = toSpawnProposal(rows);
-    expect(result.sessions[0]!.model).toBe("gpt-5.4");
-    expect(result.sessions[0]!.reasoningEffort).toBe("medium");
+    expect(result.sessions[0]!.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "medium", fast: "false" },
+    });
+    expect("model" in result.sessions[0]!).toBe(false);
+    expect("reasoningEffort" in result.sessions[0]!).toBe(false);
   });
 
-  it("omits model + reasoningEffort for a dual agent (both run defaults)", () => {
-    const rows = [editable({ agent: "dual" })];
+  it("omits modelSelection for a dual agent (both run defaults)", () => {
+    const rows = [editable({ agent: "dual", modelSelection: null })];
     const result = toSpawnProposal(rows);
-    expect(result.sessions[0]!.model).toBeUndefined();
-    expect(result.sessions[0]!.reasoningEffort).toBeUndefined();
+    expect(result.sessions[0]!.modelSelection).toBeUndefined();
   });
 
-  it("emits model but omits reasoningEffort when the model supports no effort levels", () => {
-    // haiku supports no reasoning levels — the model still ships, the effort does not.
+  it("preserves the empty parameter set for a model with no controls", () => {
     const rows = [
-      editable({ agent: "claude", model: "haiku", reasoningEffort: "high" }),
+      editable({
+        agent: "claude",
+        modelSelection: { modelId: "haiku", parameters: {} },
+      }),
     ];
     const result = toSpawnProposal(rows);
-    expect(result.sessions[0]!.model).toBe("haiku");
-    expect(result.sessions[0]!.reasoningEffort).toBeUndefined();
+    expect(result.sessions[0]!.modelSelection).toEqual({
+      modelId: "haiku",
+      parameters: {},
+    });
   });
 });
 

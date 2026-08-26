@@ -8,9 +8,16 @@ import type {
   PortableMcpConfig,
   McpApplyResult,
 } from "@/lib/agent-backends/portable-mcp";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
-import { dispatchConversationTurn } from "./agent-call-conversation";
-import type { BackendCapabilityView } from "./agent-call-vocabulary";
+import {
+  dispatchConversationTurn as dispatchConversationTurnPrimitive,
+  type DispatchConversationTurnDeps,
+} from "./agent-call-conversation";
+import type {
+  AgentCallRequest,
+  BackendCapabilityView,
+} from "./agent-call-vocabulary";
 
 const CAPABILITY_VIEW: BackendCapabilityView = {
   backend: "claude",
@@ -20,6 +27,28 @@ const CAPABILITY_VIEW: BackendCapabilityView = {
   contextMetricsAvailable: true,
   nativeMidTurnAskUser: true,
 };
+
+const CLAUDE_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "high" },
+};
+
+type TestDispatchConversationTurnDeps = Omit<
+  DispatchConversationTurnDeps,
+  "modelSelection"
+> & {
+  modelSelection?: BackendModelSelection;
+};
+
+function dispatchConversationTurn(
+  request: AgentCallRequest,
+  deps: TestDispatchConversationTurnDeps,
+) {
+  return dispatchConversationTurnPrimitive(request, {
+    ...deps,
+    modelSelection: deps.modelSelection ?? CLAUDE_SELECTION,
+  });
+}
 
 interface StubRuntimeOptions {
   result?: Partial<ConversationBackendTurnResult>;
@@ -54,8 +83,7 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
   const runtime: ConversationBackendRuntime = {
     backend: "claude",
     status: "alive",
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: CLAUDE_SELECTION,
     outputFormat: undefined,
     alignmentVersion: null,
     async sendTurn(input) {
@@ -131,6 +159,26 @@ describe("dispatchConversationTurn", () => {
     expect(result.usage.contextTokens).toBe(5000);
     expect(result.usage.contextWindowMax).toBe(200_000);
     expect(result.capabilities).toEqual(CAPABILITY_VIEW);
+  });
+
+  it("forwards one complete atomic model selection to the runtime", async () => {
+    const { runtime, capturedSendTurnInput } = makeStubRuntime();
+    const selection: BackendModelSelection = {
+      modelId: "sonnet",
+      parameters: { effort: "medium", context: "long" },
+    };
+
+    await dispatchConversationTurn(
+      { kind: "conversation_turn", prompt: "hello" },
+      {
+        runtime,
+        capabilityView: CAPABILITY_VIEW,
+        signal: new AbortController().signal,
+        modelSelection: selection,
+      },
+    );
+
+    expect(capturedSendTurnInput.value?.modelSelection).toEqual(selection);
   });
 
   it("forwards the request output schema as the runtime outputFormat", async () => {
@@ -301,8 +349,7 @@ describe("dispatchConversationTurn", () => {
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CLAUDE_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn() {

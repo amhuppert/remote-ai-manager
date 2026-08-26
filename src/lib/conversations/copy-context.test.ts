@@ -125,8 +125,10 @@ function makeGraphWorkflowExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },
@@ -149,8 +151,10 @@ function makeGraphWorkflowExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           contextValidator: { enabled: false, assignments: [] },

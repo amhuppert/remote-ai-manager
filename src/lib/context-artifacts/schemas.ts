@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import {
   projectEventIdentity,
   sessionEventIdentity,
@@ -145,30 +146,31 @@ export type ContextArtifactStatusEvent = z.infer<
   typeof contextArtifactStatusEventSchema
 >;
 
-export const contextArtifactRowSchema = z.object({
-  id: z.string().min(1),
-  kind: artifactKindSchema,
-  scope: contextArtifactScopeSchema,
-  projectPath: z.string().min(1),
-  sessionName: z.string().nullable(),
-  conversationId: z.string().min(1),
-  messageId: z.string().nullable(),
-  messageIndex: z.number().int().nullable(),
-  coveredStartSeq: z.number().int(),
-  coveredEndSeq: z.number().int(),
-  sourceHash: z.string(),
-  status: contextArtifactStatusSchema,
-  error: z.string().nullable(),
-  modelProvider: agentBackendSchema,
-  model: z.string(),
-  effort: z.string().nullable(),
-  schemaVersion: z.number().int(),
-  promptVersion: z.string(),
-  normalizerVersion: z.string(),
-  createdBy: createdBySchema,
-  createdByConversationId: z.string().nullable(),
-  payload: compactionEnvelopeSchema.nullable(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
+export const contextArtifactRowSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: artifactKindSchema,
+    scope: contextArtifactScopeSchema,
+    projectPath: z.string().min(1),
+    sessionName: z.string().nullable(),
+    conversationId: z.string().min(1),
+    messageId: z.string().nullable(),
+    messageIndex: z.number().int().nullable(),
+    coveredStartSeq: z.number().int(),
+    coveredEndSeq: z.number().int(),
+    sourceHash: z.string(),
+    status: contextArtifactStatusSchema,
+    error: z.string().nullable(),
+    backend: agentBackendSchema,
+    modelSelection: backendModelSelectionSchema,
+    schemaVersion: z.number().int(),
+    promptVersion: z.string(),
+    normalizerVersion: z.string(),
+    createdBy: createdBySchema,
+    createdByConversationId: z.string().nullable(),
+    payload: compactionEnvelopeSchema.nullable(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .strict();
 export type ContextArtifactRow = z.infer<typeof contextArtifactRowSchema>;

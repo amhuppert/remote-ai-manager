@@ -23,8 +23,10 @@ const PROJECT_PATH = "/seed-snapshots-project";
 
 const CLAUDE_AGENT = {
   backend: "claude",
-  model: "sonnet",
-  reasoningEffort: "medium",
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  },
 } as const;
 
 let tempDir: string;

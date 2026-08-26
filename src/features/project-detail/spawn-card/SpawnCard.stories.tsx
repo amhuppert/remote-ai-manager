@@ -4,16 +4,52 @@ import SpawnCard, { ValidSpawnCard } from "./SpawnCard";
 import { validateProposal } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import {
+  getStaticBackendModelCatalog,
+  type BackendValueMap,
+} from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import type { BackendModelCatalog } from "@/lib/agent-backends/schemas";
+import { withSeededQueryClient } from "../cockpit/story-support";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
+
+function projectModelOptions() {
+  const catalogs: BackendValueMap<BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex", BACKEND_DEFAULTS.codex),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return (["claude", "codex", "cursor"] as const).map((backend) => ({
+    backend,
+    models: [],
+    defaultModelId: BACKEND_DEFAULTS[backend].modelId,
+    source: "catalog" as const,
+    modelCatalog: catalogs[backend],
+    defaultSelection: BACKEND_DEFAULTS[backend],
+    diagnostics: [],
+  }));
+}
 
 const meta: Meta<typeof ValidSpawnCard> = {
   title: "Spawn Card/SpawnCard",
   component: ValidSpawnCard,
+  decorators: [
+    withSeededQueryClient([
+      [
+        backendCatalogKeys.projectModelOptions("command-center"),
+        projectModelOptions(),
+      ],
+    ]),
+  ],
 };
 export default meta;
 

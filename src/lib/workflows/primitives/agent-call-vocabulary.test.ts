@@ -40,14 +40,89 @@ describe("agentCallRequestSchema", () => {
       outputSchema: { type: "object", properties: {}, required: [] },
       writeCapability: "read_only",
       timeoutMs: 30_000,
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      },
     });
     expect(req.kind).toBe("conversation_turn");
     if (req.kind === "conversation_turn") {
       expect(req.laneRef?.laneId).toBe("primary");
       expect(req.writeCapability).toBe("read_only");
       expect(req.outputSchema).toBeDefined();
+      expect(req.modelSelection).toEqual({
+        modelId: "sonnet",
+        parameters: { effort: "high" },
+      });
     }
   });
+
+  it("accepts only a whole atomic model-selection override", () => {
+    expect(
+      agentCallRequestSchema.safeParse({
+        kind: "task_run",
+        backend: "codex",
+        prompt: "do the thing",
+        modelSelection: {
+          modelId: "gpt-5.2",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      agentCallRequestSchema.safeParse({
+        kind: "task_run",
+        backend: "codex",
+        prompt: "do the thing",
+        modelSelection: { modelId: "gpt-5.2" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects retired tuple fields instead of reconstructing a selection", () => {
+    for (const retired of [
+      { modelId: "gpt-5.2" },
+      { reasoningEffort: "high" },
+      { codexFastMode: false },
+    ]) {
+      expect(
+        agentCallRequestSchema.safeParse({
+          kind: "task_run",
+          backend: "codex",
+          prompt: "do the thing",
+          modelSelection: {
+            modelId: "gpt-5.2",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+          ...retired,
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it.each(["conversation_turn", "task_run"] as const)(
+    "rejects unknown top-level model parameters on the %s arm",
+    (kind) => {
+      for (const field of [
+        "model",
+        "effort",
+        "reasoning",
+        "fast",
+        "context",
+        "thinking",
+      ]) {
+        const result = agentCallRequestSchema.safeParse({
+          kind,
+          ...(kind === "task_run" ? { backend: "codex" } : {}),
+          prompt: "do the thing",
+          [field]: "value",
+        });
+
+        expect(result.success, `${kind}.${field}`).toBe(false);
+      }
+    },
+  );
 
   it("carries governing systemInstructions on both request kinds", () => {
     const conversation = agentCallRequestSchema.parse({

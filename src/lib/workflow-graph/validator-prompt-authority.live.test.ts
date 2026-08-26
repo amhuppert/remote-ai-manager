@@ -83,7 +83,11 @@ import {
 } from "./validator-runner";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
-import type { SeededValidatorAssignment } from "./config-schemas";
+import type {
+  GraphWorkflowAgentConfig,
+  SeededValidatorAssignment,
+} from "./config-schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { GraphWorkflowResolvedContext } from "./definition-schemas";
 import {
   ADVERSARY_EDIT_MARKER,
@@ -206,6 +210,20 @@ function seededValidator(
     candidatePath: fixture.candidatePath,
     foreignTaskId: FOREIGN_TASK_ID,
   });
+  if (backend === "cursor") {
+    throw new Error("Cursor has no task facet for validator lanes");
+  }
+  const modelSelection: BackendModelSelection =
+    backend === "claude"
+      ? {
+          modelId: CLAUDE_MODEL_ID,
+          parameters: { effort: "medium" },
+        }
+      : {
+          modelId: CODEX_MODEL_ID,
+          parameters: { reasoning: "medium", fast: "false" },
+        };
+  const agent: GraphWorkflowAgentConfig = { backend, modelSelection };
 
   return {
     id: "adversary",
@@ -222,13 +240,10 @@ function seededValidator(
       { ...(text.focus === undefined ? {} : { assignmentFocus: text.focus }) },
     ),
     strategy: "task",
-    agent: {
-      backend,
-      model: backend === "claude" ? CLAUDE_MODEL_ID : CODEX_MODEL_ID,
-      reasoningEffort: "medium",
-    },
+    authority: "blocking",
+    agent,
     continuity: { enabled: true },
-  } as SeededValidatorAssignment;
+  };
 }
 
 function contextFor(
@@ -270,8 +285,8 @@ function liveTaskRun(
       agentBackend: backend,
       backendRef: null,
       promptText: input.prompt,
-      modelId: input.modelId ?? null,
-      effort: input.effort ?? null,
+      modelSelection: input.modelSelection ?? null,
+      onModelSelectionResolved: async () => {},
       ...(input.outputFormat !== undefined
         ? { outputFormat: input.outputFormat }
         : {}),

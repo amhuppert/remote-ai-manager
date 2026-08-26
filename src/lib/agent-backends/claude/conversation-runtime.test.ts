@@ -24,6 +24,7 @@ import type {
   ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendRuntime,
+  ConversationBackendTurnInput,
 } from "../conversation";
 import {
   projectConversationTarget,
@@ -52,25 +53,59 @@ import type {
   AgentProfileSnapshot,
   ResolvedAgentProfile,
 } from "@/lib/agent-profiles/schemas";
+import type { BackendModelSelection } from "../schemas";
+
+function modelSelection(
+  modelId: string,
+  effort?: string,
+): BackendModelSelection {
+  return {
+    modelId,
+    parameters: effort === undefined ? {} : { effort },
+  };
+}
 
 /**
  * Session-scoped runtime under the mocked SDK — the shape every test below
  * wants. Scope is a DECLARED create-input now, so the helper states it once;
  * project-scope behaviour calls the factory directly with a project target.
  */
-const createRuntimeWithFakeDeps = (
-  input: Omit<ConversationBackendCreateInput, "conversationTarget"> & {
+type TestTurnInput = Omit<ConversationBackendTurnInput, "modelSelection"> & {
+  modelSelection?: BackendModelSelection;
+};
+
+type TestConversationRuntime = Omit<ConversationBackendRuntime, "sendTurn"> & {
+  sendTurn(
+    input: TestTurnInput,
+  ): ReturnType<ConversationBackendRuntime["sendTurn"]>;
+};
+
+const createRuntimeWithFakeDeps = async (
+  input: Omit<
+    ConversationBackendCreateInput,
+    "conversationTarget" | "modelSelection"
+  > & {
     sessionName: string;
+    modelSelection?: BackendModelSelection;
   },
-): Promise<ConversationBackendRuntime> =>
-  claudeConversationBackendFactory.createRuntime({
+): Promise<TestConversationRuntime> => {
+  const runtime = await claudeConversationBackendFactory.createRuntime({
     ...input,
+    modelSelection: input.modelSelection ?? modelSelection("opus", "high"),
     conversationTarget: sessionConversationTarget(
       input.projectName,
       input.sessionName,
       input.conversationId,
     ),
   });
+  const sendTurn = runtime.sendTurn.bind(runtime);
+  runtime.sendTurn = ((turnInput: TestTurnInput) =>
+    sendTurn({
+      ...turnInput,
+      modelSelection: turnInput.modelSelection ?? runtime.modelSelection,
+    })) as ConversationBackendRuntime["sendTurn"];
+  return runtime as TestConversationRuntime;
+};
 
 function createControllableMockQuery() {
   const messages: SDKMessage[] = [];
@@ -191,7 +226,55 @@ function firstQueryEnv(): Record<string, string> {
   return firstQueryEnvSchema.parse(call[0]).options.env;
 }
 
+describe("ClaudeConversationBackendFactory — model selection admission", () => {
+  it("returns the resolver's canonical selection through the project hook", async () => {
+    const requestedSelection = modelSelection("opus", "high");
+    const validateProjectModelSelection =
+      claudeConversationBackendFactory.validateProjectModelSelection;
+
+    expect(validateProjectModelSelection).toBeTypeOf("function");
+    const result = await validateProjectModelSelection!({
+      projectPath: "/project",
+      modelSelection: requestedSelection,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      modelSelection: modelSelection("opus", "high"),
+    });
+    expect(result.modelSelection).not.toBe(requestedSelection);
+    expect(result.modelSelection.parameters).not.toBe(
+      requestedSelection.parameters,
+    );
+  });
+});
+
 describe("ClaudeConversationRuntime — SDK options", () => {
+  it("translates and exposes a complete model selection", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const selectedModel = modelSelection("fable", "max");
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-model-selection",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      modelSelection: selectedModel,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(queryMock.mock.calls[0]?.[0]?.options).toMatchObject({
+      model: "fable",
+      effort: "max",
+    });
+    expect(runtime.modelSelection).toEqual(selectedModel);
+    await runtime.close();
+  });
+
   it("exports the session scope discriminator declared on the create input", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -227,6 +310,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       conversationTarget: projectConversationTarget("proj", "conv-plc"),
       worktreePath: "/project",
       persistedRef: null,
+      modelSelection: modelSelection("opus", "high"),
       sessionInstructions: [],
       tooling: {},
     });

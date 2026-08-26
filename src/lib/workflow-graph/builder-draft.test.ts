@@ -184,7 +184,13 @@ describe("workflow builder draft helpers", () => {
       {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
-        agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+        agent: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
       },
     );
 
@@ -196,8 +202,10 @@ describe("workflow builder draft helpers", () => {
       profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
     });
     const other = result.executionContexts.find(
@@ -208,8 +216,10 @@ describe("workflow builder draft helpers", () => {
       profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
     });
   });
@@ -303,14 +313,20 @@ describe("workflow builder draft helpers", () => {
       {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
-        agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+        agent: {
+          backend: "claude",
+          modelSelection: { modelId: "sonnet", parameters: { effort: "low" } },
+        },
       },
     );
 
     expect(result.workflowConfig.implementer).toEqual({
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "low" } },
+      },
     });
   });
 

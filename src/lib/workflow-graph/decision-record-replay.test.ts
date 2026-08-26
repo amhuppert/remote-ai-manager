@@ -107,8 +107,10 @@ const VERDICT_SCHEMA = {
 
 const AGENT = {
   backend: "claude",
-  model: "sonnet",
-  reasoningEffort: "medium",
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  },
 } as const;
 
 function classifyDefinition(): WorkflowSemanticDefinition {

@@ -648,8 +648,10 @@ function createCodexExecutionWithRunningTask() {
           profileSnapshot: makeProfileSnapshot(),
           agent: {
             backend: "codex",
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "gpt-5.4-mini",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
           },
         },
         contextValidator: { enabled: false, assignments: [] },

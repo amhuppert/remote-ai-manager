@@ -22,7 +22,7 @@ import {
   useProjectsQuery,
   useProjectPreferencesQuery,
 } from "@/lib/projects/queries";
-import { useSessionsQuery } from "@/lib/sessions/queries";
+import { useSessionsQuery } from "@/lib/sessions/list-queries";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { HOTKEY_REGISTRY, formatHotkeyDisplay } from "@/lib/shared/hotkeys";

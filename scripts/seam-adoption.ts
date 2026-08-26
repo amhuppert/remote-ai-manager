@@ -604,6 +604,39 @@ export function countHardcodedBackendEnumerations(source: string): number {
   );
 }
 
+/**
+ * Provider-shaped model-parameter fields forbidden above the adapter boundary.
+ * The unit is an identifier token, so type members, object properties, member
+ * reads, and destructured locals all bite without teaching the matcher every
+ * possible TypeScript syntax. Explicit `z.never()` and migration-field helper
+ * properties are refusal gates, not compatibility readers, and count zero.
+ */
+export function countNeutralModelParameterFields(source: string): number {
+  const field = String.raw`(?:reasoningEffort|codexFastMode|fastMode)`;
+  let candidate = stripJsComments(source);
+  candidate = candidate.replace(
+    new RegExp(
+      String.raw`\b${field}\s*:\s*z\s*\.\s*never\s*\([\s\S]{0,800}?\)\s*\.\s*optional\s*\(\s*\)`,
+      "g",
+    ),
+    "",
+  );
+  candidate = candidate.replace(
+    new RegExp(
+      String.raw`\b${field}\s*:\s*migrated(?:Backend|Agent)SelectionField\s*\(\s*\)`,
+      "g",
+    ),
+    "",
+  );
+  candidate = candidate.replace(
+    /\b(reasoningEffort|codexFastMode|fastMode)\s*:\s*body\s*\[\s*["']\1["']\s*\]/g,
+    "",
+  );
+  return (
+    candidate.match(new RegExp(String.raw`\b${field}\b`, "g"))?.length ?? 0
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Seam catalog
 // ---------------------------------------------------------------------------
@@ -652,6 +685,39 @@ const BACKEND_SEAM_ALLOWLIST: readonly AllowlistEntry[] = [
     path: "src/lib/agent-backends/",
     justification:
       "The backend adapter seam itself — backend identity and provider SDK knowledge live here by design (plan §3.1).",
+  },
+];
+
+const BACKEND_IDENTITY_ALLOWLIST: readonly AllowlistEntry[] = [
+  ...BACKEND_SEAM_ALLOWLIST,
+  {
+    path: "src/lib/state-store/migrations/0035-generalized-model-selection.ts",
+    justification:
+      "Frozen one-way migration boundary: provider identity is required to translate retired provider-specific config fields into atomic selections. The file cannot serve runtime requests and is deleted only when schema-v11 databases are no longer supported.",
+  },
+  {
+    path: "src/lib/workflow-graph/archived-legacy-decode.ts",
+    justification:
+      "Read-only terminal-archive decoder: provider identity is required to project frozen legacy tuples into atomic display selections. It cannot produce runtime requests and is deleted when legacy terminal archives are no longer supported.",
+  },
+];
+
+const NEUTRAL_MODEL_PARAMETER_ALLOWLIST: readonly AllowlistEntry[] = [
+  ...BACKEND_SEAM_ALLOWLIST,
+  {
+    path: "src/lib/state-store/migrations/",
+    justification:
+      "Forward-only migrations own retired provider-field decoding. They cannot serve runtime requests and leave the exception set when pre-selection database schemas are no longer supported.",
+  },
+  {
+    path: "src/lib/workflow-graph/archived-legacy-decode.ts",
+    justification:
+      "Read-only terminal-archive decoder. It cannot produce a runtime request and is deleted when legacy terminal archives are no longer supported.",
+  },
+  {
+    path: "src/features/session/conversation/collab/envelope-adapter.ts",
+    justification:
+      "Read-only collaboration-envelope presentation adapter. It cannot produce a runtime request and is deleted when legacy collaboration envelopes are no longer supported.",
   },
 ];
 
@@ -712,11 +778,13 @@ export const SEAMS: readonly SeamDefinition[] = [
     // row with the wrong agent on a conversation Collaboration Mode does not
     // run. It now calls `asCollaborationAgent`, whose null is the signal
     // PromptComposer already gated the row on.
-    reviewedCeiling: 12,
+    // Catalog-driven model controls consume neutral catalog metadata; this
+    // ceiling covers the remaining product-policy identity sites below.
+    reviewedCeiling: 10,
     unit: 'backend ===/!== "claude"|"codex" comparisons + case labels',
     corpus:
       "src/**/*.{ts,tsx} minus tests/stories (fixture/prototype code is not the migration population); excludes src/lib/agent-backends/. Permanent-survivor floor (ceiling > 0, not expected to reach 0): per P3 the surviving branches are sanctioned adapter-boundary and explicitly-named product-policy sites — the places where the {claude, codex} pair IS the decision, not a defect to route through a normalized adapter result. These are (a) the curated collaboration pair (D19: the Claude×Codex pairing is the feature; identity is intrinsic), (b) presentation/label and default-selection maps keyed by the two ids where a normalized capability field would add no behavior, and (c) the narrow disposition/continuation reads the descriptor classifier has not yet subsumed. Deletion condition (drops per site as each is reached): a branch leaves the floor only when its distinction is expressed as a declared capability field or a normalized result field (e.g. continuationDisposition) per P3, or when the descriptor's failure/continuation classifier subsumes it (§3.1.5/1.5). The floor reaches 0 only if every remaining site becomes such a data-driven read; absent that, the reviewed nonzero count is the intentional adapter-boundary/product-policy minimum, ratcheted down whenever a migration removes an identity check. Stays in the corpus (not a file-excluding allowlist) so any NEW identity branch added above the seam still fails the ratchet.",
-    allowlist: BACKEND_SEAM_ALLOWLIST,
+    allowlist: BACKEND_IDENTITY_ALLOWLIST,
     inCorpus(relPath) {
       return (
         isTsSource(relPath) &&
@@ -726,6 +794,27 @@ export const SEAMS: readonly SeamDefinition[] = [
       );
     },
     count: (source) => countBackendIdentityBranches(source),
+  },
+  {
+    id: "neutral-model-parameter-fields",
+    title: "Provider-specific model parameter fields outside adapters",
+    reviewedCeiling: 0,
+    unit: "reasoningEffort/codexFastMode/fastMode identifier tokens, excluding rejection-only schema and retired-request gates",
+    corpus:
+      "src/**/*.{ts,tsx} minus tests, stories, testing/fixture modules, backend adapters, state-store migrations, and the two approved read-only archive adapters. Runtime-neutral code must carry one complete BackendModelSelection instead of provider-specific parameter fields.",
+    allowlist: NEUTRAL_MODEL_PARAMETER_ALLOWLIST,
+    inCorpus(relPath) {
+      return (
+        isTsSource(relPath) &&
+        !isTestPath(relPath) &&
+        !isStoriesPath(relPath) &&
+        !relPath.includes("/testing/") &&
+        !relPath.includes("/fixtures/") &&
+        !relPath.includes("test-fixture") &&
+        !matchesAllowlist(relPath, this.allowlist)
+      );
+    },
+    count: (source) => countNeutralModelParameterFields(source),
   },
   {
     id: "backend-deep-imports",

@@ -10,6 +10,7 @@ import {
   createWorkflowDefinition,
   createWorkflowLayout,
   makeValidatorAssignment,
+  TEST_AGENT_BACKENDS_CONFIG,
 } from "@/lib/workflow-graph/test-fixtures";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
@@ -21,6 +22,7 @@ import {
   type CapturingLogger,
 } from "@/lib/shared/testing/capturing-logger";
 import { createAssignmentReferenceChecker } from "./assignment-references";
+import { SEEDED_WORKFLOW_DEFAULTS } from "./resolve-config";
 import { createGraphWorkflowValidateHandlers } from "./validate-route-handlers";
 
 const execFileAsync = promisify(execFile);
@@ -53,6 +55,16 @@ function makePlan(definition = createWorkflowDefinition()) {
     description: "A workflow under test",
     definition,
     layout: createWorkflowLayout(),
+  };
+}
+
+function makeGlobalConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
+  return {
+    baseDir: "/projects",
+    ignorePatterns: [],
+    agentBackends: TEST_AGENT_BACKENDS_CONFIG,
+    defaultAgentBackend: "claude",
+    ...overrides,
   };
 }
 
@@ -142,9 +154,11 @@ describe("graph-workflow validate route handler", () => {
       worktreePath: "/session-worktree",
     });
     readRepoConfig.mockResolvedValue(null);
-    readConfig.mockResolvedValue({
-      validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
-    } as GlobalConfig);
+    readConfig.mockResolvedValue(
+      makeGlobalConfig({
+        validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
+      }),
+    );
     routeLog = createCapturingLogger();
 
     profileDir = await mkdtemp(path.join(tmpdir(), "cc-validate-profiles-"));
@@ -187,8 +201,10 @@ describe("graph-workflow validate route handler", () => {
                     authority: "blocking" as const,
                     agent: {
                       backend: "claude" as const,
-                      model: "sonnet" as const,
-                      reasoningEffort: "medium" as const,
+                      modelSelection: {
+                        modelId: "sonnet",
+                        parameters: { effort: "medium" },
+                      },
                     },
                     continuity: { enabled: true },
                   },
@@ -236,8 +252,9 @@ describe("graph-workflow validate route handler", () => {
         }),
       }),
       readConfig: async () =>
-        ({
+        makeGlobalConfig({
           workflowDefaults: {
+            ...SEEDED_WORKFLOW_DEFAULTS,
             contextValidator: {
               enabled: true,
               assignments: [
@@ -248,7 +265,7 @@ describe("graph-workflow validate route handler", () => {
               ],
             },
           },
-        }) as GlobalConfig,
+        }),
     });
 
     // The plan itself authors no validator at all — every reference to the
@@ -678,9 +695,11 @@ describe("graph-workflow validate route handler", () => {
         preMerge: ["test"],
       },
     });
-    readConfig.mockResolvedValue({
-      validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
-    } as GlobalConfig);
+    readConfig.mockResolvedValue(
+      makeGlobalConfig({
+        validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+      }),
+    );
     const definition = createWorkflowDefinition({
       workflowConfig: { scriptValidator: { commands: ["test"] } },
     });
@@ -746,8 +765,10 @@ describe("graph-workflow validate route handler", () => {
                       authority: "blocking",
                       agent: {
                         backend: "claude" as const,
-                        model: "sonnet" as const,
-                        reasoningEffort: "medium" as const,
+                        modelSelection: {
+                          modelId: "sonnet",
+                          parameters: { effort: "medium" },
+                        },
                       },
                       continuity: { enabled: true },
                     },
@@ -856,9 +877,9 @@ describe("graph-workflow validate persists nothing", () => {
       }),
       readRepoConfig: async () => null,
       readConfig: async () =>
-        ({
+        makeGlobalConfig({
           validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
-        }) as GlobalConfig,
+        }),
       assignmentReferences: createAssignmentReferenceChecker({
         library: createAgentProfileLibraryService({
           storage: createAgentProfileStorage({

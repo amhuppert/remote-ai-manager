@@ -30,6 +30,7 @@ import type {
   AgentTaskRequest,
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import {
   getBackendDescriptor as registryGetBackendDescriptor,
   getTaskRunner as registryGetTaskRunner,
@@ -82,9 +83,7 @@ export interface ConversationRuntimeResolution {
   runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
   signal: AbortSignal;
-  modelId?: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   autonomous?: boolean;
   waitForBackgroundTasks?: boolean;
   sessionInstructions?: string[];
@@ -98,9 +97,7 @@ interface TaskRunnerResolution {
   runner: AgentTaskRunner;
   capabilityView: BackendCapabilityView;
   workingDirectory: string;
-  modelId?: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
@@ -269,9 +266,8 @@ export function buildStructuredOutputRepairRequest(input: {
     ...(request.timeoutMs !== undefined
       ? { timeoutMs: request.timeoutMs }
       : {}),
-    ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
-    ...(request.reasoningEffort !== undefined
-      ? { reasoningEffort: request.reasoningEffort }
+    ...(request.modelSelection !== undefined
+      ? { modelSelection: request.modelSelection }
       : {}),
   };
   return request.kind === "task_run"
@@ -412,16 +408,8 @@ async function executeConversationTurn(
     runtime: resolution.runtime,
     capabilityView: resolution.capabilityView,
     signal: resolution.signal,
+    modelSelection: resolution.modelSelection,
     ...(classifyFailure !== undefined ? { classifyFailure } : {}),
-    ...(resolution.modelId !== undefined
-      ? { modelId: resolution.modelId }
-      : {}),
-    ...(resolution.reasoningEffort !== undefined
-      ? { reasoningEffort: resolution.reasoningEffort }
-      : {}),
-    ...(resolution.codexFastMode !== undefined
-      ? { codexFastMode: resolution.codexFastMode }
-      : {}),
     ...(resolution.autonomous !== undefined
       ? { autonomous: resolution.autonomous }
       : {}),
@@ -497,15 +485,17 @@ async function resolveTaskRunnerTarget(
 ): Promise<TaskRunnerResolution> {
   if (deps.taskExecution) {
     const intent = deps.taskExecution;
+    if (request.modelSelection === undefined) {
+      throw new Error(
+        "executeAgentCall: taskExecution requires request.modelSelection so dispatch receives one complete selection",
+      );
+    }
     const getRunner = deps.getTaskRunner ?? registryGetTaskRunner;
     return {
       runner: getRunner(request.backend),
       capabilityView: capabilityViewForBackend(request.backend),
       workingDirectory: intent.workingDirectory,
-      ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
-      ...(request.reasoningEffort !== undefined
-        ? { reasoningEffort: request.reasoningEffort }
-        : {}),
+      modelSelection: request.modelSelection,
       ...(intent.autonomous !== undefined
         ? { autonomous: intent.autonomous }
         : {}),
@@ -564,16 +554,8 @@ async function executeTaskRun(
     runner: resolution.runner,
     capabilityView: resolution.capabilityView,
     workingDirectory: resolution.workingDirectory,
+    modelSelection: resolution.modelSelection,
     ...(classifyFailure !== undefined ? { classifyFailure } : {}),
-    ...(resolution.modelId !== undefined
-      ? { modelId: resolution.modelId }
-      : {}),
-    ...(resolution.reasoningEffort !== undefined
-      ? { reasoningEffort: resolution.reasoningEffort }
-      : {}),
-    ...(resolution.codexFastMode !== undefined
-      ? { codexFastMode: resolution.codexFastMode }
-      : {}),
     ...(resolution.autonomous !== undefined
       ? { autonomous: resolution.autonomous }
       : {}),

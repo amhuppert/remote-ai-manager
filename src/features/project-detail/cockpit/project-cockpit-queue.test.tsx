@@ -29,6 +29,9 @@ import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import type { BackendModelCatalog } from "@/lib/agent-backends/schemas";
 
 vi.mock(
   "next/link",
@@ -36,10 +39,40 @@ vi.mock(
 );
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
+
+function projectModelOptionsResponse() {
+  const catalogs: Record<AgentBackendId, BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex", BACKEND_DEFAULTS.codex),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return {
+    backends: (["claude", "codex", "cursor"] as const).map((backend) => {
+      const catalog = catalogs[backend];
+      return {
+        backend,
+        models: catalog.models.map((model) => ({
+          id: model.id,
+          label: model.label,
+          description: model.description ?? model.label,
+          effortLevels: [],
+        })),
+        defaultModelId: BACKEND_DEFAULTS[backend].modelId,
+        source: "catalog" as const,
+        modelCatalog: catalog,
+        defaultSelection: BACKEND_DEFAULTS[backend],
+        diagnostics: [],
+      };
+    }),
+  };
+}
 
 const ts = "2026-01-01T00:00:00.000Z";
 
@@ -182,7 +215,12 @@ function recordingFetch(
     if (method !== "GET" && !url.endsWith("/pending-prompt")) {
       requests.push({ url, method, body });
     }
-    return route(url, init) ?? jsonResponse({ available: false });
+    const routed = route(url, init);
+    if (routed !== null) return routed;
+    if (url === "/api/projects/proj/model-options") {
+      return jsonResponse(projectModelOptionsResponse());
+    }
+    return jsonResponse({ available: false });
   }) as typeof fetch;
   return { fetch: stub, requests };
 }
@@ -380,6 +418,7 @@ describe("project cockpit follow-up queue", () => {
     expect(requests[0]?.method).toBe("POST");
     expect(requests[0]?.body).toMatchObject({
       text: "and also update the README",
+      modelSelection: BACKEND_DEFAULTS.claude,
     });
 
     // And the user sees it pending rather than watching their text vanish. The

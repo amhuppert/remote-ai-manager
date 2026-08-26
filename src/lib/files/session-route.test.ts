@@ -32,17 +32,26 @@ function fakeConfig(): GlobalConfig {
     ignorePatterns: testIgnorePatterns,
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 60_000,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
-        fastMode: false,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: null,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     defaultAgentBackend: "claude",
   };

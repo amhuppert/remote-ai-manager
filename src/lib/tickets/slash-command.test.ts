@@ -454,6 +454,18 @@ describe("createTicketCommandRunner", () => {
     });
   });
 
+  it("uses the admitted complete model selection for ticket field generation", async () => {
+    const modelSelection = {
+      modelId: "gpt-5.6-sol",
+      parameters: { fast: "true", reasoning: "ultra" },
+    };
+
+    await runner.run({ ...runInput(), modelSelection });
+
+    expect(taskRunInputs).toHaveLength(1);
+    expect(taskRunInputs[0]).toMatchObject({ modelSelection });
+  });
+
   it("reports that fallback delivery is needed when the committed ticket notice cannot be persisted", async () => {
     deps.appendNotice = async () => {
       throw new Error("transcript unavailable");

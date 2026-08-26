@@ -26,6 +26,7 @@ import {
 } from "@/lib/conversations/transcript-render";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { CompactionConfig } from "@/lib/config/schemas";
 import type {
@@ -343,7 +344,7 @@ export function createCompactionService(
     entries: TranscriptEntryWithSeq[];
     maxSeq: number;
     config: CompactionConfig;
-    model: string;
+    modelSelection: BackendModelSelection;
   }
 
   class OversizeRenderError extends Error {
@@ -474,7 +475,7 @@ export function createCompactionService(
     expected: { startSeq: number; endSeq: number },
     previousEnvelope: CompactionEnvelope | null,
   ): Promise<ModelPassResult> {
-    const { input, artifactId, config, model } = ctx;
+    const { input, artifactId, config, modelSelection } = ctx;
     const laneSessionName =
       input.sessionName ?? PROJECT_CONVERSATION_SESSION_SENTINEL;
     const result = await deps.executeTaskRun({
@@ -485,8 +486,7 @@ export function createCompactionService(
       prompt,
       outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
       timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
-      modelId: model,
-      effort: config.effort,
+      modelSelection,
       actorInput: {
         // The compaction lane inherits the scope of the conversation it
         // compacts — a project conversation has no session name, which is why
@@ -850,7 +850,7 @@ export function createCompactionService(
       conversationId: ctx.input.conversationId,
       kind: ctx.input.kind,
       mode: outcome.mode,
-      model: ctx.model,
+      modelSelection: ctx.modelSelection,
       durationMs: Date.now() - startedAt,
       inputBytes: outcome.inputBytes,
       outputBytes: Buffer.byteLength(JSON.stringify(redactedEnvelope), "utf-8"),
@@ -863,7 +863,7 @@ export function createCompactionService(
   }
 
   async function runGeneration(ctx: RunContext): Promise<ContextArtifactRow> {
-    const { input, artifactId, config, model } = ctx;
+    const { input, artifactId, config, modelSelection } = ctx;
     const startedAt = Date.now();
 
     genLogger.info("artifact.generation.started", {
@@ -872,7 +872,7 @@ export function createCompactionService(
       kind: input.kind,
       mode: ctx.plan.mode,
       backend: config.backend,
-      model,
+      modelSelection,
       messageIndex: input.messageIndex ?? null,
     });
 
@@ -888,7 +888,7 @@ export function createCompactionService(
         artifactId,
         conversationId: input.conversationId,
         kind: input.kind,
-        model,
+        modelSelection,
         durationMs: Date.now() - startedAt,
         error,
       });
@@ -989,10 +989,10 @@ export function createCompactionService(
     }
 
     const config = await deps.resolveConfig(input.projectPath);
-    const model =
+    const modelSelection =
       input.kind === "conversation_compaction"
-        ? config.conversationModel
-        : config.messageModel;
+        ? config.conversationModelSelection
+        : config.messageModelSelection;
     const nowIso = deps.now();
     const artifactId = existing?.id ?? randomUUID();
 
@@ -1014,9 +1014,8 @@ export function createCompactionService(
       sourceHash: existing?.sourceHash ?? "",
       status: "pending",
       error: null,
-      modelProvider: config.backend,
-      model,
-      effort: config.effort,
+      backend: config.backend,
+      modelSelection,
       schemaVersion: CONTEXT_ARTIFACT_SCHEMA_VERSION,
       promptVersion: PROMPT_VERSION,
       normalizerVersion: NORMALIZER_VERSION,
@@ -1037,7 +1036,7 @@ export function createCompactionService(
       entries,
       maxSeq,
       config,
-      model,
+      modelSelection,
     };
     const completion = runGeneration(ctx).finally(() => {
       if (inFlight.get(key)?.completion === completion) {

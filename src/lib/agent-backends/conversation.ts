@@ -4,7 +4,7 @@ import type {
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import type { ConversationTokenUsage } from "./schemas";
+import type { BackendModelSelection, ConversationTokenUsage } from "./schemas";
 import type { FsWritePolicy } from "./task";
 import type { ConversationToolingOverrides } from "./types";
 import type {
@@ -96,9 +96,7 @@ export interface ConversationBackendTurnInput {
   promptText: string;
   imageRefs: readonly ConversationImageRef[];
   sessionInstructions: string[];
-  modelId?: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   autonomous: boolean;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   signal: AbortSignal;
@@ -202,8 +200,7 @@ export interface ConversationBackendRuntime {
    * callers treat `undefined` as not-active.
    */
   readonly isTurnActive?: boolean;
-  readonly modelId: string | undefined;
-  readonly reasoningEffort: string | undefined;
+  readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
@@ -302,8 +299,7 @@ export interface ConversationBackendCreateInput {
   conversationTarget: ConversationTarget;
   worktreePath: string;
   persistedRef: AgentSessionRef | null;
-  modelId?: string;
-  reasoningEffort?: string;
+  modelSelection: BackendModelSelection;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   /**
    * Active alignment charter version baked into `sessionInstructions`. Stamped
@@ -362,37 +358,40 @@ export interface ConversationBackendCreateInput {
 }
 
 /**
- * Outcome of a backend's project-scoped model check. A refusal carries the
- * operator-facing reason; the caller turns it into a bounded client error.
+ * Outcome of a backend's project-scoped model resolution. Acceptance carries
+ * the canonical complete selection; refusal carries the operator-facing reason
+ * the caller turns into a bounded client error.
  */
 export type ProjectModelSelectionValidation =
-  | { ok: true }
-  | { ok: false; message: string };
+  | { ok: true; modelSelection: BackendModelSelection }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      modelId: string;
+      parameterId?: string;
+    };
 
 export interface ConversationBackendFactory {
   readonly backend: AgentBackendId;
   createRuntime(
     input: ConversationBackendCreateInput,
   ): Promise<ConversationBackendRuntime>;
-  validateModelAndEffort?(input: {
-    modelId?: string;
-    reasoningEffort?: string;
-  }): void;
+  validateModelSelection?(selection: BackendModelSelection): void;
   /**
-   * Optional project-scoped model check, for a backend whose selectable models
-   * are a property of the project rather than of Command Center. Declared
-   * separately from `validateModelAndEffort` because that hook is synchronous
-   * and project-blind: it cannot read a project's configuration, so it cannot
-   * answer membership in a per-project list.
+   * Optional project-scoped model resolution, for a backend whose selectable
+   * models are a property of the project rather than of Command Center.
+   * Declared separately from `validateModelSelection` because that hook is
+   * synchronous and project-blind: it cannot read a project's configuration,
+   * so it cannot answer membership in a per-project list.
    *
    * Called before a turn is accepted so an unsupported selection costs neither
-   * a process nor a billable turn. Omitting `modelId` asks the backend to check
-   * whatever it would resolve on its own — a configured default outside the
-   * project's list has to fail closed, not silently substitute.
+   * a process nor a billable turn. An accepted result carries the canonical
+   * complete selection the caller must persist and dispatch.
    */
   validateProjectModelSelection?(input: {
     projectPath: string;
-    modelId?: string;
+    modelSelection: BackendModelSelection;
   }): Promise<ProjectModelSelectionValidation>;
   /**
    * The project's permitted models, for creation surfaces that must offer only

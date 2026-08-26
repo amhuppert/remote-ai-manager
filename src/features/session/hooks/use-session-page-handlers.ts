@@ -13,7 +13,7 @@ import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-ses
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { EffectiveCollabConfig } from "@/stores/collaboration.store";
 
 type SubmissionArgs = Parameters<typeof usePromptSubmission>[0];
@@ -29,11 +29,8 @@ export interface UseSessionPageHandlersArgs {
   local: ReturnType<typeof useSessionPageLocalState>;
   isBusy: boolean;
   messagesLength: number;
-  selectedModel: string;
-  selectedEffort: EffortLevel;
-  effortSupported: boolean;
+  selectedModelSelection: BackendModelSelection;
   selectedBackend: SubmissionArgs["selectedBackend"];
-  selectedCodexFastMode: boolean;
   sendPrompt: SubmissionArgs["sendPrompt"];
   queueMessage: SubmissionArgs["queueMessage"];
   collaborationStartMutation: SubmissionArgs["collaborationStartMutation"];
@@ -55,11 +52,8 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     store,
     local,
     messagesLength,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
+    selectedModelSelection,
     selectedBackend,
-    selectedCodexFastMode,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,
@@ -102,11 +96,8 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     effectiveCollabConfig,
     clearCollabConfigDraft,
     messagesLength,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
+    selectedModelSelection,
     selectedBackend,
-    selectedCodexFastMode,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,

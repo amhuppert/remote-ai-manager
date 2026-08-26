@@ -68,6 +68,7 @@ import type {
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { composeValidatorLaneWriteEnvelope } from "./lane-write-policy";
 import {
   _resetServerBaseUrlForTesting,
@@ -371,9 +372,17 @@ async function runAdversary(
   backend: AgentBackendId,
   fixture: Fixture,
 ): Promise<AgentTaskResult> {
+  const modelSelection: BackendModelSelection =
+    backend === "codex"
+      ? {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        }
+      : { modelId: "sonnet", parameters: { effort: "medium" } };
   return runnerFor(backend).run({
     workingDirectory: fixture.worktreePath,
     prompt: adversarialPrompt(fixture),
+    modelSelection,
     timeoutMs: RUN_TIMEOUT_MS,
     autonomous: true,
     fsWritePolicy: fixture.policy,

@@ -13,6 +13,7 @@ import type {
   MessageContentBlock,
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getConfigDirPath } from "@/lib/config/loader";
 import {
   projectStoredToolResultBlocks,
@@ -62,12 +63,8 @@ export interface TranscriptEntry {
   content?: MessageContentBlock[];
   /** Full SDK message data (for debugging/future use) */
   raw?: unknown;
-  /** Model used for this turn (stored on user entries) */
-  model?: string;
-  /** Reasoning effort level used for this turn (stored on user entries) */
-  effort?: string;
-  /** Whether this Codex turn used Fast mode (stored on user entries). */
-  codexFastMode?: boolean;
+  /** Complete canonical model selection used for this turn. */
+  modelSelection?: BackendModelSelection;
   /** SDK message UUID (stored on assistant entries for fork resumeSessionAt) */
   uuid?: string;
   /** Where this entry originated. Absent on legacy entries and any caller that
@@ -299,10 +296,8 @@ export async function appendTranscriptEntry(
         role: entry.role,
         content: entry.content,
         timestamp: entry.timestamp ?? null,
-        ...(entry.model !== undefined ? { model: entry.model } : {}),
-        ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
-        ...(entry.codexFastMode !== undefined
-          ? { codexFastMode: entry.codexFastMode }
+        ...(entry.modelSelection !== undefined
+          ? { modelSelection: entry.modelSelection }
           : {}),
         ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
       },
@@ -1131,15 +1126,12 @@ async function readConversationMessagesWithSeqImpl(
   const lines = raw.split("\n");
 
   // Parse the raw lines into the grouping owner's normalized entry shape,
-  // tracking each visible line's per-turn model/effort so a merged unit can
-  // resolve the settings active for its turn (assistant units inherit the most
-  // recent user entry's; notices carry neither). The map is keyed by the raw
-  // line index the owner threads through on every part.
+  // Track each visible line's complete model selection so merged units resolve
+  // the settings active for their turn. The map is keyed by the raw line index
+  // the grouping owner threads through on every part.
   const entries: LogicalUnitEntry[] = [];
   const turnMetaBySeq = new Map<number, TurnAgentSettings>();
-  let currentModel: string | undefined;
-  let currentEffort: string | undefined;
-  let currentCodexFastMode: boolean | undefined;
+  let currentModelSelection: BackendModelSelection | undefined;
   let openRole: LogicalUnitRole | null = null;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
@@ -1163,19 +1155,17 @@ async function readConversationMessagesWithSeqImpl(
     if (entry.role === "user") {
       const explicitSettings = selectLatestExplicitTurnAgentSettings([entry]);
       if (explicitSettings) {
-        currentModel = explicitSettings.model;
-        currentEffort = explicitSettings.effort;
-        currentCodexFastMode = explicitSettings.codexFastMode;
+        currentModelSelection = explicitSettings.modelSelection;
         turnMetaBySeq.set(lineIndex, explicitSettings);
       } else if (opensUnit) {
-        currentEffort = undefined;
-        currentCodexFastMode = undefined;
+        currentModelSelection = undefined;
       }
-    } else if (entry.role === "assistant") {
+    } else if (
+      entry.role === "assistant" &&
+      currentModelSelection !== undefined
+    ) {
       turnMetaBySeq.set(lineIndex, {
-        model: currentModel,
-        effort: currentEffort,
-        codexFastMode: currentCodexFastMode,
+        modelSelection: currentModelSelection,
       });
     }
 
@@ -1212,9 +1202,7 @@ async function readConversationMessagesWithSeqImpl(
         ...(unit.role === "notice"
           ? {}
           : {
-              model: meta?.model,
-              effort: meta?.effort,
-              codexFastMode: meta?.codexFastMode,
+              modelSelection: meta?.modelSelection,
             }),
         seq: lastPart.seq,
       };

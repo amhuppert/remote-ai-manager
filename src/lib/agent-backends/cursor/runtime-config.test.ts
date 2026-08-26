@@ -14,14 +14,18 @@ import { createCursorRuntimeConfigAdapter } from "./runtime-config";
 import type { ConversationBackendRuntime } from "../conversation";
 import type { ResolvedCapabilityCascade } from "../runtime-config";
 
+const MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+} as const;
+
 function stubRuntime(
   status: "alive" | "dead" = "alive",
 ): ConversationBackendRuntime {
   return {
     backend: "cursor",
     status,
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: MODEL_SELECTION,
     outputFormat: undefined,
     alignmentVersion: null,
     async sendTurn(): Promise<never> {

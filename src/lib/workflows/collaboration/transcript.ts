@@ -1,13 +1,12 @@
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 
 export function buildCollaborationUserTranscriptEntry(input: {
   timestamp: string;
   brief: string;
   imageRefs: readonly ConversationImageRef[];
-  modelId?: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection?: BackendModelSelection;
   id?: string;
 }): TranscriptEntry {
   return {
@@ -23,10 +22,13 @@ export function buildCollaborationUserTranscriptEntry(input: {
         imagePath: image.path,
       })),
     ],
-    ...(input.modelId !== undefined ? { model: input.modelId } : {}),
-    ...(input.effort !== undefined ? { effort: input.effort } : {}),
-    ...(input.codexFastMode !== undefined
-      ? { codexFastMode: input.codexFastMode }
+    ...(input.modelSelection !== undefined
+      ? {
+          modelSelection: {
+            modelId: input.modelSelection.modelId,
+            parameters: { ...input.modelSelection.parameters },
+          },
+        }
       : {}),
   };
 }

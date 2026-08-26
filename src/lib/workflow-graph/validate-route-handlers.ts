@@ -194,6 +194,7 @@ export function createGraphWorkflowValidateHandlers(
       projectValidation: repoConfig?.validation ?? null,
       globalValidation: globalConfig.validation,
       workflowDefaults: globalConfig.workflowDefaults,
+      agentBackends: globalConfig.agentBackends,
       assignmentReferences,
     });
     if (!validation.ok) {

@@ -495,7 +495,13 @@ describe("validateWorkflowPlan", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+      },
       continuity: { enabled: true },
     };
 

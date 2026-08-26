@@ -9,6 +9,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -68,13 +69,13 @@ beforeAll(async () => {
 
   const original = await harness.startReady({
     sessionName: workspace.name,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     workspace,
   });
   original.attach({
     mode: "create",
     ref: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
   });
   expect(
@@ -91,7 +92,7 @@ beforeAll(async () => {
     promptText: `Remember this token for later: ${MARKER}. Reply with exactly REMEMBERED and nothing else.`,
     images: [],
     structuredOutputInstruction: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
     forceExpirePersistedRun: false,
   });
@@ -107,14 +108,14 @@ beforeAll(async () => {
 
   resumed = await harness.startReady({
     sessionName: workspace.name,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     workspace,
   });
   expect(resumed.session.pid).not.toBe(original.session.pid);
   resumed.attach({
     mode: "resume",
     ref,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
   });
   expect(
@@ -130,7 +131,7 @@ beforeAll(async () => {
       "What token did I ask you to remember? Reply with only that token and nothing else.",
     images: [],
     structuredOutputInstruction: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
     forceExpirePersistedRun: false,
   });
@@ -219,13 +220,13 @@ describe("Cursor continuation ref rejections", () => {
     for (const testCase of cases) {
       const live = await harness.startReady({
         sessionName: `ref-${testCase.id}-${randomUUID()}`,
-        model: CURSOR_DEFAULT_MODEL,
+        modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
         ...(testCase.sameWorkspace ? { workspace } : {}),
       });
       live.attach({
         mode: "resume",
         ref: testCase.ref,
-        model: CURSOR_DEFAULT_MODEL,
+        modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
         mcpServers: {},
       });
       expect(

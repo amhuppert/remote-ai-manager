@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type {
   PendingQueuedMessage,
   QueuedMessageView,
@@ -27,12 +28,12 @@ const testSession = {
   conversations: [],
 };
 
-const testConversation = {
+const testConversation = makeConversationState({
   id: "conv-123",
-  status: "running" as const,
+  status: "running",
   role: null,
-  agentBackend: "claude" as const,
-};
+  agentBackend: "claude",
+});
 
 const sampleImage: ImagePayload = {
   attachmentId: "att-1",
@@ -123,6 +124,10 @@ function createTestDeps(
     resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
     getSession: vi.fn().mockResolvedValue(testSession),
     getConversation: vi.fn().mockResolvedValue(testConversation),
+    admitModelSelection: vi.fn(async ({ modelSelection }) => ({
+      ok: true as const,
+      modelSelection,
+    })),
     getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
     queueMessage: vi
       .fn()
@@ -291,6 +296,92 @@ describe("POST .../conversations/[conversationId]/queue", () => {
       images: [sampleImage],
       backend: "claude",
     });
+  });
+
+  it("forwards one complete model selection to durable queue persistence", async () => {
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+
+    const response = await handlers.POST(
+      makeRequest({ text: "follow up", modelSelection }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.queueMessage).toHaveBeenCalledWith({
+      projectPath: "/projects/my-project",
+      sessionName: "test-session",
+      conversationId: "conv-123",
+      text: "follow up",
+      modelSelection,
+      backend: "claude",
+    });
+  });
+
+  it("canonicalizes a complete selection before durable queue persistence", async () => {
+    const requestedSelection = {
+      modelId: "composer",
+      parameters: { fast: "true" },
+    };
+    const canonicalSelection = {
+      modelId: "composer-2.5",
+      parameters: { fast: "true" },
+    };
+    vi.mocked(deps.getConversation).mockResolvedValue({
+      ...testConversation,
+      agentBackend: "cursor",
+    });
+    vi.mocked(deps.admitModelSelection).mockResolvedValue({
+      ok: true,
+      modelSelection: canonicalSelection,
+    });
+
+    const response = await handlers.POST(
+      makeRequest({ text: "follow up", modelSelection: requestedSelection }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.admitModelSelection).toHaveBeenCalledWith({
+      backend: "cursor",
+      projectPath: "/projects/my-project",
+      modelSelection: requestedSelection,
+    });
+    expect(deps.queueMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ modelSelection: canonicalSelection }),
+    );
+  });
+
+  it("rejects a catalog-invalid selection before durable queue persistence", async () => {
+    vi.mocked(deps.admitModelSelection).mockResolvedValue({
+      ok: false,
+      code: "unsupported_combination",
+      message: "The requested parameter combination is unsupported.",
+      modelId: "claude-opus-5",
+      parameterId: "thinking",
+    });
+
+    const response = await handlers.POST(
+      makeRequest({
+        text: "follow up",
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { effort: "max", thinking: "false" },
+        },
+      }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "The requested parameter combination is unsupported.",
+      code: "unsupported_combination",
+      modelId: "claude-opus-5",
+      parameterId: "thinking",
+    });
+    expect(deps.queueMessage).not.toHaveBeenCalled();
   });
 
   it("returns 400 EMPTY_MESSAGE when the payload has neither text nor images", async () => {

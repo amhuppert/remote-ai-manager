@@ -62,7 +62,13 @@ describe("collaboration store — /collab config drafts", () => {
       .getState()
       .setCollabConfigDraft("proj", "sess-a", "conv-2", {
         ...DEFAULT_COLLAB_CONFIG_DRAFT,
-        agentTwo: { backend: "claude", model: "opus", effort: "high" },
+        agentTwo: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        },
       });
 
     const drafts =

@@ -51,7 +51,13 @@ const VALIDATOR: ValidatorAssignment = {
   strategy: "conversation",
   authority: "blocking",
   continuity: { enabled: true },
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  agent: {
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
+  },
 };
 
 function renderAssignment(
@@ -88,11 +94,15 @@ describe("AssignmentEditor", () => {
     expect(onChange).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Codex" }));
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agent: expect.objectContaining({ backend: "codex" }),
-      }),
-    );
+    const next = onChange.mock.calls[0]?.[0] as AgentAssignment | undefined;
+    expect(next?.agent).toEqual({
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    });
+    expect(next?.agent).not.toHaveProperty("model");
   });
 
   it("shows the assigned profile and its tier badge from the library listing", () => {

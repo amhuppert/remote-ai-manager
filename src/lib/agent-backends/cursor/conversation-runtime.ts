@@ -13,6 +13,7 @@ import type { AgentFailureClassification } from "../errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { McpApplyResult, PortableMcpConfig } from "../portable-mcp";
 import type { ConversationTokenUsage } from "../schemas";
+import type { BackendModelSelection } from "../schemas";
 import { appendStructuredOutputInstruction } from "../structured-output-prompt";
 import type { FsWritePolicy } from "../task";
 import { CURSOR_BACKEND_ID } from "./backend-id";
@@ -24,7 +25,6 @@ import {
 } from "./failure-classifier";
 import { translateCursorImages } from "./image-input";
 import type { PortableMcpToCursorResult } from "./mcp-translation";
-import type { CursorModelResolution } from "./model-policy";
 import { projectCursorNativeEvent } from "./transcript-projections";
 import {
   CURSOR_CANCEL_SETTLE_TIMEOUT_MS,
@@ -72,8 +72,11 @@ export interface CursorConversationRuntimeDeps {
    * starts and before a billable turn.
    */
   resolveModel(
-    explicitSelection: string | null,
-  ): Promise<CursorModelResolution>;
+    selection: BackendModelSelection,
+  ): Promise<
+    | { ok: true; selection: BackendModelSelection }
+    | { ok: false; message: string }
+  >;
   /**
    * Translates the conversation's portable MCP config into the SDK's inline
    * stdio map, passed on attach and on every send (D18). Injected so the
@@ -132,8 +135,7 @@ interface ActiveTurn {
 
 export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly backend = CURSOR_BACKEND_ID;
-  readonly modelId: string | undefined;
-  readonly reasoningEffort: string | undefined;
+  readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
@@ -150,6 +152,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   private readonly workflowLaneCapability: string | undefined;
   private readonly conversationCapability: string | undefined;
   private readonly deps: CursorConversationRuntimeDeps;
+  private readonly workerOwnerToken = {};
 
   private session: CursorWorkerSession | null = null;
   /** Resolves once the current session's agent is attached; null when none. */
@@ -197,8 +200,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.workflowContextId = input.workflowContextId;
     this.workflowLaneCapability = input.workflowLaneCapability;
     this.conversationCapability = input.conversationCapability;
-    this.modelId = input.modelId;
-    this.reasoningEffort = input.reasoningEffort;
+    this.modelSelection = input.modelSelection;
     this.outputFormat = input.outputFormat;
     this.alignmentVersion = input.alignmentVersion ?? null;
     this.fsWritePolicy = input.fsWritePolicy;
@@ -231,7 +233,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
     // Pre-turn validation, before any worker exists: a refused model or image
     // must cost neither a process nor a billable turn (D10, D15).
-    const model = await this.deps.resolveModel(input.modelId ?? null);
+    const model = await this.deps.resolveModel(input.modelSelection);
     if (!model.ok) {
       return this.refuse(model.message, startedAt);
     }
@@ -240,7 +242,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       return this.refuse(images.message, startedAt);
     }
 
-    const attached = await this.ensureAttached(model.model);
+    const attached = await this.ensureAttached(model.selection);
     if (!attached.ok) {
       return this.settleWithFailure(attached.error, startedAt);
     }
@@ -256,7 +258,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     let turn = await this.runOnce(session, input, {
       promptText,
       images: images.images,
-      model: model.model,
+      modelSelection: model.selection,
       forceExpirePersistedRun: false,
     });
 
@@ -276,7 +278,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       turn = await this.runOnce(session, input, {
         promptText,
         images: images.images,
-        model: model.model,
+        modelSelection: model.selection,
         forceExpirePersistedRun: true,
       });
     }
@@ -300,7 +302,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     dispatch: {
       promptText: string;
       images: readonly { data: string; mimeType: string }[];
-      model: string;
+      modelSelection: BackendModelSelection;
       forceExpirePersistedRun: boolean;
     },
   ): Promise<{ state: ActiveTurn; outcome: TurnOutcome }> {
@@ -330,7 +332,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
         promptText: dispatch.promptText,
         images: dispatch.images,
         structuredOutputInstruction: null,
-        model: dispatch.model,
+        modelSelection: dispatch.modelSelection,
         mcpServers: this.mcpServerMap(),
         forceExpirePersistedRun: dispatch.forceExpirePersistedRun,
       });
@@ -393,7 +395,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   // Worker lifecycle
   // ============================================================
 
-  private async ensureAttached(model: string): Promise<AttachOutcome> {
+  private async ensureAttached(
+    modelSelection: BackendModelSelection,
+  ): Promise<AttachOutcome> {
     // A discarded worker still owns the conversation's registry slot until its
     // teardown settles. Waiting here is what turns "discarded" into "gone",
     // so the start below can only ever return a genuinely fresh worker.
@@ -403,19 +407,22 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       if (this.discarding === discarding) this.discarding = null;
     }
     if (this.attaching !== null) return this.attaching;
-    this.attaching = this.startAndAttach(model);
+    this.attaching = this.startAndAttach(modelSelection);
     const outcome = await this.attaching;
     if (!outcome.ok) this.attaching = null;
     return outcome;
   }
 
-  private async startAndAttach(model: string): Promise<AttachOutcome> {
+  private async startAndAttach(
+    modelSelection: BackendModelSelection,
+  ): Promise<AttachOutcome> {
     const started = await this.deps.transport.start({
       conversationId: this.conversationId,
       target: this.conversationTarget,
       cwd: this.worktreePath,
       storePath: this.deps.storePath(this.conversationId),
-      model,
+      modelSelection,
+      ownerToken: this.workerOwnerToken,
       onFrame: (frame) => this.handleFrame(frame),
       onExit: (info) => this.handleExit(info.expected),
       ...(this.workflowExecutionId !== undefined
@@ -442,7 +449,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     started.session.attach({
       mode: this.backendRef === null ? "create" : "resume",
       ref: this.backendRef,
-      model,
+      modelSelection,
       // Re-passed on resume, not just on create: the SDK does not persist the
       // MCP map with the agent, so a resumed agent whose attach omitted it
       // would run with no servers at all (D11, D18).
@@ -1149,19 +1156,24 @@ function startFailure(
     { kind: "ready" | "already_active" }
   >,
 ): Error {
-  if (result.kind === "runtime_preflight_failed") {
-    const error = new Error(result.message);
-    error.name = "CursorRuntimePreflightError";
-    Reflect.set(error, "code", result.code);
-    return error;
+  switch (result.kind) {
+    case "runtime_preflight_failed": {
+      const error = new Error(result.message);
+      error.name = "CursorRuntimePreflightError";
+      Reflect.set(error, "code", result.code);
+      return error;
+    }
+    case "preflight_failed": {
+      const error = new Error(result.message);
+      error.name = "CursorPreflightError";
+      Reflect.set(error, "code", result.reason);
+      return error;
+    }
+    case "binding_mismatch":
+      return new CursorLocalFailure("binding_mismatch", result.message);
+    case "spawn_failed":
+      return new CursorLocalFailure("worker_exit", result.message);
   }
-  if (result.kind === "preflight_failed") {
-    const error = new Error(result.message);
-    error.name = "CursorPreflightError";
-    Reflect.set(error, "code", result.reason);
-    return error;
-  }
-  return new CursorLocalFailure("worker_exit", result.message);
 }
 
 /**

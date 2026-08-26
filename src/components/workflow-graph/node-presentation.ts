@@ -7,6 +7,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
 import type { ContextWaitState } from "./derive-wait-state";
 import type { ExecutionContextNodeData } from "./derive-graph";
+import { modelSelectionParametersLabel } from "../model-selection-presentation";
 
 /**
  * The context node's presentation vocabulary — everything the card says,
@@ -165,7 +166,7 @@ export interface NodeCrewImplementer {
   backend: AgentBackendId;
   /** The catalog's canonical long name — never the short selector id. */
   modelLabel: string;
-  effort: string;
+  parametersLabel: string;
 }
 
 export interface NodeCrewSeat {
@@ -173,6 +174,7 @@ export interface NodeCrewSeat {
   authority: "blocking" | "advisory";
   backend: AgentBackendId;
   modelLabel: string;
+  parametersLabel: string;
 }
 
 export interface NodeCrew {
@@ -197,9 +199,11 @@ export function contextNodeCrew(
           backend: implementer.agent.backend,
           modelLabel: modelDisplayLabel(
             implementer.agent.backend,
-            implementer.agent.model,
+            implementer.agent.modelSelection.modelId,
           ),
-          effort: implementer.agent.reasoningEffort,
+          parametersLabel: modelSelectionParametersLabel(
+            implementer.agent.modelSelection,
+          ),
         }
       : null,
     seats:
@@ -210,7 +214,10 @@ export function contextNodeCrew(
             backend: assignment.agent.backend,
             modelLabel: modelDisplayLabel(
               assignment.agent.backend,
-              assignment.agent.model,
+              assignment.agent.modelSelection.modelId,
+            ),
+            parametersLabel: modelSelectionParametersLabel(
+              assignment.agent.modelSelection,
             ),
           }))
         : [],
@@ -312,8 +319,11 @@ export function contextNodeAriaLabel(input: ContextNodeAriaInput): string {
       input.configOverrides.length > 0
         ? `set on this context: ${input.configOverrides.join(", ")}`
         : "inherited";
+    const parameters = implementer.parametersLabel
+      ? ` ${implementer.parametersLabel}`
+      : "";
     parts.push(
-      `implementer ${implementer.modelLabel} ${implementer.effort}`,
+      `implementer ${implementer.modelLabel}${parameters}`,
       provenance,
     );
   }

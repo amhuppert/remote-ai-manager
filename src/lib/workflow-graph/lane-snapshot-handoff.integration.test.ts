@@ -70,8 +70,10 @@ const EDITED_INSTRUCTIONS = "COMPLETELY DIFFERENT. EDITED_SENTINEL_V2";
 
 const CLAUDE_AGENT = {
   backend: "claude",
-  model: "sonnet",
-  reasoningEffort: "medium",
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  },
 } as const;
 
 const TURN_RESULT: ConversationBackendTurnResult = {
@@ -292,11 +294,10 @@ async function runTurnAfterRestart(
     promptText: "Do the work",
     images: [],
     streamId: "stream-1",
-    modelId: null,
-    effort: null,
+    modelSelection: CLAUDE_AGENT.modelSelection,
+    onModelSelectionResolved: async () => {},
     autonomous: false,
     debugMode: null,
-    codexFastMode: null,
   };
 
   registerConversationRuntime(

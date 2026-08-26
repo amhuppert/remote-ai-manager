@@ -16,6 +16,7 @@ import {
 } from "./route-handlers";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { SpawnResult } from "./schemas";
+import { ModelSelectionAdmissionError } from "@/lib/agent-backends/model-selection-admission";
 
 function ctx(params: Record<string, string>) {
   return { params: Promise.resolve(params) };
@@ -101,6 +102,46 @@ describe("createSpawnRouteHandlers POST", () => {
     const body = await res.json();
     expect(body.error).toContain("Invalid spawn proposal");
     expect(deps.createFromProposal).not.toHaveBeenCalled();
+  });
+
+  it("returns a bounded stable diagnostic when model admission fails", async () => {
+    const deps = makeDeps({
+      createFromProposal: vi.fn().mockRejectedValue(
+        new ModelSelectionAdmissionError({
+          code: "missing_parameter",
+          message: 'Parameter "fast" is required for model "composer-2.5".',
+          modelId: "composer-2.5",
+          parameterId: "fast",
+        }),
+      ),
+    });
+    const { POST } = createSpawnRouteHandlers(deps);
+
+    const res = await POST(
+      jsonRequest({
+        sessions: [
+          {
+            name: "alpha",
+            agent: "cursor",
+            mode: "normal",
+            initialPrompt: "go",
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: {},
+            },
+          },
+        ],
+      }),
+      ctx({ name: "repo", conversationId: "plc-1" }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'Parameter "fast" is required for model "composer-2.5".',
+      code: "missing_parameter",
+      modelId: "composer-2.5",
+      parameterId: "fast",
+    });
   });
 
   it("returns 400 for an unparseable JSON body", async () => {

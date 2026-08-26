@@ -5,7 +5,10 @@ import {
   StaleDeliveryPlanDraftError,
   type SpecDeliveryPlanRepo,
 } from "@/lib/state-store/spec-delivery-plan-repo";
-import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
+import type {
+  AuthoredWorkflowLaunchAdmissionResult,
+  AuthoredWorkflowModelSelectionAdmissionResult,
+} from "@/lib/workflow-graph/authored-launch-admission";
 import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/spec-bridge";
 import {
   type WorkflowDefinitionDraft,
@@ -117,6 +120,10 @@ export interface DeliveryPlanServiceDeps {
     launch: WorkflowDefinitionMutation;
     accountabilityGroups: readonly AuthoredAccountabilityCoverageGroup[];
   }): Promise<AuthoredWorkflowLaunchAdmissionResult>;
+  admitModelSelections(input: {
+    spec: Spec;
+    launch: WorkflowDefinitionDraft;
+  }): Promise<AuthoredWorkflowModelSelectionAdmissionResult>;
   nextId(): string;
   now(): string;
 }
@@ -466,6 +473,32 @@ export function createDeliveryPlanService(
     });
   }
 
+  async function admitSeededModelSelections(
+    spec: Spec,
+    document: DeliveryPlanDocument,
+  ): Promise<PlanResult<DeliveryPlanDocument>> {
+    const admission = await deps.admitModelSelections({
+      spec,
+      launch: document.launch,
+    });
+    if (!admission.ok) {
+      logger.warn("specs.delivery-plan.model-selection-rejected", {
+        specId: spec.id,
+        operation: "seed_from_last",
+        issueCount: admission.issues.length,
+        issueCodes: admission.issues.map((issue) => issue.code),
+      });
+      return seededOpenAdmissionRefusal(
+        spec.slug,
+        admission.issues.map((issue) => `${issue.path}: ${issue.message}`),
+      );
+    }
+    return {
+      ok: true,
+      value: { ...document, launch: admission.launch },
+    };
+  }
+
   return {
     async open(input) {
       const blocking = liveAttempt(input.spec.id);
@@ -492,6 +525,10 @@ export function createDeliveryPlanService(
             value: initialDocumentForOpen(input.spec, pinnedRevision),
           };
       if (!document.ok) return document;
+      const admittedDocument = input.seedFromLast
+        ? await admitSeededModelSelections(input.spec, document.value)
+        : document;
+      if (!admittedDocument.ok) return admittedDocument;
       const occurredAt = deps.now();
       try {
         const opened = deps.plans.open({
@@ -502,7 +539,9 @@ export function createDeliveryPlanService(
             delta_basis_execution_id: basis.basis.comparedExecutionId,
             status: "draft",
             draft_revision: 1,
-            content_json: canonicalDeliveryPlanEnvelopeBytes(document.value),
+            content_json: canonicalDeliveryPlanEnvelopeBytes(
+              admittedDocument.value,
+            ),
             proposed_snapshot_id: null,
             approval_json: null,
             prelaunch_json: null,
@@ -531,6 +570,28 @@ export function createDeliveryPlanService(
     async edit(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
+      const modelSelectionAdmission = await deps.admitModelSelections({
+        spec: input.spec,
+        launch: input.document.launch,
+      });
+      if (!modelSelectionAdmission.ok) {
+        logger.warn("specs.delivery-plan.model-selection-rejected", {
+          specId: input.spec.id,
+          attemptId: attempt.id,
+          issueCount: modelSelectionAdmission.issues.length,
+          issueCodes: modelSelectionAdmission.issues.map((issue) => issue.code),
+        });
+        return admissionRefusal(
+          input.spec.slug,
+          modelSelectionAdmission.issues.map(
+            (issue) => `${issue.path}: ${issue.message}`,
+          ),
+        );
+      }
+      const document = {
+        ...input.document,
+        launch: modelSelectionAdmission.launch,
+      };
       // Read before the write: the receipt reports the blocking count the edit
       // moved from, which is what makes a partial correction legible.
       const before = await healthOf(
@@ -542,7 +603,7 @@ export function createDeliveryPlanService(
         const edited = deps.plans.saveDraft({
           attemptId: attempt.id,
           expectedDraftRevision: input.expectedDraftRevision,
-          document: input.document,
+          document,
           updatedAt: deps.now(),
         });
         const view = await project(edited, input.spec);
@@ -1611,6 +1672,19 @@ function admissionRefusal(
       code: "validation",
       unmetConditions: [...conditions],
       instruction: `Correct the graph launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
+    },
+  };
+}
+function seededOpenAdmissionRefusal(
+  slug: string,
+  conditions: readonly string[],
+): PlanResult<never> {
+  return {
+    ok: false,
+    refusal: {
+      code: "validation",
+      unmetConditions: [...conditions],
+      instruction: `Open an unseeded attempt with \`cctl spec plan open ${slug}\`, then correct the graph launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
     },
   };
 }

@@ -22,7 +22,7 @@ vi.mock(
 // File-specific mocks
 const mutateMock = vi.fn();
 
-vi.mock("@/lib/sessions/mutations", () => ({
+vi.mock("@/lib/sessions/create-mutation", () => ({
   useCreateSessionMutation: () => ({ mutate: mutateMock, isPending: false }),
 }));
 

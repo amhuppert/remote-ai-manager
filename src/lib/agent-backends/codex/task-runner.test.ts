@@ -38,7 +38,15 @@ vi.mock("@/lib/shared/child-env", () => ({
 import { Codex } from "@openai/codex-sdk";
 import { CodexTaskRunner, type CodexTaskRunnerDeps } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
-import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+
+function modelSelection(
+  modelId: string,
+  reasoning = "high",
+  fast = "false",
+): BackendModelSelection {
+  return { modelId, parameters: { reasoning, fast } };
+}
 
 function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
   return {
@@ -46,6 +54,7 @@ function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
     prompt: "Do the thing",
     timeoutMs: 30_000,
     autonomous: true,
+    modelSelection: modelSelection("gpt-5.4"),
     ...overrides,
   };
 }
@@ -99,12 +108,26 @@ describe("CodexTaskRunner", () => {
     });
   });
 
-  it("passes modelReasoningEffort to thread options", async () => {
-    await runner.run(makeRequest({ reasoningEffort: "high" }));
+  it("translates the complete model selection into Codex thread options", async () => {
+    await runner.run(
+      makeRequest({
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "ultra", fast: "true" },
+        },
+      }),
+    );
 
     expect(startThreadMock).toHaveBeenCalledWith(
-      expect.objectContaining({ modelReasoningEffort: "high" }),
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        modelReasoningEffort: "ultra",
+      }),
     );
+    expect(vi.mocked(Codex).mock.calls[0]?.[0]?.config).toMatchObject({
+      service_tier: "fast",
+      features: { fast_mode: true },
+    });
   });
 
   it("neutralizes ambient CC_* env before spawning the codex subprocess", async () => {
@@ -281,16 +304,18 @@ describe("CodexTaskRunner", () => {
     });
   });
 
-  it("defaults to the global default codex model when no modelId is provided", async () => {
+  it("passes the selected model to thread options", async () => {
     await runner.run(makeRequest());
 
     expect(startThreadMock).toHaveBeenCalledWith(
-      expect.objectContaining({ model: getDefaultCodexModel() }),
+      expect.objectContaining({ model: "gpt-5.4" }),
     );
   });
 
-  it("passes an explicit modelId to thread options", async () => {
-    await runner.run(makeRequest({ modelId: "gpt-5.5" }));
+  it("passes a different complete selection to thread options", async () => {
+    await runner.run(
+      makeRequest({ modelSelection: modelSelection("gpt-5.5") }),
+    );
 
     expect(startThreadMock).toHaveBeenCalledWith(
       expect.objectContaining({ model: "gpt-5.5" }),
@@ -312,18 +337,26 @@ describe("CodexTaskRunner", () => {
     );
   });
 
-  it("fails fast when reasoning effort is invalid", async () => {
-    const result = await runner.run(makeRequest({ reasoningEffort: "turbo" }));
+  it("fails fast when the complete model selection is invalid", async () => {
+    const result = await runner.run(
+      makeRequest({
+        modelSelection: modelSelection("gpt-5.4", "turbo"),
+      }),
+    );
 
     expect(startThreadMock).not.toHaveBeenCalled();
-    expect(result.error).toContain('Invalid Codex reasoning effort: "turbo"');
+    expect(result.error).toContain(
+      'Value "turbo" is not supported for parameter "reasoning"',
+    );
   });
 
   it("passes the GPT-5.6 max/ultra effort through to the SDK thread options", async () => {
     for (const effort of ["max", "ultra"]) {
       startThreadMock.mockClear();
       await runner.run(
-        makeRequest({ modelId: "gpt-5.6-sol", reasoningEffort: effort }),
+        makeRequest({
+          modelSelection: modelSelection("gpt-5.6-sol", effort),
+        }),
       );
       expect(startThreadMock).toHaveBeenCalledWith(
         expect.objectContaining({ modelReasoningEffort: effort }),
@@ -449,7 +482,7 @@ describe("CodexTaskRunner", () => {
     });
   });
 
-  it("uses standard mode when a task omits an explicit choice", async () => {
+  it("uses standard mode when the selection disables fast mode", async () => {
     await runner.run(makeRequest());
 
     const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
@@ -459,18 +492,12 @@ describe("CodexTaskRunner", () => {
     });
   });
 
-  it("honors an explicit standard-mode task choice", async () => {
-    await runner.run(makeRequest({ codexFastMode: false }));
-
-    const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
-    expect(passedOptions.config).toEqual({
-      service_tier: "default",
-      features: { fast_mode: false },
-    });
-  });
-
-  it("honors an explicit fast-mode task choice", async () => {
-    await runner.run(makeRequest({ codexFastMode: true }));
+  it("honors fast mode from the complete selection", async () => {
+    await runner.run(
+      makeRequest({
+        modelSelection: modelSelection("gpt-5.4", "high", "true"),
+      }),
+    );
 
     const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
     expect(passedOptions.config).toEqual({
@@ -1027,7 +1054,9 @@ describe("CodexTaskRunner", () => {
     // beforeEach runMock usage: 12 input (3 cached), 7 output.
 
     it("estimates usage.costUsd at the requested model's default rates", async () => {
-      const result = await runner.run(makeRequest({ modelId: "gpt-5.5" }));
+      const result = await runner.run(
+        makeRequest({ modelSelection: modelSelection("gpt-5.5") }),
+      );
 
       // gpt-5.5: $5/$0.50/$30 per 1M
       expect(result.usage?.costUsd).toBeCloseTo(
@@ -1036,7 +1065,7 @@ describe("CodexTaskRunner", () => {
       );
     });
 
-    it("prices at the default codex model when no modelId is provided", async () => {
+    it("prices at the selected default codex model", async () => {
       const result = await runner.run(makeRequest());
 
       // gpt-5.4: $2.50/$0.25/$15 per 1M
@@ -1047,7 +1076,9 @@ describe("CodexTaskRunner", () => {
     });
 
     it("keeps token usage but null costUsd for a model with no known rates", async () => {
-      const result = await runner.run(makeRequest({ modelId: "o3-pro" }));
+      const result = await runner.run(
+        makeRequest({ modelSelection: modelSelection("o3-pro") }),
+      );
 
       expect(result.usage).toMatchObject({
         inputTokens: 12,
@@ -1080,7 +1111,7 @@ describe("CodexTaskRunner", () => {
       });
 
       const result = await overriddenRunner.run(
-        makeRequest({ modelId: "gpt-5.5" }),
+        makeRequest({ modelSelection: modelSelection("gpt-5.5") }),
       );
 
       expect(result.usage?.costUsd).toBeCloseTo(

@@ -25,6 +25,7 @@ import type {
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
 import type { AgentFailureWithContinuation } from "@/lib/agent-backends/errors";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,
@@ -41,9 +42,7 @@ export interface DispatchTaskRunDeps {
   runner: AgentTaskRunner;
   capabilityView: BackendCapabilityView;
   workingDirectory: string;
-  modelId?: string;
-  reasoningEffort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
   imagePaths?: readonly string[];
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
@@ -125,13 +124,7 @@ export async function dispatchTaskRun(
     ...(request.systemInstructions
       ? { systemInstructions: [request.systemInstructions] }
       : {}),
-    ...(deps.modelId !== undefined ? { modelId: deps.modelId } : {}),
-    ...(deps.reasoningEffort !== undefined
-      ? { reasoningEffort: deps.reasoningEffort }
-      : {}),
-    ...(deps.codexFastMode !== undefined
-      ? { codexFastMode: deps.codexFastMode }
-      : {}),
+    modelSelection: deps.modelSelection,
     ...(deps.resumeRef !== undefined ? { resumeRef: deps.resumeRef } : {}),
     ...(deps.executionProfile !== undefined
       ? { executionProfile: deps.executionProfile }

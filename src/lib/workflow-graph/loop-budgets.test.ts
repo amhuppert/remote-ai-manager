@@ -709,8 +709,10 @@ describe("loop budgets (R10)", () => {
           makeValidatorAssignment({
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           }),
         ],

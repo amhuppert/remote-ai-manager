@@ -12,7 +12,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
-import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  listBackendCatalogEntries,
+} from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import { pastedImageDescription } from "@/lib/tickets/description-images";
 import type { TicketDetail } from "@/lib/tickets/schemas";
 import {
@@ -68,6 +76,34 @@ const SECOND_SCREENSHOT = {
 
 let api: FetchFixture;
 
+const MODEL_DEFAULTS = {
+  claude: { modelId: "opus", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
+} satisfies Record<string, BackendModelSelection>;
+
+function projectModelOptions() {
+  const catalogs: Record<"claude" | "codex" | "cursor", BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex"),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return {
+    backends: (["claude", "codex", "cursor"] as const).map((backend) => ({
+      backend,
+      models: [],
+      defaultModelId: MODEL_DEFAULTS[backend].modelId,
+      source: "catalog" as const,
+      modelCatalog: catalogs[backend],
+      defaultSelection: MODEL_DEFAULTS[backend],
+      diagnostics: [],
+    })),
+  };
+}
+
 function installBaseRoutes(): void {
   api.json("GET", "/api/projects", [
     {
@@ -91,13 +127,18 @@ function installBaseRoutes(): void {
       baseDir: "/repos",
       ignorePatterns: [],
       agentBackends: {
-        claude: { model: "opus", reasoningEffort: "medium", timeoutMs: null },
-        codex: {
-          model: "gpt-5.6-sol",
-          reasoningEffort: "ultra",
+        claude: {
+          modelSelection: MODEL_DEFAULTS.claude,
           timeoutMs: null,
         },
-        cursor: { model: "composer-2.5", timeoutMs: null },
+        codex: {
+          modelSelection: MODEL_DEFAULTS.codex,
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: MODEL_DEFAULTS.cursor,
+          timeoutMs: null,
+        },
       },
       defaultAgentBackend: "claude",
     },
@@ -106,6 +147,16 @@ function installBaseRoutes(): void {
   api.json("GET", "/api/agent-backends", {
     backends: listBackendCatalogEntries(),
   });
+  api.json(
+    "GET",
+    "/api/projects/command-center/model-options",
+    projectModelOptions(),
+  );
+  api.json(
+    "GET",
+    "/api/projects/other-project/model-options",
+    projectModelOptions(),
+  );
 }
 
 function open(location = "/tickets"): void {
@@ -312,7 +363,7 @@ describe("QuickTicketDialog", () => {
     expect(
       screen.getByRole("checkbox", { name: "Start agent after create" }),
     ).toHaveAccessibleDescription(
-      "Creates a session and sends the ticket kickoff prompt using the project's configured backend, model, and effort defaults.",
+      "Creates a session and sends the ticket kickoff prompt using the project's configured backend and model selection defaults.",
     );
     await waitFor(() => expect(mode).toBeEnabled());
     await user.click(mode);
@@ -898,8 +949,10 @@ describe("QuickTicketDialog", () => {
     ).toEqual({
       mode: "agent",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "medium" },
+      },
       // The untouched picker still names the Standard Agent on the wire (R7.1).
       profile: { tier: "builtin", id: "standard-agent" },
     });
@@ -944,7 +997,7 @@ describe("QuickTicketDialog", () => {
     expect(await screen.findByTestId("model-selector-label")).toHaveTextContent(
       /^Opus 5$/,
     );
-    expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
+    expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent(
       /^Medium$/,
     );
     expect(screen.getByRole("button", { name: "Claude" })).toHaveAttribute(
@@ -962,7 +1015,7 @@ describe("QuickTicketDialog", () => {
   });
 
   // R7.1: the quick-ticket kickoff path offers the picker on its Standard Agent
-  // default, beside — not merged into — the backend/model/effort controls.
+  // default, beside — not merged into — the runtime controls.
   it("reveals a Standard-Agent-defaulted profile picker with the kickoff controls", async () => {
     open("/projects/command-center");
     const user = userEvent.setup();
@@ -983,10 +1036,12 @@ describe("QuickTicketDialog", () => {
       await screen.findByRole("combobox", { name: /agent profile/i }),
     ).toHaveTextContent("Standard Agent");
     expect(screen.getByTestId("model-selector-trigger")).toBeInTheDocument();
-    expect(screen.getByTestId("effort-selector-trigger")).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Effort" }),
+    ).toBeInTheDocument();
   });
 
-  it("switches kickoff defaults per backend, clamps effort per model, and sends the selection", async () => {
+  it("switches backend defaults, applies a model's default variant, and sends the whole selection", async () => {
     open("/projects/command-center");
     api.reply("POST", "/api/projects/command-center/tickets", {
       status: 201,
@@ -1014,9 +1069,9 @@ describe("QuickTicketDialog", () => {
     expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
       /^GPT-5\.6 Sol$/,
     );
-    expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
-      /^Ultra$/,
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent(/^Ultra$/);
 
     await user.click(screen.getByTestId("model-selector-trigger"));
     await user.click(
@@ -1025,9 +1080,9 @@ describe("QuickTicketDialog", () => {
     expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
       /^GPT-5\.6 Terra$/,
     );
-    expect(screen.getByTestId("effort-selector-label")).toHaveTextContent(
-      /^High$/,
-    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent(/^High$/);
 
     await user.click(screen.getByRole("button", { name: "Create ticket" }));
     await waitFor(() =>
@@ -1041,8 +1096,10 @@ describe("QuickTicketDialog", () => {
     ).toEqual({
       mode: "agent",
       backend: "codex",
-      model: "gpt-5.6-terra",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.6-terra",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       profile: { tier: "builtin", id: "standard-agent" },
     });
   });
@@ -1080,7 +1137,7 @@ describe("QuickTicketDialog", () => {
       screen.queryByTestId("model-selector-trigger"),
     ).not.toBeInTheDocument();
     expect(autoStart).toHaveAccessibleDescription(
-      "Creates a session and sends the ticket kickoff prompt using the project's configured backend, model, and effort defaults.",
+      "Creates a session and sends the ticket kickoff prompt using the project's configured backend and model selection defaults.",
     );
 
     await user.click(screen.getByRole("button", { name: "Create ticket" }));

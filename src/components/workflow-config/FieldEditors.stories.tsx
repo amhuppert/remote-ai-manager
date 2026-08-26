@@ -55,8 +55,10 @@ const IMPLEMENTER: AgentAssignment = {
   profile: { tier: "builtin", id: "general-implementer" },
   agent: {
     backend: "claude",
-    model: "opus",
-    reasoningEffort: "high",
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
   },
 };
 
@@ -65,7 +67,13 @@ const VALIDATOR: ValidatorAssignment = {
   profile: { tier: "builtin", id: "general-reviewer" },
   strategy: "conversation",
   authority: "blocking",
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  agent: {
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
+  },
   continuity: { enabled: true },
 };
 
@@ -87,8 +95,10 @@ const COLLABORATION: WorkflowCollaborationConfig = {
   enabled: false,
   secondAgent: {
     backend: "claude",
-    model: "sonnet",
-    reasoningEffort: "medium",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
   },
   negotiationRounds: 3,
   autonomousResolutionThreshold: "minor",
@@ -229,8 +239,10 @@ export const CodexImplementer: Story = {
         ...IMPLEMENTER,
         agent: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
       });
       return (

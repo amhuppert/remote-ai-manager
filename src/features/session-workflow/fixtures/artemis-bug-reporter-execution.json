@@ -1221,8 +1221,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -1246,8 +1251,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -1296,8 +1306,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -1308,8 +1323,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -1397,8 +1417,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -1422,8 +1447,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -1472,8 +1502,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -1484,8 +1519,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -1565,8 +1605,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -1590,8 +1635,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -1640,8 +1690,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -1652,8 +1707,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -1729,8 +1789,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -1754,8 +1819,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -1804,8 +1874,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -1816,8 +1891,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -1905,8 +1985,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -1930,8 +2015,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -1980,8 +2070,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -1992,8 +2087,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -2081,8 +2181,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -2106,8 +2211,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -2156,8 +2266,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -2168,8 +2283,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -2253,8 +2373,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -2278,8 +2403,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -2328,8 +2458,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -2340,8 +2475,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -2445,8 +2585,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -2470,8 +2615,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -2520,8 +2670,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -2532,8 +2687,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -2617,8 +2777,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -2642,8 +2807,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -2692,8 +2862,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -2704,8 +2879,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -2793,8 +2973,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -2818,8 +3003,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -2868,8 +3058,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -2880,8 +3075,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -2969,8 +3169,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -2994,8 +3199,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -3044,8 +3254,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -3056,8 +3271,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -3145,8 +3365,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -3170,8 +3395,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -3220,8 +3450,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -3232,8 +3467,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },
@@ -3321,8 +3561,13 @@
           },
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-terra",
-            "reasoningEffort": "high"
+            "modelSelection": {
+              "modelId": "gpt-5.6-terra",
+              "parameters": {
+                "reasoning": "high",
+                "fast": "false"
+              }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -3346,8 +3591,13 @@
               },
               "agent": {
                 "backend": "codex",
-                "model": "gpt-5.6-sol",
-                "reasoningEffort": "xhigh"
+                "modelSelection": {
+                  "modelId": "gpt-5.6-sol",
+                  "parameters": {
+                    "reasoning": "xhigh",
+                    "fast": "false"
+                  }
+                }
               },
               "strategy": "task",
               "authority": "blocking",
@@ -3396,8 +3646,13 @@
           "maxAttemptsPerContext": 2,
           "agent": {
             "backend": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoningEffort": "xhigh"
+            "modelSelection": {
+              "modelId": "gpt-5.6-sol",
+              "parameters": {
+                "reasoning": "xhigh",
+                "fast": "false"
+              }
+            }
           }
         },
         "collaboration": {
@@ -3408,8 +3663,13 @@
           "secondAgent": {
             "value": {
               "backend": "codex",
-              "model": "gpt-5.6-terra",
-              "reasoningEffort": "xhigh"
+              "modelSelection": {
+                "modelId": "gpt-5.6-terra",
+                "parameters": {
+                  "reasoning": "xhigh",
+                  "fast": "false"
+                }
+              }
             },
             "source": "global"
           },

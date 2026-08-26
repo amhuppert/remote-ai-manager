@@ -21,14 +21,27 @@ function loadedConfig(): FullConfigResponse {
       ignorePatterns: [],
       defaultAgentBackend: "claude",
       agentBackends: {
-        claude: { model: "opus", reasoningEffort: "high", timeoutMs: null },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          fastMode: false,
+        claude: {
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
           timeoutMs: null,
         },
-        cursor: { model: "composer-2.5", timeoutMs: null },
+        codex: {
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+          timeoutMs: null,
+        },
       },
     },
     raw: {},
@@ -44,20 +57,26 @@ describe("useConfigForm backend profile editing", () => {
   // ALL_FIELD_PATHS omits is editable on screen yet never dirties the form, so
   // Save stays disabled and the edit is dropped from the PUT body entirely.
   it.each(listBackendCatalogEntries().map((entry) => entry.id))(
-    "marks a %s model edit dirty and carries it into the save payload",
+    "marks a %s atomic selection edit dirty and carries it into the save payload",
     (backend) => {
       const { result } = renderForm();
+      const modelSelection = {
+        modelId: "edited-model",
+        parameters: { providerOption: "enabled" },
+      };
 
       act(() => {
         result.current.controller?.handleChange(
-          `agentBackends.${backend}.model`,
-          "edited-model",
+          `agentBackends.${backend}.modelSelection`,
+          modelSelection,
         );
       });
 
       expect(result.current.dirtyCount).toBe(1);
       const payload = result.current.buildSavePayload();
-      expect(payload?.agentBackends?.[backend]?.model).toBe("edited-model");
+      expect(payload?.agentBackends?.[backend]?.modelSelection).toEqual(
+        modelSelection,
+      );
     },
   );
 
@@ -106,13 +125,16 @@ describe("useConfigForm backend profile editing", () => {
 
     act(() => {
       result.current.controller?.handleChange(
-        "agentBackends.cursor.model",
-        "composer-next",
+        "agentBackends.cursor.modelSelection",
+        { modelId: "composer-next", parameters: { fast: "false" } },
       );
     });
 
     const payload = result.current.buildSavePayload();
-    expect(payload?.agentBackends?.cursor?.model).toBe("composer-next");
+    expect(payload?.agentBackends?.cursor?.modelSelection).toEqual({
+      modelId: "composer-next",
+      parameters: { fast: "false" },
+    });
     expect(payload?.agentBackends?.claude).toBeUndefined();
     expect(payload?.agentBackends?.codex).toBeUndefined();
   });

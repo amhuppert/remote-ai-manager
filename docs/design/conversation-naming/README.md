@@ -22,7 +22,7 @@ Status: decision-complete, ready for implementation. Objective clarified with Al
 | First-message basis | `context.activeTurn.promptText` truncated to 4 000 chars — no transcript read needed. |
 | Race safety | Module-level single-flight map keyed by conversationId + write-time guard: auto-apply only while `nameOrigin === "default"`. |
 | Kill switch | `enabled: boolean` (default true) in the config block. Gates ONLY automatic naming; the explicit buttons always work. |
-| Config defaults | `{ enabled: true, backend: "claude", model: "haiku", effort: "low", timeoutMs: null }`; service resolves `timeoutMs ?? 60_000` (never unbounded). Hand-edited invalid model/backend self-heals via catalog (`isModelCompatibleWithBackend` → `getDefaultModelForBackend`; effort clamped to the model's levels). |
+| Config defaults | `{ enabled: true, backend: "claude", modelSelection: { modelId: "haiku", parameters: {} }, timeoutMs: null }`; service resolves `timeoutMs ?? 60_000` (never unbounded). The selection is an atomic catalog variant. |
 | Output contract | `outputSchema: { name: string }` (structured output); fallback = first non-empty line of `result.text`. Sanitize: strip wrapping quotes/backticks, collapse whitespace, strip trailing `.`/`:`, truncate to 200 chars (the rename schema max). Empty after sanitize = failure. Prompt asks for 2–6 words, Title Case, same language as content. |
 | Failure UX | Auto: silent — keep placeholder, structured warn log. Explicit: route returns the error; client shows a toast (`pushToast`, the tickets pattern). |
 | Explicit API | `POST .../generate-name` (session + project routes), body `{ source: "conversation" } \| { source: "message", messageIndex }`. Handler AWAITS generation (bounded by timeout) and returns `{ name }` — gives the button real error handling; no new SSE event needed. |
@@ -49,13 +49,13 @@ Status: decision-complete, ready for implementation. Objective clarified with Al
 
 ## Slice 2 — `conversationNaming` config block + settings section
 
-1. `src/lib/config/schemas.ts` — `conversationNamingConfigSchema = z.object({ enabled: z.boolean().default(true), backend: agentBackendSchema.default("claude"), model: z.string().default("haiku"), effort: effortLevelSchema.default("low"), timeoutMs: z.number().int().positive().nullable().optional() })` + raw twin (all optional) + `export const resolveConversationNamingConfig = (config) => conversationNamingConfigSchema.parse(config.conversationNaming ?? {})`. Register in `globalConfigSchema` (:112 area) and `rawGlobalConfigSchema` (:171 area). **NOT** in `perRepoConfigSchema`, no cascade helper.
+1. `src/lib/config/schemas.ts` — `conversationNamingConfigSchema = z.object({ enabled: z.boolean().default(true), backend: agentBackendSchema.default("claude"), modelSelection: backendModelSelectionSchema.default({ modelId: "haiku", parameters: {} }), timeoutMs: z.number().int().positive().nullable().optional() })` + raw twin (all optional) + `export const resolveConversationNamingConfig = (config) => conversationNamingConfigSchema.parse(config.conversationNaming ?? {})`. Register in `globalConfigSchema` and `rawGlobalConfigSchema`. **NOT** in `perRepoConfigSchema`, no cascade helper.
 2. `src/lib/config/loader.ts` `defaultConfig()` — block after compaction (:195-201).
-3. `src/features/config/sections/NamingSection.tsx` — mirror `CompactionSection.tsx`: `SettingsPage title="Conversation" accent="naming"`; `ConfigToggle` (enabled), `ConfigPillGroup` (backend; switch resets model to backend default + effort to `undefined` via `handleChangeMulti`, mirroring :98-103), `ConfigPillGroup` (model from `entry.models`), effort pills from `effortLevelsForCatalogEntry(entry, model)` — **render the effort field only when options are non-empty** (haiku has none), `ConfigNumericInput` for timeout (`displayAsMinutes`, hint "Empty = 1 minute default").
+3. `src/features/config/sections/NamingSection.tsx` — mirror `CompactionSection.tsx`: `SettingsPage title="Conversation" accent="naming"`; `ConfigToggle` (enabled), catalog-driven atomic model-selection controls, and `ConfigNumericInput` for timeout (`displayAsMinutes`, hint "Empty = 1 minute default"). Backend changes apply that catalog's complete default selection.
 4. `src/features/config/ConfigPage.tsx` — import + `ConfigNavSection` union + `CONFIG_NAV` `{ id: "naming", label: "Naming" }` + `TabsContent` block (four edits, :23/:32-39/:44/:180-188 pattern).
-5. `src/features/config/form-state.ts` — five `ALL_FIELD_PATHS` entries: `conversationNaming.enabled/.backend/.model/.effort/.timeoutMs`. (`use-config-form.ts` is generic — no edit.)
+5. `src/features/config/form-state.ts` — four `ALL_FIELD_PATHS` entries: `conversationNaming.enabled/.backend/.modelSelection/.timeoutMs`. (`use-config-form.ts` is generic — no edit.)
 
-**Tests**: `schemas.test.ts` (defaults materialize; raw accepts partial), `NamingSection.test.tsx` mirroring `CompactionSection.test.tsx` (heading, defaults, backend switch clears effort, field update, timeout minutes→ms, clear→null), `form-state.test.ts` if it enumerates paths.
+**Tests**: `schemas.test.ts` (defaults materialize; raw accepts partial), `NamingSection.test.tsx` mirroring `CompactionSection.test.tsx` (heading, atomic defaults, backend selection reset, parameter update, timeout minutes→ms, clear→null), `form-state.test.ts` if it enumerates paths.
 
 ## Slice 3 — naming service + content resolution
 
@@ -68,8 +68,8 @@ Status: decision-complete, ready for implementation. Objective clarified with Al
 - `generateAndApplyConversationName(input: { projectPath; projectName; sessionName; conversationId; content; trigger: "auto" | "explicit" }, deps?)`:
   1. Single-flight map keyed by conversationId (concurrent call returns the in-flight promise; `finally` deletes).
   2. `resolveConversationNamingConfig`; `trigger === "auto" && !enabled` ⇒ skip.
-  3. Model/backend/effort self-heal via catalog helpers.
-  4. `runner.run({ workingDirectory: projectPath, prompt, modelId, reasoningEffort, timeoutMs: config.timeoutMs ?? 60_000, executionProfile: "isolated-one-shot", autonomous: true, outputSchema })`.
+  3. Read the configured backend and complete atomic `modelSelection`.
+  4. `runner.run({ workingDirectory: projectPath, prompt, modelSelection, timeoutMs: config.timeoutMs ?? 60_000, executionProfile: "isolated-one-shot", autonomous: true, outputSchema })`.
   5. Extract structured `name`, fall back to first text line, sanitize.
   6. Apply via `mutateConversation(label: "applyGeneratedConversationName")` — auto: only while `nameOrigin === "default"` (skip + log `apply_skipped_origin` otherwise); explicit: unconditional. Sets `name` + `nameOrigin = "auto"`. Works for the `__project__` sentinel (same routing the persistence adapter relies on).
   7. On apply: `publishEventBestEffort` with `conversationRenamedEventSchema` + `conversationEventScopeFields(...)` (project scope handled by the helper).

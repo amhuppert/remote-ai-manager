@@ -53,8 +53,10 @@ function makeContext(id: string) {
       profile: { tier: "builtin" as const, id: "general-implementer" },
       agent: {
         backend: "claude" as const,
-        model: "sonnet" as const,
-        reasoningEffort: "medium" as const,
+        modelSelection: {
+          modelId: "sonnet" as const,
+          parameters: { effort: "medium" as const },
+        },
       },
     },
     mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },

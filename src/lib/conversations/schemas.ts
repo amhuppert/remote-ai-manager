@@ -37,6 +37,10 @@ import {
   redactAgentProfileSnapshot,
   redactedAgentProfileSnapshotSchema,
 } from "@/lib/agent-profiles/schemas";
+import {
+  backendModelSelectionSchema,
+  type BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 
 export {
   messageContentBlockSchema,
@@ -95,9 +99,7 @@ export const transcriptMessageSchema = z.object({
   role: z.enum(["user", "assistant", "notice"]),
   content: z.array(messageContentBlockSchema),
   timestamp: z.string().nullable(),
-  model: z.string().optional(),
-  effort: z.string().optional(),
-  codexFastMode: z.boolean().optional(),
+  modelSelection: backendModelSelectionSchema.optional(),
   origin: transcriptMessageOriginSchema.optional(),
 });
 
@@ -111,12 +113,8 @@ export interface TranscriptMessage {
   content: MessageContentBlock[];
   /** ISO 8601 timestamp if available */
   timestamp: string | null;
-  /** Model used for this turn (e.g., "opus", "sonnet") */
-  model?: string;
-  /** Reasoning effort level used for this turn */
-  effort?: string;
-  /** Codex speed selected for this turn. Absent on Claude and legacy turns. */
-  codexFastMode?: boolean;
+  /** Complete canonical model selection used for this turn. */
+  modelSelection?: BackendModelSelection;
   /** Where this message originated. Absent on legacy transcripts. */
   origin?: TranscriptMessageOrigin;
 }

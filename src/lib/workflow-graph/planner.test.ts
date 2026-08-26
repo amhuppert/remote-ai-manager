@@ -34,8 +34,10 @@ describe("workflow graph planner", () => {
                 profile: { tier: "builtin", id: "general-implementer" },
                 agent: {
                   backend: "claude",
-                  model: "opus",
-                  reasoningEffort: "high",
+                  modelSelection: {
+                    modelId: "opus",
+                    parameters: { effort: "high" },
+                  },
                 },
               },
               mutability: {
@@ -59,8 +61,10 @@ describe("workflow graph planner", () => {
                 profile: { tier: "builtin", id: "general-implementer" },
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
               },
               mutability: {
@@ -141,8 +145,10 @@ describe("workflow graph planner", () => {
                 profile: { tier: "builtin", id: "general-implementer" },
                 agent: {
                   backend: "claude",
-                  model: "opus",
-                  reasoningEffort: "high",
+                  modelSelection: {
+                    modelId: "opus",
+                    parameters: { effort: "high" },
+                  },
                 },
               },
               mutability: {

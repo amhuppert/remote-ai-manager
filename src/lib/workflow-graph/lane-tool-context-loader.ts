@@ -295,15 +295,11 @@ export async function loadGraphWorkflowLaneToolContext(
               agents: {
                 agent_one: {
                   backend: agentOneBackend,
-                  model: agentOneDefaults.modelId,
-                  ...(agentOneDefaults.reasoningEffort !== undefined
-                    ? { reasoningEffort: agentOneDefaults.reasoningEffort }
-                    : {}),
+                  modelSelection: agentOneDefaults.modelSelection,
                 },
                 agent_two: {
                   backend: agentTwoAgentConfig.backend,
-                  model: agentTwoAgentConfig.model,
-                  reasoningEffort: agentTwoAgentConfig.reasoningEffort,
+                  modelSelection: agentTwoAgentConfig.modelSelection,
                 },
               },
             });

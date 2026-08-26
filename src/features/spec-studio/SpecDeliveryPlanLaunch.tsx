@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import { useSessionsQuery } from "@/lib/sessions/queries";
+import { useSessionsQuery } from "@/lib/sessions/list-queries";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import {

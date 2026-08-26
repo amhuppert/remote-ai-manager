@@ -93,6 +93,13 @@ function context() {
 
 function handlers(onQueue?: () => Promise<void>) {
   return createQueueRouteHandlers({
+    admitModelSelection: async ({ modelSelection }) => ({
+      ok: true,
+      modelSelection: modelSelection ?? {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
+    }),
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: store.getSession,
     getConversation: store.getConversation,

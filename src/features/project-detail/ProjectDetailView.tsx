@@ -4,7 +4,7 @@ import "./styles/project-detail.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useSessionsQuery } from "@/lib/sessions/queries";
+import { useSessionsQuery } from "@/lib/sessions/list-queries";
 import { useProjectsQuery } from "@/lib/projects/queries";
 import { useTicketListQuery } from "@/lib/tickets/queries";
 import { useDeleteSessionMutation } from "@/lib/sessions/mutations";

@@ -8,6 +8,7 @@
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "../schemas";
 import type { ConversationBackendTurnResult } from "../conversation";
 import { claudeConversationBackendFactory } from "../claude/conversation-runtime";
 import {
@@ -19,6 +20,11 @@ export const STALE_CLAUDE_RESUME_REF: AgentSessionRef = {
   backend: "claude",
   ref: "session-gone",
 };
+
+const STALE_CLAUDE_MODEL_SELECTION = {
+  modelId: "opus",
+  parameters: { effort: "high" },
+} satisfies BackendModelSelection;
 
 function createRejectableProviderPort(): {
   query: ClaudeSdkQueryPort;
@@ -89,6 +95,7 @@ export async function runStaleClaudePumpResumeTurn(identity: {
         identity.conversationId,
       ),
       persistedRef: STALE_CLAUDE_RESUME_REF,
+      modelSelection: STALE_CLAUDE_MODEL_SELECTION,
       sessionInstructions: [],
       tooling: {},
     });
@@ -96,6 +103,7 @@ export async function runStaleClaudePumpResumeTurn(identity: {
       promptText: "Continue where we left off",
       imageRefs: [],
       sessionInstructions: [],
+      modelSelection: STALE_CLAUDE_MODEL_SELECTION,
       autonomous: false,
       signal: new AbortController().signal,
       onEvent: () => {},

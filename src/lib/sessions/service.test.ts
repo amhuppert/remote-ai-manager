@@ -468,7 +468,7 @@ describe("generateSessionName", () => {
       expect.objectContaining({
         workingDirectory: "/projects/repo",
         prompt: expect.stringContaining("Add user authentication"),
-        modelId: "haiku",
+        modelSelection: { modelId: "haiku", parameters: {} },
         autonomous: true,
         timeoutMs: 60_000,
         executionProfile: "isolated-one-shot",
@@ -1386,8 +1386,10 @@ describe("deleteSession", () => {
     registerRuntime("conv-live", {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       outputFormat: undefined,
       alignmentVersion: null,
       sendTurn: async () => {
@@ -1428,8 +1430,10 @@ describe("deleteSession", () => {
     registerRuntime("conv-broken", {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       outputFormat: undefined,
       alignmentVersion: null,
       sendTurn: async () => {

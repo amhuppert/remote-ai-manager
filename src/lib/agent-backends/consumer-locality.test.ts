@@ -33,6 +33,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fromPromise } from "xstate";
 
 import { agentSessionRefSchema } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -135,6 +136,22 @@ const PROJECT_NAME = "locality";
 const SESSION_NAME = "locality-session";
 const WORKTREE_PATH = "/projects/locality/.worktrees/locality-session";
 const NOW = "2026-07-12T00:00:00.000Z";
+const TESTFAKE_MODEL_SELECTION = {
+  modelId: "fake-1",
+  parameters: {},
+} satisfies BackendModelSelection;
+const CLAUDE_MODEL_SELECTION = {
+  modelId: "opus",
+  parameters: { effort: "high" },
+} satisfies BackendModelSelection;
+const CODEX_MODEL_SELECTION = {
+  modelId: "gpt-5.4",
+  parameters: { reasoning: "high", fast: "false" },
+} satisfies BackendModelSelection;
+const CURSOR_MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+} satisfies BackendModelSelection;
 
 function makeCreateInput(
   conversationId: string,
@@ -150,6 +167,7 @@ function makeCreateInput(
     ),
     worktreePath: WORKTREE_PATH,
     persistedRef: null,
+    modelSelection: TESTFAKE_MODEL_SELECTION,
     sessionInstructions: [],
     tooling: {},
   };
@@ -226,9 +244,23 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     getTranscriptPath: async (id) => `/inmemory/${id}.jsonl`,
     readConfig: async () => ({
       agentBackends: {
-        claude: { model: "opus", timeoutMs: null },
-        codex: { model: "gpt-5.4", timeoutMs: null },
-        cursor: { model: "composer-2.5", timeoutMs: null },
+        claude: {
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          timeoutMs: null,
+        },
+        codex: {
+          modelSelection: CODEX_MODEL_SELECTION,
+          timeoutMs: null,
+        },
+        cursor: {
+          modelSelection: CURSOR_MODEL_SELECTION,
+          timeoutMs: null,
+        },
+        [TESTFAKE_BACKEND_ID]: {
+          modelSelection: TESTFAKE_MODEL_SELECTION,
+          timeoutMs: null,
+          stallTimeoutMs: null,
+        },
       },
       maxTurns: 50,
       idleQuerySessionTtlMs: 0,
@@ -246,6 +278,10 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     getNextImageIndex: async () => 1,
     getConversationBackendFactory: (backend) =>
       getConversationBackendFactory(backend),
+    admitConfiguredModelSelection: async ({ modelSelection }) => ({
+      ok: true,
+      modelSelection,
+    }),
     getConversationCapabilities: (backend) =>
       getBackendDescriptor(backend).conversation?.capabilities,
     registerBackendRuntime: () => {},
@@ -351,6 +387,7 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
       {
         kind: "conversation_turn",
         prompt: "run the testfake turn",
+        modelSelection: TESTFAKE_MODEL_SELECTION,
         writeCapability: "read_only",
       },
       {
@@ -361,6 +398,7 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
             runtime,
             capabilityView: capabilityViewForBackend(request.backend!),
             signal: new AbortController().signal,
+            modelSelection: TESTFAKE_MODEL_SELECTION,
           };
         },
       },
@@ -398,6 +436,7 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
         kind: "task_run",
         backend: TESTFAKE_BACKEND_ID,
         prompt: "run the testfake task",
+        modelSelection: TESTFAKE_MODEL_SELECTION,
         timeoutMs: 0,
       },
       {
@@ -405,6 +444,7 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
           runner: getTaskRunner(request.backend),
           capabilityView: capabilityViewForBackend(request.backend),
           workingDirectory: "/tmp",
+          modelSelection: TESTFAKE_MODEL_SELECTION,
         }),
       },
     );
@@ -455,9 +495,8 @@ describe("E2: executePromptForMachine drives a testfake turn end-to-end", () => 
       promptText: "hello testfake",
       images: [],
       streamId: "stream-e2",
-      modelId: "fake-1",
-      effort: "medium",
-      codexFastMode: null,
+      modelSelection: TESTFAKE_MODEL_SELECTION,
+      onModelSelectionResolved: async () => {},
       autonomous: false,
       debugMode: null,
     };
@@ -642,6 +681,7 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
         conversationId: "conv-e4",
         kind: "task_run",
         prompt: "validate something",
+        modelSelection: TESTFAKE_MODEL_SELECTION,
         timeoutMs: 10_000,
       });
 
@@ -1104,6 +1144,7 @@ describe("E3: lane modules", () => {
         kind: "conversation_turn" as const,
         backend: TESTFAKE_BACKEND_ID,
         prompt: "exercise descriptor continuity",
+        modelSelection: TESTFAKE_MODEL_SELECTION,
         laneRef,
         writeCapability: "write_capable" as const,
       },
@@ -1173,8 +1214,7 @@ describe("E6: graph runners", () => {
         executionId: "exec-e6",
         contextId: "ctx-e6",
         backend: TESTFAKE_BACKEND_ID,
-        model: "fake-1",
-        reasoningEffort: "medium",
+        modelSelection: TESTFAKE_MODEL_SELECTION,
         toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       })

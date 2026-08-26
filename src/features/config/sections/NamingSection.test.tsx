@@ -1,20 +1,42 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
 import { renderWithQuery } from "@/test/component-mocks";
+
 import { NamingSection } from "./NamingSection";
 import { makeController } from "./test-controller";
+
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+Element.prototype.scrollIntoView = () => {};
 
 function pillIn(fieldPath: string, text: string): HTMLButtonElement {
   const field = document.querySelector(`[data-field="${fieldPath}"]`);
   if (!(field instanceof HTMLElement)) {
     throw new Error(`no field ${fieldPath}`);
   }
-  const btn = [...field.querySelectorAll("button")].find(
-    (b) => b.textContent === text,
+  const button = [...field.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent === text,
   );
-  if (!btn) throw new Error(`no "${text}" pill in ${fieldPath}`);
-  return btn;
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`no "${text}" pill in ${fieldPath}`);
+  }
+  return button;
+}
+
+function selectModel(label: string): void {
+  const field = document.querySelector(
+    '[data-field="conversationNaming.modelSelection"]',
+  );
+  const select = field?.querySelector('[role="combobox"][aria-label="Model"]');
+  if (!(select instanceof HTMLElement)) {
+    throw new Error("no conversation naming model select");
+  }
+  fireEvent.click(select);
+  fireEvent.click(screen.getByRole("option", { name: label }));
 }
 
 function timeoutInput(): HTMLInputElement {
@@ -28,87 +50,69 @@ function timeoutInput(): HTMLInputElement {
 }
 
 describe("NamingSection", () => {
-  it("renders the Conversation naming heading with enabled, backend and model", () => {
+  it("renders one complete model-selection field", () => {
     const { controller } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);
 
     expect(
-      screen.getByRole("heading", { name: /Conversation naming/i }),
-    ).toBeVisible();
-    expect(screen.getByText("Backend")).toBeVisible();
-    expect(screen.getByText("Model")).toBeVisible();
-    expect(screen.getByText("Timeout")).toBeVisible();
-  });
-
-  // Naming is a one-shot task run, so its backend must register a task facet.
-  // The option stays visible and explains itself rather than being hidden or
-  // silently accepted and failing at generation time (spec R15.1).
-  it("refuses a backend with no task facet and keeps the configured one", () => {
-    const { controller, getState } = makeController();
-    renderWithQuery(<NamingSection controller={controller} />);
-
-    const cursor = pillIn("conversationNaming.backend", "cursor");
-    expect(cursor.getAttribute("aria-disabled")).toBe("true");
-    expect(cursor.getAttribute("title")).toContain("task");
-
-    fireEvent.click(cursor);
-    expect(getState().conversationNaming?.backend).toBeUndefined();
-
-    fireEvent.click(pillIn("conversationNaming.backend", "codex"));
-    expect(getState().conversationNaming?.backend).toBe("codex");
-  });
-
-  it("defaults to the claude haiku model when config has no naming block", () => {
-    const { controller } = makeController();
-    renderWithQuery(<NamingSection controller={controller} />);
-
-    expect(pillIn("conversationNaming.model", "Haiku")).toBeTruthy();
-  });
-
-  it("hides the effort field when the model has no effort levels (haiku)", () => {
-    const { controller } = makeController();
-    renderWithQuery(<NamingSection controller={controller} />);
-
+      document.querySelector(
+        '[data-field="conversationNaming.modelSelection"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-field="conversationNaming.model"]'),
+    ).toBeNull();
     expect(
       document.querySelector('[data-field="conversationNaming.effort"]'),
     ).toBeNull();
   });
 
-  it("shows effort pills when the selected model supports effort levels", () => {
-    const { controller, getState } = makeController({
-      conversationNaming: {
-        enabled: true,
-        backend: "claude",
-        model: "sonnet",
-        effort: "low",
-      },
-    });
+  it("refuses a backend with no task facet and keeps the configured one", () => {
+    const { controller, getState } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);
 
-    fireEvent.click(pillIn("conversationNaming.effort", "high"));
+    const cursor = pillIn("conversationNaming.backend", "cursor");
+    expect(cursor).toHaveAttribute("aria-disabled", "true");
+    expect(cursor).toHaveAttribute("title", expect.stringContaining("task"));
 
-    expect(getState().conversationNaming?.effort).toBe("high");
+    fireEvent.click(cursor);
+    expect(getState().conversationNaming?.backend).toBeUndefined();
   });
 
-  it("switching to the codex backend sets the codex default model and clears effort", () => {
+  it("defaults to the Claude Haiku selection when config has no naming block", () => {
+    const { controller } = makeController();
+    renderWithQuery(<NamingSection controller={controller} />);
+
+    expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
+      "Haiku",
+    );
+  });
+
+  it("switches backend and replaces the complete model selection", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);
 
     fireEvent.click(pillIn("conversationNaming.backend", "codex"));
 
-    const state = getState();
-    expect(state.conversationNaming?.backend).toBe("codex");
-    expect(state.conversationNaming?.model).toBe("gpt-5.4");
-    expect(state.conversationNaming?.effort).toBeUndefined();
+    expect(getState().conversationNaming).toMatchObject({
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    });
   });
 
-  it("selecting a model updates only that field", () => {
+  it("selecting a model replaces only the complete selection field", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);
 
-    fireEvent.click(pillIn("conversationNaming.model", "Sonnet"));
+    selectModel("Sonnet");
 
-    expect(getState().conversationNaming?.model).toBe("sonnet");
+    expect(getState().conversationNaming?.modelSelection).toEqual({
+      modelId: "sonnet",
+      parameters: { effort: "high" },
+    });
     expect(getState().conversationNaming?.backend).toBeUndefined();
   });
 
@@ -121,7 +125,7 @@ describe("NamingSection", () => {
     expect(getState().conversationNaming?.enabled).toBe(false);
   });
 
-  it("renders a timeout field that stores entered minutes as milliseconds", () => {
+  it("stores entered timeout minutes as milliseconds", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<NamingSection controller={controller} />);
 
@@ -130,13 +134,12 @@ describe("NamingSection", () => {
     expect(getState().conversationNaming?.timeoutMs).toBe(300_000);
   });
 
-  it("clearing the timeout stores null (service falls back to the 1 minute default)", () => {
+  it("clears an explicit timeout to the null fallback sentinel", () => {
     const { controller, getState } = makeController({
       conversationNaming: {
         enabled: true,
         backend: "claude",
-        model: "haiku",
-        effort: "low",
+        modelSelection: { modelId: "haiku", parameters: {} },
         timeoutMs: 300_000,
       },
     });

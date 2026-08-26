@@ -41,6 +41,7 @@ import {
 } from "@/lib/agent-backends/continuity";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { createStallWatchdog } from "@/lib/agent-backends/stall-watchdog";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
@@ -119,12 +120,9 @@ export interface CollaborationProductionAgentCallerInput {
   /**
    * Both flow agents' resolved lane runtimes, keyed by flow-agent id. The
    * asymmetric slice builds requests without per-call settings, so each lane's
-   * complete profile must cross this boundary: a lane whose request reached an
-   * SDK without a model would fall back to the SDK's own default — rejected
-   * for some accounts and surfacing as a misleading structured-output
-   * validation failure. A per-call `request.modelId` (if a future caller sets
-   * one) still takes precedence. Timeouts follow the backend profile
-   * convention: zero disables the bound.
+   * complete profile must cross this boundary. A per-call `modelSelection` (if
+   * a future caller sets one) replaces that lane selection as a whole. Timeouts
+   * follow the backend profile convention: zero disables the bound.
    */
   agents: CollaborationLaneAgentsInput;
   /** Optional override for testing. Defaults to module-level `executeAgentCall`. */
@@ -158,15 +156,11 @@ type InnerCallAgent = (
 
 /**
  * One flow agent's resolved lane runtime as the production caller consumes it.
- * `model` is deliberately required: every collaboration caller resolves a
- * concrete model before any lane runs.
+ * The complete selection is deliberately required before any lane runs.
  */
 export interface CollaborationLaneAgentConfig {
   backend: AgentBackendId;
-  model: string;
-  reasoningEffort?: string;
-  /** Meaningful only when `backend` supports fast mode (Codex). */
-  fastMode?: boolean;
+  modelSelection: BackendModelSelection;
   /**
    * Whole-turn safety bound from the backend profile; zero disables it.
    * Absent means the underlying runner's own default applies (the
@@ -239,7 +233,6 @@ function buildInnerCallAgent(
   ): Promise<AgentCallResult> => {
     if (request.kind === "task_run") {
       const runner = resolveTaskRunner(request.backend);
-      const isCodex = request.backend === "codex";
       const laneDefaults = laneAgentConfigFor(input, request);
       const codexResumeRef =
         continuity.laneAction === "reuse" &&
@@ -247,35 +240,26 @@ function buildInnerCallAgent(
         continuity.resumeRef.backend === "codex"
           ? continuity.resumeRef
           : null;
-      const codexHardenedSettings = isCodex
-        ? {
-            sandboxMode: "danger-full-access" as const,
-            approvalPolicy: "never" as const,
-            webSearchMode: "disabled" as const,
-            skipGitRepoCheck: true,
-            networkAccessEnabled: true,
-          }
-        : {};
-      // The slice omits per-call settings, so fall back to the lane's complete
-      // backend profile rather than independent SDK defaults.
-      const effectiveModelId = request.modelId ?? laneDefaults.model;
-      const effectiveReasoningEffort =
-        request.reasoningEffort ?? laneDefaults.reasoningEffort;
-      const result = await exec(request, {
+      const codexHardenedSettings =
+        request.backend === "codex"
+          ? {
+              sandboxMode: "danger-full-access" as const,
+              approvalPolicy: "never" as const,
+              webSearchMode: "disabled" as const,
+              skipGitRepoCheck: true,
+              networkAccessEnabled: true,
+            }
+          : {};
+      const modelSelection =
+        request.modelSelection ?? laneDefaults.modelSelection;
+      const effectiveRequest = { ...request, modelSelection };
+      const result = await exec(effectiveRequest, {
         resolveTaskRunner: () => ({
           runner,
           capabilityView: capabilityViewForBackend(request.backend),
           workingDirectory: input.worktreePath,
           autonomous: true,
-          ...(effectiveModelId !== undefined
-            ? { modelId: effectiveModelId }
-            : {}),
-          ...(effectiveReasoningEffort !== undefined
-            ? { reasoningEffort: effectiveReasoningEffort }
-            : {}),
-          ...(isCodex && laneDefaults.fastMode !== undefined
-            ? { codexFastMode: laneDefaults.fastMode }
-            : {}),
+          modelSelection,
           ...(laneDefaults.timeoutMs !== undefined
             ? { defaultTimeoutMs: laneDefaults.timeoutMs }
             : {}),
@@ -316,13 +300,8 @@ function buildInnerCallAgent(
     const outputFormat = request.outputSchema
       ? { type: "json_schema" as const, schema: request.outputSchema }
       : undefined;
-    // The slice omits a per-call model, so fall back to the lane's configured
-    // Claude model rather than the SDK's built-in CLI default. The Claude
-    // conversation runtime fixes the model at creation time, so it must be set
-    // here (the per-turn modelId on the dispatch resolution is ignored).
-    const effectiveModelId = request.modelId ?? laneDefaults.model;
-    const effectiveReasoningEffort =
-      request.reasoningEffort ?? laneDefaults.reasoningEffort;
+    const modelSelection =
+      request.modelSelection ?? laneDefaults.modelSelection;
     // Semantic → transport: the request's governing instructions become the
     // conversation's session instructions, the same channel an ordinary turn
     // gives the charter. Both the runtime (which bakes governance at creation)
@@ -348,10 +327,7 @@ function buildInnerCallAgent(
       ),
       worktreePath: input.worktreePath,
       persistedRef: claudeResumeRef,
-      ...(effectiveModelId !== undefined ? { modelId: effectiveModelId } : {}),
-      ...(effectiveReasoningEffort !== undefined
-        ? { reasoningEffort: effectiveReasoningEffort }
-        : {}),
+      modelSelection,
       ...(outputFormat !== undefined ? { outputFormat } : {}),
       sessionInstructions,
       tooling: {},
@@ -411,19 +387,15 @@ function buildInnerCallAgent(
       },
     });
     try {
-      const result = await exec(request, {
+      const effectiveRequest = { ...request, modelSelection };
+      const result = await exec(effectiveRequest, {
         resolveConversationRuntime: () => ({
           runtime,
           capabilityView: capabilityViewForBackend(backend),
           signal: abort.signal,
+          modelSelection,
           autonomous: true,
           onEvent: () => stallWatchdog.touch(),
-          ...(request.modelId !== undefined
-            ? { modelId: request.modelId }
-            : {}),
-          ...(request.reasoningEffort !== undefined
-            ? { reasoningEffort: request.reasoningEffort }
-            : {}),
           sessionInstructions,
         }),
       });

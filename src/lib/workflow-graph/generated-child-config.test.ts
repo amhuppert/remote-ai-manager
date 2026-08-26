@@ -36,7 +36,10 @@ const FALLBACK_COLLABORATION = resolveContext(
 ).collaboration ?? {
   enabled: { value: false, source: "global" },
   secondAgent: {
-    value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    value: {
+      backend: "claude",
+      modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+    },
     source: "global",
   },
   negotiationRounds: { value: 3, source: "global" },
@@ -91,7 +94,10 @@ function invokerConfig(
     implementer: seedAssignment({
       id: "invoker-implementer",
       profile: { tier: "builtin", id: "general-implementer" },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+      },
     }),
     contextValidator: {
       enabled: true,
@@ -104,8 +110,10 @@ function invokerConfig(
           continuity: { enabled: true },
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         }),
       ],
@@ -143,7 +151,10 @@ function weakSeedConfig(
     implementer: seedAssignment({
       id: "seed-implementer",
       profile: { tier: "project", id: "fast-implementer" },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "low" } },
+      },
     }),
     contextValidator: {
       enabled: false,
@@ -156,8 +167,10 @@ function weakSeedConfig(
           continuity: { enabled: false },
           agent: {
             backend: "claude",
-            model: "haiku",
-            reasoningEffort: "low",
+            modelSelection: {
+              modelId: "haiku",
+              parameters: { effort: "low" },
+            },
           },
         }),
       ],
@@ -473,8 +486,10 @@ describe("generated-child config override schema", () => {
         focus: "candidate implementation",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
     });
@@ -484,8 +499,10 @@ describe("generated-child config override schema", () => {
       generatedChildConfigOverrideSchema.safeParse({
         implementer: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       }).success,
     ).toBe(false);

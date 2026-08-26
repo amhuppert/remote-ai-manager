@@ -15,7 +15,10 @@ function makeMessage(
       },
     ],
     timestamp: "2026-04-12T11:00:00Z",
-    model: "opus",
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     ...overrides,
   };
 }
@@ -98,7 +101,7 @@ export const SystemNotice: Story = {
           text: "Commit job started — generating commit message from session changes.",
         },
       ],
-      model: undefined,
+      modelSelection: undefined,
     }),
   },
 };

@@ -52,6 +52,7 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/WorkRailMain.tsx",
   "src/components/ApprovalGatePanel.tsx",
   "src/components/ConfirmDialog.tsx",
+  "src/components/ModelSelectionMetadata.tsx",
   "src/components/ModelSelector.tsx",
   "src/components/ReasoningLevelSelector.tsx",
   "src/features/session-diff/components/SessionDiffViewer.tsx",

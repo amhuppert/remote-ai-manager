@@ -215,7 +215,10 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
-        agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+        agent: {
+          backend: "claude",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        },
       },
       contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { commands: [] },
@@ -227,8 +230,10 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
         secondAgent: {
           value: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           source: "global",
         },
@@ -276,8 +281,10 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
                 strategy: "conversation",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: true },
               },
@@ -307,8 +314,10 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
             focus: "Rewrite the failing module",
             agent: {
               backend: "codex",
-              model: "gpt-5.6-sol",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "gpt-5.6-sol",
+                parameters: { reasoning: "high", fast: "false" },
+              },
             },
           },
         },

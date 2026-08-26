@@ -9,6 +9,7 @@ import {
   countHandRolledProjectResolutionLadders,
   countHardcodedBackendEnumerations,
   countInternalViMocks,
+  countNeutralModelParameterFields,
   countRoute404Rungs,
   countStateStoreConstructions,
   countStatusChipPills,
@@ -131,6 +132,31 @@ describe("countBackendIdentityBranches", () => {
       if (mode === "codex-plugins") return y;
     `;
     expect(countBackendIdentityBranches(src)).toBe(0);
+  });
+});
+
+describe("countNeutralModelParameterFields", () => {
+  it("counts retired provider-shaped fields while ignoring explicit migration rejection gates", () => {
+    const src = `
+      interface TurnInput { reasoningEffort?: string }
+      const request = { fastMode: true };
+      consume(runtime.codexFastMode);
+
+      reasoningEffort: z.never({ error: "migrated" }).optional(),
+      fastMode: migratedBackendSelectionField(),
+      reasoningEffort: body["reasoningEffort"],
+    `;
+
+    expect(countNeutralModelParameterFields(src)).toBe(3);
+  });
+
+  it("ignores comments that name the retired fields", () => {
+    expect(
+      countNeutralModelParameterFields(`
+        // reasoningEffort is retired.
+        /* codexFastMode and fastMode are adapter details. */
+      `),
+    ).toBe(0);
   });
 });
 
@@ -702,7 +728,7 @@ describe("seam catalog", () => {
     ).toEqual([]);
   });
 
-  it("tracks the ten live seams from the consolidated plan (the data-tooltip seam is retired — enforced by the no-data-tooltip-attribute ESLint rule)", () => {
+  it("tracks the live seams from the consolidated plan (the data-tooltip seam is retired — enforced by the no-data-tooltip-attribute ESLint rule)", () => {
     expect(SEAMS.map((s) => s.id).sort()).toEqual(
       [
         "broadcaster-direct-imports",
@@ -712,6 +738,7 @@ describe("seam catalog", () => {
         "bespoke-dialog-overlays",
         "status-chip-pills",
         "internal-vi-mocks",
+        "neutral-model-parameter-fields",
         "state-store-construction",
         "structured-output-schema-literals",
         "hardcoded-backend-enumeration",
@@ -788,6 +815,31 @@ describe("seam corpus predicates", () => {
     expect(
       seam.inCorpus("src/features/session/mobile/Toolbar.stories.tsx"),
     ).toBe(false);
+  });
+
+  it("neutral model-parameter seam excludes provider owners, migrations, archives, and fixtures", () => {
+    const seam = byId.get("neutral-model-parameter-fields")!;
+    expect(seam.inCorpus("src/lib/prompt/dispatch.ts")).toBe(true);
+    expect(seam.inCorpus("src/lib/agent-backends/codex/translator.ts")).toBe(
+      false,
+    );
+    expect(
+      seam.inCorpus(
+        "src/lib/state-store/migrations/0035-generalized-model-selection.ts",
+      ),
+    ).toBe(false);
+    expect(
+      seam.inCorpus("src/lib/workflow-graph/archived-legacy-decode.ts"),
+    ).toBe(false);
+    expect(
+      seam.inCorpus(
+        "src/features/session/conversation/collab/envelope-adapter.ts",
+      ),
+    ).toBe(false);
+    expect(seam.inCorpus("src/lib/prompt/testing/request-fixture.ts")).toBe(
+      false,
+    );
+    expect(seam.inCorpus("src/lib/prompt/request.test.ts")).toBe(false);
   });
 
   it("deep-import seam includes tests but excludes the adapter seam", () => {

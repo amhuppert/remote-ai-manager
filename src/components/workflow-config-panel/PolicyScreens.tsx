@@ -1,6 +1,7 @@
 "use client";
 
 import { Switch } from "@/components/ui/Switch";
+import { modelSelectionParametersLabel } from "@/components/model-selection-presentation";
 import { NumericInput } from "@/components/workflow-config/FieldPrimitives";
 import {
   PLAN_REPAIR_DEFAULT_AGENT,
@@ -52,8 +53,8 @@ const PLAN_REPAIR_ATTEMPTS_HINT =
  */
 const PLAN_REPAIR_DEFAULT_HINT = `Off — uses the default repair agent (${modelDisplayName(
   PLAN_REPAIR_DEFAULT_AGENT.backend,
-  PLAN_REPAIR_DEFAULT_AGENT.model,
-)}, ${PLAN_REPAIR_DEFAULT_AGENT.reasoningEffort} reasoning).`;
+  PLAN_REPAIR_DEFAULT_AGENT.modelSelection.modelId,
+)}, ${modelSelectionParametersLabel(PLAN_REPAIR_DEFAULT_AGENT.modelSelection)}).`;
 
 export function ExecutionPolicyScreen({
   editor,
@@ -333,7 +334,6 @@ export function PlanRepairScreen({
         <ConfigRowGroup label="Repair agent">
           <ConfigAgentRuntimeRows
             rowPrefix="planrepair-agent"
-            agentLabel="the plan-repair agent"
             value={policy.agent}
             onChange={(agent) => edit({ ...policy, agent })}
             provenance={provenance}

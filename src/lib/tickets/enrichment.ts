@@ -7,6 +7,7 @@ import type {
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { QuickTicketConversationContext } from "./schemas";
 
 const logger = createLogger("tickets.enrichment");
@@ -50,8 +51,7 @@ export interface TicketEnrichmentInput {
   diagnosticsMarkdown: string | null;
   conversationContext?: QuickTicketConversationContext;
   backend: AgentBackendId;
-  modelId: string;
-  reasoningEffort?: string;
+  modelSelection: BackendModelSelection;
 }
 
 export interface AppendTriageNoteInput {
@@ -212,8 +212,7 @@ export function createTicketEnrichmentService(
         ticketId: input.ticketId,
         number: input.number,
         backend: input.backend,
-        modelId: input.modelId,
-        reasoningEffort: input.reasoningEffort ?? null,
+        modelSelection: input.modelSelection,
         hasDiagnostics: input.diagnosticsMarkdown !== null,
         hasConversationContext: input.conversationContext !== undefined,
       });
@@ -224,10 +223,7 @@ export function createTicketEnrichmentService(
         result = await runner.run({
           workingDirectory: input.projectPath,
           prompt: buildEnrichmentPrompt(input),
-          modelId: input.modelId,
-          ...(input.reasoningEffort !== undefined
-            ? { reasoningEffort: input.reasoningEffort }
-            : {}),
+          modelSelection: input.modelSelection,
           outputSchema: TICKET_ENRICHMENT_OUTPUT_SCHEMA,
           timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
           tooling: { portableMcp: { servers: [] } },

@@ -103,7 +103,13 @@ describe("WorkflowExecutionCanvas — set-on-this-context marker", () => {
                   ...context.implementer,
                   agent: {
                     ...context.implementer.agent,
-                    reasoningEffort: "low" as const,
+                    modelSelection: {
+                      ...context.implementer.agent.modelSelection,
+                      parameters: {
+                        ...context.implementer.agent.modelSelection.parameters,
+                        effort: "low",
+                      },
+                    },
                   },
                 },
               }

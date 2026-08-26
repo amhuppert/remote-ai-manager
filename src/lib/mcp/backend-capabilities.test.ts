@@ -438,9 +438,12 @@ function makeRuntime(
   return {
     backend: partial.backend ?? "claude",
     status: partial.status ?? "alive",
-    modelId: partial.modelId,
-    reasoningEffort: partial.reasoningEffort,
+    modelSelection: partial.modelSelection ?? {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     outputFormat: partial.outputFormat,
+    alignmentVersion: partial.alignmentVersion ?? null,
     sendTurn: partial.sendTurn ?? vi.fn(),
     close: partial.close ?? vi.fn(),
     ...(partial.listMcpServerTools

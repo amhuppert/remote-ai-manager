@@ -31,6 +31,18 @@ describe("computeSendButtonState", () => {
     });
   });
 
+  it("blocks submission while the applied model selection is unavailable", () => {
+    expect(
+      computeSendButtonState({
+        ...base,
+        modelSelectionBlockedReason: "Model catalog snapshot is unavailable.",
+      }),
+    ).toEqual({
+      disabled: true,
+      title: "Model catalog snapshot is unavailable.",
+    });
+  });
+
   it("labels in-turn delivery when sending into a Claude conversation", () => {
     expect(
       computeSendButtonState({ ...base, sending: true, backend: "claude" }),

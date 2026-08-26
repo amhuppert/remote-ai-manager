@@ -60,8 +60,10 @@ describe("abort-registry", () => {
     registerRuntime("conv-close-rejects", {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       outputFormat: undefined,
       alignmentVersion: null,
       sendTurn: async () => {

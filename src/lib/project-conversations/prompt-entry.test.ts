@@ -6,7 +6,7 @@ import {
 } from "./prompt-entry";
 import {
   BackendMismatchError,
-  ModelEffortValidationError,
+  ModelSelectionValidationError,
   type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -15,6 +15,7 @@ import { makeConversationState } from "@/lib/conversations/testing/conversation-
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 function makeConv(
   overrides: Partial<ConversationState> & { id: string },
@@ -43,12 +44,11 @@ interface ExecCall {
   session: SessionState;
   text: string;
   conversationId: string | undefined;
+  modelSelection: BackendModelSelection | undefined;
   options:
     | {
         executionTarget?: ExecutionTarget;
         actorInput?: EnsureActorInputData;
-        effort?: string;
-        codexFastMode?: boolean;
         backend?: unknown;
       }
     | undefined;
@@ -83,7 +83,7 @@ function harness(opts?: {
       text,
       _emit,
       conversationId,
-      _modelId,
+      modelSelection,
       _images,
       options,
     ) => {
@@ -92,6 +92,7 @@ function harness(opts?: {
         session,
         text,
         conversationId,
+        modelSelection,
         options,
       };
       calls.push(call);
@@ -298,34 +299,25 @@ describe("executeProjectPromptStream", () => {
     expect(h.calls[0]?.options).not.toHaveProperty("backend");
   });
 
-  it("forwards an explicit speed selection only for Codex conversations", async () => {
+  it("forwards an explicit complete selection without interpreting its parameters", async () => {
     const codex = harness({
       seed: [makeConv({ id: "codex", promptCount: 1, agentBackend: "codex" })],
     });
+    const modelSelection = {
+      modelId: "gpt-5.4",
+      parameters: { fast: "true", reasoning: "high" },
+    };
     await codex.executeProjectPromptStream({
       projectPath: "/repo",
       conversationId: "codex",
       promptText: "next",
       backend: "codex",
-      codexFastMode: true,
+      modelSelection,
       emit: () => {},
     });
-    expect(codex.calls[0]?.options?.codexFastMode).toBe(true);
-
-    const claude = harness({
-      seed: [
-        makeConv({ id: "claude", promptCount: 1, agentBackend: "claude" }),
-      ],
-    });
-    await claude.executeProjectPromptStream({
-      projectPath: "/repo",
-      conversationId: "claude",
-      promptText: "next",
-      backend: "claude",
-      codexFastMode: true,
-      emit: () => {},
-    });
-    expect(claude.calls[0]?.options).not.toHaveProperty("codexFastMode");
+    expect(codex.calls[0]?.modelSelection).toEqual(modelSelection);
+    expect(codex.calls[0]?.options).not.toHaveProperty("effort");
+    expect(codex.calls[0]?.options).not.toHaveProperty("codexFastMode");
   });
 
   it("rejects a backend change after the first turn with BackendMismatchError", async () => {
@@ -361,20 +353,28 @@ describe("executeProjectPromptStream", () => {
     );
   });
 
-  it("propagates a ModelEffortValidationError raised by executePromptStream", async () => {
+  it("propagates a ModelSelectionValidationError raised by executePromptStream", async () => {
     const h = harness({
       executeImpl: async () => {
-        throw new ModelEffortValidationError("bad effort for backend");
+        throw new ModelSelectionValidationError({
+          code: "unsupported_combination",
+          message: "bad selection for backend",
+          modelId: "opus",
+          parameterId: "effort",
+        });
       },
     });
     await expect(
       h.executeProjectPromptStream({
         projectPath: "/repo",
         promptText: "x",
-        effort: "nope",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "nope" },
+        },
         emit: () => {},
       }),
-    ).rejects.toBeInstanceOf(ModelEffortValidationError);
+    ).rejects.toBeInstanceOf(ModelSelectionValidationError);
   });
 
   it("propagates a running-actor worktree mismatch raised downstream", async () => {

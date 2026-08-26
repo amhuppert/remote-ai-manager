@@ -5,6 +5,7 @@ import {
   type CursorWorkerFrame,
   type NativeCodecViolation,
 } from "../worker/ipc";
+import { modelSelectionKey } from "../../model-selection";
 import type {
   CursorAttachInput,
   CursorTurnInput,
@@ -65,6 +66,8 @@ export class ScriptedWorker implements CursorWorkerSession {
   readonly conversationId: string;
   readonly workerId: string;
   readonly pid = 4242;
+  readonly selectionKey: string;
+  readonly ownerToken: object;
 
   readonly attachments: CursorAttachInput[] = [];
   readonly turns: ScriptedTurn[] = [];
@@ -85,6 +88,8 @@ export class ScriptedWorker implements CursorWorkerSession {
     deregister: () => void,
   ) {
     this.conversationId = input.conversationId;
+    this.selectionKey = modelSelectionKey(input.modelSelection);
+    this.ownerToken = input.ownerToken;
     this.emit = input.onFrame;
     this.emitExit = input.onExit;
     this.options = options;
@@ -289,6 +294,20 @@ export function createScriptedTransport(
       // worker gets THAT worker back, even while its teardown is in flight.
       const existing = live.get(input.conversationId);
       if (existing !== undefined) {
+        if (existing.ownerToken !== input.ownerToken) {
+          return {
+            kind: "binding_mismatch",
+            message:
+              "A Cursor worker is already active for this conversation under a different runtime owner.",
+          };
+        }
+        if (existing.selectionKey !== modelSelectionKey(input.modelSelection)) {
+          return {
+            kind: "binding_mismatch",
+            message:
+              "A Cursor worker is already active for this conversation under a different model selection.",
+          };
+        }
         return { kind: "already_active", session: existing };
       }
       const refused = options.startResult?.(input) ?? null;

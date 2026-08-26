@@ -35,7 +35,7 @@ import {
   type AbortHandleKey,
 } from "@/lib/shared/abort-registry";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { ArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { createAgentRunsRepo } from "./repo";
 import { getStateDb } from "../state-store/store";
@@ -81,8 +81,7 @@ export interface AgentRunExecInput {
   backend: AgentBackendId;
   prompt: string;
   workingDirectory: string;
-  model?: string;
-  reasoningEffort?: EffortLevel;
+  modelSelection: BackendModelSelection;
   outputSchema: Record<string, unknown>;
   timeoutMs: number;
   signal: AbortSignal;
@@ -108,8 +107,7 @@ export interface StartAgentRunInput {
   /** Where the agent runs; defaults to the worktree, may be a subdirectory of it. */
   workingDirectory: string;
   timeoutMs: number;
-  model?: string;
-  reasoningEffort?: EffortLevel;
+  modelSelection: BackendModelSelection;
 }
 
 export interface RunOwner {
@@ -168,7 +166,8 @@ export function startAgentRun(
     sessionName: input.sessionName,
     workingDirectory: input.workingDirectory,
     timeoutMs: input.timeoutMs,
-    model: input.model ?? "default",
+    modelId: input.modelSelection.modelId,
+    parameterIds: Object.keys(input.modelSelection.parameters).sort(),
   });
 
   // Fire-and-forget: the run outlives the initiating request by design.
@@ -214,10 +213,7 @@ async function executeRun(
       backend: input.backend,
       prompt: composeRunPrompt(input.prompt),
       workingDirectory: input.workingDirectory,
-      ...(input.model !== undefined ? { model: input.model } : {}),
-      ...(input.reasoningEffort !== undefined
-        ? { reasoningEffort: input.reasoningEffort }
-        : {}),
+      modelSelection: input.modelSelection,
       outputSchema: AGENT_RUN_OUTPUT_SCHEMA,
       timeoutMs: input.timeoutMs,
       signal,
@@ -399,10 +395,7 @@ export async function runAgentTaskDefault(
     const result = await runner.run({
       workingDirectory: input.workingDirectory,
       prompt: input.prompt,
-      ...(input.model !== undefined ? { modelId: input.model } : {}),
-      ...(input.reasoningEffort !== undefined
-        ? { reasoningEffort: input.reasoningEffort }
-        : {}),
+      modelSelection: input.modelSelection,
       outputSchema: input.outputSchema,
       autonomous: true,
       timeoutMs: input.timeoutMs,

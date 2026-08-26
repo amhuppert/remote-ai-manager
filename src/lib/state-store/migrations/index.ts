@@ -43,6 +43,7 @@ import { graphWorkflowCandidateUnstableHalt } from "./0031-graph-workflow-candid
 import { addGraphPlanReviews } from "./0032-add-graph-plan-reviews";
 import { conversationOwnership } from "./0033-conversation-ownership";
 import { nativeSddAttentionCitations } from "./0034-native-sdd-attention-citations";
+import { generalizedModelSelection } from "./0035-generalized-model-selection";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -98,6 +99,7 @@ export const migrations: readonly StateMigration[] = [
   addGraphPlanReviews,
   conversationOwnership,
   nativeSddAttentionCitations,
+  generalizedModelSelection,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

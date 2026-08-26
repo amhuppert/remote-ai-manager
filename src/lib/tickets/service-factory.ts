@@ -3,6 +3,7 @@ import path from "node:path";
 import packageMetadata from "../../../package.json";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { resolveConfiguredAgentBackendDefaults } from "@/lib/agent-backends/conversation-policy";
+import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { getBuildInfo } from "@/lib/build-info";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
@@ -191,10 +192,7 @@ function scheduleTicketEnrichment(input: {
         ? { conversationContext: input.conversationContext }
         : {}),
       backend,
-      modelId: backendDefaults.modelId,
-      ...(backendDefaults.reasoningEffort !== undefined
-        ? { reasoningEffort: backendDefaults.reasoningEffort }
-        : {}),
+      modelSelection: backendDefaults.modelSelection,
     });
   })().catch((error: unknown) => {
     logger.warn("tickets.service_factory.enrichment_schedule_failed", {
@@ -605,6 +603,10 @@ export function getTicketStartService(): TicketStartService {
           operation,
         );
       },
+      async getDefaultAgentBackend() {
+        return (await readConfig()).defaultAgentBackend;
+      },
+      admitModelSelection: admitConfiguredModelSelection,
       scheduleConversationSnapshotRefresh(input) {
         getConversationSnapshotRefreshService().schedule(input);
       },

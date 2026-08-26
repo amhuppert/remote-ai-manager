@@ -9,12 +9,11 @@ import { redactedAgentProfileSnapshotSchema } from "@/lib/agent-profiles/schemas
 import {
   graphWorkflowCleanupStatusValueSchema,
   graphWorkflowMergeStatusValueSchema,
-} from "@/lib/workflow-graph/event-schemas";
+} from "@/lib/workflow-graph/execution-progress-schemas";
 import {
   graphWorkflowExecutionJoinKindSchema,
   graphWorkflowExecutionJoinStatusSchema,
-  graphWorkflowHaltReasonSchema,
-} from "@/lib/workflow-graph/schemas";
+} from "@/lib/workflow-graph/join-schemas";
 
 const activeConversationForkedFromSchema = z.object({
   conversationId: z.string(),
@@ -151,6 +150,10 @@ const activeGraphWorkflowFinalPublishProgressSchema = z.object({
   status: graphWorkflowExecutionJoinStatusSchema,
 });
 
+const activeGraphWorkflowHaltReasonSchema = z
+  .object({ type: z.string().trim().min(1) })
+  .passthrough();
+
 const activeGraphWorkflowExecutionSchema = z.object({
   executionId: z.string(),
   status: z.enum([
@@ -167,7 +170,9 @@ const activeGraphWorkflowExecutionSchema = z.object({
   activeContextIds: z.array(z.string()).default([]),
   activeContextTitles: z.array(z.string()).default([]),
   activeBatchIds: z.array(z.string()).default([]),
-  pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  pendingHaltReason: activeGraphWorkflowHaltReasonSchema
+    .nullable()
+    .default(null),
   contextMergeProgress: z
     .array(activeGraphWorkflowContextMergeProgressSchema)
     .default([]),

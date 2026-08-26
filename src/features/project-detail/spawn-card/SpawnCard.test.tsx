@@ -16,13 +16,40 @@ import { buildMessageRefXml } from "@/lib/conversations/message-ref";
 import { buildTicketRefXml } from "@/lib/tickets/references";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
-import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  listBackendCatalogEntries,
+  type BackendValueMap,
+} from "@/lib/agent-backends/catalog";
+import { loadGeneratedCursorModelCatalog } from "@/lib/agent-backends/cursor/model-catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import type { BackendModelCatalog } from "@/lib/agent-backends/schemas";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "ultra", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
+
+function projectModelOptions(defaults: BackendSelectionDefaultsById) {
+  const catalogs: BackendValueMap<BackendModelCatalog> = {
+    claude: getStaticBackendModelCatalog("claude"),
+    codex: getStaticBackendModelCatalog("codex", defaults.codex),
+    cursor: loadGeneratedCursorModelCatalog(),
+  };
+  return (["claude", "codex", "cursor"] as const).map((backend) => ({
+    backend,
+    models: [],
+    defaultModelId: defaults[backend].modelId,
+    source: "catalog" as const,
+    modelCatalog: catalogs[backend],
+    defaultSelection: defaults[backend],
+    diagnostics: [],
+  }));
+}
 
 // Radix focuses items / captures the pointer on open; jsdom implements neither.
 Element.prototype.scrollIntoView = () => {};
@@ -30,10 +57,20 @@ Element.prototype.hasPointerCapture = () => false;
 Element.prototype.setPointerCapture = () => {};
 Element.prototype.releasePointerCapture = () => {};
 
-function renderCard(ui: React.ReactElement) {
+function renderCard(
+  ui: React.ReactElement,
+  backendDefaults: BackendSelectionDefaultsById = BACKEND_DEFAULTS,
+  seedModelOptions = true,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  if (seedModelOptions) {
+    client.setQueryData(
+      backendCatalogKeys.projectModelOptions("repo"),
+      projectModelOptions(backendDefaults),
+    );
+  }
   return render(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );
@@ -65,7 +102,9 @@ const dual = asProposal({
 function renderValid(
   proposal: SpawnProposal,
   overrides: Partial<React.ComponentProps<typeof ValidSpawnCard>> = {},
+  seedModelOptions = true,
 ) {
+  const backendDefaults = overrides.backendDefaults ?? BACKEND_DEFAULTS;
   return renderCard(
     <ValidSpawnCard
       proposal={proposal}
@@ -75,8 +114,10 @@ function renderValid(
       branchPrefix="csm"
       targetOptions={["main"]}
       {...overrides}
-      backendDefaults={overrides.backendDefaults ?? BACKEND_DEFAULTS}
+      backendDefaults={backendDefaults}
     />,
+    backendDefaults,
+    seedModelOptions,
   );
 }
 
@@ -154,10 +195,10 @@ describe("SpawnCard", () => {
     expect(claude.className).toContain("data-[state=checked]:bg-cyan-glow");
   });
 
-  it("shows model + reasoning controls for a single-backend agent", () => {
+  it("shows catalog-driven model and parameter controls for a single-backend agent", () => {
     renderValid(single);
     expect(screen.getByTestId("model-selector-trigger")).toBeTruthy();
-    expect(screen.getByTestId("effort-selector-trigger")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Effort" })).toBeTruthy();
   });
 
   it("shows and submits a custom configured Codex model", async () => {
@@ -172,9 +213,15 @@ describe("SpawnCard", () => {
 
     renderValid(codexOnly, {
       backendDefaults: {
-        claude: { modelId: "sonnet", effort: "medium" },
-        codex: { modelId: "custom-codex-model", effort: "ultra" },
-        cursor: { modelId: "composer-2.5", effort: "high" },
+        claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+        codex: {
+          modelId: "custom-codex-model",
+          parameters: { reasoning: "ultra", fast: "false" },
+        },
+        cursor: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
       },
     });
 
@@ -190,17 +237,20 @@ describe("SpawnCard", () => {
       sessions: [
         {
           agent: "codex",
-          model: "custom-codex-model",
-          reasoningEffort: "ultra",
+          modelSelection: {
+            modelId: "custom-codex-model",
+            parameters: { reasoning: "ultra", fast: "false" },
+          },
         },
       ],
     });
   });
 
-  it("hides model + reasoning controls for a dual agent (both run defaults)", () => {
+  it("hides model controls for a dual agent (both run defaults)", () => {
     renderValid(dual);
     expect(screen.queryByTestId("model-selector-trigger")).toBeNull();
-    expect(screen.queryByTestId("effort-selector-trigger")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Effort" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Reasoning" })).toBeNull();
   });
 
   it("labels Create with the included count (single)", () => {
@@ -560,6 +610,29 @@ describe("SpawnCard project-scoped model options", () => {
     api: FetchFixture,
     models: readonly string[],
   ): void {
+    const defaultOptions = projectModelOptions(BACKEND_DEFAULTS);
+    const defaultModelId = models[0] ?? null;
+    const cursorCatalog =
+      defaultModelId === null
+        ? null
+        : {
+            backend: "cursor" as const,
+            defaultModelId,
+            models: models.map((id) => ({
+              id,
+              label: id,
+              aliases: [],
+              parameters: [],
+              variants: [
+                {
+                  selection: { modelId: id, parameters: {} },
+                  label: id,
+                  isDefault: id === defaultModelId,
+                },
+              ],
+            })),
+            provenance: { source: "test project catalog" },
+          };
     api.json("GET", "/api/projects/repo/model-options", {
       backends: listBackendCatalogEntries().map((entry) =>
         entry.id === "cursor"
@@ -571,15 +644,24 @@ describe("SpawnCard project-scoped model options", () => {
                 description: "Configured for this project.",
                 effortLevels: [],
               })),
-              defaultModelId: models[0] ?? null,
+              defaultModelId,
               source: "project",
+              modelCatalog: cursorCatalog,
+              defaultSelection:
+                defaultModelId === null
+                  ? null
+                  : { modelId: defaultModelId, parameters: {} },
+              diagnostics:
+                defaultModelId === null
+                  ? [
+                      {
+                        code: "complete_catalog_unavailable",
+                        message: "No Cursor model variants are available.",
+                      },
+                    ]
+                  : [],
             }
-          : {
-              backend: entry.id,
-              models: entry.models,
-              defaultModelId: entry.defaultModelId,
-              source: "catalog",
-            },
+          : defaultOptions.find((option) => option.backend === entry.id)!,
       ),
     });
   }
@@ -594,12 +676,16 @@ describe("SpawnCard project-scoped model options", () => {
     api.json("GET", "/api/voice/health", { available: false });
     serveProjectOptions(api, ["composer-1"]);
 
-    renderValid(cursorOnly, {
-      backendDefaults: {
-        ...BACKEND_DEFAULTS,
-        cursor: { modelId: "composer-1", effort: "high" },
+    renderValid(
+      cursorOnly,
+      {
+        backendDefaults: {
+          ...BACKEND_DEFAULTS,
+          cursor: { modelId: "composer-1", parameters: {} },
+        },
       },
-    });
+      false,
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
@@ -619,11 +705,11 @@ describe("SpawnCard project-scoped model options", () => {
     api.json("GET", "/api/voice/health", { available: false });
     serveProjectOptions(api, ["composer-1"]);
 
-    renderValid(cursorOnly);
+    renderValid(cursorOnly, {}, false);
 
     await waitFor(() =>
       expect(screen.getByTestId("model-selector-trigger")).toHaveAttribute(
-        "data-invalid-selection",
+        "aria-invalid",
         "true",
       ),
     );

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 import {
   enqueueConversationMessage,
@@ -43,6 +44,7 @@ interface Recorder {
   calls: string[];
   queuedBackend: AgentBackendId | null;
   queuedDeliveryPolicy: "next_turn" | null;
+  queuedModelSelection: BackendModelSelection | null;
   ensuredWith: {
     projectPath: string;
     sessionName: string;
@@ -66,6 +68,7 @@ function makeDeps(
       recorder.calls.push("queueMessage");
       recorder.queuedBackend = params.backend;
       recorder.queuedDeliveryPolicy = params.deliveryPolicy ?? null;
+      recorder.queuedModelSelection = params.modelSelection ?? null;
       return { entry: makePendingEntry(), deliveryTiming };
     },
     async ensureConversationActorAndDrain(
@@ -91,6 +94,7 @@ describe("enqueueConversationMessage", () => {
         calls: [],
         queuedBackend: null,
         queuedDeliveryPolicy: null,
+        queuedModelSelection: null,
         ensuredWith: null,
       };
       const deps = makeDeps(
@@ -133,6 +137,7 @@ describe("enqueueConversationMessage", () => {
       calls: [],
       queuedBackend: null,
       queuedDeliveryPolicy: null,
+      queuedModelSelection: null,
       ensuredWith: null,
     };
     const deps = makeDeps(
@@ -164,6 +169,7 @@ describe("enqueueConversationMessage", () => {
       calls: [],
       queuedBackend: null,
       queuedDeliveryPolicy: null,
+      queuedModelSelection: null,
       ensuredWith: null,
     };
     const deps = makeDeps(
@@ -190,5 +196,37 @@ describe("enqueueConversationMessage", () => {
 
     expect(recorder.queuedBackend).toBe("codex");
     expect(recorder.ensuredWith).not.toBeNull();
+  });
+
+  it("forwards an admitted complete model selection atomically", async () => {
+    const recorder: Recorder = {
+      calls: [],
+      queuedBackend: null,
+      queuedDeliveryPolicy: null,
+      queuedModelSelection: null,
+      ensuredWith: null,
+    };
+    const deps = makeDeps(
+      recorder,
+      { getConversation: async () => makeConversation("claude") },
+      "next_turn",
+    );
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+
+    await enqueueConversationMessage(
+      {
+        projectPath: "/proj",
+        sessionName: "sess",
+        conversationId: "conv-1",
+        message: "author the charter",
+        modelSelection,
+      },
+      deps,
+    );
+
+    expect(recorder.queuedModelSelection).toEqual(modelSelection);
   });
 });

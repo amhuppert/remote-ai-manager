@@ -249,8 +249,7 @@ const stubClaudeFactory: ConversationBackendFactory = {
     return {
       backend: "claude",
       status: "alive",
-      modelId: input.modelId,
-      reasoningEffort: input.reasoningEffort,
+      modelSelection: input.modelSelection,
       outputFormat: input.outputFormat,
       alignmentVersion: null,
       applyPortableMcpConfig: async () => ({
@@ -310,8 +309,20 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       laneService,
       laneScheduler: instrumented.scheduler,
       agents: {
-        agent_one: { backend: "claude", model: "claude-sched-model" },
-        agent_two: { backend: "codex", model: "codex-sched-model" },
+        agent_one: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "claude-sched-model",
+            parameters: { effort: "high" },
+          },
+        },
+        agent_two: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "codex-sched-model",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
       },
       executeAgentCallImpl: (request) => scripted.exec(request),
       getTaskRunner: () => stubTaskRunner,
@@ -450,8 +461,20 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
       laneService,
       laneScheduler: instrumented.scheduler,
       agents: {
-        agent_one: { backend: "claude", model: "claude-sched-model" },
-        agent_two: { backend: "codex", model: "codex-sched-model" },
+        agent_one: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "claude-sched-model",
+            parameters: { effort: "high" },
+          },
+        },
+        agent_two: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "codex-sched-model",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
       },
       executeAgentCallImpl: (request) => exec(request),
       getTaskRunner: () => stubTaskRunner,

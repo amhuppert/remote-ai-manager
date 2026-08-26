@@ -4,6 +4,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type { SpawnAgent } from "@/lib/chat-spawning/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { executePromptStream } from "./sdk-driver";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 const logger = createLogger("prompt.first-turn-dispatch");
 
@@ -19,13 +20,8 @@ export interface DispatchFirstTurnInput {
   initialPrompt: string | null;
   images?: ImagePayload[];
   agent: SpawnAgent;
-  /**
-   * Backend model + reasoning effort for this first turn. Set only for a
-   * single-backend agent (`claude` / `codex`); the `dual` race ignores both and
-   * runs each participant at its backend default. Absent ⇒ backend default.
-   */
-  model?: string;
-  reasoningEffort?: string;
+  /** Complete model selection for a single-backend first turn. */
+  modelSelection?: BackendModelSelection;
 }
 
 export interface FirstTurnDispatcherDeps {
@@ -113,19 +109,17 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
         });
       } else {
         // `agent` is narrowed to "claude" | "codex" here — both are valid
-        // AgentBackendId values, so the first turn runs on the chosen backend
-        // with the proposed model + reasoning effort (absent ⇒ backend default).
+        // AgentBackendId values, so the first turn runs on the chosen backend.
         await deps.executePromptStream(
           projectPath,
           session,
           initialPrompt,
           noopEmit,
           conversationId,
-          input.model,
+          input.modelSelection,
           input.images,
           {
             backend: agent,
-            ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
           },
         );
       }

@@ -6,11 +6,14 @@ import { specAssumptionCitationSnapshotSchema } from "@/lib/specs/schemas";
 import { stableStringify } from "../serialization";
 import { createSpecReviewRepo } from "../spec-review-repo";
 import { createSpecsRepo } from "../specs-repo";
-import { _createTestDb, KNOWN_SCHEMA_VERSION } from "../state-db";
+import { _createTestDb } from "../state-db";
 import { enforceCurrentSchemaCompatibility } from "../schema-compatibility";
 import { createWriteQueue } from "../write-queue";
 import { migrations } from "./index";
-import { nativeSddAttentionCitations } from "./0034-native-sdd-attention-citations";
+import {
+  NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION,
+  nativeSddAttentionCitations,
+} from "./0034-native-sdd-attention-citations";
 
 const logSpies = vi.hoisted(() => ({
   debug: vi.fn(),
@@ -394,9 +397,9 @@ function citationHash(
 }
 
 describe("0034-native-sdd-attention-citations", () => {
-  it("is the registered schema-11 compatibility cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(11);
-    expect(migrations.at(-1)?.name).toBe("0034-native-sdd-attention-citations");
+  it("is a registered schema-11 compatibility cutover", () => {
+    expect(NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION).toBe(11);
+    expect(migrations).toContain(nativeSddAttentionCitations);
   });
 
   it.each([

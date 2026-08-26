@@ -53,6 +53,7 @@ import {
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
   createWorkflowLayout,
+  TEST_AGENT_BACKENDS_CONFIG,
 } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowLiveOutlineRouteHandlers } from "@/lib/workflow-graph/live-outline-route-handlers";
 import { runCli } from "../core";
@@ -140,9 +141,13 @@ function notUsed(): never {
   throw new Error("route not exercised in this contract test");
 }
 
-const VALIDATION_GLOBAL_CONFIG = {
+const VALIDATION_GLOBAL_CONFIG: GlobalConfig = {
+  baseDir: "/repos",
+  ignorePatterns: [],
+  defaultAgentBackend: "claude",
+  agentBackends: TEST_AGENT_BACKENDS_CONFIG,
   validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
-} as GlobalConfig;
+};
 
 /** A supported-subset declaration: an object root with two named properties. */
 const OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -789,6 +794,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
       ),
     );
 
+    expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
     const envelope = JSON.parse(result.stdout);
     expect(envelope).toMatchObject({
@@ -1396,7 +1402,13 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
       id: "security",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+      },
       continuity: { enabled: true },
       ...overrides,
     };
@@ -1749,7 +1761,13 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
       id: "security",
       profile,
       strategy: "conversation",
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+      },
       continuity: { enabled: true },
     };
   }

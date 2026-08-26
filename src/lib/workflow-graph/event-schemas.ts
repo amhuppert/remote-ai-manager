@@ -1,5 +1,18 @@
 import { z } from "zod";
 import {
+  graphWorkflowCleanupStatusValueSchema,
+  graphWorkflowMergeStatusValueSchema,
+} from "./execution-progress-schemas";
+
+export {
+  graphWorkflowCleanupStatusValueSchema,
+  graphWorkflowMergeStatusValueSchema,
+};
+export type {
+  GraphWorkflowCleanupStatusValue,
+  GraphWorkflowMergeStatusValue,
+} from "./execution-progress-schemas";
+import {
   agentProfileIdSchema,
   agentProfileTierSchema,
 } from "@/lib/agent-profiles/schemas";
@@ -55,28 +68,6 @@ export const graphWorkflowStatusEventSchema = z.object({
 });
 export type GraphWorkflowStatusEvent = z.infer<
   typeof graphWorkflowStatusEventSchema
->;
-
-export const graphWorkflowMergeStatusValueSchema = z.enum([
-  "not-applicable",
-  "pending",
-  "in-progress",
-  "merged-success",
-  "merged-failed",
-  "conflicts",
-]);
-export type GraphWorkflowMergeStatusValue = z.infer<
-  typeof graphWorkflowMergeStatusValueSchema
->;
-
-export const graphWorkflowCleanupStatusValueSchema = z.enum([
-  "not-applicable",
-  "pending",
-  "removed",
-  "failed",
-]);
-export type GraphWorkflowCleanupStatusValue = z.infer<
-  typeof graphWorkflowCleanupStatusValueSchema
 >;
 
 export const graphWorkflowPendingHaltReasonEventSchema = z.object({

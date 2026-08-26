@@ -34,7 +34,10 @@ const draftPrimary: CollabPendingStep = {
 export const ClaudeDrafting = {
   args: {
     step: draftPrimary,
-    modelSettings: { model: "Opus", effort: "xhigh" },
+    modelSettings: {
+      modelId: "opus",
+      parameters: { effort: "xhigh" },
+    },
   },
 } satisfies Story;
 
@@ -47,7 +50,10 @@ export const CodexDrafting = {
       agent: "codex",
       lane: "right",
     },
-    modelSettings: { model: "GPT-5.4", effort: "high" },
+    modelSettings: {
+      modelId: "gpt-5.4",
+      parameters: { fast: "false", reasoning: "high" },
+    },
   },
 } satisfies Story;
 
@@ -67,7 +73,10 @@ export const CrossReview = {
       statusText: "reviewing Claude's draft",
       lines: 2,
     },
-    modelSettings: { model: "GPT-5.4", effort: "high" },
+    modelSettings: {
+      modelId: "gpt-5.4",
+      parameters: { fast: "false", reasoning: "high" },
+    },
   },
 } satisfies Story;
 
@@ -87,7 +96,10 @@ export const CounterProposal = {
       round: 1,
       lines: 2,
     },
-    modelSettings: { model: "GPT-5.4", effort: "high" },
+    modelSettings: {
+      modelId: "gpt-5.4",
+      parameters: { fast: "false", reasoning: "high" },
+    },
   },
 } satisfies Story;
 
@@ -106,7 +118,10 @@ export const FinalAnswer = {
       statusText: "composing final answer",
       lines: 3,
     },
-    modelSettings: { model: "Opus", effort: "xhigh" },
+    modelSettings: {
+      modelId: "opus",
+      parameters: { effort: "xhigh" },
+    },
   },
 } satisfies Story;
 

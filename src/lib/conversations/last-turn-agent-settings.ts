@@ -1,21 +1,19 @@
+import {
+  backendModelSelectionSchema,
+  type BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import type { TranscriptMessage } from "./schemas";
 
 export interface TurnAgentSettingsCandidate {
-  model?: unknown;
-  effort?: unknown;
-  codexFastMode?: unknown;
+  modelSelection?: unknown;
 }
 
 export interface TurnAgentSettings {
-  model: string | undefined;
-  effort: string | undefined;
-  codexFastMode: boolean | undefined;
+  modelSelection: BackendModelSelection;
 }
 
 export interface LastUserTurnAgentSettings {
-  modelId?: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection?: BackendModelSelection;
 }
 
 /**
@@ -31,24 +29,11 @@ export function selectLatestExplicitTurnAgentSettings(
   for (const candidate of candidates) {
     if (!candidate) continue;
 
-    const model =
-      typeof candidate.model === "string" ? candidate.model : undefined;
-    const effort =
-      typeof candidate.effort === "string" ? candidate.effort : undefined;
-    const codexFastMode =
-      typeof candidate.codexFastMode === "boolean"
-        ? candidate.codexFastMode
-        : undefined;
-
-    if (
-      model === undefined &&
-      effort === undefined &&
-      codexFastMode === undefined
-    ) {
-      continue;
-    }
-
-    selected = { model, effort, codexFastMode };
+    const parsed = backendModelSelectionSchema.safeParse(
+      candidate.modelSelection,
+    );
+    if (!parsed.success) continue;
+    selected = { modelSelection: parsed.data };
   }
 
   return selected;
@@ -61,12 +46,5 @@ export function selectLastUserTurnAgentSettings(
     messages.filter((message) => message.role === "user"),
   );
   if (!selected) return {};
-
-  return {
-    ...(selected.model !== undefined ? { modelId: selected.model } : {}),
-    ...(selected.effort !== undefined ? { effort: selected.effort } : {}),
-    ...(selected.codexFastMode !== undefined
-      ? { codexFastMode: selected.codexFastMode }
-      : {}),
-  };
+  return { modelSelection: selected.modelSelection };
 }

@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { assertNever } from "@/lib/shared/assert-never";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
-import type { SeededValidatorCohort, ValidatorCohort } from "./config-schemas";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { validateModelSelection } from "@/lib/agent-backends/model-selection";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type {
+  GraphWorkflowAgentConfig,
+  SeededValidatorCohort,
+  ValidatorCohort,
+} from "./config-schemas";
 import {
   createExecutionIndex,
   type ExecutionIndex,
@@ -98,6 +106,7 @@ import {
 import { CHARTER_CONTENT_EDIT_FIELDS } from "@/lib/workflows/edit-schemas";
 import type { LoadedGraphExecutionLiveEditContract } from "./execution-contract-port";
 import type { PlaceableAssignment } from "./live-edit-preparation";
+import { collectResolvedWorkflowModelSelectionSites } from "./model-selection-admission";
 
 export interface AgentAddedTask {
   slug?: string;
@@ -511,6 +520,7 @@ interface LiveEditOpContext {
   amendmentContextSeed: ResolvedContextConfig | undefined;
   deps: LiveEditDeps;
   affectedContextIds: Set<string>;
+  modelSelectionTouchedContextIds: Set<string>;
   validationTouchedContextIds: Set<string>;
   /**
    * Set by `update-lane-merge-validation` so the frontier check preflights
@@ -790,6 +800,7 @@ function runLiveEditOps(
 
   const next = cloneExecution(execution);
   const affectedContextIds = new Set<string>();
+  const modelSelectionTouchedContextIds = new Set<string>();
   const validationTouchedContextIds = new Set<string>();
 
   const opContext: LiveEditOpContext = {
@@ -798,6 +809,7 @@ function runLiveEditOps(
     amendmentContextSeed: options.amendmentContextSeed,
     deps,
     affectedContextIds,
+    modelSelectionTouchedContextIds,
     validationTouchedContextIds,
     laneMergeTouched: false,
     placementTouched: false,
@@ -2175,6 +2187,14 @@ function applyUpdateContext(
   }
   const priorAgentValidation = context.agentValidation;
   applyLiveConfigBlocks(context, op, ctx.deps);
+  if (
+    op.implementer !== undefined ||
+    op.contextValidator !== undefined ||
+    op.planRepair !== undefined ||
+    op.collaboration !== undefined
+  ) {
+    ctx.modelSelectionTouchedContextIds.add(op.contextId);
+  }
   if (op.agentValidation !== undefined) {
     freezeAgentValidationSnapshot(context, priorAgentValidation, ctx.deps);
   }
@@ -2683,6 +2703,7 @@ function applyAddContext(
   );
 
   ctx.affectedContextIds.add(op.id);
+  ctx.modelSelectionTouchedContextIds.add(op.id);
   ctx.validationTouchedContextIds.add(op.id);
   ctx.batchCreatedContextIds.add(op.id);
   // An add always establishes a placement, authored or fallback, so the lane it
@@ -3613,13 +3634,72 @@ function mintLiveEdgeId(
   );
 }
 
+function admittedCustomModelSelection(
+  execution: GraphWorkflowExecution,
+  backend: AgentBackendId,
+): BackendModelSelection | undefined {
+  const knownModels = new Set(
+    getConfiguredBackendModelCatalog(backend).models.map(({ id }) => id),
+  );
+
+  for (const site of collectResolvedWorkflowModelSelectionSites(
+    execution.workingDefinition,
+  )) {
+    if (
+      site.backend === backend &&
+      !knownModels.has(site.modelSelection.modelId)
+    ) {
+      return site.modelSelection;
+    }
+  }
+
+  return undefined;
+}
+
+function canonicalizeAcceptedAgentModelSelection(
+  agent: GraphWorkflowAgentConfig | undefined,
+  configuredSelection: BackendModelSelection | undefined,
+): void {
+  if (agent === undefined) return;
+  const validation = validateModelSelection(
+    getConfiguredBackendModelCatalog(agent.backend, configuredSelection),
+    agent.modelSelection,
+  );
+  if (!validation.valid) {
+    throw new Error(
+      "Live-edit model selection canonicalization diverged from frontier validation",
+    );
+  }
+  agent.modelSelection = validation.selection;
+}
+
+function canonicalizeAcceptedContextModelSelections(
+  context: GraphWorkflowResolvedContext,
+  configuredSelectionFor: (
+    backend: AgentBackendId,
+  ) => BackendModelSelection | undefined,
+): void {
+  const agents = [
+    context.implementer.agent,
+    ...context.contextValidator.assignments.map(({ agent }) => agent),
+    context.planRepair.agent,
+    context.collaboration?.secondAgent.value,
+  ];
+  for (const agent of agents) {
+    canonicalizeAcceptedAgentModelSelection(
+      agent,
+      agent === undefined ? undefined : configuredSelectionFor(agent.backend),
+    );
+  }
+}
+
 /**
  * The execution-frontier invariant (doc 06, §"The execution-frontier invariant")
  * — the post-batch safety net that guarantees the whole result is legal, beyond
  * what the per-op gates already enforce. In order: graph validity (unique ids,
  * DAG acyclicity), frozen-past unchanged (a completed/started context's prose +
  * config, completed tasks, and incoming edges are byte-identical), resolved-config
- * validity (concrete model/effort pairs and command selections), and
+ * validity (complete model selections and command selections), and
  * runtime-map 1:1 consistency. A violation rejects the whole batch.
  */
 function checkLiveEditFrontier(
@@ -3637,9 +3717,22 @@ function checkLiveEditFrontier(
     return { code: "frozen", issues: frozenPast };
   }
 
-  const resolved = validateResolvedWorkflow(next.workingDefinition);
+  const resolved = validateResolvedWorkflow(next.workingDefinition, {
+    configuredModelSelectionFor: (backend) =>
+      admittedCustomModelSelection(original, backend),
+  });
   if (!resolved.ok) {
     return { code: "invalid_edit", issues: resolved.errors };
+  }
+  for (const contextId of ctx.modelSelectionTouchedContextIds) {
+    const context = next.workingDefinition.executionContexts.find(
+      (entry) => entry.id === contextId,
+    );
+    if (context !== undefined) {
+      canonicalizeAcceptedContextModelSelections(context, (backend) =>
+        admittedCustomModelSelection(original, backend),
+      );
+    }
   }
 
   const placementIssues = checkPlacements(next, ctx);

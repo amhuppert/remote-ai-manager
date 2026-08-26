@@ -1,0 +1,5703 @@
+{
+  "backend": "cursor",
+  "defaultModelId": "composer-2.5",
+  "models": [
+    {
+      "id": "default",
+      "label": "Auto",
+      "aliases": ["auto"],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "default",
+            "parameters": {}
+          },
+          "label": "Auto",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "grok-4.6",
+      "label": "Cursor Grok 4.6",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast​​"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "low",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "low",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "medium",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "medium",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "high",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "high",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "xhigh",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.6",
+            "parameters": {
+              "effort": "xhigh",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.6",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "composer-2.5",
+      "label": "Composer 2.5",
+      "aliases": ["composer-latest", "composer", "composer-2-5"],
+      "parameters": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "composer-2.5",
+            "parameters": {
+              "fast": "true"
+            }
+          },
+          "label": "Composer 2.5",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "composer-2.5",
+            "parameters": {
+              "fast": "false"
+            }
+          },
+          "label": "Composer 2.5",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-5",
+      "label": "Claude Opus 5",
+      "aliases": ["opus-5"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "cyber",
+          "label": "cyber",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            }
+          ],
+          "prominence": "hidden"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-5",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 5",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-8",
+      "label": "Claude Opus 4.8",
+      "aliases": ["opus-4.8", "opus-4-8"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "cyber",
+          "label": "cyber",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            }
+          ],
+          "prominence": "hidden"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-8",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.8",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "aliases": ["gpt-latest", "gpt-5-6-sol", "gpt-5.6"],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "272k",
+              "label": "272K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-sol",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Sol",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "aliases": ["gpt-5-5"],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "272k",
+              "label": "272K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "extra-high",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.5",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.5",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-fable-5",
+      "label": "Claude Fable 5",
+      "aliases": ["fable", "fable-5"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "xhigh",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "xhigh",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "xhigh",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "xhigh",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-fable-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Fable 5",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "grok-4.5",
+      "label": "Cursor Grok 4.5",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast​"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "grok-4.5",
+            "parameters": {
+              "effort": "low",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.5",
+            "parameters": {
+              "effort": "low",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.5",
+            "parameters": {
+              "effort": "medium",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.5",
+            "parameters": {
+              "effort": "medium",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.5",
+            "parameters": {
+              "effort": "high",
+              "fast": "false"
+            }
+          },
+          "label": "Cursor Grok 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "grok-4.5",
+            "parameters": {
+              "effort": "high",
+              "fast": "true"
+            }
+          },
+          "label": "Cursor Grok 4.5",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "label": "Gemini 3.7 Flash",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-3.7-flash",
+            "parameters": {
+              "effort": "low"
+            }
+          },
+          "label": "Gemini 3.7 Flash",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gemini-3.7-flash",
+            "parameters": {
+              "effort": "medium"
+            }
+          },
+          "label": "Gemini 3.7 Flash",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gemini-3.7-flash",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "label": "Gemini 3.7 Flash",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "aliases": ["gpt-5-6-terra"],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "272k",
+              "label": "272K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-terra",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Terra",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "aliases": ["sonnet-5"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "xhigh",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "xhigh",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "xhigh",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "300k",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "xhigh",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-5",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 5",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "label": "Claude Sonnet 4.6",
+      "aliases": ["sonnet-4.6", "sonnet-4-6"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "200k",
+              "label": "200K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.6",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "composer-2",
+      "label": "Composer 2",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "composer-2",
+            "parameters": {
+              "fast": "true"
+            }
+          },
+          "label": "Composer 2",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "composer-2",
+            "parameters": {
+              "fast": "false"
+            }
+          },
+          "label": "Composer 2",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "label": "Codex 5.3",
+      "aliases": ["codex-latest", "codex", "codex-5.3"],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "extra-high",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.3-codex",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "Codex 5.3",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-7",
+      "label": "Claude Opus 4.7",
+      "aliases": ["opus-4.7", "opus-4-7"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "300k",
+              "label": "300K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "cyber",
+          "label": "cyber",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            }
+          ],
+          "prominence": "hidden"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "300k",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "low",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "medium",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "high",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "xhigh",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "false",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-7",
+            "parameters": {
+              "context": "1m",
+              "cyber": "false",
+              "effort": "max",
+              "fast": "true",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.7",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.4",
+      "label": "GPT-5.4",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "272k",
+              "label": "272K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "extra-high",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.4",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-6",
+      "label": "Claude Opus 4.6",
+      "aliases": ["opus-4.6", "opus-4-6"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "200k",
+              "label": "200K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "200k",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "low",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "medium",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "high",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-6",
+            "parameters": {
+              "context": "1m",
+              "effort": "max",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.6",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-opus-4-5",
+      "label": "Claude Opus 4.5",
+      "aliases": ["opus-4.5", "opus-4-5"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-opus-4-5",
+            "parameters": {
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Opus 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-opus-4-5",
+            "parameters": {
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Opus 4.5",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.2",
+      "label": "GPT-5.2",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "extra-high",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "false",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.2",
+            "parameters": {
+              "fast": "true",
+              "reasoning": "extra-high"
+            }
+          },
+          "label": "GPT-5.2",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "aliases": ["gpt-5-6-luna"],
+      "parameters": [
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "272k",
+              "label": "272K"
+            },
+            {
+              "value": "1m",
+              "label": "1M"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        },
+        {
+          "id": "fast",
+          "label": "Fast",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "Fast"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "false",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "272k",
+              "fast": "true",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.6-luna",
+            "parameters": {
+              "context": "1m",
+              "fast": "false",
+              "reasoning": "max"
+            }
+          },
+          "label": "GPT-5.6 Luna",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "label": "Gemini 3.6 Flash",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "effort",
+          "label": "Effort",
+          "values": [
+            {
+              "value": "minimal",
+              "label": "Minimal"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-3.6-flash",
+            "parameters": {
+              "effort": "minimal"
+            }
+          },
+          "label": "Gemini 3.6 Flash",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gemini-3.6-flash",
+            "parameters": {
+              "effort": "low"
+            }
+          },
+          "label": "Gemini 3.6 Flash",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gemini-3.6-flash",
+            "parameters": {
+              "effort": "medium"
+            }
+          },
+          "label": "Gemini 3.6 Flash",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gemini-3.6-flash",
+            "parameters": {
+              "effort": "high"
+            }
+          },
+          "label": "Gemini 3.6 Flash",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.1-pro",
+      "label": "Gemini 3.1 Pro",
+      "aliases": ["gemini-latest", "gemini-pro-latest", "gemini", "gemini-pro"],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-3.1-pro",
+            "parameters": {}
+          },
+          "label": "Gemini 3.1 Pro",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "label": "GPT-5.4 Mini",
+      "aliases": ["gpt-mini-latest"],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.4-mini",
+            "parameters": {
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.4 Mini",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-mini",
+            "parameters": {
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.4 Mini",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-mini",
+            "parameters": {
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.4 Mini",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-mini",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.4 Mini",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-mini",
+            "parameters": {
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.4 Mini",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "label": "GPT-5.4 Nano",
+      "aliases": ["gpt-nano-latest", "gpt-nano"],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "none",
+              "label": "None"
+            },
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra High"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.4-nano",
+            "parameters": {
+              "reasoning": "none"
+            }
+          },
+          "label": "GPT-5.4 Nano",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-nano",
+            "parameters": {
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.4 Nano",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-nano",
+            "parameters": {
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.4 Nano",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-nano",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.4 Nano",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.4-nano",
+            "parameters": {
+              "reasoning": "xhigh"
+            }
+          },
+          "label": "GPT-5.4 Nano",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "label": "Claude Haiku 4.5",
+      "aliases": ["haiku-latest", "haiku", "haiku-4.5", "haiku-4-5"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-haiku-4-5",
+            "parameters": {
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Haiku 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-haiku-4-5",
+            "parameters": {
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Haiku 4.5",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "label": "Claude Sonnet 4.5",
+      "aliases": ["sonnet-4.5", "sonnet-4-5"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "200k",
+              "label": "200K"
+            }
+          ],
+          "prominence": "hidden"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-5",
+            "parameters": {
+              "context": "200k",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4.5",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4-5",
+            "parameters": {
+              "context": "200k",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4.5",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gpt-5.1",
+      "label": "GPT-5.1",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5.1",
+            "parameters": {
+              "reasoning": "low"
+            }
+          },
+          "label": "GPT-5.1",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.1",
+            "parameters": {
+              "reasoning": "medium"
+            }
+          },
+          "label": "GPT-5.1",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "gpt-5.1",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "GPT-5.1",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gemini-3-flash",
+      "label": "Gemini 3 Flash",
+      "aliases": [],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-3-flash",
+            "parameters": {}
+          },
+          "label": "Gemini 3 Flash",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "label": "Gemini 3.5 Flash",
+      "aliases": [],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-3.5-flash",
+            "parameters": {}
+          },
+          "label": "Gemini 3.5 Flash",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "claude-sonnet-4",
+      "label": "Claude Sonnet 4",
+      "aliases": ["sonnet-4"],
+      "parameters": [
+        {
+          "id": "thinking",
+          "label": "Thinking",
+          "values": [
+            {
+              "value": "false",
+              "label": "false"
+            },
+            {
+              "value": "true",
+              "label": "true"
+            }
+          ],
+          "prominence": "advanced"
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "values": [
+            {
+              "value": "200k",
+              "label": "200K"
+            }
+          ],
+          "prominence": "hidden"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4",
+            "parameters": {
+              "context": "200k",
+              "thinking": "false"
+            }
+          },
+          "label": "Claude Sonnet 4",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "claude-sonnet-4",
+            "parameters": {
+              "context": "200k",
+              "thinking": "true"
+            }
+          },
+          "label": "Claude Sonnet 4",
+          "isDefault": false
+        }
+      ]
+    },
+    {
+      "id": "gpt-5-mini",
+      "label": "GPT-5 Mini",
+      "aliases": [],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gpt-5-mini",
+            "parameters": {}
+          },
+          "label": "GPT-5 Mini",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash",
+      "aliases": [],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "gemini-2.5-flash",
+            "parameters": {}
+          },
+          "label": "Gemini 2.5 Flash",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "kimi-k3",
+      "label": "Kimi K3",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "kimi-k3",
+            "parameters": {
+              "reasoning": "low"
+            }
+          },
+          "label": "Kimi K3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "kimi-k3",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "Kimi K3",
+          "isDefault": false
+        },
+        {
+          "selection": {
+            "modelId": "kimi-k3",
+            "parameters": {
+              "reasoning": "max"
+            }
+          },
+          "label": "Kimi K3",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "label": "Kimi K2.7 Code",
+      "aliases": ["kimi-latest", "kimi"],
+      "parameters": [],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "kimi-k2.7-code",
+            "parameters": {}
+          },
+          "label": "Kimi K2.7 Code",
+          "isDefault": true
+        }
+      ]
+    },
+    {
+      "id": "glm-5.2",
+      "label": "GLM 5.2",
+      "aliases": [],
+      "parameters": [
+        {
+          "id": "reasoning",
+          "label": "Reasoning",
+          "values": [
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "max",
+              "label": "Max"
+            }
+          ],
+          "prominence": "primary"
+        }
+      ],
+      "variants": [
+        {
+          "selection": {
+            "modelId": "glm-5.2",
+            "parameters": {
+              "reasoning": "high"
+            }
+          },
+          "label": "GLM 5.2",
+          "isDefault": true
+        },
+        {
+          "selection": {
+            "modelId": "glm-5.2",
+            "parameters": {
+              "reasoning": "max"
+            }
+          },
+          "label": "GLM 5.2",
+          "isDefault": false
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "source": "Cursor.models.list",
+    "generatedAt": "2026-08-25T18:55:11.561Z",
+    "sdkVersion": "1.0.28"
+  }
+}

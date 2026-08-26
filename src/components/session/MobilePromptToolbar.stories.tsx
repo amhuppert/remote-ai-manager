@@ -1,48 +1,33 @@
 "use client";
 
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { fn } from "storybook/test";
 import { useState } from "react";
+import { fn } from "storybook/test";
+
 import MobilePromptToolbar, {
   MOBILE_PROMPT_ROW_CLASS,
-  type MobilePromptToolbarProps,
 } from "@/components/session/MobilePromptToolbar";
-import { SEND_BUTTON_CLASS } from "@/components/session/prompt/PromptDesktopToolbar";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
+import { SEND_BUTTON_CLASS } from "@/components/session/prompt/PromptDesktopToolbar";
+import { Spinner } from "@/components/ui/Spinner";
 import {
-  getEffortLevelsForBackend,
-  getModelsForBackend,
+  backendLabel,
+  getStaticBackendModelCatalog,
 } from "@/lib/agent-backends/catalog";
-import {
-  clampEffortToModel,
-  type ClaudeModel,
-  type EffortLevel,
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
 } from "@/lib/agent-backends/schemas";
-import { type AgentBackendId } from "@/lib/shared/schemas";
-const ALL_EFFORT_OPTIONS = [
-  { id: "minimal" as const, label: "Minimal", description: "Least reasoning" },
-  { id: "low" as const, label: "Low", description: "Minimal" },
-  { id: "medium" as const, label: "Medium", description: "Moderate" },
-  { id: "high" as const, label: "High", description: "Default" },
-  { id: "xhigh" as const, label: "XHigh", description: "Extra high" },
-  { id: "max" as const, label: "Max", description: "Maximum" },
-  {
-    id: "ultra" as const,
-    label: "Ultra",
-    description: "Max + parallel agents",
-  },
-];
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
-function effortOptionsFor(backend: AgentBackendId, model: string) {
-  const allowed = new Set(getEffortLevelsForBackend(backend, model));
-  return ALL_EFFORT_OPTIONS.filter((o) => allowed.has(o.id));
-}
+import { fullModelParameterCatalog } from "./prompt/model-selection-story-data";
 
 interface DemoProps {
-  initialModel?: string;
-  initialEffort?: EffortLevel;
   initialBackend?: AgentBackendId;
+  initialModel?: string;
   backendLocked?: boolean;
+  catalogUnavailable?: boolean;
   debugActive?: boolean;
   isReadOnly?: boolean;
   isBusy?: boolean;
@@ -53,7 +38,21 @@ interface DemoProps {
   mcpTotalCount?: number;
   mcpHasOverrides?: boolean;
   attachDisabled?: boolean;
-  initialFastMode?: boolean;
+}
+
+function catalogForBackend(backend: AgentBackendId): BackendModelCatalog {
+  if (backend === "cursor") return fullModelParameterCatalog;
+  return getStaticBackendModelCatalog(backend);
+}
+
+function initialSelection(
+  catalog: BackendModelCatalog,
+  preferredModel: string | undefined,
+): BackendModelSelection {
+  const modelId = catalog.models.some(({ id }) => id === preferredModel)
+    ? preferredModel!
+    : catalog.defaultModelId;
+  return defaultSelectionForModel(catalog, modelId);
 }
 
 function McpRowStub({
@@ -64,7 +63,7 @@ function McpRowStub({
   enabled: number;
   total: number;
   hasOverrides?: boolean;
-}) {
+}): React.JSX.Element {
   const meta =
     total === 0
       ? "No servers configured"
@@ -75,34 +74,26 @@ function McpRowStub({
         className="flex h-[28px] w-[28px] shrink-0 items-center justify-center font-mono text-[0.85rem] text-text-secondary"
         aria-hidden
       >
-        <svg viewBox="0 0 16 16" width="16" height="16">
-          <path
-            fill="currentColor"
-            d="M8 1.5a1.5 1.5 0 0 1 1.5 1.5v1.17a3.5 3.5 0 0 1 1.3.75l1.02-.59a1.5 1.5 0 0 1 2.05.55l.5.87a1.5 1.5 0 0 1-.55 2.05l-1.02.59a3.5 3.5 0 0 1 0 1.5l1.02.59a1.5 1.5 0 0 1 .55 2.05l-.5.87a1.5 1.5 0 0 1-2.05.55l-1.02-.59a3.5 3.5 0 0 1-1.3.75V13a1.5 1.5 0 0 1-1.5 1.5h-1A1.5 1.5 0 0 1 5.5 13v-1.17a3.5 3.5 0 0 1-1.3-.75l-1.02.59a1.5 1.5 0 0 1-2.05-.55l-.5-.87a1.5 1.5 0 0 1 .55-2.05l1.02-.59a3.5 3.5 0 0 1 0-1.5l-1.02-.59a1.5 1.5 0 0 1-.55-2.05l.5-.87a1.5 1.5 0 0 1 2.05-.55l1.02.59a3.5 3.5 0 0 1 1.3-.75V3A1.5 1.5 0 0 1 6.5 1.5h1ZM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"
-          />
-        </svg>
+        ⚙
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-2xs">
         <span className="font-medium text-text-primary">MCP servers</span>
         <span className="text-[0.7rem] text-text-tertiary">{meta}</span>
       </span>
-      <span className="flex shrink-0 items-center gap-xs">
-        {total > 0 && (
-          <span className="inline-flex items-center rounded-sm bg-bg-raised px-sm py-2xs font-mono text-[0.7rem] font-medium text-text-secondary">{`${enabled}/${total}`}</span>
-        )}
-        <span className="shrink-0 text-[1rem] text-text-tertiary" aria-hidden>
-          {"\u203A"}
+      {total > 0 ? (
+        <span className="inline-flex items-center rounded-sm bg-bg-raised px-sm py-2xs font-mono text-[0.7rem] font-medium text-text-secondary">
+          {enabled}/{total}
         </span>
-      </span>
+      ) : null}
     </button>
   );
 }
 
 function DemoToolbar({
-  initialModel = "opus",
-  initialEffort = "xhigh",
-  initialBackend = "claude",
+  initialBackend = "cursor",
+  initialModel,
   backendLocked = false,
+  catalogUnavailable = false,
   debugActive: initialDebug = false,
   isReadOnly = false,
   isBusy = false,
@@ -113,132 +104,97 @@ function DemoToolbar({
   mcpTotalCount = 3,
   mcpHasOverrides = false,
   attachDisabled = false,
-  initialFastMode = false,
-}: DemoProps) {
-  const [model, setModel] = useState(initialModel);
-  const [effort, setEffort] = useState<EffortLevel>(initialEffort);
+}: DemoProps): React.JSX.Element {
   const [backend, setBackend] = useState<AgentBackendId>(initialBackend);
+  const catalog = catalogForBackend(backend);
+  const [selection, setSelection] = useState<BackendModelSelection>(() =>
+    initialSelection(catalog, initialModel),
+  );
   const [debug, setDebug] = useState(initialDebug);
-  const [fastMode, setFastMode] = useState(initialFastMode);
   const [text, setText] = useState("");
 
-  const modelOptions = getModelsForBackend(backend);
-  const effortOptions = effortOptionsFor(backend, model);
-  const effortSupported = effortOptions.length > 0;
-  const effortDisabledReason =
-    backend === "claude" && model === "haiku"
-      ? "Reasoning level is only available for Opus and Sonnet models"
-      : undefined;
-
-  const handleSelectModel = (id: string) => {
-    setModel(id);
-    if (backend === "claude") {
-      const clamped = clampEffortToModel(effort, id as ClaudeModel);
-      if (clamped && clamped !== effort) setEffort(clamped);
-    } else {
-      const allowed = getEffortLevelsForBackend(backend, id);
-      if (allowed.length > 0 && !allowed.includes(effort)) {
-        setEffort(allowed.includes("high") ? "high" : allowed[0]!);
-      }
-    }
-  };
-
-  const props: MobilePromptToolbarProps = {
-    modelOptions,
-    effortOptions,
-    selectedModel: model,
-    selectedEffort: effort,
-    effortSupported,
-    effortDisabledReason,
-    onSelectModel: handleSelectModel,
-    onSelectEffort: setEffort,
-    backend,
-    backendLocked,
-    onSelectBackend: (b) => {
-      setBackend(b);
-      const next = getModelsForBackend(b);
-      const nextModel = next.some((m) => m.id === model) ? model : next[0]!.id;
-      setModel(nextModel);
-      const allowed = getEffortLevelsForBackend(b, nextModel);
-      if (allowed.length > 0 && !allowed.includes(effort)) {
-        setEffort(allowed.includes("high") ? "high" : allowed[0]!);
-      }
-    },
-    codexFastMode: fastMode,
-    onCodexFastModeChange: setFastMode,
-    onAttach: fn(),
-    attachDisabled,
-    debugActive: debug,
-    debugSupported: true,
-    onToggleDebug: () => setDebug((v) => !v),
-    debugDisabled: false,
-    mcpRow: (
-      <McpRowStub
-        enabled={mcpEnabledCount}
-        total={mcpTotalCount}
-        hasOverrides={mcpHasOverrides}
-      />
-    ),
-    isReadOnly,
-    isBusy,
-    voiceButton: (
-      <VoiceRecordButton
-        isRecording={isRecording}
-        isProcessing={false}
-        elapsedTime={isRecording ? 5 : 0}
-        isAvailable={voiceAvailable}
-        toggleRecording={fn()}
-        disabled={sending}
-      />
-    ),
-    sendButton: (
-      <button
-        type="button"
-        className={SEND_BUTTON_CLASS}
-        data-busy={sending}
-        disabled={(!text.trim() && !sending) || isReadOnly || isRecording}
-        title={
-          isReadOnly
-            ? "Session is read-only"
-            : sending
-              ? "Session is busy"
-              : "Send prompt"
-        }
-      >
-        {sending ? (
-          <div
-            className="spinner"
-            style={{
-              borderColor: "rgba(0, 229, 255, 0.3)",
-              borderTopColor: "var(--cyan)",
-              width: 18,
-              height: 18,
-            }}
-          />
-        ) : (
-          "\u25B6"
-        )}
-      </button>
-    ),
+  const changeBackend = (nextBackend: AgentBackendId): void => {
+    const nextCatalog = catalogForBackend(nextBackend);
+    setBackend(nextBackend);
+    setSelection(
+      defaultSelectionForModel(nextCatalog, nextCatalog.defaultModelId),
+    );
   };
 
   return (
-    <div className="shrink-0 border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-lg py-md max-768:border-border-default max-768:bg-[var(--cc-bg-base-a60)] max-768:px-sm max-768:py-xs">
+    <div className="shrink-0 border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-sm py-xs">
       <div className="relative flex flex-col gap-sm">
         <textarea
-          className="prompt-textarea"
+          className="prompt-textarea min-h-11 max-h-[120px]"
           placeholder={
             isReadOnly
               ? "Session is merged and read-only"
-              : `Send a prompt to ${backend === "codex" ? "Codex" : "Claude"}...`
+              : `Send a prompt to ${backendLabel(backend)}...`
           }
           rows={1}
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          style={{ minHeight: 44, maxHeight: 120 }}
+          onChange={(event) => setText(event.target.value)}
           disabled={isReadOnly}
         />
-        <MobilePromptToolbar {...props} />
+        <MobilePromptToolbar
+          modelCatalog={catalogUnavailable ? null : catalog}
+          modelSelection={selection}
+          modelSelectionBlockedReason={
+            catalogUnavailable
+              ? "The project-effective model catalog is unavailable."
+              : null
+          }
+          onModelSelectionChange={setSelection}
+          backend={backend}
+          backendLocked={backendLocked}
+          onSelectBackend={changeBackend}
+          onAttach={fn()}
+          attachDisabled={attachDisabled}
+          debugActive={debug}
+          debugSupported
+          onToggleDebug={() => setDebug((current) => !current)}
+          mcpRow={
+            <McpRowStub
+              enabled={mcpEnabledCount}
+              total={mcpTotalCount}
+              hasOverrides={mcpHasOverrides}
+            />
+          }
+          isReadOnly={isReadOnly}
+          isBusy={isBusy}
+          voiceButton={
+            <VoiceRecordButton
+              isRecording={isRecording}
+              isProcessing={false}
+              elapsedTime={isRecording ? 5 : 0}
+              isAvailable={voiceAvailable}
+              toggleRecording={fn()}
+              disabled={sending}
+            />
+          }
+          sendButton={
+            <button
+              type="button"
+              className={SEND_BUTTON_CLASS}
+              data-busy={sending}
+              disabled={
+                (!text.trim() && !sending) ||
+                isReadOnly ||
+                isRecording ||
+                catalogUnavailable
+              }
+              title={
+                catalogUnavailable
+                  ? "The project-effective model catalog is unavailable."
+                  : sending
+                    ? "Session is busy"
+                    : "Send prompt"
+              }
+            >
+              {sending ? <Spinner size="sm" tone="inherit" /> : "\u25B6"}
+            </button>
+          }
+        />
       </div>
     </div>
   );
@@ -248,22 +204,13 @@ const meta = {
   title: "Mobile/MobilePromptToolbar",
   component: DemoToolbar,
   parameters: {
+    a11y: { test: "error" },
     viewport: { defaultViewport: "mobile1" },
     layout: "fullscreen",
   },
   decorators: [
     (Story) => (
-      <div
-        style={{
-          maxWidth: 390,
-          margin: "0 auto",
-          minHeight: "100dvh",
-          background: "var(--bg-base)",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "flex-end",
-        }}
-      >
+      <div className="mx-auto flex min-h-dvh max-w-[390px] flex-col justify-end bg-bg-base">
         <Story />
       </div>
     ),
@@ -273,134 +220,43 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Default mobile prompt toolbar — Opus + XHigh chip with rainbow border. */
-export const Default: Story = {};
+/** Cursor's primary reasoning value is visible in the chip; the sheet exposes every advanced parameter. */
+export const FullCursorParameters: Story = {};
 
-/** Tap the chip to open the combined Model + Reasoning sheet. */
-export const ChipOpen: Story = {
-  parameters: {
-    docs: {
-      description: {
-        story:
-          "Tap the **Opus · XHigh** chip to open the combined model and reasoning level sheet.",
-      },
-    },
-  },
+/** Tap the model chip to inspect draft validation and atomic Apply/Cancel behavior. */
+export const ModelOptionsSheet: Story = {};
+
+/** Tap + for attachments, backend switching, debug, and MCP controls. */
+export const MoreSheet: Story = {};
+
+export const ClaudeEffortOnly: Story = {
+  args: { initialBackend: "claude", initialModel: "opus" },
 };
 
-/** Tap the + button to open the More sheet with attach, backend, debug, MCP. */
-export const MoreOpen: Story = {
-  parameters: {
-    docs: {
-      description: {
-        story:
-          "Tap the **+** button to open the More sheet (attach, backend, debug, MCP).",
-      },
-    },
-  },
+export const CodexReasoningAndFast: Story = {
+  args: { initialBackend: "codex", initialModel: "gpt-5.6-sol" },
 };
 
-/** Backend lock state — once a conversation has started, Claude/Codex is fixed. */
-export const BackendLocked: Story = {
-  args: {
-    backendLocked: true,
-  },
+export const CatalogUnavailable: Story = {
+  args: { catalogUnavailable: true },
 };
 
-/** Codex backend selected. Models list switches automatically. */
-export const CodexBackend: Story = {
-  args: {
-    initialBackend: "codex",
-    initialModel: "gpt-5.5",
-  },
-};
-
-/** Codex Fast mode selected in the Speed section of prompt settings. */
-export const CodexFastMode: Story = {
-  args: {
-    initialBackend: "codex",
-    initialModel: "gpt-5.5",
-    initialFastMode: true,
-  },
-};
-
-/** Reasoning unsupported — Haiku has no effort levels; chip shows only the model. */
-export const ReasoningUnavailable: Story = {
-  args: {
-    initialModel: "haiku",
-    initialEffort: "high",
-  },
-};
-
-/** Sonnet — only Low/Medium/High are listed. Switch to Opus to unlock XHigh/Max. */
-export const SonnetReducedLevels: Story = {
-  args: {
-    initialModel: "sonnet",
-    initialEffort: "high",
-  },
-};
-
-/** Debug mode active — amber dot in chip and on the row. */
-export const DebugOn: Story = {
-  args: {
-    debugActive: true,
-  },
-};
-
-/** Sending state — chip is disabled and send shows a spinner. */
-export const Sending: Story = {
-  args: {
-    sending: true,
-    isBusy: true,
-  },
-};
-
-/** Recording — voice button shows a square + timer. */
-export const Recording: Story = {
-  args: {
-    isRecording: true,
-  },
-};
-
-/** Read-only session — every interactive element is disabled. */
-export const ReadOnly: Story = {
-  args: {
-    isReadOnly: true,
-  },
-};
-
-/** No MCP servers configured — row shows the empty state copy. */
+export const BackendLocked: Story = { args: { backendLocked: true } };
+export const DebugOn: Story = { args: { debugActive: true } };
+export const Sending: Story = { args: { sending: true, isBusy: true } };
+export const Recording: Story = { args: { isRecording: true } };
+export const ReadOnly: Story = { args: { isReadOnly: true } };
 export const NoMcpServers: Story = {
-  args: {
-    mcpEnabledCount: 0,
-    mcpTotalCount: 0,
-  },
+  args: { mcpEnabledCount: 0, mcpTotalCount: 0 },
 };
-
-/** MCP overrides at the conversation level. */
 export const McpOverrides: Story = {
-  args: {
-    mcpEnabledCount: 1,
-    mcpTotalCount: 3,
-    mcpHasOverrides: true,
-  },
+  args: { mcpEnabledCount: 1, mcpTotalCount: 3, mcpHasOverrides: true },
 };
 
-/** Narrow Galaxy-style viewport (360px) — controls still fit. */
 export const VeryNarrow: Story = {
   decorators: [
     (Story) => (
-      <div
-        style={{
-          maxWidth: 360,
-          margin: "0 auto",
-          minHeight: "100dvh",
-          background: "var(--bg-base)",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "flex-end",
-        }}
-      >
+      <div className="mx-auto flex min-h-dvh max-w-[360px] flex-col justify-end bg-bg-base">
         <Story />
       </div>
     ),

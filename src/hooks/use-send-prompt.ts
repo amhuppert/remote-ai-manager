@@ -16,8 +16,7 @@ import {
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import { consumePromptStream } from "@/lib/prompt/stream-transport";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { QueueEnqueueResponse } from "@/lib/prompt/schemas";
@@ -34,18 +33,17 @@ export interface SendPromptHandle {
   send: (
     text: string,
     currentMessageCount: number,
-    modelId?: string,
+    modelSelection?: BackendModelSelection,
     images?: ImagePayload[],
-    effort?: EffortLevel,
     backend?: AgentBackendId,
     submittedPendingPromptText?: string,
-    codexFastMode?: boolean,
   ) => Promise<void>;
   /** Queue a message into a running conversation. */
   queue: (
     text: string,
     images?: ImagePayload[],
     submittedPendingPromptText?: string,
+    modelSelection?: BackendModelSelection,
   ) => Promise<void>;
   /** Abort the in-flight SSE stream (client-side only). */
   abortClient: () => void;
@@ -84,12 +82,10 @@ export function useSendPrompt(
     async (
       text: string,
       currentMessageCount: number,
-      modelId?: string,
+      modelSelection?: BackendModelSelection,
       images?: ImagePayload[],
-      effort?: EffortLevel,
       backend?: AgentBackendId,
       submittedPendingPromptText?: string,
-      codexFastMode?: boolean,
     ) => {
       const trimmed = text.trim();
       const hasImages = images && images.length > 0;
@@ -125,15 +121,8 @@ export function useSendPrompt(
           : userContent;
 
       // 1. Set optimistic state via Zustand
-      const agentSettings = {
-        ...(modelId !== undefined ? { model: modelId } : {}),
-        ...(effort !== undefined ? { effort } : {}),
-        ...(backend !== undefined &&
-        backendSupportsFastMode(backend) &&
-        codexFastMode !== undefined
-          ? { codexFastMode }
-          : {}),
-      };
+      const agentSettings =
+        modelSelection === undefined ? {} : { modelSelection };
       submitPrompt(
         conversationId,
         displayContent,
@@ -156,15 +145,9 @@ export function useSendPrompt(
           body: JSON.stringify({
             prompt: trimmed,
             submittedPendingPromptText,
-            modelId,
-            effort,
+            modelSelection,
             images: hasImages ? images : undefined,
             backend,
-            ...(backend !== undefined &&
-            backendSupportsFastMode(backend) &&
-            codexFastMode !== undefined
-              ? { codexFastMode }
-              : {}),
           }),
           signal: controller.signal,
         });
@@ -274,6 +257,7 @@ export function useSendPrompt(
       text: string,
       images?: ImagePayload[],
       submittedPendingPromptText?: string,
+      modelSelection?: BackendModelSelection,
     ) => {
       // No gate on the tab-local `sending` flag here: a running turn is not
       // always one this tab started (drained next-turn delivery, reload,
@@ -309,6 +293,7 @@ export function useSendPrompt(
             text: trimmed || undefined,
             submittedPendingPromptText,
             images: hasImages ? images : undefined,
+            modelSelection,
           }),
         });
       } catch (e) {

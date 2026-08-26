@@ -52,7 +52,10 @@ const validatorConfig: ValidatorAssignment = {
   profile: { tier: "builtin" as const, id: "general-reviewer" },
   strategy: "conversation" as const,
   authority: "blocking",
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  agent: {
+    backend: "claude",
+    modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+  },
   continuity: { enabled: false },
 };
 

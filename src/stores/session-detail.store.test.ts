@@ -135,15 +135,17 @@ describe("session-detail.store — mobile sidebar slice", () => {
 describe("session-detail.store — optimistic agent settings stamps", () => {
   beforeEach(resetStore);
 
-  it("stamps the optimistic user row and the streaming assistant row with the turn's model/effort", () => {
+  it("stamps optimistic user and assistant rows with the turn's complete model selection", () => {
+    const modelSelection = {
+      modelId: "fable",
+      parameters: { effort: "max" },
+    };
     useSessionDetailStore.getState().submitPrompt(A, textBlock("hello"), 0, {
-      model: "fable",
-      effort: "max",
+      modelSelection,
     });
     expect(inFlightFor(A).optimisticMessages[0]).toMatchObject({
       role: "user",
-      model: "fable",
-      effort: "max",
+      modelSelection,
     });
 
     useSessionDetailStore
@@ -152,25 +154,23 @@ describe("session-detail.store — optimistic agent settings stamps", () => {
         A,
         textBlock("hello"),
         textBlock("partial answer"),
-        { model: "fable", effort: "max" },
+        { modelSelection },
       );
     const messages = inFlightFor(A).optimisticMessages;
     expect(messages[1]).toMatchObject({
       role: "assistant",
-      model: "fable",
-      effort: "max",
+      modelSelection,
     });
   });
 
-  it("leaves optimistic rows unstamped when the turn has no explicit model/effort", () => {
+  it("leaves optimistic rows unstamped when the turn has no explicit selection", () => {
     useSessionDetailStore.getState().submitPrompt(A, textBlock("hello"), 0);
     useSessionDetailStore
       .getState()
       .receiveStreamContent(A, textBlock("hello"), textBlock("partial answer"));
     const messages = inFlightFor(A).optimisticMessages;
-    expect(messages[0]).not.toHaveProperty("model");
-    expect(messages[1]).not.toHaveProperty("model");
-    expect(messages[1]).not.toHaveProperty("effort");
+    expect(messages[0]).not.toHaveProperty("modelSelection");
+    expect(messages[1]).not.toHaveProperty("modelSelection");
   });
 });
 

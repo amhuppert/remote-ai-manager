@@ -5,9 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
-/** Open the given subsection's ModelSelector and pick the option whose label
- * starts with `labelPrefix` (Radix renders options only while the listbox is
- * open; they portal to document.body and carry `data-testid`). */
+/** Open the given container's catalog model select and pick a visible option. */
 async function pickModel(
   user: ReturnType<typeof userEvent.setup>,
   subsection: HTMLElement,
@@ -18,7 +16,7 @@ async function pickModel(
   ) as HTMLElement;
   await user.click(trigger);
   const option = screen
-    .getAllByTestId("model-selector-option")
+    .getAllByRole("option")
     .find((o) => (o.textContent ?? "").startsWith(labelPrefix));
   expect(option, `no model option "${labelPrefix}"`).toBeTruthy();
   await user.click(option!);
@@ -46,17 +44,26 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
     defaultAgentBackend: "claude",
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 3_600_000,
       },
       codex: {
-        fastMode: false,
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: null,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     maxConcurrentQueries: 3,
     preMergeTimeoutMs: 300_000,
@@ -186,11 +193,8 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen.getByRole("heading", { name: /Agent backends/i }),
     ).toBeInTheDocument();
     expect(screen.getByText("Default backend")).toBeVisible();
-    expect(screen.getByText("Claude model")).toBeVisible();
-    expect(screen.getByText("Codex model")).toBeVisible();
-    expect(
-      screen.getByRole("switch", { name: "Codex fast mode" }),
-    ).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("Claude model selection")).toBeVisible();
+    expect(screen.getByText("Codex model selection")).toBeVisible();
     expect(
       screen.getByRole("tab", { name: "Agent backends" }).className,
     ).toContain("max-768:min-h-[var(--touch-target-min)]");
@@ -211,16 +215,27 @@ describe("ConfigPage — Workflow Defaults", () => {
           ...fullConfigData.config.agentBackends,
           codex: {
             ...fullConfigData.config.agentBackends.codex,
-            model: "gpt-5.4-mini",
+            modelSelection: {
+              modelId: "gpt-5.4-mini",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
         },
       },
       raw: {
         baseDir: "/home/user/projects",
         branchPrefix: "feature",
-        agentBackends: { codex: { model: "gpt-5.4-mini" } },
+        agentBackends: {
+          codex: {
+            modelSelection: {
+              modelId: "gpt-5.4-mini",
+              parameters: { reasoning: "high", fast: "false" },
+            },
+          },
+        },
       },
     });
+    const user = userEvent.setup();
     await renderConfigPage();
     selectSettingsTab("Agent backends");
 
@@ -233,14 +248,20 @@ describe("ConfigPage — Workflow Defaults", () => {
       )!,
     );
     const claudeModelField = screen
-      .getByText("Claude model")
-      .closest('[data-field="agentBackends.claude.model"]')!;
+      .getByText("Claude model selection")
+      .closest('[data-field="agentBackends.claude.modelSelection"]')!;
+    await pickModel(user, claudeModelField as HTMLElement, "Sonnet");
+    const codexModelField = screen
+      .getByText("Codex model selection")
+      .closest('[data-field="agentBackends.codex.modelSelection"]')!;
     fireEvent.click(
-      [...claudeModelField.querySelectorAll("button")].find(
-        (button) => button.textContent === "Sonnet",
+      codexModelField.querySelector('[role="switch"][aria-label="Fast mode"]')!,
+    );
+    fireEvent.click(
+      [...codexModelField.querySelectorAll("button")].find(
+        (button) => button.textContent === "Apply",
       )!,
     );
-    fireEvent.click(screen.getByRole("switch", { name: "Codex fast mode" }));
     fireEvent.click(screen.getByRole("button", { name: /Save changes/i }));
 
     await vi.waitFor(() =>
@@ -251,24 +272,31 @@ describe("ConfigPage — Workflow Defaults", () => {
       branchPrefix: "feature",
       defaultAgentBackend: "codex",
       agentBackends: {
-        claude: { model: "sonnet" },
-        codex: { fastMode: true, model: "gpt-5.4-mini" },
+        claude: {
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "high" },
+          },
+        },
+        codex: {
+          modelSelection: {
+            modelId: "gpt-5.4-mini",
+            parameters: { reasoning: "high", fast: "true" },
+          },
+        },
       },
     });
   });
 
   it("reverts unsaved backend profile edits", async () => {
+    const user = userEvent.setup();
     await renderConfigPage();
     selectSettingsTab("Agent backends");
 
     const claudeModelField = screen
-      .getByText("Claude model")
-      .closest('[data-field="agentBackends.claude.model"]')!;
-    fireEvent.click(
-      [...claudeModelField.querySelectorAll("button")].find(
-        (button) => button.textContent === "Sonnet",
-      )!,
-    );
+      .getByText("Claude model selection")
+      .closest('[data-field="agentBackends.claude.modelSelection"]')!;
+    await pickModel(user, claudeModelField as HTMLElement, "Sonnet");
     expect(screen.getByText(/unsaved change/i)).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Revert" }));
@@ -492,7 +520,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(implementer.textContent).toContain("MODIFIED");
   });
 
-  it("switching the implementer model to Haiku does not crash and disables effort editing", async () => {
+  it("switching the implementer model to Haiku omits unsupported parameters", async () => {
     const user = userEvent.setup();
     const { container } = await renderConfigPage();
     expandWorkflowDefaults();
@@ -508,14 +536,9 @@ describe("ConfigPage — Workflow Defaults", () => {
         ?.textContent,
     ).toBe("Haiku");
 
-    const effortTrigger = implementer.querySelector(
-      '[data-testid="effort-selector-trigger"]',
-    ) as HTMLButtonElement;
-    expect(effortTrigger).toBeDisabled();
     expect(
-      implementer.querySelector('[data-testid="effort-selector-label"]')
-        ?.textContent,
-    ).toBe("Unavailable");
+      implementer.querySelector('[role="combobox"][aria-label="Effort"]'),
+    ).toBeNull();
   });
 
   it("save writes only the changed blocks (unchanged workflow-defaults blocks not written)", async () => {
@@ -543,22 +566,25 @@ describe("ConfigPage — Workflow Defaults", () => {
     const defaults = savedConfig().workflowDefaults;
     expect(defaults).toEqual({
       implementer: expect.objectContaining({
-        agent: expect.objectContaining({ model: "sonnet" }),
+        agent: expect.objectContaining({
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "high" },
+          },
+        }),
       }),
     });
   });
 
   it("saves only the changed compaction field after editing the Compaction section", async () => {
+    const user = userEvent.setup();
     const { container } = await renderConfigPage();
     selectSettingsTab(/Compaction/i);
 
-    const effortField = container.querySelector(
-      '[data-field="compaction.effort"]',
+    const conversationSelection = container.querySelector(
+      '[data-field="compaction.conversationModelSelection"]',
     ) as HTMLElement;
-    const highBtn = [...effortField.querySelectorAll("button")].find(
-      (b) => b.textContent === "high",
-    ) as HTMLButtonElement;
-    fireEvent.click(highBtn);
+    await pickModel(user, conversationSelection, "Opus 5");
 
     const saveBtn = screen.getByRole("button", {
       name: /Save Changes/i,
@@ -568,7 +594,12 @@ describe("ConfigPage — Workflow Defaults", () => {
     await vi.waitFor(() =>
       expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
     );
-    expect(savedConfig().compaction).toEqual({ effort: "high" });
+    expect(savedConfig().compaction).toEqual({
+      conversationModelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+    });
   });
 
   it("marks the Plan repair sub-section modified and saves the full block after disabling it", async () => {

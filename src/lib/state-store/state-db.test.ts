@@ -25,6 +25,7 @@ import {
   publishSchemaCompatibilityBarrier,
   schemaCompatibilityBarrierPath,
 } from "./schema-compatibility";
+import { NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION } from "./migrations/0034-native-sdd-attention-citations";
 
 afterEach(() => {
   _setStateDbBeforeLockedInitializationHookForTesting(null);
@@ -275,11 +276,14 @@ describe("state-db schema initialization", () => {
       expect(
         JSON.parse(
           readFileSync(
-            schemaCompatibilityBarrierPath(tempDir, KNOWN_SCHEMA_VERSION),
+            schemaCompatibilityBarrierPath(
+              tempDir,
+              NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION,
+            ),
             "utf8",
           ),
         ),
-      ).toEqual({ version: KNOWN_SCHEMA_VERSION });
+      ).toEqual({ version: NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION });
       upgraded.close();
 
       const reopened = _createTestDbAtPath(dbPath);
@@ -1182,8 +1186,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 11 after the Native SDD attention/citation cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(11);
+  it("this build understands schema version 12 after the generalized model-selection cutover", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(12);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

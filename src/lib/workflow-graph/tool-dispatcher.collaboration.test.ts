@@ -14,7 +14,13 @@ function resolvedConfigFixture(): ResolvedCollaborationConfig {
   return {
     enabled: { value: true, source: "global" },
     secondAgent: {
-      value: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
+      value: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        },
+      },
       source: "global",
     },
     negotiationRounds: { value: 4, source: "global" },

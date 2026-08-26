@@ -15,8 +15,10 @@ import {
 
 const AGENT = {
   backend: "claude",
-  model: "opus",
-  reasoningEffort: "medium",
+  modelSelection: {
+    modelId: "opus",
+    parameters: { effort: "medium" },
+  },
 } as const;
 
 function composeFrom(

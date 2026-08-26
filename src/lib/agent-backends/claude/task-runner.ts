@@ -33,10 +33,6 @@ import {
   toRawTranscriptEntries,
   type AgentTranscriptEntry,
 } from "../transcript";
-import {
-  claudeEffortLevelSchema,
-  type ClaudeEffortLevel,
-} from "@/lib/agent-backends/schemas";
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/shared/sdk-env";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -49,6 +45,11 @@ import {
   buildClaudeFsWriteEnvelope,
   type ClaudeFsWriteEnvelope,
 } from "./fs-write-envelope";
+import {
+  resolveClaudeModelSelection,
+  type ResolvedClaudeModelSelection,
+} from "./model-selection";
+import { ModelSelectionPolicyError } from "../model-selection";
 
 const logger = createLogger("claude:task-runner");
 const claudeFailureClassifier = createClaudeFailureClassifier();
@@ -209,6 +210,31 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         ? this.deps.getServerUrl()
         : null;
 
+    let resolvedModelSelection: ResolvedClaudeModelSelection;
+    try {
+      resolvedModelSelection = resolveClaudeModelSelection(
+        input.modelSelection,
+      );
+    } catch (cause) {
+      const error = getErrorMessage(cause);
+      logger.error("claude-task-runner.invalid_model_selection", {
+        workingDirectory: input.workingDirectory,
+        modelId: input.modelSelection.modelId,
+        issues:
+          cause instanceof ModelSelectionPolicyError ? cause.issues : null,
+      });
+      return {
+        ...resolveTaskContinuation(
+          input.resumeRef?.backend === "claude" ? input.resumeRef : null,
+          error,
+        ),
+        text: null,
+        usage: null,
+        error,
+        timedOut: false,
+      };
+    }
+
     logger.info("claude-task-runner.start", {
       workingDirectory: input.workingDirectory,
       hasResume: !!input.resumeRef,
@@ -255,31 +281,6 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
         requestedWorkingDirectory: input.workingDirectory,
         effectiveWorkingDirectory: workingDirectory,
       });
-    }
-
-    let validatedReasoningEffort: ClaudeEffortLevel | undefined;
-    if (input.reasoningEffort !== undefined) {
-      const effortResult = claudeEffortLevelSchema.safeParse(
-        input.reasoningEffort,
-      );
-      if (!effortResult.success) {
-        const error = `Invalid Claude reasoning effort: "${input.reasoningEffort}"`;
-        logger.error("claude-task-runner.invalid_reasoning_effort", {
-          workingDirectory: input.workingDirectory,
-          reasoningEffort: input.reasoningEffort,
-        });
-        return {
-          ...resolveTaskContinuation(
-            input.resumeRef?.backend === "claude" ? input.resumeRef : null,
-            error,
-          ),
-          text: null,
-          usage: null,
-          error,
-          timedOut: false,
-        };
-      }
-      validatedReasoningEffort = effortResult.data;
     }
 
     // Cannot resume a different backend's session
@@ -483,9 +484,9 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           ...(isolatedOneShot
             ? { maxTurns: 1, tools: [], strictMcpConfig: true }
             : {}),
-          ...(input.modelId ? { model: input.modelId } : {}),
-          ...(validatedReasoningEffort
-            ? { effort: validatedReasoningEffort as Options["effort"] }
+          model: resolvedModelSelection.modelId,
+          ...(resolvedModelSelection.effort
+            ? { effort: resolvedModelSelection.effort as Options["effort"] }
             : {}),
           resume: resumeSessionId,
           persistSession: !isolatedOneShot,

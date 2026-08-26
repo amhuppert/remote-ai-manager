@@ -96,6 +96,10 @@ function harness(overrides: Partial<ProjectQueueRouteDeps> = {}): Harness {
   let nextId = 0;
 
   const deps: ProjectQueueRouteDeps = {
+    admitModelSelection: async ({ modelSelection }) => ({
+      ok: true,
+      modelSelection,
+    }),
     resolveProjectPath: async (name) => (name === "demo" ? "/repo" : null),
     getProjectDisplayName: () => "demo",
     getProjectConversation: async (_projectPath, id) => store.get(id) ?? null,

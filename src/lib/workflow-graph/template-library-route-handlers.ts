@@ -133,6 +133,7 @@ export function createTemplateLibraryRouteHandlers(
         documentScope: { kind: "global" },
         globalValidation: globalConfig.validation,
         workflowDefaults: globalConfig.workflowDefaults,
+        agentBackends: globalConfig.agentBackends,
         assignmentReferences,
       },
     );
@@ -185,6 +186,7 @@ export function createTemplateLibraryRouteHandlers(
         documentScope: { kind: "global" },
         globalValidation: globalConfig.validation,
         workflowDefaults: globalConfig.workflowDefaults,
+        agentBackends: globalConfig.agentBackends,
         assignmentReferences,
       },
     );
@@ -229,6 +231,7 @@ export function createTemplateLibraryRouteHandlers(
           documentScope: { kind: "global" },
           globalValidation: globalConfig.validation,
           workflowDefaults: globalConfig.workflowDefaults,
+          agentBackends: globalConfig.agentBackends,
           assignmentReferences,
         });
       },

@@ -23,6 +23,7 @@ import type {
 } from "@/lib/agent-backends/task";
 import type { StructuredOutputFormat } from "./types";
 import type { TaskRunResult, TaskRunUsage } from "./execute-workflow-task-run";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 const logger = createLogger("conversation.execute-fresh-task-run");
 
@@ -44,8 +45,7 @@ const DEFAULT_FRESH_TASK_TIMEOUT_MS = 900_000;
 
 export interface FreshTurnAgentIdentity {
   backend: AgentBackendId;
-  model?: string;
-  reasoningEffort?: string;
+  modelSelection: BackendModelSelection;
 }
 
 export interface ExecuteFreshTaskRunInput {
@@ -102,7 +102,12 @@ async function defaultResolveIdentity(input: {
       `No conversation found for session ${input.projectPath}::${input.sessionName}; cannot resolve an agent identity for a fresh task run`,
     );
   }
-  return { backend: record.agentBackend };
+  const { readConfig } = await import("@/lib/config/loader");
+  const config = await readConfig();
+  return {
+    backend: record.agentBackend,
+    modelSelection: config.agentBackends[record.agentBackend].modelSelection,
+  };
 }
 
 function toTaskRunResult(
@@ -189,10 +194,7 @@ export async function executeFreshTaskRun(
     ...(input.systemInstructions !== undefined
       ? { systemInstructions: [input.systemInstructions] }
       : {}),
-    ...(identity.model !== undefined ? { modelId: identity.model } : {}),
-    ...(identity.reasoningEffort !== undefined
-      ? { reasoningEffort: identity.reasoningEffort }
-      : {}),
+    modelSelection: identity.modelSelection,
     ...(input.outputFormat !== undefined
       ? { outputSchema: input.outputFormat.schema }
       : {}),

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, act, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderWithQuery } from "@/test/component-mocks";
+import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import ConversationWorkspace from "@/features/session/ConversationWorkspace";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { ApiCallError } from "@/lib/api/errors";
@@ -11,6 +11,9 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type { SessionDiff } from "@/lib/git/schemas";
 import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import type { HotkeyInvocation } from "@/lib/hotkeys/dispatcher";
 import type { HotkeyId } from "@/lib/shared/hotkeys";
@@ -572,22 +575,53 @@ beforeEach(() => {
 });
 
 const DEFAULT_BACKEND_SELECTIONS: BackendSelectionDefaultsById = {
-  claude: { modelId: "sonnet", effort: "high" },
-  codex: { modelId: "gpt-5.6-sol", effort: "high" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "sonnet", parameters: { effort: "high" } },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    parameters: { reasoning: "high", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
 
 function renderPage(props?: {
   backendDefaults?: BackendSelectionDefaultsById;
 }) {
+  const backendDefaults = props?.backendDefaults ?? DEFAULT_BACKEND_SELECTIONS;
+  const queryClient = createTestQueryClient();
+  const backends: AgentBackendId[] = ["claude", "codex", "cursor"];
+  queryClient.setQueryData(
+    backendCatalogKeys.projectModelOptions("repo"),
+    backends.map((backend) => {
+      const defaultSelection = backendDefaults[backend];
+      const modelCatalog = getConfiguredBackendModelCatalog(
+        backend,
+        defaultSelection,
+      );
+      return {
+        backend,
+        models: modelCatalog.models.map((model) => ({
+          id: model.id,
+          label: model.label,
+          description: model.description,
+          effortLevels: [],
+        })),
+        defaultModelId: defaultSelection.modelId,
+        source: "catalog" as const,
+        modelCatalog,
+        defaultSelection,
+        diagnostics: [],
+      };
+    }),
+  );
   return renderWithQuery(
     <ConversationWorkspace
       projectName="repo"
       sessionName="test-session"
       conversationId="conv-1"
-      backendDefaults={props?.backendDefaults ?? DEFAULT_BACKEND_SELECTIONS}
+      backendDefaults={backendDefaults}
       {...props}
     />,
+    queryClient,
   );
 }
 
@@ -849,9 +883,9 @@ describe("ConversationWorkspace", () => {
   describe("backend selection defaults", () => {
     it("uses the projected effort as the initial effort", () => {
       renderPage();
-      const effortTrigger = document.querySelector(
-        '[data-testid="effort-selector-trigger"]',
-      );
+      const effortTrigger = screen.getAllByRole("combobox", {
+        name: "Effort",
+      })[0];
       expect(effortTrigger).toBeTruthy();
       expect(effortTrigger!.getAttribute("title")).toContain("High");
     });
@@ -860,13 +894,16 @@ describe("ConversationWorkspace", () => {
       renderPage({
         backendDefaults: {
           ...DEFAULT_BACKEND_SELECTIONS,
-          claude: { modelId: "sonnet", effort: "low" },
-          cursor: { modelId: "composer-2.5", effort: "high" },
+          claude: { modelId: "sonnet", parameters: { effort: "low" } },
+          cursor: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
         },
       });
-      const effortTrigger = document.querySelector(
-        '[data-testid="effort-selector-trigger"]',
-      );
+      const effortTrigger = screen.getAllByRole("combobox", {
+        name: "Effort",
+      })[0];
       expect(effortTrigger).toBeTruthy();
       expect(effortTrigger!.getAttribute("title")).toContain("Low");
     });
@@ -1417,7 +1454,10 @@ describe("ConversationWorkspace", () => {
       renderPage({
         backendDefaults: {
           ...DEFAULT_BACKEND_SELECTIONS,
-          codex: { modelId: "gpt-5.6-sol", effort: "xhigh" },
+          codex: {
+            modelId: "gpt-5.6-sol",
+            parameters: { reasoning: "xhigh", fast: "false" },
+          },
         },
       });
 
@@ -1428,9 +1468,11 @@ describe("ConversationWorkspace", () => {
       fireEvent.click(screen.getAllByTitle("Send prompt")[0]!);
 
       expect(sendPromptMock).toHaveBeenCalledTimes(1);
-      expect(sendPromptMock.mock.calls[0]?.[2]).toBe("gpt-5.6-sol");
-      expect(sendPromptMock.mock.calls[0]?.[4]).toBe("xhigh");
-      expect(sendPromptMock.mock.calls[0]?.[5]).toBe("codex");
+      expect(sendPromptMock.mock.calls[0]?.[2]).toEqual({
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "xhigh", fast: "false" },
+      });
+      expect(sendPromptMock.mock.calls[0]?.[4]).toBe("codex");
     });
 
     // A cached conversation initializes backend and model as one selection so
@@ -1456,13 +1498,20 @@ describe("ConversationWorkspace", () => {
 
       expect(sendPromptMock).toHaveBeenCalledTimes(1);
       const callArgs = sendPromptMock.mock.calls[0]!;
-      const submittedModel = callArgs[2] as string;
-      const submittedBackend = callArgs[5] as string;
+      const submittedSelection = callArgs[2] as {
+        modelId: string;
+        parameters: Record<string, string>;
+      };
+      const submittedBackend = callArgs[4] as string;
 
       expect(submittedBackend).toBe("codex");
-      expect(submittedModel).not.toBe("sonnet");
-      expect(submittedModel).not.toBe("opus");
-      expect(submittedModel).not.toBe("haiku");
+      expect(submittedSelection.modelId).not.toBe("sonnet");
+      expect(submittedSelection.modelId).not.toBe("opus");
+      expect(submittedSelection.modelId).not.toBe("haiku");
+      expect(submittedSelection.parameters).toEqual({
+        reasoning: "high",
+        fast: "false",
+      });
     });
   });
 });

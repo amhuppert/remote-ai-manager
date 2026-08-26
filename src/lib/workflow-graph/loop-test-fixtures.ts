@@ -60,8 +60,10 @@ export const NOW = "2026-08-04T00:00:00.000Z";
 export const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   implementer: makeSeededImplementerAssignment({
     backend: "claude",
-    model: "opus",
-    reasoningEffort: "medium",
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "medium" },
+    },
   }),
   contextValidator: makeSeededValidatorCohort({
     enabled: false,
@@ -78,7 +80,10 @@ export const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   collaboration: {
     enabled: { value: true, source: "global" },
     secondAgent: {
-      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      value: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
       source: "global",
     },
     negotiationRounds: { value: 3, source: "global" },

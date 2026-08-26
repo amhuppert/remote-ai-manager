@@ -159,7 +159,13 @@ const DORMANT_COHORT: ValidatorCohort = {
       strategy: "conversation",
       authority: "blocking",
       continuity: { enabled: true },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      agent: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+      },
     },
     {
       id: "security",
@@ -168,7 +174,13 @@ const DORMANT_COHORT: ValidatorCohort = {
       authority: "advisory",
       focus: "auth boundaries and session fixation",
       continuity: { enabled: false },
-      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agent: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     },
   ],
 };

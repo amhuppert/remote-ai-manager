@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { workflowDefinitionMutationSchema } from "./definition-schemas";
 import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
 import { criterionRecordsOf } from "./criteria/criterion-records";
+import { TEST_AGENT_BACKENDS_CONFIG } from "./test-fixtures";
 import {
   MAXIMAL_AUTHORED_LAUNCH_ACCOUNTABILITY_GROUPS,
   MAXIMAL_GRAPH_AFTER_ENVELOPE_CANARY,
@@ -46,6 +47,7 @@ describe("maximal authored launch contract", () => {
       },
       globalValidation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
       workflowDefaults: undefined,
+      agentBackends: TEST_AGENT_BACKENDS_CONFIG,
       accountabilityGroups: MAXIMAL_AUTHORED_LAUNCH_ACCOUNTABILITY_GROUPS,
     });
 

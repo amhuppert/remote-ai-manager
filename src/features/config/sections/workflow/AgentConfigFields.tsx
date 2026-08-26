@@ -1,7 +1,7 @@
-import ModelSelector from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import { effortLevelsForCatalogEntry } from "@/lib/agent-backends/catalog";
+import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
@@ -26,7 +26,10 @@ export function AgentConfigFields({
   if (!entry) {
     throw new Error(`Unknown agent backend: ${backend}`);
   }
-  const effortOptions = effortLevelsForCatalogEntry(entry, value.model);
+  const catalog = getConfiguredBackendModelCatalog(
+    value.backend,
+    value.modelSelection,
+  );
 
   const handleBackendChange = (next: AgentBackendId) => {
     if (next === value.backend) return;
@@ -39,8 +42,10 @@ export function AgentConfigFields({
     onChange(
       graphWorkflowAgentConfigSchema.parse({
         backend: next,
-        model: nextEntry.defaultModelId,
-        reasoningEffort: "medium",
+        modelSelection: defaultSelectionForModel(
+          getConfiguredBackendModelCatalog(next),
+          nextEntry.defaultModelId,
+        ),
       }),
     );
   };
@@ -66,44 +71,22 @@ export function AgentConfigFields({
       </ConfigField>
 
       <ConfigField
-        label="Model"
-        fieldPath={`${fieldPathPrefix}.model`}
+        label="Model selection"
+        fieldPath={`${fieldPathPrefix}.modelSelection`}
         isDefault={false}
         isModified={false}
       >
-        <ModelSelector
-          value={value.model}
-          backend={backend}
-          onChange={(model) => {
+        <DesktopModelSelectionControls
+          catalog={catalog}
+          selection={value.modelSelection}
+          onSelectionChange={(modelSelection) => {
             onChange(
               graphWorkflowAgentConfigSchema.parse({
                 backend,
-                model,
-                reasoningEffort: value.reasoningEffort,
+                modelSelection,
               }),
             );
           }}
-        />
-      </ConfigField>
-
-      <ConfigField
-        label="Reasoning effort"
-        fieldPath={`${fieldPathPrefix}.reasoningEffort`}
-        isDefault={false}
-        isModified={false}
-      >
-        <ReasoningLevelSelector
-          value={value.reasoningEffort}
-          availableLevels={effortOptions}
-          onChange={(level) =>
-            onChange(
-              graphWorkflowAgentConfigSchema.parse({
-                backend,
-                model: value.model,
-                reasoningEffort: level,
-              }),
-            )
-          }
         />
       </ConfigField>
     </>

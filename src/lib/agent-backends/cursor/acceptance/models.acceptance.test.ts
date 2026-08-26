@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL, resolveCursorModel } from "../model-policy";
+import { defaultSelectionForModel } from "../../model-selection";
+import type { BackendModelSelection } from "../../schemas";
+import {
+  createCursorModelCatalogFacet,
+  loadGeneratedCursorModelCatalog,
+} from "../model-catalog";
+import {
+  CURSOR_DEFAULT_MODEL,
+  validateCursorModelSelectionForProject,
+} from "../model-policy";
 import { decodeNativePayload } from "../worker/ipc";
 import type { CredentialSecret } from "./credential-scan";
 import {
@@ -9,6 +18,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -33,10 +43,38 @@ const LISTED_CUSTOM_MODEL = "composer-2";
 const PROJECT_SUPPORTED_MODELS = [CURSOR_DEFAULT_MODEL, LISTED_CUSTOM_MODEL];
 
 const REJECTED_MODEL_ID = "composer-does-not-exist-9x7";
+const GENERATED_MODEL_CATALOG = loadGeneratedCursorModelCatalog();
+const LISTED_CUSTOM_MODEL_SELECTION = defaultSelectionForModel(
+  GENERATED_MODEL_CATALOG,
+  LISTED_CUSTOM_MODEL,
+);
+const UNLISTED_MODEL_SELECTION = defaultSelectionForModel(
+  GENERATED_MODEL_CATALOG,
+  "gpt-5.6-sol",
+);
+const REJECTED_MODEL_SELECTION = {
+  modelId: REJECTED_MODEL_ID,
+  parameters: {},
+} satisfies BackendModelSelection;
+const projectModelCatalog = createCursorModelCatalogFacet({
+  loadCatalog: () => GENERATED_MODEL_CATALOG,
+  supportedModels: async () => PROJECT_SUPPORTED_MODELS,
+});
 
 let store: AcceptanceEvidenceStore;
 let secret: CredentialSecret;
 let harness: LiveHarness;
+
+function resolveModelSelection(selection: BackendModelSelection) {
+  return validateCursorModelSelectionForProject(
+    {
+      projectPath: "/cursor-acceptance",
+      selection,
+      configuredSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
+    },
+    { modelCatalog: projectModelCatalog },
+  );
+}
 
 /** Every native payload of a run, flattened — enough to answer "did the model
  *  produce this text", without reimplementing the transcript projection. */
@@ -62,42 +100,38 @@ afterAll(async () => {
 });
 
 describe("live Cursor model selection", () => {
-  it("selects the default explicitly rather than deferring to the provider", () => {
-    const resolution = resolveCursorModel({});
+  it("selects the generated default as a complete bundle", async () => {
+    const resolution = await resolveModelSelection(
+      CURSOR_ACCEPTANCE_MODEL_SELECTION,
+    );
     expect(resolution).toEqual({
       ok: true,
-      model: CURSOR_DEFAULT_MODEL,
-      source: "default",
-      supportedModels: [CURSOR_DEFAULT_MODEL],
+      selection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     });
   });
 
-  it("refuses an id absent from the project's list before any worker starts", () => {
-    const resolution = resolveCursorModel({
-      explicitSelection: "gpt-5.6-sol",
-      configuredSupportedModels: PROJECT_SUPPORTED_MODELS,
-    });
+  it("refuses a complete selection absent from the project's list before any worker starts", async () => {
+    const resolution = await resolveModelSelection(UNLISTED_MODEL_SELECTION);
     expect(resolution.ok).toBe(false);
     if (resolution.ok) throw new Error("unreachable");
-    expect(resolution.code).toBe("model_not_supported");
+    expect(resolution.code).toBe("unknown_model");
   });
 
   it("runs a live turn on a listed custom model", async () => {
-    const resolution = resolveCursorModel({
-      explicitSelection: LISTED_CUSTOM_MODEL,
-      configuredSupportedModels: PROJECT_SUPPORTED_MODELS,
-    });
+    const resolution = await resolveModelSelection(
+      LISTED_CUSTOM_MODEL_SELECTION,
+    );
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) throw new Error("unreachable");
 
     const live = await harness.startReady({
       sessionName: `model-custom-${randomUUID()}`,
-      model: resolution.model,
+      modelSelection: resolution.selection,
     });
     live.attach({
       mode: "create",
       ref: null,
-      model: resolution.model,
+      modelSelection: resolution.selection,
       mcpServers: {},
     });
     expect(
@@ -114,7 +148,7 @@ describe("live Cursor model selection", () => {
       promptText: "Reply with exactly MODEL-OK and nothing else.",
       images: [],
       structuredOutputInstruction: null,
-      model: resolution.model,
+      modelSelection: resolution.selection,
       mcpServers: {},
       forceExpirePersistedRun: false,
     });
@@ -134,7 +168,7 @@ describe("live Cursor model selection", () => {
     await store.publish({
       caseId: "model-listed-custom",
       outcome: "pass",
-      metrics: { model: resolution.model, source: resolution.source },
+      metrics: { modelSelection: JSON.stringify(resolution.selection) },
       artifacts: [],
     });
   });
@@ -148,13 +182,13 @@ describe("live Cursor model selection", () => {
     const workspace = harness.createWorkspace(`model-resume-${randomUUID()}`);
     const created = await harness.startReady({
       sessionName: workspace.name,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       workspace,
     });
     created.attach({
       mode: "create",
       ref: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
     });
     expect(
@@ -169,13 +203,13 @@ describe("live Cursor model selection", () => {
 
     const resumed = await harness.startReady({
       sessionName: workspace.name,
-      model: REJECTED_MODEL_ID,
+      modelSelection: REJECTED_MODEL_SELECTION,
       workspace,
     });
     resumed.attach({
       mode: "resume",
       ref,
-      model: REJECTED_MODEL_ID,
+      modelSelection: REJECTED_MODEL_SELECTION,
       mcpServers: {},
     });
     expect(
@@ -208,12 +242,12 @@ describe("live Cursor model selection", () => {
   it("fails bounded on an id the SDK rejects, without substituting another", async () => {
     const live = await harness.startReady({
       sessionName: `model-rejected-${randomUUID()}`,
-      model: REJECTED_MODEL_ID,
+      modelSelection: REJECTED_MODEL_SELECTION,
     });
     live.attach({
       mode: "create",
       ref: null,
-      model: REJECTED_MODEL_ID,
+      modelSelection: REJECTED_MODEL_SELECTION,
       mcpServers: {},
     });
 
@@ -239,7 +273,7 @@ describe("live Cursor model selection", () => {
         promptText: "Reply with exactly MODEL-OK and nothing else.",
         images: [],
         structuredOutputInstruction: null,
-        model: REJECTED_MODEL_ID,
+        modelSelection: REJECTED_MODEL_SELECTION,
         mcpServers: {},
         forceExpirePersistedRun: false,
       });

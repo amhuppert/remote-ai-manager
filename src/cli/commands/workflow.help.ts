@@ -955,7 +955,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl workflow live edit --file .cc/temp/live-ops.json",
         explanation:
-          'live-ops.json under .cc/temp/: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli", "operations": [ { "type": "update-context", "contextId": "verify", "implementer": { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } } ] } — take baseLiveRevision from `cctl workflow live get`',
+          'live-ops.json under .cc/temp/: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli", "operations": [ { "type": "update-context", "contextId": "verify", "implementer": { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "modelSelection": { "modelId": "opus", "parameters": { "effort": "high" } } } } } ] } — take baseLiveRevision from `cctl workflow live get`',
       },
       {
         invocation:

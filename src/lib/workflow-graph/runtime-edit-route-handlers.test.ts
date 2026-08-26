@@ -62,8 +62,10 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       profileSnapshot: makeProfileSnapshot(),
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
     },
     contextValidator: { enabled: false, assignments: [] },
@@ -79,8 +81,10 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       secondAgent: {
         value: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         source: "global",
       },

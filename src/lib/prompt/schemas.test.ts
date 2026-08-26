@@ -91,29 +91,62 @@ describe("queueEnqueueRequestSchema", () => {
       sampleFeedback,
     );
   });
+
+  it("preserves one complete model selection for the queued turn", () => {
+    expect(
+      queueEnqueueRequestSchema.parse({
+        text: "follow up",
+        modelSelection: {
+          modelId: "claude-opus-5",
+          parameters: { effort: "xhigh", thinking: "true" },
+        },
+      }).modelSelection,
+    ).toEqual({
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    });
+  });
+
+  it("rejects a partial top-level model tuple", () => {
+    expect(
+      queueEnqueueRequestSchema.safeParse({
+        text: "follow up",
+        modelId: "claude-opus-5",
+        effort: "xhigh",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("runPromptRequestSchema documentFeedback", () => {
-  it("accepts an explicit Codex fast-mode selection", () => {
+  it("accepts one complete model selection", () => {
     expect(
       runPromptRequestSchema.parse({
         prompt: "ship it",
-        codexFastMode: true,
-      }).codexFastMode,
-    ).toBe(true);
-    expect(
-      runPromptRequestSchema.parse({
-        prompt: "take the standard route",
-        codexFastMode: false,
-      }).codexFastMode,
-    ).toBe(false);
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { fast: "true", reasoning: "ultra" },
+        },
+      }).modelSelection,
+    ).toEqual({
+      modelId: "gpt-5.6-sol",
+      parameters: { fast: "true", reasoning: "ultra" },
+    });
   });
 
-  it("rejects a non-boolean Codex fast-mode selection", () => {
+  it.each([
+    "modelId",
+    "effort",
+    "reasoningEffort",
+    "codexFastMode",
+    "thinking",
+    "context",
+    "fast",
+  ])("rejects the migrated top-level field %s", (field) => {
     expect(
       runPromptRequestSchema.safeParse({
         prompt: "ship it",
-        codexFastMode: "fast",
+        [field]: field === "codexFastMode" ? true : "legacy",
       }).success,
     ).toBe(false);
   });

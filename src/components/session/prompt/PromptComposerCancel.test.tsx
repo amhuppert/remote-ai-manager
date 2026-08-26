@@ -16,7 +16,11 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+
+const modelCatalog = getStaticBackendModelCatalog("claude");
+const modelSelection = defaultSelectionForModel(modelCatalog, "sonnet");
 
 function makeQueueEntry(
   overrides: Partial<PendingQueuedMessage> & Pick<PendingQueuedMessage, "id">,
@@ -84,32 +88,34 @@ function makeProps(activeConversation: ConversationState) {
     backendLocked: false,
     selectedBackend: "claude" as const,
     onBackendChange: vi.fn(),
-    selectedModel: "sonnet",
-    onModelChange: vi.fn(),
-    selectedEffort: "medium" as const,
-    onEffortChange: vi.fn(),
-    codexFastMode: false,
-    onCodexFastModeChange: vi.fn(),
-    availableEffortLevels: ["low", "medium", "high"] satisfies EffortLevel[],
-    effortSupported: true,
+    modelCatalog,
+    modelCatalogs: {
+      claude: modelCatalog,
+      codex: getStaticBackendModelCatalog("codex"),
+      cursor: null,
+    },
+    modelSelection,
+    modelSelectionBlockedReason: null,
+    onModelSelectionChange: vi.fn(),
     hasCollabChip: false,
     effectiveCollabConfig: {
       agentTwo: {
         backend: "codex" as const,
-        model: "gpt-5.4",
-        effort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "none" as const,
     },
     collabBackendDefaults: {
-      claude: { modelId: "opus", effort: "high" as const },
+      claude: { modelId: "opus", parameters: { effort: "high" } },
       codex: {
         modelId: "gpt-5.4",
-        effort: "high" as const,
-        codexFastMode: false,
+        parameters: { reasoning: "high", fast: "false" },
       },
-      cursor: { modelId: "composer-2.5", effort: "high" as const },
+      cursor: { modelId: "composer-2.5", parameters: {} },
     },
     originatingCollabAgent: "claude" as const,
     onCollabConfigChange: vi.fn(),

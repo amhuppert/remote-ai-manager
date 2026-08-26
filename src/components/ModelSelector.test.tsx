@@ -117,6 +117,9 @@ describe("ModelSelector with project-scoped options", () => {
     ],
     defaultModelId: "composer-1",
     source: "project" as const,
+    modelCatalog: null,
+    defaultSelection: null,
+    diagnostics: [],
   };
 
   it("offers only the project's models", async () => {

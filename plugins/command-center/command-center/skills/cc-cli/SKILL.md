@@ -451,7 +451,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl ticket delete` — delete a ticket
   - `cctl ticket delete <number | project#number>`
 - `cctl ticket start` — start work on a ticket in a new session
-  - `cctl ticket start <number | project#number> --mode <agent|prepared> [--backend <claude|codex> --model <model> --effort <level>]`
+  - `cctl ticket start <number | project#number> --mode <agent|prepared> [--backend <backend>] [--model <model> [--model-param <id=value> ...]]`
 - `cctl ticket attach` — attach described context to a ticket
   - `cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"`
 - `cctl ticket attachment` — read, edit, refresh, and remove ticket attachments
@@ -1245,7 +1245,8 @@ cctl workflow live edit --file .cc/temp/live-ops.json
 #   "operations": [ { "type": "update-context", "contextId": "verify",
 #     "implementer": { "id": "implementer",
 #       "profile": { "tier": "builtin", "id": "general-implementer" },
-#       "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } } ] }
+#       "agent": { "backend": "claude", "modelSelection": {
+#         "modelId": "opus", "parameters": { "effort": "high" } } } } } ] }
 cctl workflow live resume
 ```
 
@@ -1383,13 +1384,15 @@ cctl agent cancel <runId>
 
 - `run` — start an agent run. **File-only input**: author `.cc/temp/prompt.json`
   as a JSON object `{ "backend": "codex", "prompt": "<task>" }`.
-  `backend` is required (`codex` or `claude`); optional fields are `model`
-  and `reasoning_effort` (`minimal|low|medium|high|xhigh`) plus the job extras
-  `timeoutMs` (server-side execution cap) and `workingDirectory` (defaults to
-  the session worktree; must resolve **inside** it). The agent is instructed to
-  write detailed output to files under `memory-bank/agent-runs/` and return a
-  short `summary` plus a `referenceDocuments` list — so **read the referenced
-  files**, don't rely on the summary alone.
+  `backend` is required (`codex` or `claude`). The optional `modelSelection`
+  is one complete `{ "modelId": "...", "parameters": { "...": "..." } }`
+  variant from that backend's effective catalog; omit it to use the configured
+  atomic default. Job extras are `timeoutMs` (server-side execution cap) and
+  `workingDirectory` (defaults to the session worktree; must resolve **inside**
+  it). The agent is instructed to write detailed output to files under
+  `memory-bank/agent-runs/` and return a short `summary` plus a
+  `referenceDocuments` list — so **read the referenced files**, don't rely on
+  the summary alone.
   - Without `--wait`: returns immediately with a `runId` and hints how to poll
     and cancel. The run continues server-side.
   - With `--wait`: long-polls until the run finishes and prints the result

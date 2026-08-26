@@ -627,8 +627,10 @@ function resolvedContext(
     acceptanceCriteria: `${id} is done`,
     implementer: makeSeededImplementerAssignment({
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "medium" },
+      },
     }),
     contextValidator: makeSeededValidatorCohort({
       enabled: false,

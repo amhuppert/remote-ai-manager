@@ -74,8 +74,20 @@ function resolvedConfigFixture(
     secondAgent: {
       value:
         backend === "codex"
-          ? { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" }
-          : { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+          ? {
+              backend: "codex",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "medium", fast: "false" },
+              },
+            }
+          : {
+              backend: "claude",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
+            },
       source: "global",
     },
     negotiationRounds: { value: 4, source: "global" },
@@ -410,6 +422,10 @@ describe("createWorkflowCollaboratorCaller", () => {
         throw new Error("expected task_run");
       }
       expect(req.agentCallRequest.backend).toBe("codex");
+      expect(req.agentCallRequest.modelSelection).toEqual({
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "medium", fast: "false" },
+      });
       expect(req.laneRef.laneId).toBe("agent_two");
       expect(out.agentTwoCrossReview.agent).toBe("agent_two");
       expect(out.agentTwoCrossReview.target_agent).toBe("agent_one");

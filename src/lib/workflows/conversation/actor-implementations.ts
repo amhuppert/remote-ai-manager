@@ -29,6 +29,7 @@ import type {
   ConversationBackendFactory,
   ConversationBackendTurnInput,
   ConversationBackendEvent,
+  ProjectModelSelectionValidation,
 } from "@/lib/agent-backends/conversation";
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
 import { isOrdinaryConversationRole } from "@/lib/conversations/schemas";
@@ -37,6 +38,7 @@ import type {
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowResultDelivery } from "@/lib/workflow-graph/schemas";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
@@ -72,7 +74,11 @@ import {
   classifyFailureForBackend,
   resolveFailureClassifierForBackend,
 } from "./failure-classification";
-import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+import {
+  ModelSelectionPolicyError,
+  modelSelectionKey,
+} from "@/lib/agent-backends/model-selection";
 import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
@@ -107,8 +113,7 @@ import {
 import { getDebugManifestPath } from "@/lib/debug-log/service";
 import type { ActorConfig } from "./pre-turn/resolve-model-effort";
 import {
-  resolveTurnModelEffort,
-  resolveTurnCodexFastMode,
+  resolveTurnModelSelection,
   resolveBackendTimeoutMs,
   resolveBackendStallTimeoutMs,
 } from "./pre-turn/resolve-model-effort";
@@ -176,6 +181,12 @@ export interface TurnExecutionDeps {
   getConversationBackendFactory(
     backend: AgentBackendId,
   ): ConversationBackendFactory;
+  admitConfiguredModelSelection(input: {
+    backend: AgentBackendId;
+    projectPath: string;
+    modelSelection: BackendModelSelection;
+    config?: ActorConfig;
+  }): Promise<ProjectModelSelectionValidation>;
   /**
    * Declared conversation capabilities from the backend's registered
    * descriptor. Undefined when the backend has no conversation facet. The
@@ -540,6 +551,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     alignmentServiceFactoryMod,
     ticketServiceFactoryMod,
     agentGatewayTokenMod,
+    modelSelectionAdmissionMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -564,6 +576,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/session-alignment/service-factory"),
     import("@/lib/tickets/service-factory"),
     import("@/lib/agent-gateway/token"),
+    import("@/lib/agent-backends/model-selection-admission"),
   ]);
 
   // The alignment service holds a repo bound to the live DB; construct it once
@@ -628,6 +641,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     saveTranscriptImage: transcriptImagesMod.saveTranscriptImage,
     getNextImageIndex: transcriptImagesMod.getNextImageIndex,
     getConversationBackendFactory: registryMod.getConversationBackendFactory,
+    admitConfiguredModelSelection: (input) =>
+      modelSelectionAdmissionMod.admitConfiguredModelSelection(input),
     getConversationCapabilities: (backend: AgentBackendId) =>
       registryMod.getBackendDescriptor(backend).conversation?.capabilities,
     registerBackendRuntime: runtimeRegistryMod.registerRuntime,
@@ -729,7 +744,7 @@ export function _resetActorDepsForTesting(): void {
 
 /**
  * Determine whether an existing backend runtime should be closed and recreated
- * because the model, effort level, outputFormat, or baked-in alignment charter
+ * because the model selection, outputFormat, or baked-in alignment charter
  * version changed. An alignment-version mismatch is the seam that guarantees a
  * charter change propagates to an already-running runtime (R7.3): the new
  * version is baked into the rebuilt session instructions on recreation.
@@ -738,15 +753,13 @@ export function shouldRecreateRuntime(
   runtime:
     | {
         status: string;
-        modelId: unknown;
-        reasoningEffort: unknown;
+        modelSelection: BackendModelSelection;
         outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
         alignmentVersion?: number | null;
         fsWritePolicy?: FsWritePolicy;
       }
     | undefined,
-  effectiveModel: string | undefined,
-  effectiveEffort: string | undefined,
+  effectiveModelSelection: BackendModelSelection,
   desiredOutputFormat?: {
     type: "json_schema";
     schema: Record<string, unknown>;
@@ -755,14 +768,14 @@ export function shouldRecreateRuntime(
   desiredFsWritePolicy?: FsWritePolicy,
 ): boolean {
   if (!runtime || runtime.status !== "alive") return false;
-  const modelChanged = runtime.modelId !== effectiveModel;
-  const effortChanged = runtime.reasoningEffort !== effectiveEffort;
+  const modelSelectionChanged =
+    modelSelectionKey(runtime.modelSelection) !==
+    modelSelectionKey(effectiveModelSelection);
   const outputFormatChanged = runtime.outputFormat !== desiredOutputFormat;
   const alignmentChanged =
     (runtime.alignmentVersion ?? null) !== desiredAlignmentVersion;
   return (
-    modelChanged ||
-    effortChanged ||
+    modelSelectionChanged ||
     outputFormatChanged ||
     alignmentChanged ||
     fsWritePolicyChanged(runtime.fsWritePolicy, desiredFsWritePolicy)
@@ -906,9 +919,7 @@ interface DispatchTurnViaAgentCallInput {
   backend: AgentBackendId;
   promptText: string;
   imageRefs: ConversationBackendTurnInput["imageRefs"] | undefined;
-  modelId: string | null | undefined;
-  reasoningEffort: string | undefined;
-  codexFastMode: boolean | undefined;
+  modelSelection: BackendModelSelection;
   autonomous: boolean;
   waitForBackgroundTasks: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
@@ -968,13 +979,7 @@ async function dispatchTurnViaAgentCall(
         runtime: wrappedRuntime,
         capabilityView: capabilityViewForBackend(input.backend),
         signal: input.signal,
-        ...(input.modelId != null ? { modelId: input.modelId } : {}),
-        ...(input.reasoningEffort !== undefined
-          ? { reasoningEffort: input.reasoningEffort }
-          : {}),
-        ...(input.codexFastMode !== undefined
-          ? { codexFastMode: input.codexFastMode }
-          : {}),
+        modelSelection: input.modelSelection,
         autonomous: input.autonomous,
         ...(input.waitForBackgroundTasks
           ? { waitForBackgroundTasks: true }
@@ -1236,57 +1241,120 @@ export async function executePromptForMachine(
       ? deps.safeAppendTranscriptEntryOnce(conversationId, entry, broadcastMeta)
       : safeAppendWithMeta(conversationId, entry);
 
-  // Resolve model/effort with a three-tier fallback (explicit → conversation's
-  // last-used → backend config default). A follow-up turn that carries no
-  // explicit model/effort — a drained queued message, document feedback, an
-  // alignment turn — continues on the model the conversation was already using
-  // rather than snapping to the global default. Reading the transcript is only
-  // needed when a tier below "explicit" could apply, so the common composer
-  // path (both supplied) skips it.
+  // Resolve the atomic model selection with a three-tier fallback (explicit →
+  // conversation's last-used → backend config default). Reading the transcript
+  // is only needed when a tier below "explicit" could apply.
   const priorMessages =
-    input.modelId == null ||
-    input.effort == null ||
-    (backendSupportsFastMode(input.agentBackend) && input.codexFastMode == null)
+    input.modelSelection === null
       ? await deps.readConversationMessages(input.transcriptPath ?? null)
       : [];
-  const { effectiveModel, effectiveEffort } = resolveTurnModelEffort({
+  let effectiveModelSelection = resolveTurnModelSelection({
     backend: input.agentBackend,
     config,
-    explicitModel: input.modelId,
-    explicitEffort: input.effort,
+    explicitModelSelection: input.modelSelection,
     priorMessages,
   });
-  const effectiveCodexFastMode = resolveTurnCodexFastMode({
-    backend: input.agentBackend,
-    config,
-    explicitCodexFastMode: input.codexFastMode,
-    priorMessages,
-  });
+  const lastTurnSelection =
+    input.modelSelection === null
+      ? selectLastUserTurnAgentSettings(priorMessages).modelSelection
+      : undefined;
+  const modelSelectionSourceLayer =
+    input.modelSelection !== null
+      ? "explicit"
+      : lastTurnSelection !== undefined
+        ? "last_turn"
+        : "backend_default";
   const factory = deps.getConversationBackendFactory(input.agentBackend);
 
-  if (factory.validateModelAndEffort) {
-    try {
-      factory.validateModelAndEffort({
-        modelId: effectiveModel,
-        reasoningEffort: effectiveEffort,
-      });
-    } catch (err) {
-      const errorMessage = getErrorMessage(err);
-      deps.log.warn("prompt.model_effort_validation_failed_actor", {
-        ...scopeRef,
-        backend: input.agentBackend,
-        modelId: effectiveModel,
-        reasoningEffort: effectiveEffort,
+  const buildModelSelectionFailure = async (
+    selection: BackendModelSelection,
+    code: string,
+    errorMessage: string,
+    parameterId?: string,
+  ): Promise<PromptActorResult> => {
+    deps.log.warn("model_selection.rejected", {
+      backend: input.agentBackend,
+      modelId: selection.modelId,
+      parameterIds: Object.keys(selection.parameters).sort(),
+      sourceLayer: modelSelectionSourceLayer,
+      code,
+      ...(parameterId !== undefined ? { parameterId } : {}),
+    });
+    if (input.queuedDelivery !== undefined) {
+      await deps.markQueuedFailed({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        ids: input.queuedDelivery.messageIds,
+        deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
         error: errorMessage,
-      });
-      runtimeState.streamEmit?.("error", { message: errorMessage });
-      return buildFailedTurnResult({
-        contentBlocks: [],
-        error: errorMessage,
-        continuationDisposition: "retain",
       });
     }
+    runtimeState.streamEmit?.("error", { message: errorMessage });
+    return buildFailedTurnResult({
+      contentBlocks: [],
+      error: errorMessage,
+      continuationDisposition: "retain",
+    });
+  };
+
+  if (factory.validateModelSelection) {
+    try {
+      factory.validateModelSelection(effectiveModelSelection);
+    } catch (err) {
+      const errorMessage = getErrorMessage(err);
+      const issue =
+        err instanceof ModelSelectionPolicyError ? err.issues[0] : undefined;
+      deps.log.warn("prompt.model_selection_validation_failed_actor", {
+        ...scopeRef,
+        backend: input.agentBackend,
+        modelSelection: effectiveModelSelection,
+        error: errorMessage,
+      });
+      return await buildModelSelectionFailure(
+        effectiveModelSelection,
+        issue?.code ?? "selection_invalid",
+        errorMessage,
+        issue?.parameterId,
+      );
+    }
   }
+
+  if (factory.validateProjectModelSelection) {
+    let validation;
+    try {
+      validation = await factory.validateProjectModelSelection({
+        projectPath: input.projectPath,
+        modelSelection: effectiveModelSelection,
+      });
+    } catch (err) {
+      return await buildModelSelectionFailure(
+        effectiveModelSelection,
+        "project_model_selection_validation_failed",
+        getErrorMessage(err),
+      );
+    }
+
+    if (!validation.ok) {
+      return await buildModelSelectionFailure(
+        effectiveModelSelection,
+        validation.code,
+        validation.message,
+        validation.parameterId,
+      );
+    }
+
+    effectiveModelSelection = validation.modelSelection;
+  }
+
+  deps.log.debug("model_selection.resolved", {
+    backend: input.agentBackend,
+    modelId: effectiveModelSelection.modelId,
+    parameterIds: Object.keys(effectiveModelSelection.parameters).sort(),
+    sourceLayer: modelSelectionSourceLayer,
+  });
+
+  await input.onModelSelectionResolved(effectiveModelSelection);
 
   const { effectivePromptText, isDrainedFeedbackBatch } = resolveTurnPromptText(
     {
@@ -1333,11 +1401,7 @@ export async function executePromptForMachine(
     type: "user",
     role: "user",
     content: transcriptBlocks,
-    model: effectiveModel ?? undefined,
-    effort: effectiveEffort,
-    ...(backendSupportsFastMode(input.agentBackend)
-      ? { codexFastMode: effectiveCodexFastMode }
-      : {}),
+    modelSelection: effectiveModelSelection,
   });
 
   const queuedAccounting = createQueuedDeliveryAccounting(deps, {
@@ -1431,32 +1495,29 @@ export async function executePromptForMachine(
     desiredAlignmentVersion = gate.desiredAlignmentVersion;
   }
 
-  // Close existing runtime if model, effort, outputFormat, or alignment version changed
+  // Close existing runtime if its selection, outputFormat, or alignment changes.
   if (
     backendRuntime &&
     shouldRecreateRuntime(
       backendRuntime,
-      effectiveModel,
-      effectiveEffort,
+      effectiveModelSelection,
       input.outputFormat,
       desiredAlignmentVersion,
       input.fsWritePolicy,
     )
   ) {
     const reason =
-      effectiveModel != null && backendRuntime.modelId !== effectiveModel
-        ? "model_changed"
-        : effectiveEffort != null &&
-            backendRuntime.reasoningEffort !== effectiveEffort
-          ? "effort_changed"
-          : input.outputFormat !== backendRuntime.outputFormat
-            ? "output_format_changed"
-            : fsWritePolicyChanged(
-                  backendRuntime.fsWritePolicy,
-                  input.fsWritePolicy,
-                )
-              ? "fs_write_policy_changed"
-              : "alignment_changed";
+      modelSelectionKey(backendRuntime.modelSelection) !==
+      modelSelectionKey(effectiveModelSelection)
+        ? "model_selection_changed"
+        : input.outputFormat !== backendRuntime.outputFormat
+          ? "output_format_changed"
+          : fsWritePolicyChanged(
+                backendRuntime.fsWritePolicy,
+                input.fsWritePolicy,
+              )
+            ? "fs_write_policy_changed"
+            : "alignment_changed";
     deps.log.info("prompt.runtime_recreate", {
       ...scopeRef,
       reason,
@@ -1711,8 +1772,7 @@ export async function executePromptForMachine(
       ...(conversationCapability !== null ? { conversationCapability } : {}),
       worktreePath: input.worktreePath,
       persistedRef: input.backendRef,
-      modelId: effectiveModel,
-      reasoningEffort: effectiveEffort,
+      modelSelection: effectiveModelSelection,
       outputFormat: input.outputFormat,
       alignmentVersion: activeAlignmentVersion,
       sessionInstructions,
@@ -2103,11 +2163,7 @@ export async function executePromptForMachine(
       backend: input.agentBackend,
       promptText,
       imageRefs: imageRefs.length > 0 ? imageRefs : undefined,
-      modelId: effectiveModel,
-      reasoningEffort: effectiveEffort,
-      codexFastMode: backendSupportsFastMode(input.agentBackend)
-        ? effectiveCodexFastMode
-        : undefined,
+      modelSelection: effectiveModelSelection,
       autonomous: input.autonomous ?? false,
       waitForBackgroundTasks: input.waitForBackgroundTasks ?? false,
       outputFormat: input.outputFormat,
@@ -2495,21 +2551,18 @@ export async function runTaskRunTurnForMachine(
     }
   }
 
-  let effectiveModel = input.modelId ?? undefined;
-  let effectiveEffort = input.effort ?? undefined;
+  let effectiveModelSelection = input.modelSelection;
   let effectiveTimeoutMs = input.timeoutMs;
   let taskStallTimeoutMs: number | undefined;
+  let config: ActorConfig | undefined;
   try {
+    config = await deps.readConfig();
     const defaults = resolveAgentBackendTurnDefaults({
       backend: input.agentBackend,
-      config: await deps.readConfig(),
-      explicit: {
-        modelId: input.modelId,
-        reasoningEffort: input.effort,
-      },
+      config,
+      explicit: { modelSelection: input.modelSelection },
     });
-    effectiveModel = defaults.modelId;
-    effectiveEffort = defaults.reasoningEffort;
+    effectiveModelSelection = defaults.modelSelection;
     effectiveTimeoutMs = input.timeoutMs ?? defaults.timeoutMs;
     taskStallTimeoutMs = defaults.stallTimeoutMs;
   } catch (err) {
@@ -2519,7 +2572,74 @@ export async function runTaskRunTurnForMachine(
       conversationId: input.conversationId,
       error: getErrorMessage(err),
     });
+    if (effectiveModelSelection === null) throw err;
   }
+
+  if (effectiveModelSelection === null) {
+    throw new Error(
+      `Task run for backend "${input.agentBackend}" has no model selection.`,
+    );
+  }
+  const requestedModelSelection = effectiveModelSelection;
+
+  const modelSelectionSourceLayer =
+    input.modelSelection === null ? "backend_default" : "explicit";
+  const buildModelSelectionFailure = (diagnostic: {
+    code: string;
+    message: string;
+    modelId: string;
+    parameterId?: string;
+  }): PromptActorResult => {
+    deps.log.warn("model_selection.rejected", {
+      ...scopeRef,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      modelId: diagnostic.modelId,
+      parameterIds: Object.keys(requestedModelSelection.parameters).sort(),
+      sourceLayer: modelSelectionSourceLayer,
+      code: diagnostic.code,
+      ...(diagnostic.parameterId !== undefined
+        ? { parameterId: diagnostic.parameterId }
+        : {}),
+    });
+    return buildFailedTurnResult({
+      contentBlocks: [],
+      error: diagnostic.message,
+      continuationDisposition: "retain",
+    });
+  };
+
+  let admission: ProjectModelSelectionValidation;
+  try {
+    admission = await deps.admitConfiguredModelSelection({
+      backend: input.agentBackend,
+      projectPath: input.projectPath,
+      modelSelection: requestedModelSelection,
+      ...(config !== undefined ? { config } : {}),
+    });
+  } catch (error) {
+    return buildModelSelectionFailure({
+      code: "selection_validation_failed",
+      message: getErrorMessage(error),
+      modelId: requestedModelSelection.modelId,
+    });
+  }
+
+  if (!admission.ok) {
+    return buildModelSelectionFailure(admission);
+  }
+  effectiveModelSelection = admission.modelSelection;
+
+  deps.log.debug("model_selection.resolved", {
+    ...scopeRef,
+    backend: input.agentBackend,
+    conversationId: input.conversationId,
+    modelId: effectiveModelSelection.modelId,
+    parameterIds: Object.keys(effectiveModelSelection.parameters).sort(),
+    sourceLayer: modelSelectionSourceLayer,
+  });
+
+  await input.onModelSelectionResolved(effectiveModelSelection);
 
   // The turn's permission literals are derived from the lane's role — the
   // presence of a server-derived write envelope — never asserted here.
@@ -2533,10 +2653,7 @@ export async function runTaskRunTurnForMachine(
     ...(input.fsWritePolicy !== undefined
       ? { fsWritePolicy: input.fsWritePolicy }
       : {}),
-    ...(effectiveModel !== undefined ? { modelId: effectiveModel } : {}),
-    ...(effectiveEffort !== undefined
-      ? { reasoningEffort: effectiveEffort }
-      : {}),
+    modelSelection: effectiveModelSelection,
     ...(input.outputFormat?.type === "json_schema"
       ? { outputSchema: input.outputFormat.schema }
       : {}),

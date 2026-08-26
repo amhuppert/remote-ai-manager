@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import type { CredentialSecret } from "./credential-scan";
 import { scanForCredentials } from "./credential-scan";
 import {
@@ -10,6 +9,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   waitUntil,
@@ -79,7 +79,7 @@ describe("live CURSOR_API_KEY preflight taxonomy", () => {
   it("refuses an absent credential before any worker process exists", async () => {
     const result = await harnessWith(null).start({
       sessionName: `preflight-absent-${randomUUID()}`,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     });
 
     expect(result.kind).toBe("preflight_failed");
@@ -102,7 +102,7 @@ describe("live CURSOR_API_KEY preflight taxonomy", () => {
   it("treats an empty credential exactly as an absent one", async () => {
     const result = await harnessWith("").start({
       sessionName: `preflight-empty-${randomUUID()}`,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     });
 
     expect(result.kind).toBe("preflight_failed");
@@ -116,7 +116,7 @@ describe("live CURSOR_API_KEY preflight taxonomy", () => {
     const bogus = `crsr-acceptance-invalid-${randomUUID().replace(/-/g, "")}`;
     const result = await harnessWith(bogus).start({
       sessionName: `preflight-invalid-${randomUUID()}`,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     });
 
     expect(result.kind).toBe("preflight_failed");
@@ -150,13 +150,13 @@ describe("live CURSOR_API_KEY preflight taxonomy", () => {
 
     const created = await harness.startReady({
       sessionName: workspace.name,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       workspace,
     });
     created.attach({
       mode: "create",
       ref: null,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
     });
     expect(
@@ -174,13 +174,13 @@ describe("live CURSOR_API_KEY preflight taxonomy", () => {
     // cached value would show up.
     const resumed = await harness.startReady({
       sessionName: workspace.name,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       workspace,
     });
     resumed.attach({
       mode: "resume",
       ref: ref ?? "",
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
       mcpServers: {},
     });
     expect(

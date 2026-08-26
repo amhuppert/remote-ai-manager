@@ -3,8 +3,6 @@ import type { RunCommandInput, RunCommandOutcome } from "./service";
 export type ConversationCommandDispatchInput = RunCommandInput & {
   /** The user's message exactly as submitted, persisted to the transcript. */
   rawText: string;
-  modelId?: string;
-  effort?: string;
 };
 
 /**
@@ -26,8 +24,9 @@ export async function dispatchConversationCommand(
       type: "user",
       role: "user",
       content: [{ type: "text", text: input.rawText }],
-      ...(input.modelId !== undefined ? { model: input.modelId } : {}),
-      ...(input.effort !== undefined ? { effort: input.effort } : {}),
+      ...(input.modelSelection !== undefined
+        ? { modelSelection: input.modelSelection }
+        : {}),
     },
     undefined,
     undefined,

@@ -14,6 +14,8 @@ import {
   type CursorSdkErrorFrameDetail,
   type CursorWorkerFrame,
 } from "./ipc";
+import type { BackendModelSelection } from "../../schemas";
+import { validateCursorWorkerModelSelection } from "./model-selection";
 
 /**
  * The Cursor worker process (spec D1, D2, D3 layer 2, D9).
@@ -70,7 +72,7 @@ export interface CursorWorkerMcpServer {
  */
 export interface CursorWorkerAttachOptions {
   apiKey: string;
-  model: string;
+  modelSelection: BackendModelSelection;
   cwd: string;
   storePath: string;
   disallowedTools: readonly string[];
@@ -87,7 +89,7 @@ export interface CursorWorkerAttachOptions {
  * where the SDK exposes it (`LocalSendOptions.force`).
  */
 export interface CursorWorkerSendOptions {
-  model: string;
+  modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
   forceExpirePersistedRun: boolean;
 }
@@ -530,10 +532,11 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
     frame: Extract<CursorParentFrame, { type: "attachAgent" }>,
     apiKey: string,
     current: WorkerConfig,
+    modelSelection: BackendModelSelection,
   ): CursorWorkerAttachOptions {
     return {
       apiKey,
-      model: frame.model,
+      modelSelection,
       cwd: current.cwd,
       storePath: current.storePath,
       disallowedTools: frame.disallowedTools,
@@ -586,7 +589,26 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       return;
     }
 
-    const options = attachOptions(frame, apiKey, current);
+    const modelSelection = validateCursorWorkerModelSelection(
+      frame.modelSelection,
+    );
+    if (!modelSelection.valid) {
+      send({
+        v: CURSOR_IPC_CODEC_VERSION,
+        type: "attachResult",
+        outcome: "failed",
+        ref: null,
+        error: modelSelection.error,
+      });
+      return;
+    }
+
+    const options = attachOptions(
+      frame,
+      apiKey,
+      current,
+      modelSelection.selection,
+    );
     try {
       agent =
         frame.mode === "resume" && frame.ref !== null
@@ -686,6 +708,20 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       return;
     }
 
+    const modelSelection = validateCursorWorkerModelSelection(
+      frame.modelSelection,
+    );
+    if (!modelSelection.valid) {
+      send({
+        v: CURSOR_IPC_CODEC_VERSION,
+        type: "turnSettled",
+        runId: frame.runId,
+        outcome: "failed",
+        error: modelSelection.error,
+      });
+      return;
+    }
+
     let run: CursorWorkerRun;
     try {
       run = await current.send(
@@ -694,7 +730,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
         // recovery flag; the rest of the policy was established at attach and
         // is retained by the agent.
         {
-          model: frame.model,
+          modelSelection: modelSelection.selection,
           mcpServers: frame.mcpServers,
           forceExpirePersistedRun: frame.forceExpirePersistedRun,
         },

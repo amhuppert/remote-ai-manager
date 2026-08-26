@@ -6,8 +6,10 @@ import {
 import { publishEvent } from "@/lib/events/publication";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { createLogger } from "@/lib/logging";
+import { modelSelectionKey } from "@/lib/agent-backends/model-selection";
 
 import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
@@ -46,6 +48,7 @@ interface ConversationKey {
 interface EnqueueQueuedMessageInput extends ConversationKey {
   content: MessageContentBlock[];
   metadata?: QueuedMessageMetadata;
+  modelSelection?: BackendModelSelection;
 }
 
 interface ConsumingEnqueueQueuedMessageInput extends EnqueueQueuedMessageInput {
@@ -70,6 +73,7 @@ export function createPendingEntry(args: {
   content: MessageContentBlock[];
   now: string;
   metadata?: QueuedMessageMetadata;
+  modelSelection?: BackendModelSelection;
 }): PendingQueuedMessage {
   return {
     id: args.id,
@@ -85,6 +89,7 @@ export function createPendingEntry(args: {
     attemptCount: 0,
     error: null,
     metadata: args.metadata ?? null,
+    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
   };
 }
 
@@ -162,6 +167,7 @@ export function toQueuedMessageView(
     failedAt: entry.failedAt,
     error: entry.error,
     metadata: entry.metadata,
+    ...(entry.modelSelection ? { modelSelection: entry.modelSelection } : {}),
   };
 }
 
@@ -279,6 +285,7 @@ export function claimNextTurnBatchTransform(
   } else {
     for (const entry of pending) {
       if (parseConversationCommand(contentToText(entry.content))) break;
+      if (!sameModelSelection(head.modelSelection, entry.modelSelection)) break;
       claimIds.add(entry.id);
     }
   }
@@ -300,6 +307,16 @@ export function claimNextTurnBatchTransform(
     return updated;
   });
   return { queue: next, claimed, command: headCommand, refused };
+}
+
+function sameModelSelection(
+  left: BackendModelSelection | undefined,
+  right: BackendModelSelection | undefined,
+): boolean {
+  if (left === undefined || right === undefined) {
+    return left === right;
+  }
+  return modelSelectionKey(left) === modelSelectionKey(right);
 }
 
 /**
@@ -488,6 +505,7 @@ export interface ClaimedQueuedBatch {
   deliveryAttemptId: string;
   messageIds: string[];
   content: MessageContentBlock[];
+  modelSelection?: BackendModelSelection;
   /**
    * Non-null when the batch is a single conversation-command row claimed alone
    * at the queue head; the drain routes it to the command service instead of
@@ -568,11 +586,18 @@ export function createMessageQueueService(
       conversationId,
       content,
       metadata,
+      modelSelection,
       consumePendingQuestionId,
     } = input;
     const id = deps.newId();
     const now = deps.now();
-    const entry = createPendingEntry({ id, content, now, metadata });
+    const entry = createPendingEntry({
+      id,
+      content,
+      now,
+      metadata,
+      modelSelection,
+    });
 
     // The store's serialized write queue makes the check-consume-append
     // race-free: a concurrent duplicate sees `committed: false`.
@@ -796,6 +821,9 @@ export function createMessageQueueService(
       messageIds,
       content: coalesceContent(claimed),
       command,
+      ...(claimed[0]?.modelSelection
+        ? { modelSelection: claimed[0].modelSelection }
+        : {}),
     };
   }
 

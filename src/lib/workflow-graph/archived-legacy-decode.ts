@@ -64,6 +64,9 @@ const LEGACY_VALIDATOR_PROFILE = {
  */
 const LEGACY_CODEX_VALIDATOR_MODEL = "gpt-5.4";
 const LEGACY_CODEX_VALIDATOR_EFFORT = "high";
+// Archived workflow assignments predate a per-assignment fast field. The
+// frozen task-run default completes their read-only Codex selection.
+const LEGACY_CODEX_FAST = "false";
 
 /**
  * The snapshot a pre-profile archived execution decodes into.
@@ -187,6 +190,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const legacyAgentParameters = {
+  claude: (reasoningEffort: string) => ({ effort: reasoningEffort }),
+  codex: (reasoningEffort: string) => ({
+    reasoning: reasoningEffort,
+    fast: LEGACY_CODEX_FAST,
+  }),
+} as const;
+
+function upgradeAgent(
+  legacy: z.infer<typeof legacyAgentConfigSchema>,
+): Record<string, unknown> {
+  return {
+    backend: legacy.backend,
+    modelSelection: {
+      modelId: legacy.model,
+      parameters: legacyAgentParameters[legacy.backend](legacy.reasoningEffort),
+    },
+  };
+}
+
 /**
  * The pre-cutover implementer was the bare per-backend runtime config.
  * `undefined` means "not that shape" — the caller refuses the whole blob
@@ -199,9 +222,9 @@ function upgradeImplementer(value: unknown): unknown {
     id: LEGACY_IMPLEMENTER_ID,
     profile: LEGACY_IMPLEMENTER_PROFILE,
     profileSnapshot: legacyProfileSnapshot(LEGACY_IMPLEMENTER_PROFILE),
-    // The parsed value, so a pre-`backend` config materializes the Claude
-    // backend it implicitly ran on.
-    agent: legacy.data,
+    // The parsed value materializes the implicit Claude backend before it is
+    // projected into the current read-only presentation shape.
+    agent: upgradeAgent(legacy.data),
   };
 }
 
@@ -222,15 +245,18 @@ function upgradeContextValidator(value: unknown): unknown {
     legacy.data.type === "codex"
       ? {
           strategy: "task",
-          agent: {
+          agent: upgradeAgent({
             backend: "codex",
             model: legacy.data.codex.model ?? LEGACY_CODEX_VALIDATOR_MODEL,
             reasoningEffort:
               legacy.data.codex.reasoningEffort ??
               LEGACY_CODEX_VALIDATOR_EFFORT,
-          },
+          }),
         }
-      : { strategy: "conversation", agent: legacy.data.agent };
+      : {
+          strategy: "conversation",
+          agent: upgradeAgent(legacy.data.agent),
+        };
 
   return {
     enabled: legacy.data.enabled,

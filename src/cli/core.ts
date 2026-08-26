@@ -293,7 +293,7 @@ async function dispatchCli(
       validate: (rest) =>
         runValidate(rest, passthrough, flags, values, env, host),
       conversation: (rest) => runConversation(rest, flags, values, env, host),
-      ticket: (rest) => runTicket(rest, flags, values, env, host),
+      ticket: (rest) => runTicket(rest, flags, values, lists, env, host),
       spec: (rest) => runSpec(rest, flags, values, lists, env, host),
       logs: (rest) => runLogs(rest, flags, values, env, host),
       doctor: () => runDoctor(flags, values, env, host),

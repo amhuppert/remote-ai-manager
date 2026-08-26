@@ -3,46 +3,46 @@ import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import {
   resolveBackendStallTimeoutMs,
   resolveBackendTimeoutMs,
-  resolveBackendTurnSettings,
-  resolveTurnCodexFastMode,
-  resolveTurnModelEffort,
+  resolveBackendTurnSelection,
+  resolveTurnModelSelection,
   type ActorConfig,
 } from "./resolve-model-effort";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getDefaultStallTimeoutForBackend } from "@/lib/agent-backends/catalog";
 
 function makeConfig(): ActorConfig {
   return {
     agentBackends: {
       claude: {
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
         timeoutMs: 300_000,
       },
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-        fastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "true" },
+        },
         timeoutMs: null,
       },
-      cursor: { model: "composer-2.5", timeoutMs: null },
+      cursor: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        timeoutMs: null,
+      },
     },
     maxTurns: 50,
     idleQuerySessionTtlMs: 300_000,
   };
 }
 
-function userTurn(
-  model?: string,
-  effort?: string,
-  codexFastMode?: boolean,
-): TranscriptMessage {
+function userTurn(modelSelection?: BackendModelSelection): TranscriptMessage {
   return {
     role: "user",
     content: [{ type: "text", text: "hi" }],
     timestamp: null,
-    ...(model !== undefined ? { model } : {}),
-    ...(effort !== undefined ? { effort } : {}),
-    ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+    ...(modelSelection !== undefined ? { modelSelection } : {}),
   };
 }
 
@@ -54,208 +54,66 @@ function assistantTurn(): TranscriptMessage {
   };
 }
 
-describe("resolveTurnCodexFastMode", () => {
-  it("prefers an explicit conversation selection over the last turn and global default", () => {
-    expect(
-      resolveTurnCodexFastMode({
-        backend: "codex",
-        config: makeConfig(),
-        explicitCodexFastMode: false,
-        priorMessages: [userTurn("gpt-5.4", "high", true)],
-      }),
-    ).toBe(false);
-  });
-
-  it("uses the conversation's latest selection before the global default", () => {
-    expect(
-      resolveTurnCodexFastMode({
-        backend: "codex",
-        config: makeConfig(),
-        explicitCodexFastMode: null,
-        priorMessages: [
-          userTurn("gpt-5.4", "high", true),
-          assistantTurn(),
-          userTurn("gpt-5.4", "high", false),
-        ],
-      }),
-    ).toBe(false);
-  });
-
-  it("uses the global Codex default for a conversation without a prior selection", () => {
-    expect(
-      resolveTurnCodexFastMode({
-        backend: "codex",
-        config: makeConfig(),
-        explicitCodexFastMode: null,
-        priorMessages: [],
-      }),
-    ).toBe(true);
-  });
-
-  it("never enables Codex fast mode for Claude", () => {
-    expect(
-      resolveTurnCodexFastMode({
-        backend: "claude",
-        config: makeConfig(),
-        explicitCodexFastMode: true,
-        priorMessages: [],
-      }),
-    ).toBe(false);
-  });
-});
-
-describe("resolveBackendTurnSettings", () => {
-  it("uses the selected backend's profile without consulting the default backend", () => {
-    const config = makeConfig();
-
-    expect(resolveBackendTurnSettings("claude", config, null, null)).toEqual({
-      effectiveModel: "opus",
-      effectiveEffort: "high",
-    });
-    expect(resolveBackendTurnSettings("codex", config, null, null)).toEqual({
-      effectiveModel: "gpt-5.4",
-      effectiveEffort: "medium",
+describe("atomic model selection resolution", () => {
+  it("uses the selected backend's complete configured selection", () => {
+    expect(resolveBackendTurnSelection("codex", makeConfig(), null)).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "medium", fast: "true" },
     });
   });
 
-  it("prefers explicit model and effort over the configured profile", () => {
-    expect(
-      resolveBackendTurnSettings("codex", makeConfig(), "gpt-5.6-sol", "ultra"),
-    ).toEqual({
-      effectiveModel: "gpt-5.6-sol",
-      effectiveEffort: "ultra",
-    });
-  });
-
-  it("rejects an explicit Claude model for Codex", () => {
-    expect(
-      resolveBackendTurnSettings("codex", makeConfig(), "opus", null),
-    ).toEqual({
-      effectiveModel: "gpt-5.4",
-      effectiveEffort: "medium",
-    });
-  });
-
-  it("accepts an unknown custom Codex model", () => {
-    expect(
-      resolveBackendTurnSettings(
-        "codex",
-        makeConfig(),
-        "custom-codex-model",
-        "ultra",
-      ),
-    ).toEqual({
-      effectiveModel: "custom-codex-model",
-      effectiveEffort: "ultra",
-    });
-  });
-
-  it("does not synthesize effort for Haiku", () => {
-    const base = makeConfig();
-    const config: ActorConfig = {
-      ...base,
-      agentBackends: {
-        ...base.agentBackends,
-        claude: {
-          model: "haiku",
-          timeoutMs: 300_000,
-        },
-        cursor: { model: "composer-2.5", timeoutMs: null },
-      },
+  it("prefers the complete explicit selection over remembered and configured selections", () => {
+    const explicit = {
+      modelId: "gpt-5.6-sol",
+      parameters: { reasoning: "ultra", fast: "false", context: "1m" },
     };
-
-    expect(resolveBackendTurnSettings("claude", config, null, null)).toEqual({
-      effectiveModel: "haiku",
-      effectiveEffort: undefined,
-    });
-  });
-});
-
-describe("resolveTurnModelEffort", () => {
-  it("uses explicit values before the conversation's last selection", () => {
     expect(
-      resolveTurnModelEffort({
-        backend: "claude",
-        config: makeConfig(),
-        explicitModel: "sonnet",
-        explicitEffort: "medium",
-        priorMessages: [userTurn("opus", "low")],
-      }),
-    ).toEqual({ effectiveModel: "sonnet", effectiveEffort: "medium" });
-  });
-
-  it("rejects an explicit Claude model on the actor's Codex turn path", () => {
-    expect(
-      resolveTurnModelEffort({
+      resolveTurnModelSelection({
         backend: "codex",
         config: makeConfig(),
-        explicitModel: "opus",
-        explicitEffort: null,
-        priorMessages: [],
-      }),
-    ).toEqual({ effectiveModel: "gpt-5.4", effectiveEffort: "medium" });
-  });
-
-  it("uses the most recent scoped selection before the backend profile", () => {
-    expect(
-      resolveTurnModelEffort({
-        backend: "codex",
-        config: makeConfig(),
-        explicitModel: null,
-        explicitEffort: null,
+        explicitModelSelection: explicit,
         priorMessages: [
-          userTurn("gpt-5.5", "low"),
+          userTurn({
+            modelId: "gpt-5.5",
+            parameters: { reasoning: "low", fast: "true" },
+          }),
+        ],
+      }),
+    ).toEqual(explicit);
+  });
+
+  it("reuses the most recent selection as one indivisible bundle", () => {
+    const remembered = {
+      modelId: "gpt-5.6-sol",
+      parameters: { reasoning: "xhigh", fast: "false", context: "1m" },
+    };
+    expect(
+      resolveTurnModelSelection({
+        backend: "codex",
+        config: makeConfig(),
+        explicitModelSelection: null,
+        priorMessages: [
+          userTurn({
+            modelId: "gpt-5.5",
+            parameters: { reasoning: "low", fast: "true" },
+          }),
           assistantTurn(),
-          userTurn("gpt-5.6-sol", "xhigh"),
+          userTurn(remembered),
           assistantTurn(),
         ],
       }),
-    ).toEqual({
-      effectiveModel: "gpt-5.6-sol",
-      effectiveEffort: "xhigh",
-    });
+    ).toEqual(remembered);
   });
 
-  it("rejects a remembered Claude model for a Codex turn", () => {
+  it("falls back to the backend profile when no turn has a selection", () => {
     expect(
-      resolveTurnModelEffort({
-        backend: "codex",
-        config: makeConfig(),
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [userTurn("opus")],
-      }),
-    ).toEqual({
-      effectiveModel: "gpt-5.4",
-      effectiveEffort: "medium",
-    });
-  });
-
-  it("fills independently missing scoped fields from the profile", () => {
-    expect(
-      resolveTurnModelEffort({
-        backend: "codex",
-        config: makeConfig(),
-        explicitModel: null,
-        explicitEffort: null,
-        priorMessages: [userTurn("gpt-5.6-sol")],
-      }),
-    ).toEqual({
-      effectiveModel: "gpt-5.6-sol",
-      effectiveEffort: "medium",
-    });
-  });
-
-  it("falls back to the selected backend's profile with no scoped selection", () => {
-    expect(
-      resolveTurnModelEffort({
+      resolveTurnModelSelection({
         backend: "claude",
         config: makeConfig(),
-        explicitModel: null,
-        explicitEffort: null,
+        explicitModelSelection: null,
         priorMessages: [assistantTurn()],
       }),
-    ).toEqual({ effectiveModel: "opus", effectiveEffort: "high" });
+    ).toEqual({ modelId: "opus", parameters: { effort: "high" } });
   });
 });
 

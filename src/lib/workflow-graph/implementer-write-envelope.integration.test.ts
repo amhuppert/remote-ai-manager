@@ -157,8 +157,13 @@ async function runIterationCapturingOptions(
     executionId: "execution-1",
     contextId: "context-build",
     backend,
-    model: "opus",
-    reasoningEffort: "high",
+    modelSelection:
+      backend === "codex"
+        ? {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          }
+        : { modelId: "opus", parameters: { effort: "high" } },
     toolServer: { servers: [] },
     placement,
   });
@@ -331,8 +336,10 @@ describe("the implementer dispatch path composes the envelope before dispatching
         executionId: "execution-1",
         contextId: "context-build",
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         toolServer: { servers: [] },
         placement: {
           lane: "build",
@@ -369,8 +376,10 @@ describe("the implementer dispatch path composes the envelope before dispatching
         executionId: "execution-1",
         contextId: "context-build",
         backend: "codex",
-        model: "gpt",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         toolServer: { servers: [] },
         placement: { lane: "session", mode: "readOnly" },
       }),
@@ -402,8 +411,13 @@ describe("the implementer dispatch path composes the envelope before dispatching
           executionId: "execution-1",
           contextId: "context-build",
           backend,
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection:
+            backend === "codex"
+              ? {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "high", fast: "false" },
+                }
+              : { modelId: "opus", parameters: { effort: "high" } },
           toolServer: { servers: [] },
           placement: { lane: "build", mode: "owned", ownedPaths: ["src"] },
         }),
@@ -435,7 +449,17 @@ describe("both conversation runtimes establish the delivered policy natively", (
     ).policy;
   }
 
-  function createInput(fsWritePolicy: FsWritePolicy | undefined) {
+  function createInput(
+    fsWritePolicy: FsWritePolicy | undefined,
+    backend: AgentBackendId = "claude",
+  ) {
+    const modelSelection =
+      backend === "codex"
+        ? {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          }
+        : { modelId: "opus", parameters: { effort: "high" } };
     return {
       conversationId: "conversation-1",
       projectPath: "/repo",
@@ -447,7 +471,7 @@ describe("both conversation runtimes establish the delivered policy natively", (
       ),
       worktreePath,
       persistedRef: null,
-      modelId: undefined,
+      modelSelection,
       sessionInstructions: [],
       tooling: { portableMcp: { servers: [] } },
       ...(fsWritePolicy !== undefined ? { fsWritePolicy } : {}),
@@ -570,11 +594,15 @@ describe("both conversation runtimes establish the delivered policy natively", (
   it("codex enumerates the writable roots and moves the run out of the worktree", async () => {
     const policy = policyFor();
     const runtime = await conversationFactory("codex").createRuntime(
-      createInput(policy),
+      createInput(policy, "codex"),
     );
 
     await runtime.sendTurn({
       promptText: "go",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       imageRefs: [],
       sessionInstructions: [],
       autonomous: true,
@@ -603,11 +631,15 @@ describe("both conversation runtimes establish the delivered policy natively", (
 
   it("codex leaves an unrestricted conversation on full access in the worktree", async () => {
     const runtime = await conversationFactory("codex").createRuntime(
-      createInput(undefined),
+      createInput(undefined, "codex"),
     );
 
     await runtime.sendTurn({
       promptText: "go",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       imageRefs: [],
       sessionInstructions: [],
       autonomous: true,
@@ -640,15 +672,22 @@ describe("both conversation runtimes establish the delivered policy natively", (
 
   it("fails a codex turn for a policy it cannot establish, rather than running it unconfined", async () => {
     const runtime = await conversationFactory("codex").createRuntime(
-      createInput({
-        mode: "allowlist",
-        allowWrite: [],
-        denyWrite: [path.join(worktreePath, ".git")],
-      }),
+      createInput(
+        {
+          mode: "allowlist",
+          allowWrite: [],
+          denyWrite: [path.join(worktreePath, ".git")],
+        },
+        "codex",
+      ),
     );
 
     const result = await runtime.sendTurn({
       promptText: "go",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       imageRefs: [],
       sessionInstructions: [],
       autonomous: true,

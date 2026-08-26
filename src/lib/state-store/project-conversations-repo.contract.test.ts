@@ -193,6 +193,10 @@ function buildMaximalProjectConversation(): ConversationState {
           kind: "question_answers",
           questionBatchId: "q_maximal",
         },
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
     ],
     lastSeenAlignmentVersion: 7,

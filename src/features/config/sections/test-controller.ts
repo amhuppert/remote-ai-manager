@@ -13,18 +13,24 @@ export const baseFormState: GlobalConfig = {
   defaultAgentBackend: "claude",
   agentBackends: {
     claude: {
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       timeoutMs: 3_600_000,
     },
     codex: {
-      fastMode: false,
-      model: "gpt-5.4",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
       timeoutMs: null,
     },
     cursor: {
-      model: "composer-2.5",
+      modelSelection: {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      },
       timeoutMs: null,
     },
   },

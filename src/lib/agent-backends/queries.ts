@@ -10,7 +10,7 @@ import {
 import {
   projectModelOptionsResponseSchema,
   type ProjectBackendModelOptions,
-} from "./project-model-options";
+} from "./project-model-options-schema";
 
 /** How long a fetched server catalog stays fresh before revalidation. */
 const CATALOG_STALE_TIME_MS = 5 * 60_000;

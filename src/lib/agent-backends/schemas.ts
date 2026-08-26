@@ -1,5 +1,276 @@
 import { z } from "zod";
 
+import { agentBackendSchema } from "@/lib/shared/schemas";
+
+const backendModelIdentifierSchema = z.string().trim().min(1);
+
+/**
+ * One complete backend model choice. Parameters are provider-owned string
+ * pairs and are interpreted only against the backend's model catalog.
+ */
+export const backendModelSelectionSchema = z
+  .object({
+    modelId: backendModelIdentifierSchema,
+    parameters: z.record(backendModelIdentifierSchema, z.string()),
+  })
+  .strict();
+export type BackendModelSelection = z.infer<typeof backendModelSelectionSchema>;
+
+export const backendModelParameterValueSchema = z
+  .object({
+    value: z.string(),
+    label: z.string().trim().min(1),
+  })
+  .strict();
+export type BackendModelParameterValue = z.infer<
+  typeof backendModelParameterValueSchema
+>;
+
+export const backendModelParameterDefinitionSchema = z
+  .object({
+    id: backendModelIdentifierSchema,
+    label: z.string().trim().min(1),
+    values: z.array(backendModelParameterValueSchema).min(1),
+    prominence: z.enum(["primary", "advanced", "hidden"]),
+  })
+  .strict();
+export type BackendModelParameterDefinition = z.infer<
+  typeof backendModelParameterDefinitionSchema
+>;
+
+export const backendModelVariantSchema = z
+  .object({
+    selection: backendModelSelectionSchema,
+    label: z.string().trim().min(1),
+    description: z.string().trim().min(1).optional(),
+    isDefault: z.boolean(),
+  })
+  .strict();
+export type BackendModelVariant = z.infer<typeof backendModelVariantSchema>;
+
+export const backendModelDefinitionSchema = z
+  .object({
+    id: backendModelIdentifierSchema,
+    label: z.string().trim().min(1),
+    description: z.string().trim().min(1).optional(),
+    aliases: z.array(backendModelIdentifierSchema),
+    parameters: z.array(backendModelParameterDefinitionSchema),
+    variants: z.array(backendModelVariantSchema).min(1),
+  })
+  .strict();
+export type BackendModelDefinition = z.infer<
+  typeof backendModelDefinitionSchema
+>;
+
+export const backendModelCatalogProvenanceSchema = z
+  .object({
+    source: z.string().trim().min(1),
+    generatedAt: z.string().datetime().optional(),
+    sdkVersion: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type BackendModelCatalogProvenance = z.infer<
+  typeof backendModelCatalogProvenanceSchema
+>;
+
+function addCatalogIssue(
+  context: z.RefinementCtx,
+  path: PropertyKey[],
+  message: string,
+): void {
+  context.addIssue({ code: "custom", path, message });
+}
+
+function validateModelCatalogDefinition(
+  model: BackendModelDefinition,
+  modelIndex: number,
+  context: z.RefinementCtx,
+): void {
+  const parameterIndexes = new Map<string, number>();
+
+  model.parameters.forEach((parameter, parameterIndex) => {
+    const previousParameterIndex = parameterIndexes.get(parameter.id);
+    if (previousParameterIndex !== undefined) {
+      addCatalogIssue(
+        context,
+        ["models", modelIndex, "parameters", parameterIndex, "id"],
+        `Parameter id "${parameter.id}" duplicates parameters[${previousParameterIndex}].`,
+      );
+    } else {
+      parameterIndexes.set(parameter.id, parameterIndex);
+    }
+
+    const values = new Set<string>();
+    parameter.values.forEach(({ value }, valueIndex) => {
+      if (values.has(value)) {
+        addCatalogIssue(
+          context,
+          [
+            "models",
+            modelIndex,
+            "parameters",
+            parameterIndex,
+            "values",
+            valueIndex,
+            "value",
+          ],
+          `Parameter value "${value}" is duplicated.`,
+        );
+      }
+      values.add(value);
+    });
+
+    if (parameter.values.length === 1 && parameter.prominence !== "hidden") {
+      addCatalogIssue(
+        context,
+        ["models", modelIndex, "parameters", parameterIndex, "prominence"],
+        "A parameter with one possible value must be hidden.",
+      );
+    }
+  });
+
+  const declaredParameterIds = new Set(model.parameters.map(({ id }) => id));
+  const variantKeys = new Set<string>();
+  let defaultCount = 0;
+
+  model.variants.forEach((variant, variantIndex) => {
+    if (variant.isDefault) defaultCount += 1;
+
+    if (variant.selection.modelId !== model.id) {
+      addCatalogIssue(
+        context,
+        [
+          "models",
+          modelIndex,
+          "variants",
+          variantIndex,
+          "selection",
+          "modelId",
+        ],
+        `Variant modelId must equal its containing model id "${model.id}".`,
+      );
+    }
+
+    const suppliedParameterIds = Object.keys(variant.selection.parameters);
+    for (const parameterId of suppliedParameterIds) {
+      if (declaredParameterIds.has(parameterId)) continue;
+      addCatalogIssue(
+        context,
+        [
+          "models",
+          modelIndex,
+          "variants",
+          variantIndex,
+          "selection",
+          "parameters",
+          parameterId,
+        ],
+        `Variant supplies undeclared parameter "${parameterId}".`,
+      );
+    }
+
+    for (const parameter of model.parameters) {
+      const value = variant.selection.parameters[parameter.id];
+      if (value === undefined) {
+        addCatalogIssue(
+          context,
+          [
+            "models",
+            modelIndex,
+            "variants",
+            variantIndex,
+            "selection",
+            "parameters",
+          ],
+          `Variant is missing parameter "${parameter.id}".`,
+        );
+        continue;
+      }
+
+      if (!parameter.values.some((candidate) => candidate.value === value)) {
+        addCatalogIssue(
+          context,
+          [
+            "models",
+            modelIndex,
+            "variants",
+            variantIndex,
+            "selection",
+            "parameters",
+            parameter.id,
+          ],
+          `Variant value "${value}" is not declared for parameter "${parameter.id}".`,
+        );
+      }
+    }
+
+    const variantKey = JSON.stringify(
+      Object.entries(variant.selection.parameters).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    );
+    if (variantKeys.has(variantKey)) {
+      addCatalogIssue(
+        context,
+        ["models", modelIndex, "variants", variantIndex, "selection"],
+        "A model cannot declare the same complete selection more than once.",
+      );
+    }
+    variantKeys.add(variantKey);
+  });
+
+  if (defaultCount !== 1) {
+    addCatalogIssue(
+      context,
+      ["models", modelIndex, "variants"],
+      `Model "${model.id}" must declare exactly one default variant; found ${defaultCount}.`,
+    );
+  }
+}
+
+export const backendModelCatalogSchema = z
+  .object({
+    backend: agentBackendSchema,
+    defaultModelId: backendModelIdentifierSchema,
+    models: z.array(backendModelDefinitionSchema).min(1),
+    provenance: backendModelCatalogProvenanceSchema,
+  })
+  .strict()
+  .superRefine((catalog, context) => {
+    const claimedIdentifiers = new Map<string, string>();
+
+    catalog.models.forEach((model, modelIndex) => {
+      for (const [identifierIndex, identifier] of [
+        model.id,
+        ...model.aliases,
+      ].entries()) {
+        const previousOwner = claimedIdentifiers.get(identifier);
+        if (previousOwner !== undefined) {
+          addCatalogIssue(
+            context,
+            identifierIndex === 0
+              ? ["models", modelIndex, "id"]
+              : ["models", modelIndex, "aliases", identifierIndex - 1],
+            `Model identifier "${identifier}" is already owned by "${previousOwner}".`,
+          );
+        } else {
+          claimedIdentifiers.set(identifier, model.id);
+        }
+      }
+
+      validateModelCatalogDefinition(model, modelIndex, context);
+    });
+
+    if (!catalog.models.some((model) => model.id === catalog.defaultModelId)) {
+      addCatalogIssue(
+        context,
+        ["defaultModelId"],
+        `Default model "${catalog.defaultModelId}" is not a canonical model id in this catalog.`,
+      );
+    }
+  });
+export type BackendModelCatalog = z.infer<typeof backendModelCatalogSchema>;
+
 export const claudeModelSchema = z.enum(["fable", "opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
@@ -43,50 +314,6 @@ export function getEffortLevelsForModel(
   return MODEL_EFFORT_LEVELS[model];
 }
 
-/**
- * Clamps an effort level to the highest supported level for the given model.
- * Returns undefined if the model doesn't support effort levels at all.
- */
-export function clampEffortToModel(
-  effort: EffortLevel,
-  model: ClaudeModel,
-): ClaudeEffortLevel | undefined {
-  const supported = MODEL_EFFORT_LEVELS[model];
-  if (supported.length === 0) return undefined;
-  const parsed = claudeEffortLevelSchema.safeParse(effort);
-  if (parsed.success && supported.includes(parsed.data)) return parsed.data;
-  return supported[supported.length - 1];
-}
-
-export function isClaudeReasoningEffortSupported(
-  model: ClaudeModel,
-  reasoningEffort: ClaudeEffortLevel,
-): boolean {
-  return MODEL_EFFORT_LEVELS[model].includes(reasoningEffort);
-}
-
-export function validateClaudeBackendModelEffort(
-  config: {
-    model?: ClaudeModel;
-    reasoningEffort?: ClaudeEffortLevel;
-  },
-  context: z.RefinementCtx,
-): void {
-  if (
-    config.model === undefined ||
-    config.reasoningEffort === undefined ||
-    isClaudeReasoningEffortSupported(config.model, config.reasoningEffort)
-  ) {
-    return;
-  }
-
-  context.addIssue({
-    code: "custom",
-    path: ["reasoningEffort"],
-    message: `Reasoning effort "${config.reasoningEffort}" is not supported by Claude model "${config.model}".`,
-  });
-}
-
 export const backendTimeoutMsSchema = z.number().int().positive().nullable();
 
 const tokenCountSchema = z.number().int().nonnegative();
@@ -112,8 +339,7 @@ export type ConversationTokenUsage = z.infer<
 
 export const claudeBackendConfigSchema = z
   .object({
-    model: claudeModelSchema,
-    reasoningEffort: claudeEffortLevelSchema.optional(),
+    modelSelection: backendModelSelectionSchema,
     timeoutMs: backendTimeoutMsSchema,
     /**
      * Per-turn inactivity bound override; unset falls back to the Claude
@@ -121,7 +347,7 @@ export const claudeBackendConfigSchema = z
      */
     stallTimeoutMs: backendTimeoutMsSchema.optional(),
   })
-  .superRefine(validateClaudeBackendModelEffort);
+  .strict();
 export type ClaudeBackendConfig = z.infer<typeof claudeBackendConfigSchema>;
 
 // ============================================================
@@ -204,36 +430,6 @@ export function getCodexReasoningLevelsForModel(
   return CODEX_MODEL_REASONING_LEVELS[model] ?? null;
 }
 
-export function isCodexReasoningEffortSupported(
-  model: string,
-  reasoningEffort: CodexReasoningEffort,
-): boolean {
-  const supported = getCodexReasoningLevelsForModel(model);
-  return supported === null || supported.includes(reasoningEffort);
-}
-
-export function validateCodexBackendModelEffort(
-  config: {
-    model?: string;
-    reasoningEffort?: CodexReasoningEffort;
-  },
-  context: z.RefinementCtx,
-): void {
-  if (
-    config.model === undefined ||
-    config.reasoningEffort === undefined ||
-    isCodexReasoningEffortSupported(config.model, config.reasoningEffort)
-  ) {
-    return;
-  }
-
-  context.addIssue({
-    code: "custom",
-    path: ["reasoningEffort"],
-    message: `Reasoning effort "${config.reasoningEffort}" is not supported by Codex model "${config.model}".`,
-  });
-}
-
 // ============================================================
 // Cursor Config
 // ============================================================
@@ -260,8 +456,7 @@ export function validateCodexBackendModelEffort(
  */
 export const cursorBackendConfigSchema = z
   .object({
-    model: z.string().trim().min(1),
-    reasoningEffort: effortLevelSchema.optional(),
+    modelSelection: backendModelSelectionSchema,
     timeoutMs: backendTimeoutMsSchema,
   })
   .strict();
@@ -269,9 +464,7 @@ export type CursorBackendConfig = z.infer<typeof cursorBackendConfigSchema>;
 
 export const codexConfigSchema = z
   .object({
-    model: z.string().trim().min(1),
-    reasoningEffort: codexReasoningEffortSchema.optional(),
-    fastMode: z.boolean().default(false),
+    modelSelection: backendModelSelectionSchema,
     timeoutMs: backendTimeoutMsSchema,
     /**
      * Per-turn inactivity bound override; unset falls back to the Codex
@@ -280,5 +473,5 @@ export const codexConfigSchema = z
     stallTimeoutMs: backendTimeoutMsSchema.optional(),
     pricing: codexPricingTableSchema.optional(),
   })
-  .superRefine(validateCodexBackendModelEffort);
+  .strict();
 export type CodexConfig = z.infer<typeof codexConfigSchema>;

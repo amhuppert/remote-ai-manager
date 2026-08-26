@@ -8,24 +8,21 @@ import type { PromptEditorHandle } from "@/components/session/prompt/PromptEdito
 import { deserializePromptDoc } from "@/lib/prompt-editor";
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
-import {
-  backendSupportsFastMode,
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
-  isSelectableModelForBackend,
-} from "@/lib/agent-backends/catalog";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { validateModelSelection } from "@/lib/agent-backends/model-selection";
+import { useProjectModelOptionsQuery } from "@/lib/agent-backends/queries";
+import type { BackendValueMap } from "@/lib/agent-backends/catalog";
 import { seedAgentTwoDraft } from "@/stores/collaboration.store";
 import { asCollaborationAgent } from "@/lib/workflows/collaboration/types";
+import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
-import { useCodexFastMode } from "@/hooks/use-codex-fast-mode";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import {
-  effortLevelSchema,
-  type EffortLevel,
+  type BackendModelCatalog,
+  type BackendModelSelection,
 } from "@/lib/agent-backends/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -42,9 +39,7 @@ export interface UnifiedComposerSendInput {
   text: string;
   images: ImagePayload[];
   backend: AgentBackendId;
-  modelId: string;
-  effort?: string;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
 }
 
 /**
@@ -90,9 +85,7 @@ export interface UnifiedComposerProps {
   initialDocument?: SerializedPromptDoc;
   onDocumentChange?: (document: SerializedPromptDoc) => void;
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
-  lastUsedModelId?: string;
-  lastUsedEffort?: string;
-  lastUsedCodexFastMode?: boolean;
+  lastUsedModelSelection?: BackendModelSelection;
   busy: boolean;
   error?: ProjectPromptError | null;
   onDismissError?: () => void;
@@ -106,8 +99,6 @@ export type ProjectComposerSubmitResult =
   | { kind: "tokens"; tokens: FilterToken[] }
   | { kind: "send"; input: UnifiedComposerSendInput };
 
-const DEFAULT_EFFORT: EffortLevel = "high";
-
 /**
  * The attachment scope for the create-and-send path, which has no conversation
  * id yet. Prefixed apart from the conversation keys so it can never collide with
@@ -115,38 +106,13 @@ const DEFAULT_EFFORT: EffortLevel = "high";
  */
 const NEW_CONVERSATION_ATTACHMENT_SCOPE = "new-conversation";
 
-function modelForBackend(
-  backend: AgentBackendId,
-  preferred: string | undefined,
-  backendDefaults: BackendSelectionDefaultsById,
-): string {
-  if (
-    preferred !== undefined &&
-    isSelectableModelForBackend(backend, preferred)
-  ) {
-    return preferred;
-  }
-  const fallback = backendDefaults[backend].modelId;
-  return isSelectableModelForBackend(backend, fallback)
-    ? fallback
-    : getDefaultModelForBackend(backend);
-}
-
-function parseEffort(value: string | undefined): EffortLevel | undefined {
-  if (value === undefined) return undefined;
-  const result = effortLevelSchema.safeParse(value);
-  return result.success ? result.data : undefined;
-}
-
-function pickEffort(
-  availableLevels: readonly EffortLevel[],
-  preferred: EffortLevel,
-): EffortLevel {
-  if (availableLevels.length === 0) return preferred;
-  if (availableLevels.includes(preferred)) return preferred;
-  return availableLevels.includes(DEFAULT_EFFORT)
-    ? DEFAULT_EFFORT
-    : availableLevels[0]!;
+function cloneSelection(
+  selection: BackendModelSelection,
+): BackendModelSelection {
+  return {
+    modelId: selection.modelId,
+    parameters: { ...selection.parameters },
+  };
 }
 
 function parseCommandDraft(draft: string): ProjectCommandId | null {
@@ -163,19 +129,13 @@ export function resolveProjectComposerSubmit({
   pendingImages,
   tokens,
   backend,
-  modelId,
-  effort,
-  effortSupported,
-  codexFastMode,
+  modelSelection,
 }: {
   draft: string;
   pendingImages: ImagePayload[];
   tokens: FilterToken[];
   backend: AgentBackendId;
-  modelId: string;
-  effort: EffortLevel;
-  effortSupported: boolean;
-  codexFastMode?: boolean;
+  modelSelection: BackendModelSelection;
 }): ProjectComposerSubmitResult {
   const trimmed = draft.trim();
   if (!trimmed && pendingImages.length === 0) return { kind: "noop" };
@@ -199,11 +159,7 @@ export function resolveProjectComposerSubmit({
       text: trimmed,
       images: pendingImages,
       backend,
-      modelId,
-      ...(effortSupported ? { effort } : {}),
-      ...(backendSupportsFastMode(backend)
-        ? { codexFastMode: codexFastMode ?? false }
-        : {}),
+      modelSelection: cloneSelection(modelSelection),
     },
   };
 }
@@ -221,9 +177,7 @@ export default function UnifiedComposer({
   initialDocument,
   onDocumentChange,
   onRunCommand,
-  lastUsedModelId,
-  lastUsedEffort,
-  lastUsedCodexFastMode,
+  lastUsedModelSelection,
   busy,
   error,
   onDismissError,
@@ -233,22 +187,54 @@ export default function UnifiedComposer({
     activeConversationId,
     agentBackend,
     backendDefaults,
-    lastUsedModelId,
-    lastUsedEffort,
+    lastUsedModelSelection,
   ]);
   const [draft, setDraft] = useState(initialDocument?.prompt ?? "");
-  const [modelPref, setModelPref] = useState(() =>
-    modelForBackend(agentBackend, lastUsedModelId, backendDefaults),
+  const [modelSelection, setModelSelection] = useState(() =>
+    cloneSelection(lastUsedModelSelection ?? backendDefaults[agentBackend]),
   );
-  const [effortPref, setEffortPref] = useState<EffortLevel>(
-    () => parseEffort(lastUsedEffort) ?? backendDefaults[agentBackend].effort,
+  const projectModelOptionsQuery = useProjectModelOptionsQuery(projectName);
+  const modelCatalogs = useMemo<
+    BackendValueMap<BackendModelCatalog | null>
+  >(() => {
+    const catalogFor = (backend: AgentBackendId): BackendModelCatalog | null =>
+      projectModelOptionsQuery.data?.find((entry) => entry.backend === backend)
+        ?.modelCatalog ?? null;
+    return {
+      claude: catalogFor("claude"),
+      codex: catalogFor("codex"),
+      cursor: catalogFor("cursor"),
+    };
+  }, [projectModelOptionsQuery.data]);
+  const currentModelOptions = projectModelOptionsQuery.data?.find(
+    (entry) => entry.backend === agentBackend,
   );
-  const { codexFastMode, setCodexFastMode } = useCodexFastMode({
-    conversationId: activeConversationId,
-    promptCount: activeConversation?.promptCount ?? 0,
-    defaultValue: backendDefaults.codex.codexFastMode ?? false,
-    lastUsedValue: lastUsedCodexFastMode,
-  });
+  const modelCatalog = modelCatalogs[agentBackend];
+  const modelSelectionValidation =
+    modelCatalog === null
+      ? null
+      : validateModelSelection(modelCatalog, modelSelection);
+  let modelSelectionBlockedReason: string | null = null;
+  if (projectModelOptionsQuery.isPending) {
+    modelSelectionBlockedReason = "Loading model options…";
+  } else if (projectModelOptionsQuery.isError) {
+    modelSelectionBlockedReason = "Model options could not be loaded.";
+  } else if (currentModelOptions === undefined) {
+    modelSelectionBlockedReason = `Model options are unavailable for ${agentBackend}.`;
+  } else if (currentModelOptions.diagnostics.length > 0) {
+    modelSelectionBlockedReason = currentModelOptions.diagnostics
+      .map(({ message }) => message)
+      .join(" ");
+  } else if (
+    modelSelectionValidation !== null &&
+    !modelSelectionValidation.valid
+  ) {
+    modelSelectionBlockedReason = modelSelectionValidation.issues
+      .map(({ message }) => message)
+      .join(" ");
+  } else if (modelCatalog === null) {
+    modelSelectionBlockedReason = "Model options are unavailable.";
+  }
   const [prevRememberedSettingsKey, setPrevRememberedSettingsKey] = useState(
     rememberedSettingsKey,
   );
@@ -272,22 +258,14 @@ export default function UnifiedComposer({
 
   if (prevRememberedSettingsKey !== rememberedSettingsKey) {
     setPrevRememberedSettingsKey(rememberedSettingsKey);
-    setModelPref(
-      modelForBackend(agentBackend, lastUsedModelId, backendDefaults),
-    );
-    setEffortPref(
-      parseEffort(lastUsedEffort) ?? backendDefaults[agentBackend].effort,
+    setModelSelection(
+      cloneSelection(
+        lastUsedModelSelection ??
+          currentModelOptions?.defaultSelection ??
+          backendDefaults[agentBackend],
+      ),
     );
   }
-
-  const selectedModel = modelPref;
-
-  const availableEffortLevels = useMemo(
-    () => getEffortLevelsForBackend(agentBackend, selectedModel),
-    [agentBackend, selectedModel],
-  );
-  const effortSupported = availableEffortLevels.length > 0;
-  const selectedEffort = pickEffort(availableEffortLevels, effortPref);
 
   // One composer instance serves every tab, so both halves of a draft — the
   // text and the attachments — are bound to the conversation they were authored
@@ -415,10 +393,7 @@ export default function UnifiedComposer({
       pendingImages: images,
       tokens,
       backend: agentBackend,
-      modelId: selectedModel,
-      effort: selectedEffort,
-      effortSupported,
-      codexFastMode,
+      modelSelection,
     });
 
     switch (result.kind) {
@@ -451,10 +426,7 @@ export default function UnifiedComposer({
     draft,
     tokens,
     agentBackend,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
-    codexFastMode,
+    modelSelection,
     onRunCommand,
     clearComposer,
     restoreComposer,
@@ -534,18 +506,15 @@ export default function UnifiedComposer({
         backendLocked={backendLocked}
         selectedBackend={agentBackend}
         onBackendChange={onAgentChange}
-        selectedModel={selectedModel}
-        onModelChange={setModelPref}
-        selectedEffort={selectedEffort}
-        onEffortChange={setEffortPref}
-        codexFastMode={codexFastMode}
-        onCodexFastModeChange={setCodexFastMode}
-        availableEffortLevels={availableEffortLevels}
-        effortSupported={effortSupported}
+        modelCatalog={modelCatalog}
+        modelCatalogs={modelCatalogs}
+        modelSelection={modelSelection}
+        modelSelectionBlockedReason={modelSelectionBlockedReason}
+        onModelSelectionChange={setModelSelection}
         hasCollabChip={false}
         effectiveCollabConfig={{
           agentTwo: seedAgentTwoDraft(
-            agentBackend === "claude" ? "codex" : "claude",
+            oppositeCollaborationBackend(agentBackend),
             backendDefaults,
           ),
           negotiationRounds: 3,

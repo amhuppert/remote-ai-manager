@@ -157,7 +157,7 @@ function hasContextMissingAcceptanceCriteria(value: unknown): boolean {
  */
 const EXPECTED_IMPLEMENTER_FORM =
   "an implementer is now an assignment: " +
-  "{ id, profile: { tier, id }, agent: { backend, model, reasoningEffort } }";
+  "{ id, profile: { tier, id }, agent: { backend, modelSelection } }";
 
 const EXPECTED_VALIDATOR_FORM =
   "a context validator is now a cohort: " +

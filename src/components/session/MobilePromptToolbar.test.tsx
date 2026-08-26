@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createTestQueryClient } from "@/test/component-mocks";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import MobilePromptToolbar, {
   type MobilePromptToolbarProps,
 } from "./MobilePromptToolbar";
@@ -16,25 +18,17 @@ Element.prototype.releasePointerCapture = () => {};
 
 afterEach(cleanup);
 
+const defaultCatalog = getStaticBackendModelCatalog("claude");
+const defaultSelection = defaultSelectionForModel(defaultCatalog, "opus");
+
 const baseProps: MobilePromptToolbarProps = {
-  modelOptions: [
-    { id: "opus", label: "Opus", description: "Most capable" },
-    { id: "sonnet", label: "Sonnet", description: "Balanced" },
-  ],
-  effortOptions: [
-    { id: "high", label: "High", description: "Default" },
-    { id: "max", label: "Max", description: "Maximum" },
-  ],
-  selectedModel: "opus",
-  selectedEffort: "high",
-  effortSupported: true,
-  onSelectModel: vi.fn(),
-  onSelectEffort: vi.fn(),
+  modelCatalog: defaultCatalog,
+  modelSelection: defaultSelection,
+  modelSelectionBlockedReason: null,
+  onModelSelectionChange: vi.fn(),
   backend: "claude",
   backendLocked: false,
   onSelectBackend: vi.fn(),
-  codexFastMode: false,
-  onCodexFastModeChange: vi.fn(),
   onAttach: vi.fn(),
   debugActive: false,
   debugSupported: true,
@@ -50,6 +44,51 @@ function renderToolbar(overrides: Partial<MobilePromptToolbarProps> = {}) {
     </QueryClientProvider>,
   );
 }
+
+describe("MobilePromptToolbar model selection", () => {
+  it("applies a model's complete default variant", () => {
+    const modelCatalog = getStaticBackendModelCatalog("claude");
+    const modelSelection = defaultSelectionForModel(modelCatalog, "opus");
+    const onModelSelectionChange = vi.fn();
+    renderToolbar({
+      modelCatalog,
+      modelSelection,
+      onModelSelectionChange,
+    });
+
+    fireEvent.click(screen.getByTestId("mobile-prompt-model-chip"));
+    fireEvent.click(screen.getByRole("radio", { name: /Sonnet/ }));
+
+    expect(onModelSelectionChange).toHaveBeenCalledWith(
+      defaultSelectionForModel(modelCatalog, "sonnet"),
+    );
+  });
+
+  it("keeps parameter edits in the sheet until a valid draft is applied", () => {
+    const modelCatalog = getStaticBackendModelCatalog("codex");
+    const modelSelection = defaultSelectionForModel(
+      modelCatalog,
+      modelCatalog.defaultModelId,
+    );
+    const onModelSelectionChange = vi.fn();
+    renderToolbar({
+      backend: "codex",
+      modelCatalog,
+      modelSelection,
+      onModelSelectionChange,
+    });
+
+    fireEvent.click(screen.getByTestId("mobile-prompt-model-chip"));
+    fireEvent.click(screen.getByRole("switch", { name: "Fast mode" }));
+    expect(onModelSelectionChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onModelSelectionChange).toHaveBeenCalledWith({
+      ...modelSelection,
+      parameters: { ...modelSelection.parameters, fast: "true" },
+    });
+  });
+});
 
 describe("MobilePromptToolbar sheet open-state reporting", () => {
   // The sheets are portaled outside the composer's DOM region, so the composer
@@ -67,7 +106,7 @@ describe("MobilePromptToolbar sheet open-state reporting", () => {
     expect(onSheetOpenChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("reports open for the Model + Reasoning sheet too", () => {
+  it("reports open for the model options sheet too", () => {
     const onSheetOpenChange = vi.fn();
     renderToolbar({ onSheetOpenChange });
     fireEvent.click(screen.getByRole("button", { name: /^Model Opus/ }));
@@ -83,136 +122,18 @@ describe("MobilePromptToolbar sheet open-state reporting", () => {
     unmount();
     expect(onSheetOpenChange).toHaveBeenLastCalledWith(false);
   });
-});
-
-describe("MobilePromptToolbar Codex speed", () => {
-  it("does not show speed configuration for Claude", () => {
-    renderToolbar({ backend: "claude" });
-    fireEvent.click(screen.getByRole("button", { name: /^Model Opus/ }));
-
-    expect(
-      screen.queryByRole("radiogroup", { name: "Codex speed" }),
-    ).toBeNull();
-    expect(screen.queryByText("Speed")).toBeNull();
-  });
-
-  it("shows a Speed section for Codex and changes its conversation value", () => {
-    const onCodexFastModeChange = vi.fn();
+  it("shows the configured raw id and catalog diagnostic for a stale selection", () => {
     renderToolbar({
-      backend: "codex",
-      codexFastMode: true,
-      onCodexFastModeChange,
-    });
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Model Opus, reasoning High, speed Fast",
-      }),
-    );
-
-    expect(screen.getByText("Speed")).toBeInTheDocument();
-    expect(
-      screen.getByRole("dialog", {
-        name: "Speed, model, and reasoning",
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Fast" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-
-    fireEvent.click(screen.getByRole("radio", { name: "Standard" }));
-    expect(onCodexFastModeChange).toHaveBeenCalledWith(false);
-  });
-});
-
-describe("MobilePromptToolbar project-scoped model options", () => {
-  const PROJECT_OPTIONS = {
-    backend: "cursor" as const,
-    models: [
-      {
-        id: "composer-1",
-        label: "composer-1",
-        description: "Configured for this project.",
-        effortLevels: [],
-      },
-    ],
-    defaultModelId: "composer-1",
-    source: "project" as const,
-  };
-
-  it("offers only the project's models in the settings sheet", () => {
-    renderToolbar({
-      backend: "cursor",
-      selectedModel: "composer-1",
-      projectOptions: PROJECT_OPTIONS,
-      effortSupported: false,
-    });
-
-    fireEvent.click(screen.getByTestId("mobile-prompt-model-chip"));
-    expect(screen.getByRole("radio", { name: /composer-1/ })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.queryByRole("radio", { name: /composer-2\.5/ })).toBeNull();
-  });
-
-  it("marks the chip invalid when the selection is outside the project's list", () => {
-    // No substitution: the chip must not read as if a permitted model were in
-    // use, because the API is about to refuse this one.
-    renderToolbar({
-      backend: "cursor",
-      selectedModel: "composer-2.5",
-      projectOptions: PROJECT_OPTIONS,
-      effortSupported: false,
+      modelSelection: { modelId: "removed-model", parameters: {} },
     });
 
     const chip = screen.getByTestId("mobile-prompt-model-chip");
     expect(chip).toHaveAttribute("data-invalid-selection", "true");
-    expect(chip.getAttribute("aria-label")).toContain("composer-2.5");
-    expect(chip.getAttribute("aria-label")).toMatch(
-      /not available|unavailable/i,
-    );
-  });
+    expect(chip).toHaveTextContent("removed-model");
 
-  it("explains the mismatch and asks for a choice in the settings sheet", () => {
-    renderToolbar({
-      backend: "cursor",
-      selectedModel: "composer-2.5",
-      projectOptions: PROJECT_OPTIONS,
-      effortSupported: false,
-    });
-
-    fireEvent.click(screen.getByTestId("mobile-prompt-model-chip"));
-    const notice = screen.getByTestId("mobile-prompt-model-invalid");
-    expect(notice.textContent).toContain("composer-2.5");
-    expect(notice.textContent).toContain("composer-1");
-    expect(screen.getByRole("radio", { name: /composer-1/ })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
-  });
-
-  it("states that nothing is available when the project permits no model", () => {
-    renderToolbar({
-      backend: "cursor",
-      selectedModel: "composer-2.5",
-      projectOptions: { ...PROJECT_OPTIONS, models: [], defaultModelId: null },
-      effortSupported: false,
-    });
-
-    const chip = screen.getByTestId("mobile-prompt-model-chip");
-    expect(chip).toHaveAttribute("data-invalid-selection", "true");
     fireEvent.click(chip);
-    expect(
-      screen.getByTestId("mobile-prompt-model-invalid").textContent,
-    ).toMatch(/permits no|no model/i);
-  });
-
-  it("leaves the catalog behavior unchanged when no project options are supplied", () => {
-    renderToolbar({ selectedModel: "opus" });
-
-    const chip = screen.getByTestId("mobile-prompt-model-chip");
-    expect(chip).not.toHaveAttribute("data-invalid-selection");
-    expect(chip.textContent).toContain("Opus");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /not present in this backend catalog/i,
+    );
   });
 });

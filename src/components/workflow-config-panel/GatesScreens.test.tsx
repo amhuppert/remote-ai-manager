@@ -266,7 +266,7 @@ describe("Validator cohort roster screen", () => {
     expect(security.textContent).toContain("Sonnet");
     expect(security.textContent).not.toMatch(/\bsonnet\b/);
     expect(security.textContent).toContain(
-      `${SEED_SEAT.profile.id} · medium · continuity auto`,
+      `${SEED_SEAT.profile.id} · effort=medium · continuity auto`,
     );
   });
 

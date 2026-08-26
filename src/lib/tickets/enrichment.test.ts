@@ -46,8 +46,10 @@ const input: TicketEnrichmentInput = {
     title: "Observed failure",
   },
   backend: "codex",
-  modelId: "gpt-5.4",
-  reasoningEffort: "high",
+  modelSelection: {
+    modelId: "gpt-5.4",
+    parameters: { fast: "false", reasoning: "high" },
+  },
 };
 
 interface HarnessOptions {
@@ -93,15 +95,16 @@ describe("createTicketEnrichmentService", () => {
     const harness = createHarness();
     const configuredInput = {
       ...input,
-      modelId: "gpt-5.6-terra",
-      reasoningEffort: "ultra",
+      modelSelection: {
+        modelId: "gpt-5.6-terra",
+        parameters: { fast: "false", reasoning: "xhigh" },
+      },
     };
 
     await harness.service.enrich(configuredInput);
 
     expect(harness.requests[0]).toMatchObject({
-      modelId: configuredInput.modelId,
-      reasoningEffort: configuredInput.reasoningEffort,
+      modelSelection: configuredInput.modelSelection,
       timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
     });
   });

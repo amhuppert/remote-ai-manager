@@ -107,8 +107,10 @@ function fakeRuntime(input: {
   return {
     backend: "codex",
     status: input.status ?? "alive",
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "high", fast: "false" },
+    },
     outputFormat: undefined,
     alignmentVersion: null,
     appliedConfigs,

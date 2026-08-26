@@ -571,6 +571,7 @@ describe("native SDD proposal shares the ordinary admission service", () => {
       "project-create",
       "project-edit",
       "project-replace",
+      "project-run",
       "project-validate",
       "spec-proposal",
     ]);
@@ -584,8 +585,26 @@ describe("native SDD proposal shares the ordinary admission service", () => {
 
   it("admits the spec launch through the shared service under that caller id", () => {
     const source = read("src/lib/specs/service-factory.ts");
-    expect(source).toContain(
-      'import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission"',
+    const sourceFile = parse("src/lib/specs/service-factory.ts", source);
+    const admissionImport = sourceFile.statements.find(
+      (statement): statement is ts.ImportDeclaration =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        statement.moduleSpecifier.text ===
+          "@/lib/workflow-graph/authored-launch-admission",
+    );
+    const importedNames =
+      admissionImport?.importClause?.namedBindings !== undefined &&
+      ts.isNamedImports(admissionImport.importClause.namedBindings)
+        ? admissionImport.importClause.namedBindings.elements.map(
+            (element) => element.name.text,
+          )
+        : [];
+    expect(importedNames).toEqual(
+      expect.arrayContaining([
+        "admitAuthoredWorkflowLaunch",
+        "admitAuthoredWorkflowModelSelections",
+      ]),
     );
     expect(source).toContain('caller: "spec-proposal"');
   });

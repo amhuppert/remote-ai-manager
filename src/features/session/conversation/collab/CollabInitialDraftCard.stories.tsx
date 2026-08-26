@@ -49,7 +49,10 @@ export const ClaudePrimaryFromFixture = {
 export const WithModelSettings = {
   args: {
     ...fromInitialDraftFixture(makeAgentOneInitialDraft(), "claude", true),
-    modelSettings: { model: "fable", effort: "max" },
+    modelSettings: {
+      modelId: "fable",
+      parameters: { effort: "max" },
+    },
   },
 } satisfies Story;
 

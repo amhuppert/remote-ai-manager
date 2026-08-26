@@ -38,7 +38,7 @@ import { resolveDisplayLabel } from "@/lib/conversations/display-label";
 import { useAllConversationsQuery } from "@/lib/conversations/queries";
 import { useProjectsQuery } from "@/lib/projects/queries";
 import { useProjectConversationsQuery } from "@/lib/project-conversations-client/queries";
-import { useSessionsQuery } from "@/lib/sessions/queries";
+import { useSessionsQuery } from "@/lib/sessions/list-queries";
 import {
   useAddTicketAttachmentMutation,
   type JsonAttachmentPayloadInput,

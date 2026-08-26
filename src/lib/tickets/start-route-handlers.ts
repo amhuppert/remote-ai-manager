@@ -24,6 +24,7 @@ import {
   startTicketServiceInputSchema,
   type TicketStartService,
 } from "./start-service";
+import { ModelSelectionAdmissionError } from "@/lib/agent-backends/model-selection-admission";
 
 const logger = createLogger("tickets.routes.start");
 
@@ -59,12 +60,8 @@ export function createTicketStartRouteHandlers(
       }
 
       const parsed = startTicketServiceInputSchema.safeParse({
+        ...body,
         ...identity,
-        mode: body["mode"],
-        backend: body["backend"],
-        model: body["model"],
-        reasoningEffort: body["reasoningEffort"],
-        profile: body["profile"],
       });
       if (!parsed.success) {
         return validationFailedResponse(toTicketValidationIssues(parsed.error));
@@ -75,10 +72,38 @@ export function createTicketStartRouteHandlers(
         number: parsed.data.number,
         mode: parsed.data.mode,
         backend: parsed.data.backend,
-        model: parsed.data.model,
-        reasoningEffort: parsed.data.reasoningEffort,
+        modelId: parsed.data.modelSelection?.modelId,
+        parameterIds:
+          parsed.data.modelSelection === undefined
+            ? undefined
+            : Object.keys(parsed.data.modelSelection.parameters).sort(),
       });
-      return ticketResponse(await deps.getStartService().start(parsed.data));
+      try {
+        return ticketResponse(await deps.getStartService().start(parsed.data));
+      } catch (error) {
+        if (!(error instanceof ModelSelectionAdmissionError)) throw error;
+        logger.warn("model_selection.rejected", {
+          backend: parsed.data.backend,
+          modelId: error.modelId,
+          code: error.code,
+          ...(error.parameterId !== undefined
+            ? { parameterId: error.parameterId }
+            : {}),
+          projectName: parsed.data.projectName,
+          number: parsed.data.number,
+        });
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            modelId: error.modelId,
+            ...(error.parameterId !== undefined
+              ? { parameterId: error.parameterId }
+              : {}),
+          },
+          { status: 400 },
+        );
+      }
     },
   };
 }

@@ -94,8 +94,10 @@ describe("useSendPrompt — send()", () => {
       await result.current.send(
         "test",
         0,
-        "composer-2.5",
-        undefined,
+        {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
         undefined,
         "cursor",
       );
@@ -114,7 +116,7 @@ describe("useSendPrompt — send()", () => {
     ]);
   });
 
-  it("stamps Codex fast mode on the request and optimistic turn", async () => {
+  it("stamps the complete model selection on the request and optimistic turn", async () => {
     const sse =
       'event: content\ndata: {"type":"text","text":"partial answer"}\n\n' +
       "event: done\ndata: {}\n\n";
@@ -130,30 +132,36 @@ describe("useSendPrompt — send()", () => {
       await result.current.send(
         "hi",
         0,
-        "fable",
+        {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "max", fast: "true" },
+        },
         undefined,
-        "max",
         "codex",
         "  hi  ",
-        true,
       );
     });
 
     const messages = inFlight().optimisticMessages;
     expect(messages[0]).toMatchObject({
       role: "user",
-      model: "fable",
-      effort: "max",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "max", fast: "true" },
+      },
     });
     expect(messages[1]).toMatchObject({
       role: "assistant",
-      model: "fable",
-      effort: "max",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "max", fast: "true" },
+      },
     });
     expect(requestBody?.submittedPendingPromptText).toBe("  hi  ");
-    expect(requestBody?.codexFastMode).toBe(true);
+    expect(requestBody?.modelSelection).toEqual({
+      modelId: "gpt-5.4",
+      parameters: { reasoning: "max", fast: "true" },
+    });
   });
 });
 
@@ -294,9 +302,13 @@ describe("useSendPrompt — queue()", () => {
     };
 
     const { result } = renderQueueHook();
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
 
     await act(async () => {
-      await result.current.queue("hi", [image], "  hi  ");
+      await result.current.queue("hi", [image], "  hi  ", modelSelection);
     });
 
     expect(bodies).toHaveLength(1);
@@ -304,10 +316,12 @@ describe("useSendPrompt — queue()", () => {
       text?: string;
       images?: ImagePayload[];
       submittedPendingPromptText?: string;
+      modelSelection?: typeof modelSelection;
     };
     expect(body.text).toBe("hi");
     expect(body.images).toEqual([image]);
     expect(body.submittedPendingPromptText).toBe("  hi  ");
+    expect(body.modelSelection).toEqual(modelSelection);
   });
 
   it("posts to the queue endpoint even when this tab's sending flag is false", async () => {

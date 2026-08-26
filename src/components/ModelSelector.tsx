@@ -3,7 +3,7 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { modelOptionsForCatalogEntry } from "@/lib/agent-backends/catalog";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
-import type { ProjectBackendModelOptions } from "@/lib/agent-backends/project-model-options";
+import type { ProjectBackendModelOptions } from "@/lib/agent-backends/project-model-options-schema";
 import {
   Select,
   SelectTrigger,

@@ -25,7 +25,6 @@ import {
   type CursorConversationRuntimeDeps,
 } from "./conversation-runtime";
 import { translatePortableMcpToCursor } from "./mcp-translation";
-import { CURSOR_DEFAULT_MODEL } from "./model-policy";
 import {
   createScriptedTransport,
   type ScriptedTransport,
@@ -46,6 +45,10 @@ import { CURSOR_IPC_CODEC_VERSION } from "./worker/ipc";
 const TEST_DIR = path.join("/tmp", `cc-cursor-behavior-${process.pid}`);
 const CONVERSATION_ID = "conv-behavior";
 const BROADCAST_META = { projectName: "repo", storeSessionName: "s1" };
+const MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+} as const;
 
 const broadcasts: SSEEvent[] = [];
 
@@ -81,6 +84,7 @@ function createInput(
     },
     worktreePath: "/repo/.worktrees/s1",
     persistedRef: null,
+    modelSelection: MODEL_SELECTION,
     sessionInstructions: [],
     tooling: {},
     ...overrides,
@@ -139,11 +143,9 @@ function createPersistingHarness(
   const runtime = new CursorConversationRuntime(createInput(options.create), {
     transport,
     storePath: (conversationId) => `/state/cursor/${conversationId}`,
-    resolveModel: async (explicit) => ({
+    resolveModel: async (selection) => ({
       ok: true,
-      model: explicit ?? CURSOR_DEFAULT_MODEL,
-      source: explicit === null ? "default" : "explicit",
-      supportedModels: [CURSOR_DEFAULT_MODEL],
+      selection,
     }),
     translatePortableMcpToCursor,
     newRunId: () => `run-${++runCounter}`,
@@ -164,6 +166,7 @@ function createPersistingHarness(
         promptText: overrides.promptText ?? "do the thing",
         imageRefs: [],
         sessionInstructions: [],
+        modelSelection: MODEL_SELECTION,
         autonomous: false,
         signal: controller.signal,
         onEvent: async (event) => {

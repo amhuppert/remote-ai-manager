@@ -92,19 +92,34 @@ describe("MessageRow", () => {
     expect(screen.getByText("Codex")).toBeInTheDocument();
   });
 
-  it("renders the model name in meta for assistant messages with a model field", () => {
+  it("renders the complete model selection in assistant metadata", () => {
     renderWithQuery(
       <MessageRow
-        msg={makeMessage({ role: "assistant", model: "sonnet" })}
+        msg={makeMessage({
+          role: "assistant",
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: {
+              thinking: "true",
+              context: "1m",
+              reasoning: "xhigh",
+              fast: "false",
+            },
+          },
+        })}
         messageIndex={1}
         isLast={false}
-        selectedBackend="claude"
+        selectedBackend="cursor"
         worktreePath="/tmp/proj"
         onFork={vi.fn()}
         lastMessageExtras={null}
       />,
     );
-    expect(screen.getByText("sonnet")).toBeInTheDocument();
+    expect(screen.getByText("composer-2.5")).toBeInTheDocument();
+    expect(screen.getByText("context=1m")).toBeInTheDocument();
+    expect(screen.getByText("fast=false")).toBeInTheDocument();
+    expect(screen.getByText("reasoning=xhigh")).toBeInTheDocument();
+    expect(screen.getByText("thinking=true")).toBeInTheDocument();
   });
 
   // The rendered clock text is zone-dependent, so these assert the structure
@@ -149,7 +164,10 @@ describe("MessageRow", () => {
   it("always renders the copy action, and shows the fork action only when onFork is provided", () => {
     const withFork = renderWithQuery(
       <MessageRow
-        msg={makeMessage({ role: "assistant", model: "sonnet" })}
+        msg={makeMessage({
+          role: "assistant",
+          modelSelection: { modelId: "sonnet", parameters: {} },
+        })}
         messageIndex={1}
         isLast={false}
         selectedBackend="claude"
@@ -169,7 +187,10 @@ describe("MessageRow", () => {
 
     const noFork = renderWithQuery(
       <MessageRow
-        msg={makeMessage({ role: "assistant", model: "sonnet" })}
+        msg={makeMessage({
+          role: "assistant",
+          modelSelection: { modelId: "sonnet", parameters: {} },
+        })}
         messageIndex={1}
         isLast={false}
         selectedBackend="claude"

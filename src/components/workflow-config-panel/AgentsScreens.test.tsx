@@ -181,7 +181,13 @@ describe("Implementer screen", () => {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
           focus: "Prefer additive migrations.",
-          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+          agent: {
+            backend: "claude",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+          },
         },
       },
     });
@@ -199,7 +205,13 @@ describe("Implementer screen", () => {
         id: "implementer",
         profile: { tier: "project", id: "checkout-impl" },
         focus: "Prefer additive migrations.",
-        agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+        agent: {
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        },
       },
     });
   });
@@ -226,7 +238,7 @@ describe("Implementer screen", () => {
     expect(intent?.value).not.toHaveProperty("focus");
   });
 
-  it("resets model and effort when the backend changes, leaving the profile alone", () => {
+  it("replaces the complete model selection when the backend changes, leaving the profile alone", () => {
     const { editor, onEdit } = editorFor();
     renderScreen(<ImplementerScreen editor={editor} />);
 
@@ -237,7 +249,13 @@ describe("Implementer screen", () => {
       path: "implementer",
       value: {
         profile: SEEDED_WORKFLOW_DEFAULTS.implementer.profile,
-        agent: { backend: "codex", reasoningEffort: "medium" },
+        agent: {
+          backend: "codex",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
+        },
       },
     });
     expect(intent?.value).not.toMatchObject({ agent: { model: "opus" } });
@@ -254,7 +272,7 @@ describe("Collaboration screen", () => {
     // Enabled comes from the workflow, the second agent and the threshold from
     // global — and this edit must not move any of them.
     expect(tierOf("collab-enabled")).toBe("W");
-    expect(tierOf("collab-second-agent-model")).toBe("G");
+    expect(tierOf("collab-second-agent-model-selection")).toBe("G");
     expect(tierOf("collab-threshold")).toBe("G");
 
     fireEvent.change(screen.getByLabelText("Negotiation rounds"), {
@@ -307,8 +325,10 @@ describe("Collaboration screen", () => {
         collaboration: {
           secondAgent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
         },
       },

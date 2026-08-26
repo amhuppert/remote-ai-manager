@@ -20,8 +20,10 @@ function makeData(
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -227,9 +229,7 @@ describe("ExecutionContextNode — delivery states", () => {
     );
 
     expect(screen.getByText("In lane")).toBeInTheDocument();
-    expect(
-      screen.getByText("Waiting to merge → session"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Waiting to merge → session")).toBeInTheDocument();
     expect(screen.queryByText("Completed")).toBeNull();
   });
 
@@ -288,8 +288,10 @@ describe("ExecutionContextNode — card anatomy", () => {
         profile: { tier: "project" as const, id: "checkout-impl" },
         agent: {
           backend: "claude" as const,
-          model: "opus" as const,
-          reasoningEffort: "high" as const,
+          modelSelection: {
+            modelId: "opus" as const,
+            parameters: { effort: "high" as const },
+          },
         },
       },
       contextValidator: {
@@ -300,8 +302,10 @@ describe("ExecutionContextNode — card anatomy", () => {
             profile: { tier: "global" as const, id: "security-reviewer" },
             agent: {
               backend: "claude" as const,
-              model: "sonnet" as const,
-              reasoningEffort: "high" as const,
+              modelSelection: {
+                modelId: "sonnet" as const,
+                parameters: { effort: "high" as const },
+              },
             },
             strategy: "conversation" as const,
             authority: "blocking" as const,
@@ -312,8 +316,10 @@ describe("ExecutionContextNode — card anatomy", () => {
             profile: { tier: "project" as const, id: "style-reviewer" },
             agent: {
               backend: "codex" as const,
-              model: "gpt-5.6-luna" as const,
-              reasoningEffort: "medium" as const,
+              modelSelection: {
+                modelId: "gpt-5.6-luna" as const,
+                parameters: { effort: "medium" as const },
+              },
             },
             strategy: "task" as const,
             authority: "advisory" as const,
@@ -358,16 +364,18 @@ describe("ExecutionContextNode — card anatomy", () => {
     const crew = screen.getByTestId("node-crew");
     // The catalog's canonical long name, never the short selector id.
     expect(crew).toHaveTextContent("Opus 5");
-    expect(crew).toHaveTextContent("high");
+    expect(crew).toHaveTextContent("effort=high");
 
     const seats = screen.getAllByTestId("node-crew-seat");
     expect(seats).toHaveLength(2);
     expect(seats[0]).toHaveTextContent("security");
     expect(seats[0]).toHaveTextContent("blocking");
     expect(seats[0]).toHaveTextContent("Sonnet");
+    expect(seats[0]).toHaveTextContent("effort=high");
     expect(seats[1]).toHaveTextContent("style");
     expect(seats[1]).toHaveTextContent("advisory");
     expect(seats[1]).toHaveTextContent("GPT-5.6 Luna");
+    expect(seats[1]).toHaveTextContent("effort=medium");
   });
 
   it("names itself completely enough to be read without the visuals", () => {
@@ -386,7 +394,7 @@ describe("ExecutionContextNode — card anatomy", () => {
     );
 
     expect(screen.getByTestId("context-node")).toHaveAccessibleName(
-      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 high, inherited",
+      "Implement checkout — Running, lane delivery, owning (src/checkout, src/risk), 3 of 5 tasks, implementer Opus 5 effort=high, inherited",
     );
   });
 

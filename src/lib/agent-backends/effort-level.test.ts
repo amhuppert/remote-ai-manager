@@ -8,8 +8,6 @@ import {
   effortLevelSchema,
   getCodexReasoningLevelsForModel,
   getEffortLevelsForModel,
-  isCodexReasoningEffortSupported,
-  clampEffortToModel,
 } from "@/lib/agent-backends/schemas";
 
 describe("effortLevelSchema", () => {
@@ -76,34 +74,6 @@ describe("getEffortLevelsForModel", () => {
       "xhigh",
       "max",
     ]);
-  });
-});
-
-describe("clampEffortToModel", () => {
-  it("returns the effort unchanged when supported by the model", () => {
-    expect(clampEffortToModel("high", "opus")).toBe("high");
-    expect(clampEffortToModel("low", "sonnet")).toBe("low");
-  });
-
-  it("returns xhigh unchanged for opus", () => {
-    expect(clampEffortToModel("xhigh", "opus")).toBe("xhigh");
-  });
-
-  it("clamps xhigh down to high for sonnet", () => {
-    expect(clampEffortToModel("xhigh", "sonnet")).toBe("high");
-  });
-
-  it("clamps max down to high for sonnet", () => {
-    expect(clampEffortToModel("max", "sonnet")).toBe("high");
-  });
-
-  it("returns undefined for haiku", () => {
-    expect(clampEffortToModel("high", "haiku")).toBeUndefined();
-  });
-
-  it("returns max and xhigh unchanged for fable", () => {
-    expect(clampEffortToModel("max", "fable")).toBe("max");
-    expect(clampEffortToModel("xhigh", "fable")).toBe("xhigh");
   });
 });
 
@@ -180,11 +150,10 @@ describe("getCodexReasoningLevelsForModel (GPT-5.3 Codex Spark)", () => {
   });
 
   it("withholds minimal, max, and ultra from Spark", () => {
-    for (const effort of ["minimal", "max", "ultra"] as const) {
-      expect(
-        isCodexReasoningEffortSupported("gpt-5.3-codex-spark", effort),
-      ).toBe(false);
-    }
+    const levels = getCodexReasoningLevelsForModel("gpt-5.3-codex-spark");
+    expect(levels).not.toContain("minimal");
+    expect(levels).not.toContain("max");
+    expect(levels).not.toContain("ultra");
   });
 });
 

@@ -38,6 +38,7 @@ import {
 } from "./lifecycle-classifier";
 import type { CharterAmendment } from "@/lib/workflows/charter-schemas";
 import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import {
   getContextOutput,
   summarizeOutputSchemaShape,
@@ -102,8 +103,7 @@ export interface LiveOutlineHeader {
 
 export interface LiveOutlineAgentSummary {
   backend: GraphWorkflowAgentConfig["backend"];
-  model: string;
-  reasoningEffort: string;
+  modelSelection: BackendModelSelection;
 }
 
 /**
@@ -132,11 +132,9 @@ export interface LiveOutlineAssignmentProvenance {
 export type LiveOutlineImplementerSummary = LiveOutlineAgentSummary &
   LiveOutlineAssignmentProvenance;
 
-export interface LiveOutlineValidatorSummary extends LiveOutlineAssignmentProvenance {
+export interface LiveOutlineValidatorSummary
+  extends LiveOutlineAssignmentProvenance, LiveOutlineAgentSummary {
   strategy: ValidatorAssignment["strategy"];
-  backend: GraphWorkflowAgentConfig["backend"];
-  model: string;
-  reasoningEffort: string;
 }
 
 export interface LiveOutlineCollaborationSummary {
@@ -491,8 +489,10 @@ function summarizeAgent(
 ): LiveOutlineAgentSummary {
   return {
     backend: agent.backend,
-    model: agent.model,
-    reasoningEffort: agent.reasoningEffort,
+    modelSelection: {
+      modelId: agent.modelSelection.modelId,
+      parameters: { ...agent.modelSelection.parameters },
+    },
   };
 }
 
@@ -527,8 +527,10 @@ function summarizeValidators(
     ...summarizeProvenance(assignment),
     strategy: assignment.strategy,
     backend: assignment.agent.backend,
-    model: assignment.agent.model,
-    reasoningEffort: assignment.agent.reasoningEffort,
+    modelSelection: {
+      modelId: assignment.agent.modelSelection.modelId,
+      parameters: { ...assignment.agent.modelSelection.parameters },
+    },
   }));
 }
 

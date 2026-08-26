@@ -4,16 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
 import { Dialog, DialogContent } from "@/components/ui/Dialog";
-import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
+import { ModelOptionsEditor } from "@/components/session/prompt/ModelSelectionControls";
 import {
   backendLabel,
-  backendSupportsFastMode,
   backendToneToken,
   skillTriggerPrefixForBackend,
 } from "@/lib/agent-backends/catalog";
+import {
+  defaultSelectionForModel,
+  validateModelSelection,
+} from "@/lib/agent-backends/model-selection";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
-import type { ProjectBackendModelOptions } from "@/lib/agent-backends/project-model-options";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 /** Sheet-row layout shared by the interactive "More" rows (legacy `.mobile-prompt-row`).
@@ -27,15 +32,9 @@ const MOBILE_PROMPT_ROW_STATIC_CLASS = `${MOBILE_PROMPT_ROW_BASE} cursor-default
 /** Row icon (legacy `.mobile-prompt-row__icon`): per-backend tint + toggle-on amber. */
 const MOBILE_PROMPT_ROW_ICON_CLASS =
   "w-[28px] h-[28px] flex items-center justify-center text-text-secondary shrink-0 font-mono text-[0.85rem] data-[tone=cyan]:text-cyan data-[tone=violet]:text-violet group-data-[on=true]:text-amber";
-/** Settings sheet option row (legacy `.mobile-prompt-option`). Active beats hover
- *  via mutually-exclusive `data-active` gating (legacy relied on later-rule order). */
+/** Settings sheet option row. Active beats hover via mutually-exclusive state. */
 const MOBILE_PROMPT_OPTION_CLASS =
   "flex items-center gap-sm w-full p-sm border-0 rounded-sm bg-transparent text-text-primary cursor-pointer text-left min-h-[52px] transition-[background] duration-100 data-[active=false]:hover:bg-bg-hover data-[active=true]:bg-cyan-glow";
-/** The xhigh/max/ultra reasoning option name renders as rainbow gradient text (legacy
- *  `.mobile-prompt-option.cc-rainbow .__name`); `rainbow-shift` keyframe is preserved. */
-const MOBILE_PROMPT_OPTION_NAME_RAINBOW =
-  "bg-rainbow bg-[length:200%_auto] [-webkit-background-clip:text] [background-clip:text] [-webkit-text-fill-color:transparent] animate-[rainbow-shift_3s_linear_infinite] font-bold";
-
 // The bottom-sheet scrim + card recipe, ported from the legacy
 // `.mobile-action-backdrop` / `.mobile-action-sheet` globals to utilities so the
 // sheet composes the `ui/Dialog` unstyled/edge-anchored variant (which owns the
@@ -49,44 +48,17 @@ const MOBILE_SHEET_SCRIM =
   "fixed inset-0 z-dropdown motion-safe:animate-[fadeIn_0.15s_ease] bg-[var(--cc-bg-void-a70)] [backdrop-filter:blur(4px)]";
 const MOBILE_SHEET_CARD =
   "fixed inset-x-0 bottom-0 flex max-h-[70vh] motion-safe:animate-[slideUpSheet_0.25s_ease] flex-col gap-sm overflow-y-auto rounded-t-lg border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface px-md pt-md pb-[calc(var(--spacing-lg)+env(safe-area-inset-bottom,0px))]";
-interface ModelOption {
-  id: string;
-  label: string;
-  description: string;
-}
-
-interface EffortOption {
-  id: EffortLevel;
-  label: string;
-  description: string;
-}
-
 type SheetId = "more" | "settings" | null;
 
 export interface MobilePromptToolbarProps {
-  /** The process-global catalog's models; used when `projectOptions` is null. */
-  modelOptions: readonly ModelOption[];
-  /**
-   * The project's effective options for `backend`, when the surface has project
-   * context (spec D10). Supplying them replaces `modelOptions` AND changes the
-   * out-of-range behavior: a selection the project does not permit is reported
-   * as invalid rather than shown as if it were in use, because the API will
-   * refuse it. Null means the project's options are unknown.
-   */
-  projectOptions?: ProjectBackendModelOptions | null;
-  effortOptions: readonly EffortOption[];
-  selectedModel: string;
-  selectedEffort: EffortLevel;
-  effortSupported: boolean;
-  effortDisabledReason?: string;
-  onSelectModel(id: string): void;
-  onSelectEffort(id: EffortLevel): void;
+  modelCatalog: BackendModelCatalog | null;
+  modelSelection: BackendModelSelection;
+  modelSelectionBlockedReason: string | null;
+  onModelSelectionChange(selection: BackendModelSelection): void;
 
   backend: AgentBackendId;
   backendLocked: boolean;
   onSelectBackend(b: AgentBackendId): void;
-  codexFastMode: boolean;
-  onCodexFastModeChange(enabled: boolean): void;
 
   onAttach(): void;
   attachDisabled?: boolean;
@@ -123,20 +95,13 @@ export interface MobilePromptToolbarProps {
 }
 
 export default function MobilePromptToolbar({
-  modelOptions,
-  projectOptions = null,
-  effortOptions,
-  selectedModel,
-  selectedEffort,
-  effortSupported,
-  effortDisabledReason,
-  onSelectModel,
-  onSelectEffort,
+  modelCatalog,
+  modelSelection,
+  modelSelectionBlockedReason,
+  onModelSelectionChange,
   backend,
   backendLocked,
   onSelectBackend,
-  codexFastMode,
-  onCodexFastModeChange,
   onAttach,
   attachDisabled,
   onSheetOpenChange,
@@ -163,40 +128,38 @@ export default function MobilePromptToolbar({
     return () => onSheetOpenChange?.(false);
   }, [sheet, onSheetOpenChange]);
 
-  const availableModels = projectOptions?.models ?? modelOptions;
-  const selectedModelOpt = availableModels.find((m) => m.id === selectedModel);
-  const selectedEffortOpt = effortOptions.find((e) => e.id === selectedEffort);
-  // Only a project-scoped list makes an unmatched value a real invalid
-  // selection. Against the catalog it is usually a configured custom model or a
-  // mid backend-switch transient, where the raw id is the honest label.
-  const invalidModelSelection =
-    projectOptions != null && selectedModelOpt === undefined;
-  const invalidModelReason = !invalidModelSelection
-    ? null
-    : availableModels.length === 0
-      ? `Model "${selectedModel}" is not available: this project's configuration permits no ${backendLabel(backend)} model. Update CommandCenter.json before starting a turn.`
-      : `Model "${selectedModel}" is not available for this project. Choose one of: ${availableModels
-          .map((option) => option.id)
-          .join(", ")}.`;
-  const chipModelLabel = selectedModelOpt?.label ?? selectedModel;
-  const chipEffortLabel = selectedEffortOpt?.label;
+  const validation =
+    modelCatalog === null
+      ? null
+      : validateModelSelection(modelCatalog, modelSelection);
+  const availableModels = modelCatalog?.models ?? [];
+  const selectedModel = availableModels.find(
+    (model) =>
+      model.id === modelSelection.modelId ||
+      model.aliases.includes(modelSelection.modelId),
+  );
+  const primaryParameter = selectedModel?.parameters.find(
+    (parameter) =>
+      parameter.prominence === "primary" && parameter.values.length > 1,
+  );
+  const primaryValue = primaryParameter?.values.find(
+    ({ value }) => value === modelSelection.parameters[primaryParameter.id],
+  );
+  const invalidModelSelection = validation?.valid !== true;
+  const invalidModelReason =
+    modelSelectionBlockedReason ??
+    (validation !== null && !validation.valid
+      ? validation.issues.map(({ message }) => message).join(" ")
+      : null);
+  const chipModelLabel = selectedModel?.label ?? modelSelection.modelId;
   const chipSettingsLabel = [
     invalidModelReason ?? `Model ${chipModelLabel}`,
-    effortSupported && chipEffortLabel
-      ? `reasoning ${chipEffortLabel}`
-      : undefined,
-    backendSupportsFastMode(backend)
-      ? `speed ${codexFastMode ? "Fast" : "Standard"}`
+    primaryParameter && primaryValue
+      ? `${primaryParameter.label.toLowerCase()} ${primaryValue.label}`
       : undefined,
   ]
     .filter((label): label is string => Boolean(label))
     .join(", ");
-  const effortIsRainbow =
-    effortSupported &&
-    (selectedEffort === "xhigh" ||
-      selectedEffort === "max" ||
-      selectedEffort === "ultra");
-
   return (
     <>
       <div className="hidden items-center gap-xs max-768:flex">
@@ -213,10 +176,7 @@ export default function MobilePromptToolbar({
 
         <button
           type="button"
-          className={cn(
-            "mobile-prompt-model-chip inline-flex h-[44px] min-w-0 cursor-pointer items-center gap-xs rounded-sm border border-border-default bg-bg-surface px-[12px] font-mono text-[0.78rem] whitespace-nowrap text-text-primary transition-[border-color,background] duration-150 hover:border-cyan-dim disabled:cursor-not-allowed disabled:opacity-50",
-            effortIsRainbow && "cc-rainbow-border",
-          )}
+          className="mobile-prompt-model-chip inline-flex h-[44px] min-w-0 cursor-pointer items-center gap-xs rounded-sm border border-border-default bg-bg-surface px-[12px] font-mono text-[0.78rem] whitespace-nowrap text-text-primary transition-[border-color,background] duration-150 hover:border-cyan-dim disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => setSheet("settings")}
           disabled={isReadOnly || isBusy}
           aria-haspopup="dialog"
@@ -234,14 +194,14 @@ export default function MobilePromptToolbar({
           >
             {chipModelLabel}
           </span>
-          {effortSupported && chipEffortLabel && (
+          {primaryValue ? (
             <>
               <span className="px-2xs text-text-tertiary">·</span>
               <span className="mobile-prompt-model-chip__effort text-text-secondary">
-                {chipEffortLabel}
+                {primaryValue.label}
               </span>
             </>
-          )}
+          ) : null}
           <span className="ml-xs text-[0.7rem] text-text-tertiary" aria-hidden>
             {"\u25BE"}
           </span>
@@ -417,11 +377,7 @@ export default function MobilePromptToolbar({
           anchor="stretch"
           scrimClassName={MOBILE_SHEET_SCRIM}
           contentClassName={MOBILE_SHEET_CARD}
-          aria-label={
-            backendSupportsFastMode(backend)
-              ? "Speed, model, and reasoning"
-              : "Model and reasoning"
-          }
+          aria-label="Model options"
         >
           <div className="mobile-action-sheet-header">
             <div className="mobile-action-sheet-handle" />
@@ -435,24 +391,6 @@ export default function MobilePromptToolbar({
             </button>
           </div>
 
-          {backendSupportsFastMode(backend) && (
-            <>
-              <div className="mobile-action-sheet-section">
-                <div className="mobile-action-sheet-label">Speed</div>
-                <div className="px-sm pb-sm">
-                  <CodexSpeedToggle
-                    fastMode={codexFastMode}
-                    onFastModeChange={onCodexFastModeChange}
-                    disabled={isBusy || isReadOnly}
-                    presentation="fullWidth"
-                  />
-                </div>
-              </div>
-
-              <div className="mobile-action-sheet-divider" />
-            </>
-          )}
-
           <div className="mobile-action-sheet-section">
             <div className="mobile-action-sheet-label">Model</div>
             {invalidModelReason !== null && (
@@ -465,7 +403,7 @@ export default function MobilePromptToolbar({
               </div>
             )}
             {availableModels.map((option) => {
-              const active = option.id === selectedModel;
+              const active = option.id === selectedModel?.id;
               return (
                 <button
                   key={option.id}
@@ -474,8 +412,12 @@ export default function MobilePromptToolbar({
                   aria-checked={active}
                   className={MOBILE_PROMPT_OPTION_CLASS}
                   data-active={active}
+                  disabled={isBusy || isReadOnly}
                   onClick={() => {
-                    onSelectModel(option.id);
+                    if (modelCatalog === null) return;
+                    onModelSelectionChange(
+                      defaultSelectionForModel(modelCatalog, option.id),
+                    );
                   }}
                 >
                   <span className="flex min-w-0 flex-1 flex-col gap-2xs">
@@ -501,58 +443,25 @@ export default function MobilePromptToolbar({
 
           <div className="mobile-action-sheet-divider" />
 
-          <div className="mobile-action-sheet-section">
-            <div className="mobile-action-sheet-label">Reasoning</div>
-            {!effortSupported ? (
-              <div className="p-sm font-mono text-[0.78rem] text-text-tertiary">
-                {effortDisabledReason ??
-                  "Reasoning level is not available for this model."}
-              </div>
+          <div className="mobile-action-sheet-section px-sm pb-sm">
+            <div className="mobile-action-sheet-label px-0">Parameters</div>
+            {selectedModel && modelCatalog !== null ? (
+              <ModelOptionsEditor
+                catalog={modelCatalog}
+                selection={modelSelection}
+                onApply={(nextSelection) => {
+                  onModelSelectionChange(nextSelection);
+                  closeSheet();
+                }}
+                onCancel={closeSheet}
+                disabled={isBusy || isReadOnly}
+                parameterProminence="all"
+                selectContentLayer="popover"
+              />
             ) : (
-              effortOptions.map((option) => {
-                const active = option.id === selectedEffort;
-                const isRainbow =
-                  option.id === "xhigh" ||
-                  option.id === "max" ||
-                  option.id === "ultra";
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    className={MOBILE_PROMPT_OPTION_CLASS}
-                    data-active={active}
-                    onClick={() => {
-                      onSelectEffort(option.id);
-                    }}
-                  >
-                    <span className="flex min-w-0 flex-1 flex-col gap-2xs">
-                      <span
-                        className={cn(
-                          "font-mono text-[0.85rem]",
-                          isRainbow
-                            ? MOBILE_PROMPT_OPTION_NAME_RAINBOW
-                            : "font-medium text-text-primary",
-                        )}
-                      >
-                        {option.label}
-                      </span>
-                      <span className="font-mono text-[0.72rem] text-text-tertiary">
-                        {option.description}
-                      </span>
-                    </span>
-                    {active && (
-                      <span
-                        className="ml-auto shrink-0 text-[1rem] text-cyan"
-                        aria-hidden
-                      >
-                        {"\u2713"}
-                      </span>
-                    )}
-                  </button>
-                );
-              })
+              <p className="p-sm font-mono text-[0.78rem] text-text-tertiary">
+                Choose an available model to configure its parameters.
+              </p>
             )}
           </div>
         </DialogContent>

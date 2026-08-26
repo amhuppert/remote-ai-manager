@@ -5,6 +5,8 @@ import { fireEvent, screen } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import PromptComposer from "@/components/session/prompt/PromptComposer";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { CollabConfigRowConfig } from "@/components/session/CollabConfigRow";
 
@@ -54,15 +56,24 @@ vi.mock("@/components/agent-capabilities/McpCapabilityPanelContainer", () => ({
   McpCapabilityPanelContainer: () => null,
 }));
 
+const modelCatalog = getStaticBackendModelCatalog("claude");
+const modelSelection = defaultSelectionForModel(modelCatalog, "sonnet");
+const codexCatalog = getStaticBackendModelCatalog("codex");
+
 function makeProps(): React.ComponentProps<typeof PromptComposer> {
   const editorRef = React.createRef<PromptEditorHandle>();
   const fileInputRef = React.createRef<HTMLInputElement>();
   const collabConfig: CollabConfigRowConfig = {
-    claudeModel: "sonnet",
-    codexModel: "gpt-5.4",
-    claudeEffort: "medium",
-    codexEffort: "medium",
-  } as CollabConfigRowConfig;
+    agentTwo: {
+      backend: "codex",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
+    },
+    negotiationRounds: 3,
+    autonomousResolutionThreshold: "major",
+  };
   return {
     projectName: "proj",
     sessionName: "sess",
@@ -96,18 +107,27 @@ function makeProps(): React.ComponentProps<typeof PromptComposer> {
     backendLocked: false,
     selectedBackend: "claude",
     onBackendChange: vi.fn(),
-    selectedModel: "sonnet",
-    onModelChange: vi.fn(),
-    selectedEffort: "medium",
-    onEffortChange: vi.fn(),
-    codexFastMode: false,
-    onCodexFastModeChange: vi.fn(),
-    availableEffortLevels: ["low", "medium", "high"],
-    effortSupported: true,
+    modelCatalog,
+    modelCatalogs: {
+      claude: modelCatalog,
+      codex: codexCatalog,
+      cursor: null,
+    },
+    modelSelection,
+    modelSelectionBlockedReason: null,
+    onModelSelectionChange: vi.fn(),
     hasCollabChip: false,
     effectiveCollabConfig: collabConfig,
     originatingCollabAgent: "claude",
     onCollabConfigChange: vi.fn(),
+    collabBackendDefaults: {
+      claude: { modelId: "opus", parameters: { effort: "high" } },
+      codex: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+      cursor: { modelId: "composer-2.5", parameters: {} },
+    },
     onCollabDismiss: vi.fn(),
     onDebugToggle: vi.fn(),
     debugTogglePending: false,
@@ -206,6 +226,47 @@ describe("PromptComposer composer-focus wiring", () => {
       code: "Escape",
     });
     expect(composerFocused()).toBe(false);
+  });
+
+  it("keeps composerFocused while model options are open", () => {
+    const props = makeProps();
+    props.selectedBackend = "codex";
+    props.modelCatalog = codexCatalog;
+    props.modelSelection = defaultSelectionForModel(
+      codexCatalog,
+      codexCatalog.defaultModelId,
+    );
+    const { container } = renderWithQuery(<PromptComposer {...props} />);
+    const optionsTrigger = container.querySelector(
+      'button[aria-label="Model options"]',
+    ) as HTMLButtonElement;
+
+    fireEvent.focus(optionsTrigger);
+    fireEvent.click(optionsTrigger);
+    fireEvent.blur(optionsTrigger, { relatedTarget: document.body });
+    expect(composerFocused()).toBe(true);
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Apply" }), {
+      key: "Escape",
+      code: "Escape",
+    });
+    expect(composerFocused()).toBe(false);
+  });
+
+  it("mirrors the complete composer model selection in collaboration settings", () => {
+    const props = makeProps();
+    props.hasCollabChip = true;
+    props.modelSelection = {
+      modelId: "sonnet",
+      parameters: { effort: "high", thinking: "true" },
+    };
+
+    renderWithQuery(<PromptComposer {...props} />);
+
+    const summary = screen.getByTitle("Uses this conversation's settings");
+    expect(summary.textContent).toContain("sonnet");
+    expect(summary.textContent).toContain("effort=high");
+    expect(summary.textContent).toContain("thinking=true");
   });
 });
 

@@ -62,7 +62,13 @@ function assignment(
     strategy: "conversation",
     authority: "blocking",
     continuity: { enabled: true },
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
+    },
     ...overrides,
   };
 }
@@ -77,7 +83,13 @@ const COHORT: ValidatorCohort = {
       profile: { tier: "global", id: "security-reviewer" },
       authority: "advisory",
       focus: "auth boundaries and session fixation",
-      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agent: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     }),
     assignment("house-style", {
       profile: { tier: "project", id: "house-style" },

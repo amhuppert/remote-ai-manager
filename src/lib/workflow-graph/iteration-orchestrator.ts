@@ -5,6 +5,7 @@ import { assertLoopFence } from "./loop-fence";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { refValueForBackend } from "@/lib/agent-backends/continuity";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -199,8 +200,7 @@ export interface GraphWorkflowRunAgentIterationInput {
   contextId: string;
   prompt: string;
   backend: AgentBackendId;
-  model: string;
-  reasoningEffort: string;
+  modelSelection: BackendModelSelection;
   toolServer: unknown;
   /**
    * Resolved per-context execution target. When the context is isolated in a
@@ -3887,7 +3887,7 @@ export function createGraphWorkflowIterationOrchestrator(
       input.projectPath,
       input.sessionName,
       // The context's OWN backend: the turn is dispatched with this context's
-      // model, effort, and timeout, and a conversation created on the service
+      // model selection and timeout, and a conversation created on the service
       // default would run them against a different backend entirely.
       { role: "iteration", agentBackend: backend },
     );
@@ -4602,8 +4602,10 @@ export function createGraphWorkflowIterationOrchestrator(
         1,
       incompleteTaskCount: incompleteTasks.length,
       incompleteTaskIds: incompleteTasks.map((t) => t.id),
-      model: context.implementer.agent.model,
-      reasoningEffort: context.implementer.agent.reasoningEffort,
+      modelId: context.implementer.agent.modelSelection.modelId,
+      parameterIds: Object.keys(
+        context.implementer.agent.modelSelection.parameters,
+      ).sort(),
     });
     logger.info("graph-workflow.iteration.started", {
       executionId: initialExecution.id,
@@ -4952,8 +4954,7 @@ export function createGraphWorkflowIterationOrchestrator(
         conversationId: conversation.id,
         contextId: input.contextId,
         backend: context.implementer.agent.backend,
-        model: context.implementer.agent.model,
-        reasoningEffort: context.implementer.agent.reasoningEffort,
+        modelSelection: context.implementer.agent.modelSelection,
         toolServer: toolServer.server,
         executionTarget: input.executionTarget,
         askUserQuestionsEnabled: context.askUserQuestions.enabled,
@@ -5113,8 +5114,10 @@ export function createGraphWorkflowIterationOrchestrator(
       execLogger?.iteration(input.contextId, "iteration.prompt_sent", {
         promptMode,
         promptLength: initialPrompt.length,
-        model: context.implementer.agent.model,
-        reasoningEffort: context.implementer.agent.reasoningEffort,
+        modelId: context.implementer.agent.modelSelection.modelId,
+        parameterIds: Object.keys(
+          context.implementer.agent.modelSelection.parameters,
+        ).sort(),
       });
 
       // Same-Turn Tool Dispatch Contract (design §Same-Turn Tool Dispatch

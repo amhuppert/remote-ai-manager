@@ -144,8 +144,7 @@ export function createGraphWorkflowOutputCaptureRunner(
       // document, so anything less than the whole schema would validate a
       // different contract than the author wrote.
       outputFormat: { type: "json_schema", schema: input.outputSchema },
-      modelId: context.implementer.agent.model,
-      effort: context.implementer.agent.reasoningEffort,
+      modelSelection: context.implementer.agent.modelSelection,
       ...(writeEnvelope !== null
         ? { fsWritePolicy: writeEnvelope.policy }
         : {}),

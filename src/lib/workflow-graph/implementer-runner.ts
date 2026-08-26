@@ -16,6 +16,7 @@ import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-reso
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getConversationFsWriteRestrictionForBackend } from "@/lib/agent-backends/catalog";
 import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
 import {
@@ -46,11 +47,10 @@ interface ExecutePromptStreamFn {
     promptText: string,
     emit: (event: string, data: unknown) => void,
     conversationId?: string,
-    modelId?: string,
+    modelSelection?: BackendModelSelection,
     images?: never[],
     options?: {
       autonomous?: boolean;
-      effort?: string;
       backend?: AgentBackendId;
       tooling?: { portableMcp?: PortableMcpConfig };
       workflowContext?: WorkflowLaneIdentity;
@@ -100,8 +100,7 @@ export interface RunIterationInput {
   executionId: string;
   contextId: string;
   backend: AgentBackendId;
-  model: string;
-  reasoningEffort: string;
+  modelSelection: BackendModelSelection;
   toolServer: unknown;
   /**
    * When supplied, the iteration runs against this resolved target's
@@ -190,8 +189,8 @@ export function createGraphWorkflowImplementerRunner(
       conversationId: input.conversationId,
       contextId: input.contextId,
       backend: input.backend,
-      model: input.model,
-      reasoningEffort: input.reasoningEffort,
+      modelId: input.modelSelection.modelId,
+      parameterIds: Object.keys(input.modelSelection.parameters).sort(),
     });
 
     const laneCapability = mintLaneCapability({
@@ -267,7 +266,6 @@ export function createGraphWorkflowImplementerRunner(
     const promptOptions: {
       autonomous: boolean;
       backend: AgentBackendId;
-      effort: string;
       tooling: { portableMcp: PortableMcpConfig };
       workflowContext: WorkflowLaneIdentity;
       executionTarget?: ExecutionTarget;
@@ -278,7 +276,6 @@ export function createGraphWorkflowImplementerRunner(
     } = {
       autonomous: true,
       backend: input.backend,
-      effort: input.reasoningEffort,
       tooling: {
         portableMcp: input.toolServer as PortableMcpConfig,
       },
@@ -321,7 +318,7 @@ export function createGraphWorkflowImplementerRunner(
         : `${renderWriteEnvelopeBriefing(envelope)}\n\n${input.prompt}`,
       () => {},
       input.conversationId,
-      input.model,
+      input.modelSelection,
       undefined,
       promptOptions,
     );

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import { messageContentBlockSchema } from "@/lib/conversations/message-content-schemas";
 
 // Lifecycle of a durably-queued follow-up message. `pending` and `delivering`
@@ -52,21 +53,24 @@ export type QueuedMessageMetadata = z.infer<typeof queuedMessageMetadataSchema>;
 // The queue — not the JSONL transcript — is the source of truth for this entry
 // until delivery to the agent is confirmed. `deliveryAttemptId` guards against
 // a stale failure handler mutating a newer delivery attempt.
-export const pendingQueuedMessageSchema = z.object({
-  id: z.string(),
-  content: z.array(messageContentBlockSchema),
-  status: pendingQueuedMessageStatusSchema,
-  enqueuedAt: z.string(),
-  updatedAt: z.string(),
-  deliveryStartedAt: z.string().nullable(),
-  deliveredAt: z.string().nullable(),
-  cancelledAt: z.string().nullable(),
-  failedAt: z.string().nullable(),
-  deliveryAttemptId: z.string().nullable(),
-  attemptCount: z.number().int().nonnegative(),
-  error: z.string().nullable(),
-  metadata: queuedMessageMetadataSchema.nullable().default(null),
-});
+export const pendingQueuedMessageSchema = z
+  .object({
+    id: z.string(),
+    content: z.array(messageContentBlockSchema),
+    status: pendingQueuedMessageStatusSchema,
+    enqueuedAt: z.string(),
+    updatedAt: z.string(),
+    deliveryStartedAt: z.string().nullable(),
+    deliveredAt: z.string().nullable(),
+    cancelledAt: z.string().nullable(),
+    failedAt: z.string().nullable(),
+    deliveryAttemptId: z.string().nullable(),
+    attemptCount: z.number().int().nonnegative(),
+    error: z.string().nullable(),
+    metadata: queuedMessageMetadataSchema.nullable().default(null),
+    modelSelection: backendModelSelectionSchema.optional(),
+  })
+  .strict();
 export type PendingQueuedMessage = z.infer<typeof pendingQueuedMessageSchema>;
 
 // Client-safe projection of a pending queued message used in `message-queued`
@@ -84,6 +88,7 @@ export const queuedMessageViewSchema = z.object({
   failedAt: z.string().nullable(),
   error: z.string().nullable(),
   metadata: queuedMessageMetadataSchema.nullable().default(null),
+  modelSelection: backendModelSelectionSchema.optional(),
 });
 export type QueuedMessageView = z.infer<typeof queuedMessageViewSchema>;
 

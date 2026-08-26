@@ -38,8 +38,10 @@ function collisionDefinition() {
             authority: "blocking",
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           })),
         },

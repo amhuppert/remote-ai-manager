@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   resolveQuickTicketContext,
@@ -26,8 +26,7 @@ export interface QuickTicketDraft {
   autoStart: boolean;
   /** Auto-start kickoff overrides; null follows the configured defaults. */
   kickoffBackend: AgentBackendId | null;
-  kickoffModel: string | null;
-  kickoffReasoningEffort: EffortLevel | null;
+  kickoffModelSelection: BackendModelSelection | null;
   /**
    * Prompt identity for the started session's initial conversation, as the
    * compact `tier:id` spelling. Null means the Standard Agent default, which
@@ -80,8 +79,7 @@ function createDraft(context: ResolvedQuickTicketContext): QuickTicketDraft {
     removedBundleKeys: [],
     autoStart: false,
     kickoffBackend: null,
-    kickoffModel: null,
-    kickoffReasoningEffort: null,
+    kickoffModelSelection: null,
     kickoffProfile: null,
   };
 }

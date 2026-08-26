@@ -24,6 +24,7 @@ import { continuationDispositionSchema } from "@/lib/agent-backends/errors";
 import { messageContentBlockSchema } from "@/lib/conversations/message-content-schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 
 export const laneRefSchema = z.object({
   workflowId: z.string().min(1),
@@ -93,13 +94,12 @@ const baseRequestFields = {
   // turn. Both task runners (`claude/task-runner`, `codex/task-runner`) and
   // the conversation safety-net timer skip their timeout when this is 0.
   timeoutMs: z.number().int().nonnegative().optional(),
-  // Optional per-call model selection. When set, callers (workflow agents,
-  // collaborators) pass this through to the resolved task runner /
-  // conversation runtime so the backend uses the configured model instead of
-  // its default. Both fields are strings at this layer; backend-specific
-  // validation happens at the runner.
-  modelId: z.string().min(1).optional(),
-  reasoningEffort: z.string().min(1).optional(),
+  // Complete per-call selection. Backend-specific validation happens at the
+  // runner, but the bundle is never split or partially merged at this layer.
+  modelSelection: backendModelSelectionSchema.optional(),
+  modelId: z.never().optional(),
+  reasoningEffort: z.never().optional(),
+  codexFastMode: z.never().optional(),
   imageRefs: z.array(conversationImageRefSchema).max(5).optional(),
   // Declared on the shared base because BOTH dispatch paths now establish it
   // natively: the task runner on its own sandbox, and the conversation runtimes
@@ -110,16 +110,20 @@ const baseRequestFields = {
 } as const;
 
 export const agentCallRequestSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("conversation_turn"),
-    backend: agentBackendIdShapeSchema.optional(),
-    ...baseRequestFields,
-  }),
-  z.object({
-    kind: z.literal("task_run"),
-    backend: agentBackendIdShapeSchema,
-    ...baseRequestFields,
-  }),
+  z
+    .object({
+      kind: z.literal("conversation_turn"),
+      backend: agentBackendIdShapeSchema.optional(),
+      ...baseRequestFields,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("task_run"),
+      backend: agentBackendIdShapeSchema,
+      ...baseRequestFields,
+    })
+    .strict(),
 ]);
 export type AgentCallRequest = z.infer<typeof agentCallRequestSchema>;
 type AgentCallRequestKind = AgentCallRequest["kind"];

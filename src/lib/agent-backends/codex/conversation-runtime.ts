@@ -30,11 +30,9 @@ import type {
 } from "../conversation";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
 import type { PortableMcpToCodexResult } from "../mcp-translation";
-import {
-  codexReasoningEffortSchema,
-  getCodexReasoningLevelsForModel,
-  getDefaultCodexModel,
-  type CodexPricingTable,
+import type {
+  BackendModelSelection,
+  CodexPricingTable,
 } from "@/lib/agent-backends/schemas";
 import {
   estimateCodexCostUsd,
@@ -63,7 +61,7 @@ import type { ConversationTarget } from "@/lib/conversations/conversation-target
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
-import { toStringEnv } from "./shared";
+import { toSdkModelReasoningEffort, toStringEnv } from "./shared";
 import {
   projectSchemaForCodex,
   restoreCodexOptionalOmissions,
@@ -83,6 +81,15 @@ import {
   readCodexPersistedCostBaseline,
   type CodexPersistedCostBaseline,
 } from "./cost-baseline";
+import {
+  projectAdmittedCodexModelSelection,
+  resolveCodexModelSelection,
+  type ResolvedCodexModelSelection,
+} from "./model-selection";
+import {
+  ModelSelectionPolicyError,
+  modelSelectionKey,
+} from "../model-selection";
 
 const logger = createLogger("codex:conversation-runtime");
 
@@ -164,8 +171,7 @@ export class CodexConversationRuntime
   implements ConversationBackendRuntime, CodexCapabilityApplyTarget
 {
   readonly backend: AgentBackendId = "codex";
-  readonly modelId: string | undefined;
-  readonly reasoningEffort: string | undefined;
+  readonly modelSelection: BackendModelSelection;
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
@@ -206,6 +212,7 @@ export class CodexConversationRuntime
   private readonly workflowContextId: string | undefined;
   private readonly workflowLaneCapability: string | undefined;
   private readonly deps: CodexConversationRuntimeDeps;
+  private readonly resolvedModelSelection: ResolvedCodexModelSelection;
   /**
    * Codex `turn.completed` usage is CUMULATIVE for the thread (across exec
    * process invocations), so each turn's attributable cost is the delta
@@ -243,8 +250,10 @@ export class CodexConversationRuntime
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
     this.workflowLaneCapability = input.workflowLaneCapability;
-    this.modelId = input.modelId;
-    this.reasoningEffort = input.reasoningEffort;
+    this.resolvedModelSelection = projectAdmittedCodexModelSelection(
+      input.modelSelection,
+    );
+    this.modelSelection = this.resolvedModelSelection.modelSelection;
     this.outputFormat = input.outputFormat;
     this.alignmentVersion = input.alignmentVersion ?? null;
     this.fsWritePolicy = input.fsWritePolicy;
@@ -252,7 +261,7 @@ export class CodexConversationRuntime
 
     logger.info("codex-runtime.created", {
       conversationId: input.conversationId,
-      modelId: input.modelId,
+      modelId: this.modelSelection.modelId,
       hasPersistedRef: !!input.persistedRef,
       hasCodexCapabilityConfig: this.stagedCapabilityConfig !== null,
     });
@@ -282,6 +291,18 @@ export class CodexConversationRuntime
     const contentBlocks: MessageContentBlock[] = [];
 
     try {
+      const turnModelSelection = projectAdmittedCodexModelSelection(
+        input.modelSelection,
+      );
+      if (
+        modelSelectionKey(turnModelSelection.modelSelection) !==
+        modelSelectionKey(this.modelSelection)
+      ) {
+        throw new Error(
+          "Codex model selection changed without recreating the conversation runtime.",
+        );
+      }
+
       const promptInput = this.buildPromptInput(input);
 
       // Reconcile the managed skill bundle link before every turn so resumed
@@ -298,8 +319,7 @@ export class CodexConversationRuntime
       }
 
       // Build per-turn Codex client options
-      const codexFastMode = input.codexFastMode ?? false;
-      const codexOptions = await this.buildCodexOptions(codexFastMode);
+      const codexOptions = await this.buildCodexOptions();
 
       // Create Codex client and thread
       const codex = this.deps.createCodex(codexOptions);
@@ -315,10 +335,10 @@ export class CodexConversationRuntime
         isResume,
         threadId: this.threadId,
         threadOptions,
-        modelId: this.modelId,
-        reasoningEffort: this.reasoningEffort,
+        modelId: this.modelSelection.modelId,
+        reasoningEffort: this.resolvedModelSelection.reasoningEffort,
         hasOutputFormat: !!this.outputFormat,
-        codexFastMode,
+        codexFastMode: this.resolvedModelSelection.fastMode,
         hasMcpServers: codexOptions.config?.mcp_servers !== undefined,
         promptLength:
           typeof promptInput === "string"
@@ -408,8 +428,8 @@ export class CodexConversationRuntime
             error: acc.errorMessage ?? classification.message,
             rawError: classification.message,
             threadId: acc.knownThreadId,
-            modelId: this.modelId,
-            reasoningEffort: this.reasoningEffort,
+            modelId: this.modelSelection.modelId,
+            reasoningEffort: this.resolvedModelSelection.reasoningEffort,
             wasFirstTurn,
           });
         }
@@ -586,7 +606,7 @@ export class CodexConversationRuntime
 
     return estimateCodexCostUsd(
       usage,
-      this.modelId ?? getDefaultCodexModel(),
+      this.modelSelection.modelId,
       pricingOverrides,
     );
   }
@@ -699,9 +719,7 @@ export class CodexConversationRuntime
     return result.envelope;
   }
 
-  private async buildCodexOptions(
-    codexFastMode: boolean,
-  ): Promise<CodexOptions> {
+  private async buildCodexOptions(): Promise<CodexOptions> {
     // Thread the same cctl env contract every spawned session gets (doc 01 §2):
     // identity + server coordinates + PATH prepend, plus the graph-workflow lane
     // identity when this is an implementer lane, so `cctl workflow …` resolves
@@ -774,7 +792,7 @@ export class CodexConversationRuntime
 
     options.config = withCodexFastMode(
       configMerged as CodexOptions["config"],
-      codexFastMode,
+      this.resolvedModelSelection.fastMode,
     );
 
     return options;
@@ -825,16 +843,10 @@ export class CodexConversationRuntime
           skipGitRepoCheck: true,
         };
 
-    // Always pin a model. With no model the Codex SDK falls back to its own
-    // built-in default, which is rejected for ChatGPT-account auth.
-    options.model = this.modelId ?? getDefaultCodexModel();
-    if (this.reasoningEffort) {
-      // Validated upstream by validateModelAndEffort. Cast past the SDK type,
-      // which omits the GPT-5.6 "max"/"ultra" levels the Codex CLI accepts (the
-      // SDK serializes this field verbatim into --config model_reasoning_effort).
-      options.modelReasoningEffort = this
-        .reasoningEffort as ThreadOptions["modelReasoningEffort"];
-    }
+    options.model = this.resolvedModelSelection.modelId;
+    options.modelReasoningEffort = toSdkModelReasoningEffort(
+      this.resolvedModelSelection.reasoningEffort,
+    );
 
     return options;
   }
@@ -1155,43 +1167,96 @@ function extractMcpToolResultContent(
 // Codex Conversation Backend Factory
 // ============================================================
 
-export const codexConversationBackendFactory: ConversationBackendFactory = {
-  backend: "codex",
+export type ReadConfiguredCodexModelSelection =
+  () => Promise<BackendModelSelection>;
 
-  async createRuntime(
-    input: ConversationBackendCreateInput,
-  ): Promise<ConversationBackendRuntime> {
-    logger.info("codex-factory.create_runtime", {
-      conversationId: input.conversationId,
-      modelId: input.modelId,
-      reasoningEffort: input.reasoningEffort,
-    });
+const readConfiguredCodexModelSelection: ReadConfiguredCodexModelSelection =
+  async () => (await readConfig()).agentBackends.codex.modelSelection;
 
-    return new CodexConversationRuntime(input);
-  },
+export function createCodexConversationBackendFactory(
+  readConfiguredSelection: ReadConfiguredCodexModelSelection = readConfiguredCodexModelSelection,
+): ConversationBackendFactory {
+  return {
+    backend: "codex",
 
-  validateModelAndEffort(input: {
-    modelId?: string;
-    reasoningEffort?: string;
-  }): void {
-    if (input.reasoningEffort) {
-      const result = codexReasoningEffortSchema.safeParse(
-        input.reasoningEffort,
-      );
-      if (!result.success) {
-        throw new Error(
-          `Invalid Codex reasoning effort: "${input.reasoningEffort}". Must be one of: ${codexReasoningEffortSchema.options.join(", ")}.`,
+    async createRuntime(
+      input: ConversationBackendCreateInput,
+    ): Promise<ConversationBackendRuntime> {
+      logger.info("codex-factory.create_runtime", {
+        conversationId: input.conversationId,
+        modelId: input.modelSelection.modelId,
+      });
+
+      return new CodexConversationRuntime(input);
+    },
+
+    validateModelSelection(selection: BackendModelSelection): void {
+      projectAdmittedCodexModelSelection(selection);
+    },
+
+    async validateProjectModelSelection({ projectPath, modelSelection }) {
+      let configuredSelection: BackendModelSelection;
+      try {
+        configuredSelection = await readConfiguredSelection();
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logger.warn("codex-factory.model_selection_config_unavailable", {
+          projectPath,
+          modelId: modelSelection.modelId,
+          error: message,
+        });
+        return {
+          ok: false,
+          code: "model_catalog_unavailable",
+          message,
+          modelId: modelSelection.modelId,
+        };
+      }
+
+      try {
+        const resolved = resolveCodexModelSelection(
+          modelSelection,
+          configuredSelection,
         );
-      }
-
-      if (input.modelId) {
-        const allowed = getCodexReasoningLevelsForModel(input.modelId);
-        if (allowed && !allowed.includes(result.data)) {
-          throw new Error(
-            `Reasoning effort "${input.reasoningEffort}" is not supported by model "${input.modelId}". Supported: ${allowed.join(", ")}.`,
-          );
+        return { ok: true, modelSelection: resolved.modelSelection };
+      } catch (error) {
+        if (error instanceof ModelSelectionPolicyError) {
+          const issue = error.issues[0];
+          logger.warn("codex-factory.model_selection_refused", {
+            projectPath,
+            modelId: issue?.modelId ?? modelSelection.modelId,
+            code: issue?.code ?? "model_selection_invalid",
+            ...(issue?.parameterId === undefined
+              ? {}
+              : { parameterId: issue.parameterId }),
+          });
+          return {
+            ok: false,
+            code: issue?.code ?? "model_selection_invalid",
+            message: error.message,
+            modelId: issue?.modelId ?? modelSelection.modelId,
+            ...(issue?.parameterId === undefined
+              ? {}
+              : { parameterId: issue.parameterId }),
+          };
         }
+
+        const message = getErrorMessage(error);
+        logger.warn("codex-factory.model_selection_refused", {
+          projectPath,
+          modelId: modelSelection.modelId,
+          code: "model_selection_invalid",
+        });
+        return {
+          ok: false,
+          code: "model_selection_invalid",
+          message,
+          modelId: modelSelection.modelId,
+        };
       }
-    }
-  },
-};
+    },
+  };
+}
+
+export const codexConversationBackendFactory =
+  createCodexConversationBackendFactory();

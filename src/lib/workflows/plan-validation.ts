@@ -20,14 +20,12 @@ import {
 } from "@/lib/workflow-graph/assignment-reference-labels";
 import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
 import { lintPlanSemantics } from "./plan-lints";
-import { z } from "zod";
+import type { WorkflowPlanIssue } from "./plan-validation-schemas";
 
-export const workflowPlanIssueSchema = z.object({
-  /** JSON-path location within the request body, e.g. `definition.tasks.0.contextId`. */
-  path: z.string(),
-  message: z.string(),
-});
-export type WorkflowPlanIssue = z.infer<typeof workflowPlanIssueSchema>;
+export {
+  workflowPlanIssueSchema,
+  type WorkflowPlanIssue,
+} from "./plan-validation-schemas";
 
 export interface WorkflowPlanCommandIssue extends WorkflowPlanIssue {
   code: string;

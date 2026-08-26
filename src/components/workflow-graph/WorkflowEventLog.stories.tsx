@@ -62,8 +62,10 @@ function makeExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -86,8 +88,10 @@ function makeExecution(
             profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
@@ -105,8 +109,10 @@ function makeExecution(
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: true },
               },

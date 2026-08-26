@@ -35,6 +35,7 @@ import type {
 } from "@/lib/conversations/message-queue-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -88,6 +89,7 @@ export interface QueueMessageDeps {
     input: ConversationKey & {
       content: MessageContentBlock[];
       metadata?: QueuedMessageMetadata;
+      modelSelection?: BackendModelSelection;
       consumePendingQuestionId?: string;
     },
   ): Promise<PendingQueuedMessage | null>;
@@ -139,6 +141,7 @@ export interface QueueMessageParams {
   images?: ImagePayload[];
   documentFeedback?: DocumentFeedbackPayload;
   backend: AgentBackendId;
+  modelSelection?: BackendModelSelection;
   /** Provenance tag persisted on the queue row (e.g. question answers) so the
    *  UI can render a structured card instead of the raw text. */
   metadata?: QueuedMessageMetadata;
@@ -231,6 +234,7 @@ export async function queueMessage(
     images,
     documentFeedback,
     backend,
+    modelSelection,
     metadata,
     consumePendingQuestionId,
     deliveryPolicy,
@@ -268,6 +272,7 @@ export async function queueMessage(
     conversationId,
     content,
     ...(metadata ? { metadata } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
     ...(consumePendingQuestionId !== undefined
       ? { consumePendingQuestionId }
       : {}),
@@ -284,6 +289,18 @@ export async function queueMessage(
       messageIds: [entry.id],
       status: "pending",
       reason: "caller_policy",
+    });
+    return { entry, deliveryTiming: "next_turn" };
+  }
+
+  if (modelSelection !== undefined) {
+    logger.info("queue.delivery_deferred", {
+      projectName: deps.getProjectDisplayName(projectPath),
+      ...scopeRef,
+      conversationId,
+      messageIds: [entry.id],
+      status: "pending",
+      reason: "model_selection",
     });
     return { entry, deliveryTiming: "next_turn" };
   }

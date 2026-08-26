@@ -1,12 +1,17 @@
-import { useMemo } from "react";
-import {
-  effortLevelsForCatalogEntry,
-  type BackendCatalogEntry,
-} from "@/lib/agent-backends/catalog";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
+import type {
+  BackendModelCatalog,
+  BackendModelSelection,
+} from "@/lib/agent-backends/schemas";
 import { compactionConfigSchema } from "@/lib/config/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  CatalogModelSelect,
+  ModelOptionsEditor,
+} from "@/components/session/prompt/ModelSelectionControls";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
@@ -20,10 +25,45 @@ import type { ConfigFormController } from "./types";
 // catalog default. Any other backend starts from its catalog default model.
 const COMPACTION_DEFAULTS = compactionConfigSchema.parse({});
 
-function defaultModelForBackend(entry: BackendCatalogEntry): string {
-  return entry.id === COMPACTION_DEFAULTS.backend
-    ? COMPACTION_DEFAULTS.conversationModel
-    : entry.defaultModelId;
+function CompactionModelSelectionField({
+  controller,
+  label,
+  fieldPath,
+  catalog,
+  selection,
+}: {
+  controller: ConfigFormController;
+  label: string;
+  fieldPath: string;
+  catalog: BackendModelCatalog;
+  selection: BackendModelSelection;
+}): React.JSX.Element {
+  const { handleChange, isDefault, isModified } = controller;
+  const apply = (next: BackendModelSelection): void => {
+    handleChange(fieldPath, next);
+  };
+
+  return (
+    <ConfigField
+      label={label}
+      fieldPath={fieldPath}
+      isDefault={isDefault(fieldPath)}
+      isModified={isModified(fieldPath)}
+    >
+      <CatalogModelSelect
+        catalog={catalog}
+        selection={selection}
+        onSelectionChange={apply}
+      />
+      <div className="mt-md max-w-[420px]">
+        <ModelOptionsEditor
+          catalog={catalog}
+          selection={selection}
+          onApply={apply}
+        />
+      </div>
+    </ConfigField>
+  );
 }
 
 export function CompactionSection({
@@ -44,11 +84,12 @@ export function CompactionSection({
   const compaction = formState.compaction;
   const backend: AgentBackendId =
     compaction?.backend ?? COMPACTION_DEFAULTS.backend;
-  const conversationModel =
-    compaction?.conversationModel ?? COMPACTION_DEFAULTS.conversationModel;
-  const messageModel =
-    compaction?.messageModel ?? COMPACTION_DEFAULTS.messageModel;
-  const effort = compaction?.effort ?? COMPACTION_DEFAULTS.effort;
+  const conversationModelSelection =
+    compaction?.conversationModelSelection ??
+    COMPACTION_DEFAULTS.conversationModelSelection;
+  const messageModelSelection =
+    compaction?.messageModelSelection ??
+    COMPACTION_DEFAULTS.messageModelSelection;
 
   const { data: backends } = useBackendCatalogQuery();
   const entry = backends.find((b) => b.id === backend);
@@ -56,22 +97,20 @@ export function CompactionSection({
     throw new Error(`Unknown agent backend: ${backend}`);
   }
 
-  const modelOptions = entry.models.map((model) => model.id);
-  const modelLabel = (model: string) =>
-    entry.models.find((option) => option.id === model)?.label ?? model;
-  // A single effort applies to both models, so its options follow the primary
-  // conversation model. The backend clamps per-model, so an effort the message
-  // model doesn't support is safe.
-  const effortOptions = useMemo(
-    () => effortLevelsForCatalogEntry(entry, conversationModel),
-    [entry, conversationModel],
+  const conversationCatalog = getConfiguredBackendModelCatalog(
+    backend,
+    conversationModelSelection,
+  );
+  const messageCatalog = getConfiguredBackendModelCatalog(
+    backend,
+    messageModelSelection,
   );
 
   return (
     <SettingsPage
       title="Conversation"
       accent="compaction"
-      sub="The backend, model and reasoning effort used to summarize conversations and oversized messages into compaction artifacts."
+      sub="The backend and complete model selections used to summarize conversations and oversized messages into compaction artifacts."
     >
       <SettingsSubSection
         title="Compaction backend"
@@ -96,68 +135,43 @@ export function CompactionSection({
               if (!nextEntry) {
                 throw new Error(`Unknown agent backend: ${value}`);
               }
-              const nextModel = defaultModelForBackend(nextEntry);
-              // conversationModel/messageModel are a single shared field per
-              // kind, not split by backend, so a backend switch must reset them
-              // to a model valid for the new backend. Effort clears to its
-              // schema default (medium), which every backend supports.
+              const configuredSelection =
+                formState.agentBackends[nextEntry.id].modelSelection;
+              const nextCatalog = getConfiguredBackendModelCatalog(
+                nextEntry.id,
+                configuredSelection,
+              );
+              const nextSelection = defaultSelectionForModel(
+                nextCatalog,
+                nextCatalog.defaultModelId,
+              );
               handleChangeMulti([
                 ["compaction.backend", value],
-                ["compaction.conversationModel", nextModel],
-                ["compaction.messageModel", nextModel],
-                ["compaction.effort", undefined],
+                ["compaction.conversationModelSelection", nextSelection],
+                ["compaction.messageModelSelection", nextSelection],
               ]);
             }}
           />
         </ConfigField>
       </SettingsSubSection>
       <SettingsSubSection
-        title="Models & reasoning"
-        hint="Conversation model summarizes a whole conversation; message model condenses a single oversized message."
+        title="Model selections"
+        hint="Conversation selection summarizes a whole conversation; message selection condenses a single oversized message."
       >
-        <ConfigField
-          label="Conversation model"
-          fieldPath="compaction.conversationModel"
-          isDefault={isDefault("compaction.conversationModel")}
-          isModified={isModified("compaction.conversationModel")}
-        >
-          <ConfigPillGroup
-            value={conversationModel}
-            options={modelOptions}
-            getOptionLabel={modelLabel}
-            onChange={(value) =>
-              handleChange("compaction.conversationModel", value)
-            }
-          />
-        </ConfigField>
-        <ConfigField
-          label="Message model"
-          fieldPath="compaction.messageModel"
-          isDefault={isDefault("compaction.messageModel")}
-          isModified={isModified("compaction.messageModel")}
-        >
-          <ConfigPillGroup
-            value={messageModel}
-            options={modelOptions}
-            getOptionLabel={modelLabel}
-            onChange={(value) => handleChange("compaction.messageModel", value)}
-          />
-        </ConfigField>
-        {effortOptions.length > 0 ? (
-          <ConfigField
-            label="Effort"
-            fieldPath="compaction.effort"
-            isDefault={isDefault("compaction.effort")}
-            isModified={isModified("compaction.effort")}
-            hint="Applies to both compaction models."
-          >
-            <ConfigPillGroup
-              value={effort}
-              options={effortOptions}
-              onChange={(value) => handleChange("compaction.effort", value)}
-            />
-          </ConfigField>
-        ) : null}
+        <CompactionModelSelectionField
+          controller={controller}
+          label="Conversation model selection"
+          fieldPath="compaction.conversationModelSelection"
+          catalog={conversationCatalog}
+          selection={conversationModelSelection}
+        />
+        <CompactionModelSelectionField
+          controller={controller}
+          label="Message model selection"
+          fieldPath="compaction.messageModelSelection"
+          catalog={messageCatalog}
+          selection={messageModelSelection}
+        />
         <ConfigField
           label="Timeout"
           fieldPath="compaction.timeoutMs"

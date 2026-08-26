@@ -479,8 +479,7 @@ function maximalResolvedContext(): Record<string, unknown> {
       focus: "the persistence layer",
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
       },
       profileSnapshot: {
         tier: "builtin",
@@ -505,8 +504,10 @@ function maximalResolvedContext(): Record<string, unknown> {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: false, contextLimitTokens: 120_000 },
           profileSnapshot: {
@@ -538,8 +539,7 @@ function maximalResolvedContext(): Record<string, unknown> {
       maxAttemptsPerContext: 3,
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
       },
     },
     // Source of the guarded edge below, so its cardinality policy is the
@@ -583,8 +583,10 @@ function maximalResolvedContext(): Record<string, unknown> {
       secondAgent: {
         value: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
         source: "per-node",
       },
@@ -771,8 +773,10 @@ function buildMaximalExecution(): unknown {
             focus: "the persistence layer",
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
             profileSnapshot: {
               tier: "builtin",
@@ -800,8 +804,10 @@ function buildMaximalExecution(): unknown {
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: false, contextLimitTokens: 120_000 },
                 profileSnapshot: {
@@ -833,8 +839,10 @@ function buildMaximalExecution(): unknown {
             maxAttemptsPerContext: 3,
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           },
           // `taskValidation` is a removed CC config field name reused here as an
@@ -876,8 +884,10 @@ function buildMaximalExecution(): unknown {
             secondAgent: {
               value: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "high", fast: "false" },
+                },
               },
               source: "per-node",
             },
@@ -981,8 +991,10 @@ function buildMaximalExecution(): unknown {
             maxAttemptsPerContext: 5,
             agent: {
               backend: "codex",
-              model: "gpt-5.4",
-              reasoningEffort: "low",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "low", fast: "false" },
+              },
             },
           },
         },

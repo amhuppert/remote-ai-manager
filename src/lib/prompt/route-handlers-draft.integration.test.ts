@@ -10,7 +10,7 @@ import {
   createPromptRouteHandlers,
   type PromptRouteDeps,
 } from "./route-handlers";
-import { ModelEffortValidationError } from "./sdk-driver";
+import { ModelSelectionValidationError } from "./sdk-driver";
 
 type Db = InstanceType<typeof Database>;
 
@@ -161,7 +161,14 @@ describe("normal prompt route pending-draft ownership", () => {
   });
 
   it.each([
-    ["model validation", new ModelEffortValidationError("invalid model")],
+    [
+      "model validation",
+      new ModelSelectionValidationError({
+        code: "unknown_model",
+        message: "invalid model",
+        modelId: "invalid-model",
+      }),
+    ],
     ["actor setup", new Error("actor creation failed")],
   ])("preserves the submitted draft when %s fails", async (_phase, error) => {
     const handlers = createHandlers(async () => {

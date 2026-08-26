@@ -399,14 +399,20 @@ describe("callPrimitive agent-profile delivery", () => {
     return {
       agent_one: {
         backend: "claude",
-        model: "fable",
+        modelSelection: {
+          modelId: "fable",
+          parameters: { effort: "max" },
+        },
         ...(args.agentOne !== undefined
           ? { profileSnapshot: args.agentOne }
           : {}),
       },
       agent_two: {
         backend: "codex",
-        model: "gpt-5.4",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         ...(args.agentTwo !== undefined
           ? { profileSnapshot: args.agentTwo }
           : {}),

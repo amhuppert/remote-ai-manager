@@ -351,8 +351,10 @@ describe("graph workflow execution validation service", () => {
             authority: "blocking",
             agent: {
               backend: "codex",
-              model: "gpt-5.6-sol",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "gpt-5.6-sol",
+                parameters: { reasoning: "high", fast: "false" },
+              },
             },
             continuity: { enabled: false },
           }),
@@ -408,8 +410,10 @@ describe("graph workflow execution validation service", () => {
           strategy: "task",
           agent: {
             backend: "codex",
-            model: "gpt-5.6-sol",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.6-sol",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
           continuity: { enabled: false },
         }),

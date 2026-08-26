@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
-  effortLevelSchema,
-  type EffortLevel,
+  backendModelSelectionSchema,
+  type BackendModelSelection,
 } from "@/lib/agent-backends/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { conversationProfileSelectionSchema } from "@/lib/conversations/schemas";
@@ -9,6 +9,8 @@ import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import type { ProjectModelSelectionValidation } from "@/lib/agent-backends/conversation";
+import { ModelSelectionAdmissionError } from "@/lib/agent-backends/model-selection-admission";
 import {
   TicketSessionNotLinkableError,
   type EndSessionLinkInput,
@@ -44,21 +46,30 @@ const logger = createLogger("tickets.start");
 // Contract
 // ============================================================
 
-export const startTicketServiceInputSchema = z.object({
-  projectName: z.string().min(1),
-  number: z.number().int().positive(),
-  mode: ticketStartModeSchema,
-  backend: agentBackendSchema.optional(),
-  model: z.string().trim().min(1).max(100).optional(),
-  reasoningEffort: effortLevelSchema.optional(),
-  /**
-   * Identity for the provisioned session's initial conversation. Separate from
-   * the runtime triple above and optional on the wire: omitting it resolves the
-   * Standard Agent at the construction site (R7). Applies in both start modes —
-   * a prepared session's first manual turn runs under it too.
-   */
-  profile: conversationProfileSelectionSchema.optional(),
-});
+export const startTicketServiceInputSchema = z
+  .object({
+    projectName: z.string().min(1),
+    number: z.number().int().positive(),
+    mode: ticketStartModeSchema,
+    backend: agentBackendSchema.optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: z
+      .never({ error: "Use the complete modelSelection instead of model." })
+      .optional(),
+    reasoningEffort: z
+      .never({
+        error: "Put reasoning effort in modelSelection.parameters.",
+      })
+      .optional(),
+    /**
+     * Identity for the provisioned session's initial conversation. Separate from
+     * the complete model selection above and optional on the wire: omitting it
+     * resolves the Standard Agent at the construction site (R7). Applies in both
+     * start modes — a prepared session's first manual turn runs under it too.
+     */
+    profile: conversationProfileSelectionSchema.optional(),
+  })
+  .strict();
 export type StartTicketServiceInput = z.input<
   typeof startTicketServiceInputSchema
 >;
@@ -100,8 +111,7 @@ export interface TicketKickoffInput {
   ticketIdentifier: string;
   prompt: string;
   backend?: AgentBackendId;
-  model?: string;
-  reasoningEffort?: EffortLevel;
+  modelSelection?: BackendModelSelection;
 }
 
 export interface TicketStartServiceDeps {
@@ -113,6 +123,12 @@ export interface TicketStartServiceDeps {
     projectPath: string,
     operation: () => Promise<T>,
   ): Promise<T>;
+  getDefaultAgentBackend(): Promise<AgentBackendId>;
+  admitModelSelection(input: {
+    backend: AgentBackendId;
+    projectPath: string;
+    modelSelection?: BackendModelSelection;
+  }): Promise<ProjectModelSelectionValidation>;
   /**
    * Hands an unsettled conversation attachment to the background snapshot
    * refresher; capture never runs inside the start request.
@@ -461,8 +477,7 @@ export function createTicketStartService(
     mode: TicketStartMode,
     kickoffConfig: {
       backend?: AgentBackendId;
-      model?: string;
-      reasoningEffort?: EffortLevel;
+      modelSelection?: BackendModelSelection;
     },
     /**
      * Prompt identity for the provisioned session's initial conversation. A
@@ -705,21 +720,64 @@ export function createTicketStartService(
           issues: toTicketValidationIssues(parsed.error),
         });
       }
-      const {
-        projectName,
-        number,
-        mode,
-        backend,
-        model,
-        reasoningEffort,
-        profile,
-      } = parsed.data;
+      const { projectName, number, mode, backend, modelSelection, profile } =
+        parsed.data;
+      if (mode === "prepared" && modelSelection !== undefined) {
+        throw new ModelSelectionAdmissionError({
+          code: "model_selection_inapplicable",
+          message:
+            "modelSelection is not supported in prepared mode because no initial agent turn is queued.",
+          modelId: modelSelection.modelId,
+        });
+      }
       const projectPath = await deps.resolveProjectPath(projectName);
       if (projectPath === null) {
         return fail({
           code: "ticket_not_found",
           identifier: formatTicketIdentifier(projectName, number),
         });
+      }
+
+      let kickoffConfig: {
+        backend?: AgentBackendId;
+        modelSelection?: BackendModelSelection;
+      } = {};
+      if (mode === "agent") {
+        const effectiveBackend =
+          backend ?? (await deps.getDefaultAgentBackend());
+        const admission = await deps.admitModelSelection({
+          backend: effectiveBackend,
+          projectPath,
+          modelSelection,
+        });
+        if (!admission.ok) {
+          logger.warn("model_selection.rejected", {
+            backend: effectiveBackend,
+            modelId: admission.modelId,
+            code: admission.code,
+            ...(admission.parameterId !== undefined
+              ? { parameterId: admission.parameterId }
+              : {}),
+            projectName,
+            number,
+          });
+          throw new ModelSelectionAdmissionError(admission);
+        }
+        logger.debug("model_selection.resolved", {
+          backend: effectiveBackend,
+          modelId: admission.modelSelection.modelId,
+          parameterIds: Object.keys(admission.modelSelection.parameters).sort(),
+          sourceLayer:
+            modelSelection === undefined
+              ? "configured_default"
+              : "ticket_start_request",
+          projectName,
+          number,
+        });
+        kickoffConfig = {
+          backend: effectiveBackend,
+          modelSelection: admission.modelSelection,
+        };
       }
 
       return deps.runProjectTicketOperation(projectPath, async () => {
@@ -743,7 +801,7 @@ export function createTicketStartService(
             projectName,
             number,
             mode,
-            { backend, model, reasoningEffort },
+            kickoffConfig,
             profile,
             (id) => hold.bindTicketId(id),
           );

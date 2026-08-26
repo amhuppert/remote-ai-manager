@@ -12,7 +12,10 @@ import {
   createCursorPackageProbe,
   runCursorStaticPreflight,
 } from "../preflight";
-import type { CursorWorkerExitInfo } from "../worker-port";
+import type {
+  CursorWorkerExitInfo,
+  CursorWorkerStartInput,
+} from "../worker-port";
 import { CURSOR_IPC_CODEC_VERSION, parseWorkerFrame } from "./ipc";
 import type { CursorParentFrame, CursorWorkerFrame } from "./ipc";
 import { createCursorProcessHost } from "./process-host";
@@ -35,6 +38,10 @@ const STUB_EXEC_ARGV = ["--import", "tsx"];
 
 const API_KEY = "cursor-key-sentinel-9d41c7ab";
 const CONVERSATION_ID = "conv-real";
+const MODEL_SELECTION = {
+  modelId: "composer-2.5",
+  parameters: { fast: "true" },
+} as const;
 
 const TARGET: ConversationTarget = {
   scope: "session",
@@ -273,7 +280,7 @@ describe("cursor worker credential lifetime in a real process", () => {
       type: "attachAgent",
       mode: "create",
       ref: null,
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
       disallowedTools: ["askQuestion", "await"],
       sandboxEnabled: false,
       autoReview: false,
@@ -323,15 +330,7 @@ interface SupervisorHarness {
   transport: ReturnType<typeof createCursorWorkerSupervisor>;
   frames: CursorWorkerFrame[];
   exits: CursorWorkerExitInfo[];
-  startInput: {
-    conversationId: string;
-    target: ConversationTarget;
-    cwd: string;
-    storePath: string;
-    model: string;
-    onFrame(frame: CursorWorkerFrame): void;
-    onExit(info: CursorWorkerExitInfo): void;
-  };
+  startInput: CursorWorkerStartInput;
 }
 
 /**
@@ -382,7 +381,8 @@ function createSupervisorHarness(
       target: TARGET,
       cwd: process.cwd(),
       storePath: path.join(process.cwd(), ".cc", "temp", "cursor-store"),
-      model: "composer-2.5",
+      modelSelection: MODEL_SELECTION,
+      ownerToken: {},
       onFrame: (frame) => frames.push(frame),
       onExit: (info) => exits.push(info),
     },
@@ -513,7 +513,8 @@ describe("cursor worker credential hygiene", () => {
         target: TARGET,
         cwd: process.cwd(),
         storePath: path.join(process.cwd(), ".cc", "temp", "cursor-store"),
-        model: "composer-2.5",
+        modelSelection: MODEL_SELECTION,
+        ownerToken: {},
         onFrame: (frame) => frames.push(frame),
         onExit: () => {},
       });
@@ -542,7 +543,7 @@ describe("cursor worker credential hygiene", () => {
       started.session.attach({
         mode: "create",
         ref: null,
-        model: "composer-2.5",
+        modelSelection: MODEL_SELECTION,
         mcpServers: {},
       });
       expect(

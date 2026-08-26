@@ -71,8 +71,10 @@ function createSemanticDefinition() {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
         },
         mutability: {
@@ -94,8 +96,10 @@ function createSemanticDefinition() {
               strategy: "conversation",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -117,8 +121,10 @@ function createSemanticDefinition() {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: {
@@ -179,8 +185,10 @@ function createResolvedDefinition() {
           profileSnapshot: makeProfileSnapshot(),
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: true },
@@ -199,8 +207,10 @@ function createResolvedDefinition() {
               strategy: "conversation",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -219,8 +229,10 @@ function createResolvedDefinition() {
           profileSnapshot: makeProfileSnapshot(),
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "medium" },
+            },
           },
         },
         mutability: { allowAgentTaskAdd: false },
@@ -772,7 +784,13 @@ describe("workflow graph validator and request schemas", () => {
 describe("workflowLiveEditOperationSchema", () => {
   const resolvedCollaboration = {
     secondAgent: {
-      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      value: {
+        backend: "claude",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+      },
       source: "global" as const,
     },
     negotiationRounds: { value: 3, source: "global" as const },
@@ -794,8 +812,10 @@ describe("workflowLiveEditOperationSchema", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
           },
         },
         contextValidator: { enabled: false, assignments: [] },
@@ -851,8 +871,10 @@ describe("workflowLiveEditOperationSchema", () => {
           profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "high",
+            modelSelection: {
+              modelId: "gpt-5.4",
+              parameters: { reasoning: "high", fast: "false" },
+            },
           },
         },
       },
@@ -1031,8 +1053,10 @@ function createWorkflowDefaults() {
       profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
     },
     contextValidator: {
@@ -1044,8 +1068,10 @@ function createWorkflowDefaults() {
           strategy: "conversation",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: true },
         },
@@ -1064,8 +1090,10 @@ function createWorkflowDefaults() {
     collaboration: {
       secondAgent: {
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "minor",
@@ -1149,8 +1177,10 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
       profileSnapshot: makeProfileSnapshot(),
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "medium" },
+        },
       },
     },
     contextValidator: { enabled: false, assignments: [] },
@@ -1320,17 +1350,24 @@ describe("globalConfigSchema workflowDefaults", () => {
       ignorePatterns: [],
       agentBackends: {
         claude: {
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
           timeoutMs: 3_600_000,
         },
         codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
           timeoutMs: null,
         },
         cursor: {
-          model: "composer-2.5",
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
           timeoutMs: null,
         },
       },

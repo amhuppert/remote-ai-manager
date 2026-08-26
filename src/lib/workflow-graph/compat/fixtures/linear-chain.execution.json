@@ -25,8 +25,11 @@
           },
           "agent": {
             "backend": "claude",
-            "model": "sonnet",
-            "reasoningEffort": "medium"
+            "modelSelection": {
+              "modelId": "sonnet",
+
+              "parameters": { "effort": "medium" }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -51,8 +54,11 @@
               "strategy": "conversation",
               "agent": {
                 "backend": "claude",
-                "model": "sonnet",
-                "reasoningEffort": "medium"
+                "modelSelection": {
+                  "modelId": "sonnet",
+
+                  "parameters": { "effort": "medium" }
+                }
               },
               "continuity": {
                 "enabled": true
@@ -104,8 +110,11 @@
           "secondAgent": {
             "value": {
               "backend": "claude",
-              "model": "sonnet",
-              "reasoningEffort": "medium"
+              "modelSelection": {
+                "modelId": "sonnet",
+
+                "parameters": { "effort": "medium" }
+              }
             },
             "source": "global"
           },
@@ -164,8 +173,11 @@
           },
           "agent": {
             "backend": "claude",
-            "model": "sonnet",
-            "reasoningEffort": "medium"
+            "modelSelection": {
+              "modelId": "sonnet",
+
+              "parameters": { "effort": "medium" }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -190,8 +202,11 @@
               "strategy": "conversation",
               "agent": {
                 "backend": "claude",
-                "model": "sonnet",
-                "reasoningEffort": "medium"
+                "modelSelection": {
+                  "modelId": "sonnet",
+
+                  "parameters": { "effort": "medium" }
+                }
               },
               "continuity": {
                 "enabled": true
@@ -243,8 +258,11 @@
           "secondAgent": {
             "value": {
               "backend": "claude",
-              "model": "sonnet",
-              "reasoningEffort": "medium"
+              "modelSelection": {
+                "modelId": "sonnet",
+
+                "parameters": { "effort": "medium" }
+              }
             },
             "source": "global"
           },
@@ -303,8 +321,11 @@
           },
           "agent": {
             "backend": "claude",
-            "model": "sonnet",
-            "reasoningEffort": "medium"
+            "modelSelection": {
+              "modelId": "sonnet",
+
+              "parameters": { "effort": "medium" }
+            }
           },
           "profileSnapshot": {
             "tier": "builtin",
@@ -329,8 +350,11 @@
               "strategy": "conversation",
               "agent": {
                 "backend": "claude",
-                "model": "sonnet",
-                "reasoningEffort": "medium"
+                "modelSelection": {
+                  "modelId": "sonnet",
+
+                  "parameters": { "effort": "medium" }
+                }
               },
               "continuity": {
                 "enabled": true
@@ -382,8 +406,11 @@
           "secondAgent": {
             "value": {
               "backend": "claude",
-              "model": "sonnet",
-              "reasoningEffort": "medium"
+              "modelSelection": {
+                "modelId": "sonnet",
+
+                "parameters": { "effort": "medium" }
+              }
             },
             "source": "global"
           },

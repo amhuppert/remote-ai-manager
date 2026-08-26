@@ -37,7 +37,29 @@ import {
   type PrepareAssignmentSnapshotsResult,
 } from "@/lib/workflow-graph/live-edit-preparation";
 import { z } from "zod";
+import type { AgentBackendsConfig } from "@/lib/config/schemas";
 const timestamp = "2026-03-27T12:00:00.000Z";
+
+export const TEST_AGENT_BACKENDS_CONFIG = {
+  claude: {
+    modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+    timeoutMs: 3_600_000,
+  },
+  codex: {
+    modelSelection: {
+      modelId: "gpt-5.4",
+      parameters: { fast: "false", reasoning: "high" },
+    },
+    timeoutMs: null,
+  },
+  cursor: {
+    modelSelection: {
+      modelId: "composer-2.5",
+      parameters: { fast: "true" },
+    },
+    timeoutMs: null,
+  },
+} satisfies AgentBackendsConfig;
 
 /**
  * Assignment builders for tests whose subject is something other than the
@@ -67,7 +89,10 @@ export function makeValidatorAssignment(
     // The schema default, so a fixture whose subject is not authority behaves
     // like an ordinary authored specialist rather than like the seeded verifier.
     authority: "advisory",
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+    },
     continuity: { enabled: true },
     ...overrides,
   };
@@ -255,8 +280,10 @@ export function createWorkflowDefinition(
         placement: { lane: "plan", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
         }),
         mutability: {
           allowAgentTaskAdd: true,
@@ -276,8 +303,10 @@ export function createWorkflowDefinition(
         placement: { lane: "implement", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         }),
         // Name-free selector override (equal to the seeded default value) so
         // fixture consumers never need a validation registry to be valid.
@@ -306,8 +335,10 @@ export function createWorkflowDefinition(
         placement: { lane: "verify", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
         }),
         mutability: {
           allowAgentTaskAdd: false,
@@ -511,8 +542,10 @@ export function createResolvedWorkflowDefinition(
         ctx.implementer ??
           makeImplementerAssignment({
             backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "medium" },
+            },
           }),
       ),
       contextValidator: makeSeededValidatorCohort({

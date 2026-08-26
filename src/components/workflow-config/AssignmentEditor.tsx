@@ -2,24 +2,15 @@
 
 import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
 import BackendToggle from "@/components/BackendToggle";
-import ModelSelector from "@/components/ModelSelector";
+import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
 import { MultilineInput } from "@/components/MultilineInput";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import {
   SegmentedControl,
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
-import {
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
-} from "@/lib/agent-backends/catalog";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
-import type {
-  ClaudeModel,
-  CodexModel,
-  CodexReasoningEffort,
-  EffortLevel,
-} from "@/lib/agent-backends/schemas";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import {
   formatAgentProfileRef,
   type AgentProfileAudience,
@@ -55,15 +46,18 @@ export const VALIDATOR_AUTHORITY_OPTIONS = ["blocking", "advisory"] as const;
 export function agentConfigForBackend(
   backend: AgentBackendId,
 ): GraphWorkflowAgentConfig {
-  const model = getDefaultModelForBackend(backend);
+  const catalog = getConfiguredBackendModelCatalog(backend);
+  const modelSelection = defaultSelectionForModel(
+    catalog,
+    catalog.defaultModelId,
+  );
   const parsed = graphWorkflowAgentConfigSchema.safeParse({
     backend,
-    model,
-    reasoningEffort: "medium",
+    modelSelection,
   });
   if (!parsed.success) {
     throw new Error(
-      `The catalog's default model for ${backend} (${model}) is not a valid runtime for it.`,
+      `The catalog's default model selection for ${backend} (${modelSelection.modelId}) is not a valid workflow runtime.`,
     );
   }
   return parsed.data;
@@ -86,34 +80,25 @@ export function AgentRuntimeFields({
   onChange: (next: GraphWorkflowAgentConfig) => void;
   readOnly?: boolean;
 }): React.JSX.Element {
-  const effortOptions = getEffortLevelsForBackend(value.backend, value.model);
+  const catalog = getConfiguredBackendModelCatalog(
+    value.backend,
+    value.modelSelection,
+  );
 
   const handleBackend = (next: AgentBackendId) => {
     if (next === value.backend) return;
     onChange(agentConfigForBackend(next));
   };
 
-  const handleModel = (model: string) => {
-    if (value.backend === "codex") {
-      onChange({
-        backend: "codex",
-        model: model as CodexModel,
-        reasoningEffort: value.reasoningEffort as CodexReasoningEffort,
-      });
-    } else {
-      onChange({
-        backend: "claude",
-        model: model as ClaudeModel,
-        reasoningEffort: value.reasoningEffort as EffortLevel,
-      });
-    }
-  };
-
-  const handleEffort = (level: EffortLevel) => {
-    onChange({
-      ...value,
-      reasoningEffort: level,
-    } as GraphWorkflowAgentConfig);
+  const handleSelection = (
+    modelSelection: GraphWorkflowAgentConfig["modelSelection"],
+  ): void => {
+    onChange(
+      graphWorkflowAgentConfigSchema.parse({
+        backend: value.backend,
+        modelSelection,
+      }),
+    );
   };
 
   return (
@@ -129,19 +114,11 @@ export function AgentRuntimeFields({
           disabledReason={(entry) => backendFacetRefusal(entry, "tasks")}
         />
       </FieldRow>
-      <FieldRow label="Model">
-        <ModelSelector
-          value={value.model}
-          backend={value.backend}
-          onChange={handleModel}
-          disabled={readOnly}
-        />
-      </FieldRow>
-      <FieldRow label="Reasoning effort">
-        <ReasoningLevelSelector
-          value={value.reasoningEffort as EffortLevel}
-          availableLevels={effortOptions}
-          onChange={handleEffort}
+      <FieldRow label="Model selection">
+        <DesktopModelSelectionControls
+          catalog={catalog}
+          selection={value.modelSelection}
+          onSelectionChange={handleSelection}
           disabled={readOnly}
         />
       </FieldRow>

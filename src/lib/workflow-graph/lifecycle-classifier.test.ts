@@ -56,8 +56,10 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
         profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "medium" },
+          },
         },
       },
       contextValidator: { enabled: false, assignments: [] },

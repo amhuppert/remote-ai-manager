@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CURSOR_DEFAULT_MODEL } from "../model-policy";
 import {
   CURSOR_WORKER_PARENT_POLL_INTERVAL_MS,
   CURSOR_WORKER_TERMINATION_GRACE_MS,
@@ -15,6 +14,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   waitUntil,
@@ -142,7 +142,7 @@ describe("a Cursor worker nobody uses", () => {
 
     const live = await harness.startReady({
       sessionName: `idle-${randomUUID()}`,
-      model: CURSOR_DEFAULT_MODEL,
+      modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     });
     const pgid = frameOfType(live.frames, "ready")?.pgid ?? live.session.pid;
     expect(isProcessAlive(live.session.pid)).toBe(true);

@@ -1,11 +1,9 @@
 "use client";
 
 import BackendToggle from "@/components/BackendToggle";
-import ModelSelector from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
+import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
 import { agentConfigForBackend } from "@/components/workflow-config/AssignmentEditor";
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import {
   graphWorkflowAgentConfigSchema,
   type GraphWorkflowAgentConfig,
@@ -14,46 +12,26 @@ import { ConfigControlRow } from "./ConfigRow";
 import type { ConfigRowProvenance } from "./row-provenance";
 
 /**
- * Backend · Model · Reasoning effort, as three panel rows (Config Panel
+ * Backend and one complete model selection, as two panel rows (Config Panel
  * `runtimeRows()`).
  *
  * Four blocks carry a concrete runtime — the implementer, the collaboration
  * second agent, a validator seat and the plan-repair agent — and every one of
- * them shows these same three rows under whichever block owns it. Backend,
- * model and effort are not cascade paths of their own, so the three rows share
+ * them shows these same two rows under whichever block owns it. Backend and
+ * selection are not cascade paths of their own, so the two rows share
  * the OWNING path's provenance and its tier chip.
  *
  * Whether they also carry its reset depends on where that path's reset already
  * lives. Under a block whose first row owns the reset (the implementer's
  * profile, a seat's cohort) they must not repeat it. `collaboration.secondAgent`
- * is different: it is a cascade FIELD whose only rows are these three, so its
+ * is different: it is a cascade FIELD whose only rows are these two, so its
  * caller passes `onReset` and the reset lands on the first of them — otherwise
  * the field could be promoted and never returned to inheritance (README §7).
  */
 
-/**
- * Move one field of a runtime, refusing a pair the schema would not accept.
- *
- * The selectors only ever offer options the catalog lists for the current
- * backend and model, so a refusal here is unreachable from the UI; parsing is
- * what lets the panel narrow a per-backend discriminated union without a cast.
- */
-function withRuntimeField(
-  agent: GraphWorkflowAgentConfig,
-  patch: { model: string } | { reasoningEffort: EffortLevel },
-): GraphWorkflowAgentConfig {
-  const parsed = graphWorkflowAgentConfigSchema.safeParse({
-    ...agent,
-    ...patch,
-  });
-  return parsed.success ? parsed.data : agent;
-}
-
 export interface ConfigAgentRuntimeRowsProps {
   /** Unique within a screen; two runtimes can share one screen. */
   rowPrefix: string;
-  /** Names the runtime in each control's accessible name. */
-  agentLabel: string;
   value: GraphWorkflowAgentConfig;
   onChange: (next: GraphWorkflowAgentConfig) => void;
   /** The owning block's provenance — the tier chip and edge these rows wear. */
@@ -68,14 +46,16 @@ export interface ConfigAgentRuntimeRowsProps {
 
 export function ConfigAgentRuntimeRows({
   rowPrefix,
-  agentLabel,
   value,
   onChange,
   provenance,
   onReset,
   disabled = false,
 }: ConfigAgentRuntimeRowsProps): React.JSX.Element {
-  const effortLevels = getEffortLevelsForBackend(value.backend, value.model);
+  const catalog = getConfiguredBackendModelCatalog(
+    value.backend,
+    value.modelSelection,
+  );
 
   return (
     <>
@@ -98,32 +78,22 @@ export function ConfigAgentRuntimeRows({
         }
       />
       <ConfigControlRow
-        rowId={`${rowPrefix}-model`}
-        label="Model"
+        rowId={`${rowPrefix}-model-selection`}
+        label="Model selection"
         provenance={provenance}
         disabled={disabled}
         control={
-          <ModelSelector
-            value={value.model}
-            backend={value.backend}
+          <DesktopModelSelectionControls
+            catalog={catalog}
+            selection={value.modelSelection}
             disabled={disabled}
-            onChange={(model) => onChange(withRuntimeField(value, { model }))}
-          />
-        }
-      />
-      <ConfigControlRow
-        rowId={`${rowPrefix}-effort`}
-        label="Reasoning effort"
-        provenance={provenance}
-        disabled={disabled}
-        control={
-          <ReasoningLevelSelector
-            value={value.reasoningEffort}
-            availableLevels={effortLevels}
-            disabled={disabled}
-            disabledTooltip={`Reasoning effort for ${agentLabel}`}
-            onChange={(reasoningEffort) =>
-              onChange(withRuntimeField(value, { reasoningEffort }))
+            onSelectionChange={(modelSelection) =>
+              onChange(
+                graphWorkflowAgentConfigSchema.parse({
+                  backend: value.backend,
+                  modelSelection,
+                }),
+              )
             }
           />
         }

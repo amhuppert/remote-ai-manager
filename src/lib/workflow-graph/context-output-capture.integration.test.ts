@@ -122,8 +122,8 @@ function productionTaskRun(
       agentBackend: "claude",
       backendRef: RESUMED_BACKEND_REF,
       promptText: input.prompt,
-      modelId: input.modelId ?? null,
-      effort: input.effort ?? null,
+      modelSelection: input.modelSelection ?? null,
+      onModelSelectionResolved: async () => {},
       ...(input.outputFormat !== undefined
         ? { outputFormat: input.outputFormat }
         : {}),

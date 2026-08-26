@@ -20,7 +20,7 @@ export const agentHelpEntries: CommandHelpEntry[] = [
     path: ["agent", "run"],
     summary: "start an agent run (optionally waiting for it)",
     description:
-      'Start a run from a prompt file. File-only input: author .cc/temp/prompt.json (git-ignored scratch) as a JSON object { "backend": "codex", "prompt": "<task>" } with the Write tool (optional fields: model, reasoning_effort, timeoutMs, workingDirectory). The agent writes detail to files and returns a short summary plus a referenceDocuments list — read the referenced files, do not rely on the summary alone. Without --wait it returns a runId to poll.',
+      'Start a run from a prompt file. File-only input: author .cc/temp/prompt.json (git-ignored scratch) as a JSON object { "backend": "codex", "prompt": "<task>" } with the Write tool (optional fields: modelSelection with { modelId, parameters }, timeoutMs, workingDirectory). The modelSelection is one complete atomic variant; parameter IDs and values come from that backend\'s effective catalog. The agent writes detail to files and returns a short summary plus a referenceDocuments list — read the referenced files, do not rely on the summary alone. Without --wait it returns a runId to poll.',
     usage: [
       "cctl agent run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]",
     ],
@@ -50,7 +50,7 @@ export const agentHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl agent run --file .cc/temp/prompt.json --wait",
         explanation:
-          'the payload is {"backend":"codex","prompt":"<task>"}; --wait blocks and prints summary + referenceDocuments — read those files',
+          'the payload is {"backend":"codex","prompt":"<task>","modelSelection":{"modelId":"gpt-5.4","parameters":{"reasoning":"high","fast":"false"}}}; omit modelSelection to use the configured atomic default; --wait blocks and prints summary + referenceDocuments — read those files',
       },
       {
         invocation: "cctl agent run --file .cc/temp/prompt.json",

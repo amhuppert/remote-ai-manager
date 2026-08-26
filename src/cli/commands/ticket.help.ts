@@ -243,7 +243,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     description:
       "Provision a ready-to-work session for the ticket: attachments and conversation summaries are materialized into the worktree, a ticket charter is activated, the session is linked, and the ticket moves to in_progress. --mode agent queues an immediate first agent turn built from the ticket; --mode prepared leaves the session idle until the user's first prompt. A ticket with an active linked session is rejected naming that session.",
     usage: [
-      `cctl ticket start ${REF_PLACEHOLDER} --mode <agent|prepared> [--backend <claude|codex> --model <model> --effort <level>]`,
+      `cctl ticket start ${REF_PLACEHOLDER} --mode <agent|prepared> [--backend <backend>] [--model <model> [--model-param <id=value> ...]]`,
     ],
     flags: [
       {
@@ -256,7 +256,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
       {
         name: "backend",
         kind: "value",
-        valuePlaceholder: "<claude|codex>",
+        valuePlaceholder: "<backend>",
         description: "backend for the immediate kickoff turn",
       },
       {
@@ -266,16 +266,17 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         description: "backend model for the immediate kickoff turn",
       },
       {
-        name: "effort",
+        name: "model-param",
         kind: "value",
-        valuePlaceholder: "<minimal|low|medium|high|xhigh|max|ultra>",
-        description: "reasoning effort for the immediate kickoff turn",
+        valuePlaceholder: "<id=value>",
+        description:
+          "repeat for each catalog parameter in the immediate kickoff selection",
       },
     ],
     examples: [
       {
         invocation:
-          "cctl ticket start 12 --mode agent --backend codex --model gpt-5.6-sol --effort ultra",
+          "cctl ticket start 12 --mode agent --backend codex --model gpt-5.6-sol --model-param reasoning=ultra --model-param fast=true",
         explanation:
           "provisions the session and queues the kickoff turn from the ticket's title, description, and attachment index",
       },

@@ -9,6 +9,7 @@ import {
 } from "./evidence";
 import { openAcceptanceEvidence } from "./harness";
 import {
+  CURSOR_ACCEPTANCE_MODEL_SELECTION,
   createLiveHarness,
   frameOfType,
   framesOfType,
@@ -42,12 +43,12 @@ beforeAll(async () => {
 
   live = await harness.startReady({
     sessionName: "streaming",
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
   });
   live.attach({
     mode: "create",
     ref: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
   });
   expect(
@@ -64,7 +65,7 @@ beforeAll(async () => {
       "Reply with exactly the word ACCEPTANCE-OK and nothing else. Do not use any tools.",
     images: [],
     structuredOutputInstruction: null,
-    model: CURSOR_DEFAULT_MODEL,
+    modelSelection: CURSOR_ACCEPTANCE_MODEL_SELECTION,
     mcpServers: {},
     forceExpirePersistedRun: false,
   });

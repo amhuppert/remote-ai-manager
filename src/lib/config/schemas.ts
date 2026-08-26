@@ -1,16 +1,11 @@
 import { z } from "zod";
 import {
+  backendModelSelectionSchema,
   backendTimeoutMsSchema,
   claudeBackendConfigSchema,
-  claudeEffortLevelSchema,
-  claudeModelSchema,
   codexConfigSchema,
   codexPricingTableSchema,
-  codexReasoningEffortSchema,
   cursorBackendConfigSchema,
-  effortLevelSchema,
-  validateClaudeBackendModelEffort,
-  validateCodexBackendModelEffort,
 } from "@/lib/agent-backends/schemas";
 import { CURSOR_DEFAULT_SUPPORTED_MODELS } from "@/lib/agent-backends/cursor/model-policy";
 import { agentBackendSchema } from "@/lib/shared/schemas";
@@ -79,9 +74,14 @@ const rawWorkflowDefaultsSchema = z.object({
 
 export const compactionConfigSchema = z.object({
   backend: agentBackendSchema.default("claude"),
-  conversationModel: z.string().default("sonnet"),
-  messageModel: z.string().default("sonnet"),
-  effort: effortLevelSchema.default("medium"),
+  conversationModelSelection: backendModelSelectionSchema.default({
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  }),
+  messageModelSelection: backendModelSelectionSchema.default({
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  }),
   // No default: an unset (or null) timeout means "no timeout applied", matching
   // agentBackends.codex.timeoutMs. Resolved through resolveConfiguredTimeoutMs (→ 0) at the
   // task-run boundary, where the runner treats 0 as unbounded.
@@ -89,13 +89,32 @@ export const compactionConfigSchema = z.object({
 });
 export type CompactionConfig = z.infer<typeof compactionConfigSchema>;
 
-const rawCompactionConfigSchema = z.object({
-  backend: agentBackendSchema.optional(),
-  conversationModel: z.string().optional(),
-  messageModel: z.string().optional(),
-  effort: effortLevelSchema.optional(),
-  timeoutMs: z.number().int().positive().nullable().optional(),
-});
+const rawCompactionConfigSchema = z
+  .object({
+    backend: agentBackendSchema.optional(),
+    conversationModelSelection: backendModelSelectionSchema.optional(),
+    messageModelSelection: backendModelSelectionSchema.optional(),
+    conversationModel: z
+      .never({
+        error:
+          "This config field was migrated; use compaction.conversationModelSelection.",
+      })
+      .optional(),
+    messageModel: z
+      .never({
+        error:
+          "This config field was migrated; use compaction.messageModelSelection.",
+      })
+      .optional(),
+    effort: z
+      .never({
+        error:
+          "This config field was migrated; put parameters on the complete compaction model selections.",
+      })
+      .optional(),
+    timeoutMs: z.number().int().positive().nullable().optional(),
+  })
+  .strict();
 
 // ============================================================
 // Conversation Naming Config
@@ -104,8 +123,10 @@ const rawCompactionConfigSchema = z.object({
 export const conversationNamingConfigSchema = z.object({
   enabled: z.boolean().default(true),
   backend: agentBackendSchema.default("claude"),
-  model: z.string().default("haiku"),
-  effort: effortLevelSchema.default("low"),
+  modelSelection: backendModelSelectionSchema.default({
+    modelId: "haiku",
+    parameters: {},
+  }),
   // No default: an unset (or null) timeout falls back to the service's bounded
   // 60s default at the task-run boundary — naming is never unbounded.
   timeoutMs: z.number().int().positive().nullable().optional(),
@@ -114,13 +135,26 @@ export type ConversationNamingConfig = z.infer<
   typeof conversationNamingConfigSchema
 >;
 
-const rawConversationNamingConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  backend: agentBackendSchema.optional(),
-  model: z.string().optional(),
-  effort: effortLevelSchema.optional(),
-  timeoutMs: z.number().int().positive().nullable().optional(),
-});
+const rawConversationNamingConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    backend: agentBackendSchema.optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: z
+      .never({
+        error:
+          "This config field was migrated; use conversationNaming.modelSelection.",
+      })
+      .optional(),
+    effort: z
+      .never({
+        error:
+          "This config field was migrated; use conversationNaming.modelSelection.parameters.",
+      })
+      .optional(),
+    timeoutMs: z.number().int().positive().nullable().optional(),
+  })
+  .strict();
 
 export const resolveConversationNamingConfig = (
   config: GlobalConfig,
@@ -158,14 +192,25 @@ export const globalConfigSchema = z.object({
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
+function migratedBackendSelectionField() {
+  return z
+    .never({
+      error:
+        "This config field was migrated; use the backend's complete modelSelection.",
+    })
+    .optional();
+}
+
 const rawClaudeBackendConfigSchema = z
   .object({
-    model: claudeModelSchema.optional(),
-    reasoningEffort: claudeEffortLevelSchema.optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: migratedBackendSelectionField(),
+    reasoningEffort: migratedBackendSelectionField(),
+    fastMode: migratedBackendSelectionField(),
     timeoutMs: backendTimeoutMsSchema.optional(),
     stallTimeoutMs: backendTimeoutMsSchema.optional(),
   })
-  .superRefine(validateClaudeBackendModelEffort);
+  .strict();
 
 const rawCodexBackendConfigSchema = z
   .object({
@@ -174,14 +219,15 @@ const rawCodexBackendConfigSchema = z
         error: "Codex is always available; remove agentBackends.codex.enabled.",
       })
       .optional(),
-    model: z.string().trim().min(1).optional(),
-    reasoningEffort: codexReasoningEffortSchema.optional(),
-    fastMode: z.boolean().optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: migratedBackendSelectionField(),
+    reasoningEffort: migratedBackendSelectionField(),
+    fastMode: migratedBackendSelectionField(),
     timeoutMs: backendTimeoutMsSchema.optional(),
     stallTimeoutMs: backendTimeoutMsSchema.optional(),
     pricing: codexPricingTableSchema.optional(),
   })
-  .superRefine(validateCodexBackendModelEffort);
+  .strict();
 
 /**
  * The Cursor profile as written on disk (spec D10, R12.2).
@@ -198,21 +244,16 @@ const rawCodexBackendConfigSchema = z
  * operator is most likely to reach for get an answer better than "unrecognized
  * key": each says where the value actually belongs.
  *
- * Cursor can fail closed because it is new — no config file already on disk can
- * carry a stray key under it. Tightening the Claude and Codex profiles, which
- * shipped tolerant, is a separate migration decision.
+ * Every model-bearing raw config profile applies the same fail-closed rule, so
+ * backend selection parameters cannot be silently discarded at this boundary.
  */
 const rawCursorBackendConfigSchema = z
   .object({
-    model: z.string().trim().min(1).optional(),
-    reasoningEffort: effortLevelSchema.optional(),
+    modelSelection: backendModelSelectionSchema.optional(),
+    model: migratedBackendSelectionField(),
+    reasoningEffort: migratedBackendSelectionField(),
     timeoutMs: backendTimeoutMsSchema.optional(),
-    fastMode: z
-      .never({
-        error:
-          "Cursor has no fast mode; remove agentBackends.cursor.fastMode. Fast mode is a Codex setting.",
-      })
-      .optional(),
+    fastMode: migratedBackendSelectionField(),
     pricing: z
       .never({
         error:
@@ -249,13 +290,30 @@ function movedConfigField(replacement: string) {
     .optional();
 }
 
+function misplacedModelSelectionField() {
+  return z
+    .never({
+      error:
+        "This root field is not a model-selection boundary; use a complete modelSelection at the intended backend or service configuration site.",
+    })
+    .optional();
+}
+
 export const rawGlobalConfigSchema = z.object({
   baseDir: z.string().optional(),
   commandCenterProjectName: z.string().min(1).optional(),
   ignorePatterns: z.array(z.string()).optional(),
   claudeTimeoutMs: movedConfigField("agentBackends.claude.timeoutMs"),
-  defaultModel: movedConfigField("agentBackends.claude.model"),
-  defaultEffort: movedConfigField("agentBackends.claude.reasoningEffort"),
+  defaultModel: movedConfigField("agentBackends.claude.modelSelection"),
+  defaultEffort: movedConfigField(
+    "agentBackends.claude.modelSelection.parameters",
+  ),
+  model: misplacedModelSelectionField(),
+  effort: misplacedModelSelectionField(),
+  reasoning: misplacedModelSelectionField(),
+  fast: misplacedModelSelectionField(),
+  context: misplacedModelSelectionField(),
+  thinking: misplacedModelSelectionField(),
   codex: movedConfigField("agentBackends.codex"),
   agentBackends: rawAgentBackendsConfigSchema.optional(),
   maxTurns: z.number().int().positive().optional(),

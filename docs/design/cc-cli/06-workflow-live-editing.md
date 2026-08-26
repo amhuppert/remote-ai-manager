@@ -79,8 +79,8 @@ One pure edit core, three entry points, two guards, one invariant:
 
 - **Working-copy model**: live edits mutate `execution.workingDefinition` + runtime maps. Saved
   definitions are never touched; saved-definition edits never touch running executions.
-- **Resolved-value contract**: config edits set **concrete resolved values** (`model: "opus"`,
-  `reasoningEffort: "high"`). There is no cascade at runtime; "clear override to inherit" does not
+- **Resolved-value contract**: config edits set a **complete concrete selection**
+  (`modelSelection: { modelId: "opus", parameters: { effort: "high" } }`). There is no cascade at runtime; "clear override to inherit" does not
   exist here. Launch-time inputs (`boundInputs`), parameters, and prerequisites are not editable.
 - **Two concurrency guards, complementary**: `liveRevision`/`baseLiveRevision` catches
   *edit-vs-edit* lost updates (two operators on one paused execution); the apply-time classifier
@@ -498,8 +498,8 @@ Integration checklist (per `.kiro/steering/cli.md` — all mandatory):
 History exist today). The Config tab renders, straight from the selected context's entry in
 `workingDefinition` (already resolved — zero cascade logic client-side):
 
-- Implementer: backend, model, reasoning effort.
-- Context validator: enabled/type, model/effort, continuity, context-limit tokens.
+- Implementer: backend and complete model selection.
+- Context validator: enabled/type, complete model selection, continuity, context-limit tokens.
 - Script validator; human approval gate; ask-user-questions gate.
 - Iteration policy (`maxIterations` next to the live iteration count); circuit-breaker threshold.
 - Mutability (`allowAgentTaskAdd`); collaboration (agents, rounds, threshold) once resolved-field
@@ -548,7 +548,7 @@ pure.
    then add-edge in one batch); remove-context outgoing-edge guard + explicit-edge-removal-first
    flow; cycle rejection; reorder permutation rules (unstarted vs started); move-task
    running-execution restriction; `configFromContextId` seeding + explicit-field override;
-   resolved-config validation (bad Codex effort for model rejected; scriptValidator without
+   resolved-config validation (invalid complete model variant rejected; scriptValidator without
    preMergeCommand rejected); runtime-map sync (counts, taskStates lifecycle); lanePlan recompute
    split; frontier invariant (frozen subgraph byte-compare) violations.
 3. **Route tests** (`runtime-edit-route-handlers.test.ts`, rewritten): malformed → 400 codeless;

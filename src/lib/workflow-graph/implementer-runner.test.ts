@@ -64,8 +64,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -83,7 +85,7 @@ describe("graph workflow implementer runner", () => {
       expect.any(String),
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({
         workflowContext: {
@@ -117,8 +119,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -132,7 +136,7 @@ describe("graph workflow implementer runner", () => {
       expect.any(String),
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({
         workflowContext: {
@@ -169,8 +173,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: {
         servers: [
           {
@@ -189,12 +195,11 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({
         autonomous: true,
         backend: "claude",
-        effort: "high",
         workflowContext: {
           executionId: "execution-1",
           contextId: "context-plan",
@@ -248,8 +253,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-impl",
       backend: "codex",
-      model: "codex-mini",
-      reasoningEffort: "medium",
+      modelSelection: {
+        modelId: "codex-mini",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
       toolServer: {
         servers: [
           {
@@ -268,12 +275,14 @@ describe("graph workflow implementer runner", () => {
       "Implement feature",
       expect.any(Function),
       "conversation-codex",
-      "codex-mini",
+      {
+        modelId: "codex-mini",
+        parameters: { reasoning: "medium", fast: "false" },
+      },
       undefined,
       expect.objectContaining({
         autonomous: true,
         backend: "codex",
-        effort: "medium",
       }),
     );
     expect(result).toEqual({
@@ -314,8 +323,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
       executionTarget,
@@ -327,7 +338,7 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({
         executionTarget,
@@ -357,8 +368,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -370,7 +383,7 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.not.objectContaining({ executionTarget: expect.anything() }),
     );
@@ -402,8 +415,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -415,7 +430,7 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.not.objectContaining({ outputFormat: expect.anything() }),
     );
@@ -443,8 +458,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -455,7 +472,7 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({
         waitForBackgroundTasks: true,
@@ -486,8 +503,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
       askUserQuestionsEnabled: true,
@@ -499,7 +518,7 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({ askUserQuestionsEnabled: true }),
     );
@@ -527,8 +546,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
       askUserQuestionsEnabled: false,
@@ -540,7 +561,7 @@ describe("graph workflow implementer runner", () => {
       "Inspect the codebase",
       expect.any(Function),
       "conversation-1",
-      "opus",
+      { modelId: "opus", parameters: { effort: "high" } },
       undefined,
       expect.objectContaining({ askUserQuestionsEnabled: false }),
     );
@@ -579,8 +600,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -617,8 +640,10 @@ describe("graph workflow implementer runner", () => {
       executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
       toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
@@ -651,8 +676,10 @@ describe("graph workflow implementer runner", () => {
         executionId: "execution-1",
         contextId: "context-plan",
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       }),
@@ -687,8 +714,10 @@ describe("graph workflow implementer runner", () => {
         executionId: "execution-1",
         contextId: "context-plan",
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
         toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       }),
@@ -726,8 +755,10 @@ describe("graph workflow implementer runner", () => {
         executionId: "execution-1",
         contextId: "context-plan",
         backend: "codex",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "xhigh",
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "xhigh", fast: "false" },
+        },
         toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       }),

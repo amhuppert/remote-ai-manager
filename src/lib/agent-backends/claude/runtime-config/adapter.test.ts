@@ -25,8 +25,10 @@ function fakeRuntime(input: {
     backend: "claude",
     status: input.status ?? "alive",
     isTurnActive: input.isTurnActive ?? false,
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: {
+      modelId: "opus",
+      parameters: { effort: "high" },
+    },
     outputFormat: undefined,
     alignmentVersion: null,
     appliedConfigs,

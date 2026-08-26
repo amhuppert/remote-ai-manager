@@ -1055,8 +1055,10 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
                         authority: "blocking",
                         agent: {
                           backend: "claude",
-                          model: "sonnet",
-                          reasoningEffort: "medium",
+                          modelSelection: {
+                            modelId: "sonnet",
+                            parameters: { effort: "medium" },
+                          },
                         },
                         continuity: { enabled: true },
                       },

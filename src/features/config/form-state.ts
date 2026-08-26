@@ -1,7 +1,4 @@
-import {
-  backendSupportsFastMode,
-  listBackendCatalogEntries,
-} from "@/lib/agent-backends/catalog";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 
 export type FieldPath = string;
@@ -93,19 +90,12 @@ export function stripUndefinedDeep(value: unknown): unknown {
  * another field carries the request. A newly registered backend is therefore
  * tracked the moment its card appears.
  *
- * The optional fields follow the same catalog data the section renders them
- * from: an effort path only where some model declares effort levels, a fastMode
- * path only where the backend declares one.
+ * Model and every provider-owned parameter form one dirty-tracked field. This
+ * prevents the save diff from constructing a selection out of mixed layers.
  */
 function backendProfileFieldPaths(): FieldPath[] {
   return listBackendCatalogEntries().flatMap((entry) => [
-    `agentBackends.${entry.id}.model`,
-    ...(entry.models.some((model) => model.effortLevels.length > 0)
-      ? [`agentBackends.${entry.id}.reasoningEffort`]
-      : []),
-    ...(backendSupportsFastMode(entry.id)
-      ? [`agentBackends.${entry.id}.fastMode`]
-      : []),
+    `agentBackends.${entry.id}.modelSelection`,
     `agentBackends.${entry.id}.timeoutMs`,
   ]);
 }
@@ -136,14 +126,12 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "pushNotification.triggers.specPolicyAdmitted",
   "pushNotification.triggers.planRepair",
   "compaction.backend",
-  "compaction.conversationModel",
-  "compaction.messageModel",
-  "compaction.effort",
+  "compaction.conversationModelSelection",
+  "compaction.messageModelSelection",
   "compaction.timeoutMs",
   "conversationNaming.enabled",
   "conversationNaming.backend",
-  "conversationNaming.model",
-  "conversationNaming.effort",
+  "conversationNaming.modelSelection",
   "conversationNaming.timeoutMs",
   "workflowDefaults.implementer",
   "workflowDefaults.collaboration",

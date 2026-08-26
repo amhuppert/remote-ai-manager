@@ -54,7 +54,13 @@ function assignment(
     strategy: "conversation",
     authority: "blocking",
     continuity: { enabled: true },
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
+    },
     ...overrides,
   };
 }

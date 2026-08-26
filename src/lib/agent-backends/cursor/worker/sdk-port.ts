@@ -1,4 +1,10 @@
-import type { AgentOptions, McpServerConfig, SettingSource } from "@cursor/sdk";
+import type {
+  AgentOptions,
+  McpServerConfig,
+  ModelSelection,
+  SettingSource,
+} from "@cursor/sdk";
+import type { BackendModelSelection } from "../../schemas";
 import type {
   CursorWorkerAgent,
   CursorWorkerAttachOptions,
@@ -31,6 +37,17 @@ const SETTING_SOURCES: readonly SettingSource[] = [
   "plugins",
   "all",
 ];
+
+export function toCursorModelSelection(
+  selection: BackendModelSelection,
+): ModelSelection {
+  return {
+    id: selection.modelId,
+    params: Object.entries(selection.parameters)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, value]) => ({ id, value })),
+  };
+}
 
 function isSettingSource(value: string): value is SettingSource {
   return SETTING_SOURCES.some((source) => source === value);
@@ -65,7 +82,7 @@ function toAgentOptions(
   options: CursorWorkerAttachOptions,
 ): AgentOptions {
   return {
-    model: { id: options.model },
+    model: toCursorModelSelection(options.modelSelection),
     apiKey: options.apiKey,
     disallowedTools: [...options.disallowedTools],
     mcpServers: toMcpServerConfig(options.mcpServers),
@@ -124,7 +141,7 @@ function wrapAgent(agent: SdkAgent): CursorWorkerAgent {
           ...(message.images.length > 0 ? { images: [...message.images] } : {}),
         },
         {
-          model: { id: options.model },
+          model: toCursorModelSelection(options.modelSelection),
           mcpServers: toMcpServerConfig(options.mcpServers),
           ...(options.forceExpirePersistedRun
             ? { local: { force: true } }

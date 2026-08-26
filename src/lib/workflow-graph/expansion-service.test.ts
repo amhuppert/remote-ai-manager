@@ -46,7 +46,10 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   implementer: seedAssignment({
     id: "default-implementer",
     profile: { tier: "builtin", id: "general-implementer" },
-    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "medium" } },
+    },
   }),
   contextValidator: { enabled: false, assignments: [] },
   scriptValidator: { commands: [] },
@@ -60,7 +63,10 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   collaboration: {
     enabled: { value: false, source: "global" },
     secondAgent: {
-      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      value: {
+        backend: "claude",
+        modelSelection: { modelId: "sonnet", parameters: { effort: "medium" } },
+      },
       source: "global",
     },
     negotiationRounds: { value: 3, source: "global" },
@@ -1292,8 +1298,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
         continuity: { enabled: true },
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
       }),
     ],
@@ -1413,8 +1421,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
     expect(child?.implementer).toMatchObject({
       agent: {
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        modelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
       },
     });
     expect(child?.iterationPolicy).toEqual({
@@ -1440,8 +1450,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
             focus: "candidate implementation",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
         },
@@ -1498,8 +1510,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
                   continuity: { enabled: true },
                   agent: {
                     backend: "claude",
-                    model: "sonnet",
-                    reasoningEffort: "medium",
+                    modelSelection: {
+                      modelId: "sonnet",
+                      parameters: { effort: "medium" },
+                    },
                   },
                 },
                 frozenValidatorSnapshot,
@@ -1530,8 +1544,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
               focus: "shared focus",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
             },
             frozenImplementerSnapshot,
@@ -1578,8 +1594,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
                 focus: "shared focus",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
               },
             },
@@ -1769,8 +1787,10 @@ describe("graph expansion — generated child config (R7.2)", () => {
     expect(child?.implementer).toMatchObject({
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
     });
     expect(child?.iterationPolicy).toEqual({

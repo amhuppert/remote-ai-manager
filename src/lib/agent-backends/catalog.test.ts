@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
+  catalogBackendSelectionDefaults,
   catalogEntryFromDescriptor,
+  getConfiguredBackendModelCatalog,
   getBackendCatalogEntry,
   listBackendCatalogEntries,
   queueCapabilityForBackend,
@@ -17,6 +19,7 @@ import {
   isSelectableModelForBackend,
   modelOptionsForCatalogEntry,
 } from "./catalog";
+import { validateModelSelection } from "./model-selection";
 import { getBackendDescriptor } from "./registry";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./claude/shared";
 
@@ -127,10 +130,24 @@ describe("backend model ownership", () => {
     },
   );
 
-  it("does not reject custom Codex models", () => {
+  it("selects a custom Codex model only when the global profile authorizes it", () => {
     expect(isSelectableModelForBackend("codex", "custom-codex-model")).toBe(
-      true,
+      false,
     );
+    expect(
+      isSelectableModelForBackend(
+        "codex",
+        "custom-codex-model",
+        "custom-codex-model",
+      ),
+    ).toBe(true);
+    expect(
+      isSelectableModelForBackend(
+        "codex",
+        "request-supplied-model",
+        "custom-codex-model",
+      ),
+    ).toBe(false);
   });
 
   it("keeps unknown provider model ids runtime-compatible without accepting known foreign models", () => {
@@ -171,45 +188,76 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
     expect(
       resolveConfiguredBackendSelectionDefaults({
         agentBackends: {
-          claude: { model: "sonnet", reasoningEffort: "medium" },
-          codex: {
-            model: "gpt-5.6-sol",
-            reasoningEffort: "xhigh",
-            fastMode: true,
+          claude: {
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
-          cursor: { model: "composer-2.5" },
+          codex: {
+            modelSelection: {
+              modelId: "gpt-5.6-sol",
+              parameters: { reasoning: "xhigh", fast: "true" },
+            },
+          },
+          cursor: {
+            modelSelection: {
+              modelId: "composer-2.5",
+              parameters: {},
+            },
+          },
         },
       }),
     ).toEqual({
-      claude: { modelId: "sonnet", effort: "medium" },
+      claude: { modelId: "sonnet", parameters: { effort: "medium" } },
       codex: {
         modelId: "gpt-5.6-sol",
-        effort: "xhigh",
-        codexFastMode: true,
+        parameters: { reasoning: "xhigh", fast: "true" },
       },
-      // No codexFastMode key: the speed toggle is Codex's, and Cursor gets no
-      // copy of it (spec D10).
-      cursor: { modelId: "composer-2.5", effort: "high" },
+      cursor: { modelId: "composer-2.5", parameters: {} },
     });
   });
 
-  it("keeps the UI effort preference at high when a profile omits effort", () => {
+  it("does not synthesize parameters a configured selection omits", () => {
     expect(
       resolveConfiguredBackendSelectionDefaults({
         agentBackends: {
-          claude: { model: "haiku" },
-          codex: { model: "gpt-5.4" },
-          cursor: { model: "composer-2.5" },
+          claude: {
+            modelSelection: { modelId: "haiku", parameters: {} },
+          },
+          codex: {
+            modelSelection: { modelId: "gpt-5.4", parameters: {} },
+          },
+          cursor: {
+            modelSelection: { modelId: "composer-2.5", parameters: {} },
+          },
         },
       }),
     ).toEqual({
-      claude: { modelId: "haiku", effort: "high" },
-      codex: {
-        modelId: "gpt-5.4",
-        effort: "high",
-        codexFastMode: false,
-      },
-      cursor: { modelId: "composer-2.5", effort: "high" },
+      claude: { modelId: "haiku", parameters: {} },
+      codex: { modelId: "gpt-5.4", parameters: {} },
+      cursor: { modelId: "composer-2.5", parameters: {} },
+    });
+  });
+});
+
+describe("catalogBackendSelectionDefaults", () => {
+  it("returns an exact valid default variant for every backend", () => {
+    const defaults = catalogBackendSelectionDefaults();
+
+    for (const backend of agentBackendSchema.options) {
+      expect(
+        validateModelSelection(
+          getConfiguredBackendModelCatalog(backend),
+          defaults[backend],
+        ).valid,
+        `${backend} default must be a complete catalog variant`,
+      ).toBe(true);
+    }
+
+    expect(defaults.cursor).toEqual({
+      modelId: "composer-2.5",
+      parameters: { fast: "true" },
     });
   });
 });

@@ -22,6 +22,7 @@ import type {
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { createStubFailureClassifier } from "@/lib/agent-backends/errors";
 import {
   STRUCTURED_OUTPUT_REPAIR_MAX_ISSUE_PATHS,
@@ -58,6 +59,32 @@ const CODEX_VIEW: BackendCapabilityView = {
   nativeMidTurnAskUser: false,
 };
 
+const CLAUDE_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "high" },
+};
+
+const CODEX_SELECTION: BackendModelSelection = {
+  modelId: "gpt-5.2",
+  parameters: {
+    reasoning: "high",
+    fast: "false",
+  },
+};
+
+const CURSOR_SELECTION: BackendModelSelection = {
+  modelId: "composer-2.5",
+  parameters: {},
+};
+
+function selectionForBackend(
+  backend: BackendCapabilityView["backend"],
+): BackendModelSelection {
+  if (backend === "codex") return CODEX_SELECTION;
+  if (backend === "cursor") return CURSOR_SELECTION;
+  return CLAUDE_SELECTION;
+}
+
 interface ConversationStubOpts {
   result?: Partial<ConversationBackendTurnResult>;
   capture?: { value: ConversationBackendTurnInput | null };
@@ -88,8 +115,7 @@ function makeConversationRuntime(
   return {
     backend,
     status: "alive",
-    modelId: undefined,
-    reasoningEffort: undefined,
+    modelSelection: selectionForBackend(backend),
     outputFormat: undefined,
     alignmentVersion: null,
     async sendTurn(input) {
@@ -197,6 +223,7 @@ describe("executeAgentCall — backend selection", () => {
         runtime,
         capabilityView: CODEX_VIEW,
         signal: new AbortController().signal,
+        modelSelection: CODEX_SELECTION,
       }),
       resolveTaskRunner: () => {
         throw new Error("should not run task runner");
@@ -222,6 +249,23 @@ describe("executeAgentCall — backend selection", () => {
         deps,
       ),
     ).rejects.toThrow();
+  });
+
+  it("rejects a misplaced model parameter before default-backend dispatch", async () => {
+    const capture = { value: null as ConversationBackendTurnInput | null };
+    const runtime = makeConversationRuntime("claude", { capture });
+
+    await expect(
+      executeAgentCall(
+        {
+          kind: "conversation_turn",
+          prompt: "hi",
+          model: "opus",
+        } as unknown as Parameters<typeof executeAgentCall>[0],
+        buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
+      ),
+    ).rejects.toThrow();
+    expect(capture.value).toBeNull();
   });
 });
 
@@ -668,6 +712,7 @@ describe("executeAgentCall — guaranteed structured-output validation", () => {
           runtime,
           capabilityView: CLAUDE_VIEW,
           signal: new AbortController().signal,
+          modelSelection: CLAUDE_SELECTION,
         }),
       },
     );
@@ -769,6 +814,7 @@ function buildDepsForConversation(
       runtime: input.runtime,
       capabilityView: input.view,
       signal: new AbortController().signal,
+      modelSelection: selectionForBackend(input.view.backend),
       ...(input.artifacts !== undefined ? { artifacts: input.artifacts } : {}),
     }),
     resolveTaskRunner: () => {
@@ -794,6 +840,7 @@ function buildDepsForTask(input: TaskDepsHelperInput): AgentCallFacadeDeps {
       runner: input.runner,
       capabilityView: input.view,
       workingDirectory: "/tmp/wt",
+      modelSelection: selectionForBackend(input.view.backend),
       ...(input.artifacts !== undefined ? { artifacts: input.artifacts } : {}),
     }),
     resolveConversationRuntime: () => {
@@ -819,8 +866,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
         kind: "task_run",
         backend: "codex",
         prompt: "go",
-        modelId: "gpt-5.2",
-        reasoningEffort: "high",
+        modelSelection: CODEX_SELECTION,
       },
       {
         taskExecution: {
@@ -836,14 +882,28 @@ describe("executeAgentCall — semantic task execution intent", () => {
     expect(result.outcome.kind).toBe("completed");
     expect(capture.value?.workingDirectory).toBe("/tmp/wt-intent");
     expect(capture.value?.resumeRef).toEqual({ backend: "codex", ref: "th-9" });
-    expect(capture.value?.modelId).toBe("gpt-5.2");
-    expect(capture.value?.reasoningEffort).toBe("high");
+    expect(capture.value?.modelSelection).toEqual(CODEX_SELECTION);
   });
 
   it("fails loudly when a task_run has neither taskExecution nor resolveTaskRunner", async () => {
     await expect(
       executeAgentCall({ kind: "task_run", backend: "codex", prompt: "x" }, {}),
     ).rejects.toThrow(/taskExecution.*or deps\.resolveTaskRunner/);
+  });
+
+  it("refuses semantic task dispatch without one complete model selection", async () => {
+    const getTaskRunner = vi.fn(() => makeTaskRunner("codex"));
+
+    await expect(
+      executeAgentCall(
+        { kind: "task_run", backend: "codex", prompt: "x" },
+        {
+          taskExecution: { workingDirectory: "/tmp/wt" },
+          getTaskRunner,
+        },
+      ),
+    ).rejects.toThrow(/requires request\.modelSelection/);
+    expect(getTaskRunner).not.toHaveBeenCalled();
   });
 
   it("grants no CC session scope from the intent path — every graph-workflow and generic task run stays neutralized", async () => {
@@ -855,7 +915,12 @@ describe("executeAgentCall — semantic task execution intent", () => {
     // has no way to name a session; only a resolver-callback caller that owns
     // the originating session can grant identity.
     await executeAgentCall(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+        modelSelection: CODEX_SELECTION,
+      },
       {
         taskExecution: {
           workingDirectory: "/tmp/wt-graph",
@@ -881,6 +946,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
         kind: "task_run",
         backend: "codex",
         prompt: "review",
+        modelSelection: CODEX_SELECTION,
         writeCapability: "read_only",
         fsWritePolicy: {
           mode: "allowlist",
@@ -926,6 +992,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
           runner,
           capabilityView: CODEX_VIEW,
           workingDirectory: "/private/tmp/lane",
+          modelSelection: CODEX_SELECTION,
         }),
       },
     );
@@ -948,6 +1015,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
           runner,
           capabilityView: CODEX_VIEW,
           workingDirectory: "/tmp/wt-collab",
+          modelSelection: CODEX_SELECTION,
           ccSessionScope: {
             project: "example",
             session: "sess-1",
@@ -964,7 +1032,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
     });
   });
 
-  it("forwards a resolver-supplied Codex fast-mode choice to the runner", async () => {
+  it("forwards a resolver-supplied atomic selection to the runner", async () => {
     const capture = { value: null as AgentTaskRequest | null };
     const runner = makeTaskRunner("codex", { capture });
 
@@ -975,12 +1043,12 @@ describe("executeAgentCall — semantic task execution intent", () => {
           runner,
           capabilityView: CODEX_VIEW,
           workingDirectory: "/tmp/wt-collab",
-          codexFastMode: false,
+          modelSelection: CODEX_SELECTION,
         }),
       },
     );
 
-    expect(capture.value?.codexFastMode).toBe(false);
+    expect(capture.value?.modelSelection).toEqual(CODEX_SELECTION);
   });
 });
 
@@ -997,6 +1065,7 @@ describe("executeAgentCall — pre-turn MCP apply hook", () => {
           runtime,
           capabilityView: CLAUDE_VIEW,
           signal: new AbortController().signal,
+          modelSelection: CLAUDE_SELECTION,
         }),
         applyMcp: () => ({ ok: false, message: "MCP config rejected" }),
       },
@@ -1024,6 +1093,7 @@ describe("executeAgentCall — continuity recording", () => {
           runtime: makeConversationRuntime("claude"),
           capabilityView: CLAUDE_VIEW,
           signal: new AbortController().signal,
+          modelSelection: CLAUDE_SELECTION,
         }),
         recordContinuity: (record) => {
           recorded.push(record);
@@ -1048,6 +1118,7 @@ describe("executeAgentCall — continuity recording", () => {
           runtime: makeConversationRuntime("claude"),
           capabilityView: CLAUDE_VIEW,
           signal: new AbortController().signal,
+          modelSelection: CLAUDE_SELECTION,
         }),
         recordContinuity: () => {
           throw new Error("ledger unavailable");
@@ -1071,6 +1142,7 @@ describe("executeAgentCall — failure normalization via the descriptor classifi
           runtime,
           capabilityView: CLAUDE_VIEW,
           signal: new AbortController().signal,
+          modelSelection: CLAUDE_SELECTION,
         }),
         getFailureClassifier: () => {
           const classify = (error: unknown) => ({
@@ -1117,7 +1189,12 @@ describe("executeAgentCall — failure normalization via the descriptor classifi
       retryable: true,
     }));
     const result = await executeAgentCall(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+        modelSelection: CODEX_SELECTION,
+      },
       {
         taskExecution: { workingDirectory: "/tmp/wt" },
         getTaskRunner: () => runner,
@@ -1264,6 +1341,7 @@ describe("executeAgentCall — structured-output repair", () => {
       runner,
       capabilityView: CODEX_VIEW,
       workingDirectory: "/tmp/wt",
+      modelSelection: CODEX_SELECTION,
       autonomous: true,
       resumeRef: { backend: "codex", ref: "thread-before-call" },
       artifacts: [
@@ -1306,6 +1384,8 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(repairClock).toHaveLength(0);
     expect(resolveTaskRunner).toHaveBeenCalledTimes(1);
     expect(requests).toHaveLength(2);
+    expect(requests[0]?.modelSelection).toEqual(CODEX_SELECTION);
+    expect(requests[1]?.modelSelection).toEqual(CODEX_SELECTION);
     expect(requests[1]).toMatchObject({
       executionProfile: "isolated-one-shot",
       resumeRef: null,
@@ -1386,8 +1466,7 @@ describe("executeAgentCall — structured-output repair", () => {
     const runtime: ConversationBackendRuntime = {
       backend: "claude",
       status: "alive",
-      modelId: undefined,
-      reasoningEffort: undefined,
+      modelSelection: CLAUDE_SELECTION,
       outputFormat: undefined,
       alignmentVersion: null,
       async sendTurn(input) {
@@ -1424,6 +1503,7 @@ describe("executeAgentCall — structured-output repair", () => {
       runtime,
       capabilityView: CLAUDE_VIEW,
       signal: new AbortController().signal,
+      modelSelection: CLAUDE_SELECTION,
       imageRefs: [
         {
           index: 1,
@@ -1451,6 +1531,8 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(resolveConversationRuntime).toHaveBeenCalledTimes(1);
     expect(applyMcp).toHaveBeenCalledTimes(1);
     expect(turnInputs).toHaveLength(2);
+    expect(turnInputs[0]?.modelSelection).toEqual(CLAUDE_SELECTION);
+    expect(turnInputs[1]?.modelSelection).toEqual(CLAUDE_SELECTION);
     expect(turnInputs[1]?.imageRefs).toEqual([]);
     expect(turnInputs[1]?.promptText).toContain("$.artifacts is required");
     expect(turnInputs[1]?.promptText).toContain(
@@ -1605,6 +1687,7 @@ describe("executeAgentCall — structured-output repair", () => {
           runner,
           capabilityView: CODEX_VIEW,
           workingDirectory: "/tmp/wt",
+          modelSelection: CODEX_SELECTION,
           artifacts: [
             {
               kind: "design_doc",
@@ -1955,8 +2038,7 @@ describe("buildStructuredOutputRepairRequest", () => {
     laneRef: { workflowId: "wf-1", laneId: "primary" },
     writeCapability: "read_only" as const,
     timeoutMs: 30_000,
-    modelId: "model-x",
-    reasoningEffort: "high",
+    modelSelection: CODEX_SELECTION,
   };
   const perTurnPayload = {
     tooling: { servers: [] },

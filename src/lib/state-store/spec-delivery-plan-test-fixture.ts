@@ -114,8 +114,10 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
             focus: "Persist fixture launch configuration",
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
           },
           contextValidator: {
@@ -129,8 +131,10 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: false, contextLimitTokens: 110_000 },
               },
@@ -151,16 +155,20 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
             maxAttemptsPerContext: 3,
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "medium" },
+              },
             },
           },
           collaboration: {
             enabled: true,
             secondAgent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "low",
+              modelSelection: {
+                modelId: "sonnet",
+                parameters: { effort: "low" },
+              },
             },
             negotiationRounds: 3,
             autonomousResolutionThreshold: "major",
@@ -241,8 +249,10 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
               focus: "Persist context configuration",
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "high" },
+                },
               },
             },
             contextValidator: {
@@ -256,8 +266,10 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
                   authority: "blocking",
                   agent: {
                     backend: "codex",
-                    model: "gpt-5.4",
-                    reasoningEffort: "high",
+                    modelSelection: {
+                      modelId: "gpt-5.4",
+                      parameters: { reasoning: "high", fast: "false" },
+                    },
                   },
                   continuity: {
                     enabled: false,
@@ -281,16 +293,20 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
               maxAttemptsPerContext: 4,
               agent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "low",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "low" },
+                },
               },
             },
             collaboration: {
               enabled: true,
               secondAgent: {
                 backend: "claude",
-                model: "opus",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "opus",
+                  parameters: { effort: "high" },
+                },
               },
               negotiationRounds: 2,
               autonomousResolutionThreshold: "minor",

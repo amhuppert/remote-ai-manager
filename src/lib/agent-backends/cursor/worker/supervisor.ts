@@ -6,6 +6,7 @@ import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import { modelSelectionKey } from "../../model-selection";
 import { CURSOR_PHASE1_POLICY } from "../policy";
 import {
   createCursorPackageProbe,
@@ -158,6 +159,8 @@ type HandshakeOutcome =
 
 class SupervisedWorker implements CursorWorkerSession {
   readonly handshake = deferred<HandshakeOutcome>();
+  readonly selectionKey: string;
+  readonly ownerToken: object;
 
   private readonly activeRuns = new Set<string>();
   private readonly cancelWaiters = new Map<string, Deferred<void>>();
@@ -182,6 +185,8 @@ class SupervisedWorker implements CursorWorkerSession {
     private readonly readCredential: () => string | null,
     private readonly onSettled: (worker: SupervisedWorker) => void,
   ) {
+    this.selectionKey = modelSelectionKey(input.modelSelection);
+    this.ownerToken = input.ownerToken;
     child.onMessage((value) => this.receive(value));
     child.onExit((code, signal) => this.handleExit(code, signal));
     child.onError((error) => {
@@ -342,7 +347,7 @@ class SupervisedWorker implements CursorWorkerSession {
       type: "attachAgent",
       mode: input.mode,
       ref: input.ref,
-      model: input.model,
+      modelSelection: input.modelSelection,
       disallowedTools: [...CURSOR_PHASE1_POLICY.disallowedTools],
       sandboxEnabled: false,
       autoReview: false,
@@ -361,7 +366,7 @@ class SupervisedWorker implements CursorWorkerSession {
       promptText: input.promptText,
       images: [...input.images],
       structuredOutputInstruction: input.structuredOutputInstruction,
-      model: input.model,
+      modelSelection: input.modelSelection,
       mcpServers: input.mcpServers,
       forceExpirePersistedRun: input.forceExpirePersistedRun,
     });
@@ -503,6 +508,16 @@ export function createCursorWorkerSupervisor(
 ): CursorWorkerTransport {
   const bounds: CursorSupervisorBounds = { ...DEFAULT_BOUNDS, ...deps.bounds };
   const registry = new Map<string, SupervisedWorker>();
+  let acceptingStarts = true;
+  let closeAllPromise: Promise<void> | null = null;
+  const pendingStarts = new Map<
+    string,
+    {
+      selectionKey: string;
+      ownerToken: object;
+      promise: Promise<CursorWorkerStartResult>;
+    }
+  >();
 
   function release(worker: SupervisedWorker): void {
     const current = registry.get(worker.conversationId);
@@ -556,17 +571,43 @@ export function createCursorWorkerSupervisor(
     return env;
   }
 
-  async function start(
+  function bindingMismatch(
+    conversationId: string,
+    activeModelSelectionKey: string,
+    requestedModelSelectionKey: string,
+  ): CursorWorkerStartResult {
+    logger.warn("cursor-worker.binding_mismatch", {
+      conversationId,
+      activeModelSelectionKey,
+      requestedModelSelectionKey,
+    });
+    return {
+      kind: "binding_mismatch",
+      message:
+        "A Cursor worker is already active for this conversation under a different model selection.",
+    };
+  }
+
+  function ownerMismatch(conversationId: string): CursorWorkerStartResult {
+    logger.warn("cursor-worker.binding_mismatch", {
+      conversationId,
+      mismatchKind: "runtime_owner",
+    });
+    return {
+      kind: "binding_mismatch",
+      message:
+        "A Cursor worker is already active for this conversation under a different runtime owner.",
+    };
+  }
+
+  async function startReserved(
     input: CursorWorkerStartInput,
   ): Promise<CursorWorkerStartResult> {
-    const existing = registry.get(input.conversationId);
-    if (existing !== undefined) {
-      return { kind: "already_active", session: existing };
-    }
-
     // Layer 1 before layer 2, and both before any process: an unusable SDK
     // installation must not reach the point of handling a credential.
-    const runtime = await deps.runStaticPreflight({ model: input.model });
+    const runtime = await deps.runStaticPreflight({
+      model: input.modelSelection.modelId,
+    });
     if (!runtime.ok) {
       logger.warn("cursor-worker.runtime_preflight_failed", {
         conversationId: input.conversationId,
@@ -694,16 +735,94 @@ export function createCursorWorkerSupervisor(
     return { kind: "spawn_failed", message };
   }
 
+  async function start(
+    input: CursorWorkerStartInput,
+  ): Promise<CursorWorkerStartResult> {
+    if (!acceptingStarts) {
+      return {
+        kind: "spawn_failed",
+        message: "The Cursor worker supervisor is shutting down.",
+      };
+    }
+
+    const requestedSelectionKey = modelSelectionKey(input.modelSelection);
+    const existing = registry.get(input.conversationId);
+    if (existing !== undefined) {
+      if (existing.ownerToken !== input.ownerToken) {
+        return ownerMismatch(input.conversationId);
+      }
+      if (existing.selectionKey !== requestedSelectionKey) {
+        return bindingMismatch(
+          input.conversationId,
+          existing.selectionKey,
+          requestedSelectionKey,
+        );
+      }
+      return { kind: "already_active", session: existing };
+    }
+
+    const pending = pendingStarts.get(input.conversationId);
+    if (pending !== undefined) {
+      if (pending.ownerToken !== input.ownerToken) {
+        return ownerMismatch(input.conversationId);
+      }
+      if (pending.selectionKey !== requestedSelectionKey) {
+        return bindingMismatch(
+          input.conversationId,
+          pending.selectionKey,
+          requestedSelectionKey,
+        );
+      }
+      const result = await pending.promise;
+      if (result.kind === "ready" || result.kind === "already_active") {
+        return { kind: "already_active", session: result.session };
+      }
+      return result;
+    }
+
+    const promise = Promise.resolve().then(() => startReserved(input));
+    pendingStarts.set(input.conversationId, {
+      selectionKey: requestedSelectionKey,
+      ownerToken: input.ownerToken,
+      promise,
+    });
+    try {
+      return await promise;
+    } finally {
+      const current = pendingStarts.get(input.conversationId);
+      if (current?.promise === promise) {
+        pendingStarts.delete(input.conversationId);
+      }
+    }
+  }
+
+  async function closeEveryWorker(): Promise<void> {
+    const closingRegistered = Promise.all(
+      [...registry.values()].map(async (worker) => {
+        await worker.close();
+      }),
+    );
+    await Promise.allSettled(
+      [...pendingStarts.values()].map((pending) => pending.promise),
+    );
+    await closingRegistered;
+    await Promise.all(
+      [...registry.values()].map(async (worker) => {
+        await worker.close();
+      }),
+    );
+  }
+
+  function closeAll(): Promise<void> {
+    acceptingStarts = false;
+    closeAllPromise ??= closeEveryWorker();
+    return closeAllPromise;
+  }
+
   return {
     start,
     find: (conversationId) => registry.get(conversationId) ?? null,
-    async closeAll() {
-      await Promise.all(
-        [...registry.values()].map(async (worker) => {
-          await worker.close();
-        }),
-      );
-    },
+    closeAll,
   };
 }
 

@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   readConfig as defaultReadConfig,
   readRawConfig as defaultReadRawConfig,
-  materializeGlobalConfig,
+  canonicalizeRawGlobalConfig,
   writeRawConfig as defaultWriteRawConfig,
 } from "@/lib/config/loader";
 import { intersectKeys } from "@/lib/config/cascade";
@@ -89,8 +89,9 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
 
     // Strip Zod-injected defaults so only user-submitted keys are persisted.
     const stripped = intersectKeys(body, validation.data) as RawGlobalConfig;
+    let canonical: RawGlobalConfig;
     try {
-      materializeGlobalConfig(stripped);
+      canonical = canonicalizeRawGlobalConfig(stripped);
     } catch (err) {
       const detail =
         err instanceof z.ZodError
@@ -105,12 +106,12 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
       );
     }
 
-    // `materializeGlobalConfig` proves the SHAPE of the effective config; it
-    // cannot know whether a referenced profile exists, which needs the library
-    // and is async. `workflowDefaults` is a global-scope document — it applies
-    // to every project — so it is held to the global tier-scope rule.
+    // Canonicalization proves the effective config and its model selections;
+    // profile existence still needs the async library. `workflowDefaults` is a
+    // global-scope document — it applies to every project — so it is held to
+    // the global tier-scope rule.
     const referenceIssues = await assignmentReferences.checkWorkflowDefaults(
-      stripped.workflowDefaults,
+      canonical.workflowDefaults,
     );
     if (referenceIssues.length > 0) {
       const detail = referenceIssues
@@ -126,9 +127,9 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
     }
 
     try {
-      await deps.writeRawConfig(stripped);
+      await deps.writeRawConfig(canonical);
       log.info("config.updated", {
-        fieldCount: Object.keys(stripped).length,
+        fieldCount: Object.keys(canonical).length,
       });
 
       const [config, raw] = await Promise.all([

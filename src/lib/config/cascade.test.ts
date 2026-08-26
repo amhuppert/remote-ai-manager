@@ -10,9 +10,14 @@ describe("resolveCompactionConfig", () => {
 
     expect(result).toEqual({
       backend: "claude",
-      conversationModel: "sonnet",
-      messageModel: "sonnet",
-      effort: "medium",
+      conversationModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
+      messageModelSelection: {
+        modelId: "sonnet",
+        parameters: { effort: "medium" },
+      },
     });
     expect(result.timeoutMs).toBeUndefined();
   });
@@ -21,9 +26,14 @@ describe("resolveCompactionConfig", () => {
     const globalConfig: Pick<GlobalConfig, "compaction"> = {
       compaction: {
         backend: "claude",
-        conversationModel: "sonnet",
-        messageModel: "sonnet",
-        effort: "medium",
+        conversationModelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
+        messageModelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        },
         timeoutMs: 60_000,
       },
     };
@@ -40,9 +50,14 @@ describe("resolveCompactionConfig", () => {
     const globalConfig: Pick<GlobalConfig, "compaction"> = {
       compaction: {
         backend: "codex",
-        conversationModel: "opus",
-        messageModel: "sonnet",
-        effort: "high",
+        conversationModelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+        messageModelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
         timeoutMs: 60_000,
       },
     };
@@ -56,23 +71,32 @@ describe("resolveCompactionConfig", () => {
     const globalConfig: Pick<GlobalConfig, "compaction"> = {
       compaction: {
         backend: "claude",
-        conversationModel: "opus",
-        messageModel: "sonnet",
-        effort: "high",
+        conversationModelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
+        messageModelSelection: {
+          modelId: "sonnet",
+          parameters: { effort: "high" },
+        },
         timeoutMs: 60_000,
       },
     };
     const repoConfig: Pick<PerRepoConfig, "compaction"> = {
-      compaction: { messageModel: "haiku" },
+      compaction: {
+        messageModelSelection: { modelId: "haiku", parameters: {} },
+      },
     };
 
     const result = resolveCompactionConfig(globalConfig, repoConfig);
 
     expect(result).toEqual({
       backend: "claude",
-      conversationModel: "opus",
-      messageModel: "haiku",
-      effort: "high",
+      conversationModelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+      messageModelSelection: { modelId: "haiku", parameters: {} },
       timeoutMs: 60_000,
     });
   });

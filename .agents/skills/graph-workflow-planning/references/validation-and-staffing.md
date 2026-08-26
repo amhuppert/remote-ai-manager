@@ -104,7 +104,13 @@ Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:rev
     "id": "implementer",                                   // stable, kebab-case, unique at its use site
     "profile": { "tier": "builtin", "id": "general-implementer" },
     "focus": "state-store persistence",                    // optional use-site steer
-    "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" }
+    "agent": {
+      "backend": "claude",
+      "modelSelection": {
+        "modelId": "opus",
+        "parameters": { "effort": "high" }
+      }
+    }
   },
   "contextValidator": {
     "enabled": true,
@@ -113,7 +119,13 @@ Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:rev
         "id": "security",                                  // unique WITHIN the cohort
         "profile": { "tier": "global", "id": "security-reviewer" },
         "strategy": "conversation",
-        "agent": { "backend": "codex", "model": "gpt-5.6", "reasoningEffort": "high" }
+        "agent": {
+          "backend": "codex",
+          "modelSelection": {
+            "modelId": "gpt-5.4",
+            "parameters": { "reasoning": "high", "fast": "false" }
+          }
+        }
       }
     ]
   }

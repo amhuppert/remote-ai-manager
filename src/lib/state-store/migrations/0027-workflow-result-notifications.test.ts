@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import { workflowResultNotifications } from "./0027-workflow-result-notifications";
 
 type Db = InstanceType<typeof Database>;
@@ -72,11 +71,10 @@ describe("0027-workflow-result-notifications", () => {
     expect(db.prepare("SELECT id, source FROM notifications").all()).toEqual([
       { id: "notification-1", source: "job" },
     ]);
-    // This migration's own breaking version is 8; later cutovers (0030, 0031,
-    // and 0034) raise the application constant past it.
+    // This migration owns version 8; the application compatibility floor can
+    // advance independently when later breaking migrations are registered.
     expect(
       db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
     ).toEqual({ version: 8 });
-    expect(KNOWN_SCHEMA_VERSION).toBe(11);
   });
 });

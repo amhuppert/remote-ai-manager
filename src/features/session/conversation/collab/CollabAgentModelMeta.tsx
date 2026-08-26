@@ -1,7 +1,7 @@
 "use client";
 
-import { EffortLabel } from "@/components/conversation/EffortLabel";
 import { backendLabel } from "@/lib/agent-backends/catalog";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
 
 /** Display names for the two collaboration backends, shared by every card. */
@@ -15,10 +15,7 @@ export const AGENT_LABEL: Record<CollaborationAgent, string> = {
  * `CollaborationResolvedAgent` so both the current per-flow-agent settings and
  * the legacy backend-keyed decode satisfy it.
  */
-export interface CollabAgentMetaSettings {
-  model: string;
-  effort?: string;
-  fastMode?: boolean;
+export interface CollabAgentMetaSettings extends BackendModelSelection {
   /** Name of the agent profile the lane is staffed with, when non-default. */
   profileName?: string;
 }
@@ -36,22 +33,21 @@ export default function CollabAgentModelMeta({
   settings,
 }: CollabAgentModelMetaProps): React.JSX.Element | null {
   if (!settings) return null;
+  const parameters = Object.entries(settings.parameters).sort(
+    ([left], [right]) => left.localeCompare(right),
+  );
   return (
     <span className="font-mono text-[0.7rem] font-medium tracking-[0.02em] normal-case">
       <span className="mx-[5px] text-text-tertiary">&middot;</span>
-      <span className="text-text-secondary">{settings.model}</span>
-      {settings.effort && (
-        <>
+      <span className="text-text-secondary">{settings.modelId}</span>
+      {parameters.map(([parameterId, value]) => (
+        <span key={parameterId}>
           <span className="mx-[5px] text-text-tertiary">&middot;</span>
-          <EffortLabel effort={settings.effort} />
-        </>
-      )}
-      {settings.fastMode === true && (
-        <>
-          <span className="mx-[5px] text-text-tertiary">&middot;</span>
-          <span className="text-text-secondary">fast</span>
-        </>
-      )}
+          <span className="text-text-secondary">
+            {parameterId}={value}
+          </span>
+        </span>
+      ))}
       {settings.profileName !== undefined && (
         <>
           <span className="mx-[5px] text-text-tertiary">&middot;</span>

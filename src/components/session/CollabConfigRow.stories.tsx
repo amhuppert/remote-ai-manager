@@ -5,13 +5,20 @@ import CollabConfigRow, {
   type CollabConfigRowConfig,
   type CollabConfigRowProps,
 } from "@/components/session/CollabConfigRow";
-import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/catalog";
+import {
+  getStaticBackendModelCatalog,
+  type BackendSelectionDefaultsById,
+} from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 
+const CLAUDE_CATALOG = getStaticBackendModelCatalog("claude");
+const CODEX_CATALOG = getStaticBackendModelCatalog("codex");
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "opus", effort: "high" },
-  codex: { modelId: "gpt-5.4", effort: "high", codexFastMode: false },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: defaultSelectionForModel(CLAUDE_CATALOG, "opus"),
+  codex: defaultSelectionForModel(CODEX_CATALOG, "gpt-5.4"),
+  cursor: { modelId: "composer-2.5", parameters: {} },
 };
+const MODEL_CATALOGS = { claude: CLAUDE_CATALOG, codex: CODEX_CATALOG };
 
 function StatefulConfigRow(
   props: Omit<CollabConfigRowProps, "config" | "onChange"> & {
@@ -31,9 +38,19 @@ const meta = {
     onDismiss: fn(),
     originatingAgent: "claude",
     backendDefaults: BACKEND_DEFAULTS,
-    agentOne: { backend: "claude", model: "fable", effort: "xhigh" },
+    modelCatalogs: MODEL_CATALOGS,
+    agentOne: {
+      backend: "claude",
+      modelSelection: {
+        modelId: "fable",
+        parameters: { effort: "xhigh" },
+      },
+    },
     config: {
-      agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+      agentTwo: {
+        backend: "codex",
+        modelSelection: BACKEND_DEFAULTS.codex,
+      },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "major",
     },
@@ -55,6 +72,7 @@ function statefulRender(args: {
   originatingAgent: CollabConfigRowProps["originatingAgent"];
   agentOne?: CollabConfigRowProps["agentOne"];
   backendDefaults: CollabConfigRowProps["backendDefaults"];
+  modelCatalogs: CollabConfigRowProps["modelCatalogs"];
   config: CollabConfigRowConfig;
 }): React.JSX.Element {
   return (
@@ -63,6 +81,7 @@ function statefulRender(args: {
       originatingAgent={args.originatingAgent}
       {...(args.agentOne !== undefined ? { agentOne: args.agentOne } : {})}
       backendDefaults={args.backendDefaults}
+      modelCatalogs={args.modelCatalogs}
       initialConfig={args.config}
     />
   );
@@ -75,9 +94,18 @@ export const Default = {
 export const SameBackendPair = {
   args: {
     originatingAgent: "claude",
-    agentOne: { backend: "claude", model: "fable", effort: "max" },
+    agentOne: {
+      backend: "claude",
+      modelSelection: {
+        modelId: "fable",
+        parameters: { effort: "max" },
+      },
+    },
     config: {
-      agentTwo: { backend: "claude", model: "opus", effort: "high" },
+      agentTwo: {
+        backend: "claude",
+        modelSelection: BACKEND_DEFAULTS.claude,
+      },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "major",
     },
@@ -91,9 +119,10 @@ export const CodexAgentTwoFastMode = {
     config: {
       agentTwo: {
         backend: "codex",
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-        fastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.6-sol",
+          parameters: { reasoning: "xhigh", fast: "true" },
+        },
       },
       negotiationRounds: 5,
       autonomousResolutionThreshold: "major",
@@ -106,7 +135,10 @@ export const RoundsAtMin = {
   args: {
     originatingAgent: "claude",
     config: {
-      agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+      agentTwo: {
+        backend: "codex",
+        modelSelection: BACKEND_DEFAULTS.codex,
+      },
       negotiationRounds: 1,
       autonomousResolutionThreshold: "none",
     },
@@ -119,12 +151,16 @@ export const RoundsAtMax = {
     originatingAgent: "codex",
     agentOne: {
       backend: "codex",
-      model: "gpt-5.6-sol",
-      effort: "ultra",
-      fastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.6-sol",
+        parameters: { reasoning: "ultra", fast: "true" },
+      },
     },
     config: {
-      agentTwo: { backend: "claude", model: "opus", effort: "high" },
+      agentTwo: {
+        backend: "claude",
+        modelSelection: BACKEND_DEFAULTS.claude,
+      },
       negotiationRounds: 20,
       autonomousResolutionThreshold: "blocking",
     },
@@ -136,7 +172,10 @@ export const ThresholdMinor = {
   args: {
     originatingAgent: "claude",
     config: {
-      agentTwo: { backend: "codex", model: "gpt-5.4", effort: "high" },
+      agentTwo: {
+        backend: "codex",
+        modelSelection: BACKEND_DEFAULTS.codex,
+      },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "minor",
     },

@@ -55,8 +55,10 @@ function makeDefinition(
           profileSnapshot: makeProfileSnapshot(),
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
         },
         contextValidator: { enabled: false, assignments: [] },
@@ -1264,8 +1266,10 @@ describe("resolveValidatorCall", () => {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: false },
         },
@@ -1504,8 +1508,10 @@ describe("resolveValidatorCall — resume conversation pin", () => {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: false },
         },
@@ -1559,8 +1565,10 @@ describe("resolveValidatorCall — resume conversation pin", () => {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: false },
         },

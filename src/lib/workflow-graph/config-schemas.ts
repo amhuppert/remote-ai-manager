@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-  claudeModelSchema,
-  codexModelSchema,
-  codexReasoningEffortSchema,
-  effortLevelSchema,
-} from "@/lib/agent-backends/schemas";
+import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import {
   ASSIGNMENT_FOCUS_MAX_LENGTH,
   findReservedSequence,
@@ -24,17 +19,35 @@ import { validationCommandNameSchema } from "@/lib/validation/schemas";
 // Graph Workflow Agent Configuration Schemas
 // ============================================================
 
-const graphWorkflowClaudeAgentConfigSchema = z.object({
-  backend: z.literal("claude"),
-  model: claudeModelSchema,
-  reasoningEffort: effortLevelSchema,
-});
+function migratedAgentSelectionField() {
+  return z
+    .never({
+      error:
+        "This workflow agent field was migrated; use the complete modelSelection.",
+    })
+    .optional();
+}
 
-const graphWorkflowCodexAgentConfigSchema = z.object({
-  backend: z.literal("codex"),
-  model: codexModelSchema,
-  reasoningEffort: codexReasoningEffortSchema,
-});
+const atomicAgentSelectionFields = {
+  modelSelection: backendModelSelectionSchema,
+  model: migratedAgentSelectionField(),
+  reasoningEffort: migratedAgentSelectionField(),
+  fastMode: migratedAgentSelectionField(),
+} as const;
+
+const graphWorkflowClaudeAgentConfigSchema = z
+  .object({
+    backend: z.literal("claude"),
+    ...atomicAgentSelectionFields,
+  })
+  .strict();
+
+const graphWorkflowCodexAgentConfigSchema = z
+  .object({
+    backend: z.literal("codex"),
+    ...atomicAgentSelectionFields,
+  })
+  .strict();
 
 /**
  * Why a `backend` value matched no arm above, phrased for the author.
@@ -46,8 +59,8 @@ const graphWorkflowCodexAgentConfigSchema = z.object({
  * zod's own message.
  *
  * Only an unmatched DISCRIMINATOR reaches this callback; an arm that matches
- * and then fails on its model or effort reports its own issue, so a bad Claude
- * model can never be mislabelled as a facet problem.
+ * and then fails on its selection reports its own issue, so a bad Claude
+ * selection can never be mislabelled as a facet problem.
  */
 function agentConfigBackendRefusal(input: unknown): string | undefined {
   if (typeof input !== "object" || input === null || !("backend" in input)) {
@@ -127,8 +140,10 @@ export const DEFAULT_PLAN_REPAIR_POLICY: GraphWorkflowPlanRepairPolicy =
  */
 export const PLAN_REPAIR_DEFAULT_AGENT: GraphWorkflowAgentConfig = {
   backend: "claude",
-  model: "opus",
-  reasoningEffort: "high",
+  modelSelection: {
+    modelId: "opus",
+    parameters: { effort: "high" },
+  },
 };
 
 /**

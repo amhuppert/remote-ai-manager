@@ -258,9 +258,12 @@ function installFetchStub(initialTickets: TicketListItem[]): {
 const PAGE_PROPS = {
   defaultAgentBackend: "claude",
   backendDefaults: {
-    claude: { modelId: "sonnet", effort: "medium" },
-    codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
-    cursor: { modelId: "composer-2.5", effort: "high" },
+    claude: { modelId: "sonnet", parameters: { effort: "medium" } },
+    codex: {
+      modelId: "gpt-5.6-sol",
+      parameters: { reasoning: "ultra", fast: "false" },
+    },
+    cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
   },
 } as const;
 

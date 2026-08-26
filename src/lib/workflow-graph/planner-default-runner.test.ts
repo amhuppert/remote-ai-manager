@@ -33,8 +33,10 @@ const submittedDefinition: WorkflowSemanticDefinition = {
         profile: { tier: "builtin", id: "general-implementer" },
         agent: {
           backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
         },
       },
       mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },

@@ -52,8 +52,7 @@ function maximalResolvedContext(): Record<string, unknown> {
       focus: "the persistence layer",
       agent: {
         backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
       },
       profileSnapshot: {
         tier: "builtin",
@@ -78,8 +77,10 @@ function maximalResolvedContext(): Record<string, unknown> {
           authority: "blocking",
           agent: {
             backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            modelSelection: {
+              modelId: "sonnet",
+              parameters: { effort: "medium" },
+            },
           },
           continuity: { enabled: false, contextLimitTokens: 120_000 },
           profileSnapshot: {
@@ -111,8 +112,10 @@ function maximalResolvedContext(): Record<string, unknown> {
       maxAttemptsPerContext: 3,
       agent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
     },
     // An author-declared output contract. `taskValidation` is a removed CC
@@ -162,8 +165,10 @@ function maximalResolvedContext(): Record<string, unknown> {
       secondAgent: {
         value: {
           backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          modelSelection: {
+            modelId: "gpt-5.4",
+            parameters: { reasoning: "high", fast: "false" },
+          },
         },
         source: "per-node",
       },
@@ -270,7 +275,10 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
     id: "implementer",
     profile: { tier: "builtin", id: "general-implementer" },
     focus: "the persistence layer",
-    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    agent: {
+      backend: "claude",
+      modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+    },
   };
   const authoredValidatorCohort = {
     enabled: false,
@@ -283,8 +291,10 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
         authority: "blocking",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          modelSelection: {
+            modelId: "sonnet",
+            parameters: { effort: "medium" },
+          },
         },
         continuity: { enabled: false, contextLimitTokens: 120_000 },
       },
@@ -301,14 +311,22 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
     planRepair: {
       enabled: false,
       maxAttemptsPerContext: 3,
-      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      agent: {
+        backend: "codex",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
     },
     collaboration: {
       enabled: true,
       secondAgent: {
         backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
       },
       negotiationRounds: 5,
       autonomousResolutionThreshold: "major",
@@ -672,8 +690,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             focus: "the persistence layer",
             agent: {
               backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "opus",
+                parameters: { effort: "high" },
+              },
             },
             profileSnapshot: {
               tier: "builtin",
@@ -703,8 +723,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
                 authority: "blocking",
                 agent: {
                   backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
+                  modelSelection: {
+                    modelId: "sonnet",
+                    parameters: { effort: "medium" },
+                  },
                 },
                 continuity: { enabled: false, contextLimitTokens: 120_000 },
                 // A dormant assignment carries its seeded snapshot too: it is
@@ -738,8 +760,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             maxAttemptsPerContext: 3,
             agent: {
               backend: "codex",
-              model: "gpt-5.4",
-              reasoningEffort: "high",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "high", fast: "false" },
+              },
             },
           },
           // An author-declared output contract. `taskValidation` is a removed CC
@@ -787,8 +811,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             secondAgent: {
               value: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "high",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "high", fast: "false" },
+                },
               },
               source: "per-node",
             },
@@ -899,8 +925,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             maxAttemptsPerContext: 5,
             agent: {
               backend: "codex",
-              model: "gpt-5.4",
-              reasoningEffort: "low",
+              modelSelection: {
+                modelId: "gpt-5.4",
+                parameters: { reasoning: "low", fast: "false" },
+              },
             },
           },
         },

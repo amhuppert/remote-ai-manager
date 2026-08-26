@@ -961,8 +961,10 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
                     authority: "blocking",
                     agent: {
                       backend: "codex",
-                      model: "gpt-5.4",
-                      reasoningEffort: "medium",
+                      modelSelection: {
+                        modelId: "gpt-5.4",
+                        parameters: { reasoning: "medium", fast: "false" },
+                      },
                     },
                     continuity: { enabled: true },
                   },
@@ -1015,8 +1017,10 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "medium", fast: "false" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1055,8 +1059,10 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
               authority: "blocking",
               agent: {
                 backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "medium", fast: "false" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1096,8 +1102,10 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
               authority: "blocking",
               agent: {
                 backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
+                modelSelection: {
+                  modelId: "sonnet",
+                  parameters: { effort: "medium" },
+                },
               },
               continuity: { enabled: true },
             },
@@ -1133,11 +1141,151 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
 });
 
 describe("validateResolvedWorkflow", () => {
-  it("passes when every resolved context's implementer effort is supported", () => {
+  it("validates repair and collaboration selections in contexts and resolved loop templates", () => {
+    const base = createResolvedWorkflowDefinition();
+    const invalidAgent = {
+      backend: "claude" as const,
+      modelSelection: {
+        modelId: "haiku",
+        parameters: { effort: "xhigh" },
+      },
+    };
+    const context = base.executionContexts[0]!;
+    const configuredContext = {
+      ...context,
+      planRepair: {
+        enabled: true,
+        maxAttemptsPerContext: 2,
+        agent: invalidAgent,
+      },
+      collaboration: {
+        enabled: { value: true, source: "per-node" as const },
+        secondAgent: { value: invalidAgent, source: "per-node" as const },
+        negotiationRounds: { value: 2, source: "global" as const },
+        autonomousResolutionThreshold: {
+          value: "minor" as const,
+          source: "global" as const,
+        },
+      },
+    };
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: [
+        configuredContext,
+        ...base.executionContexts.slice(1),
+      ],
+      loopGroups: [
+        {
+          id: "repair-loop",
+          entryContextId: context.id,
+          exitContextId: context.id,
+          until: { schema: { type: "object" } },
+          maxPasses: 2,
+          template: {
+            contexts: [
+              {
+                ...context,
+                implementer: {
+                  ...context.implementer,
+                  agent: invalidAgent,
+                },
+              },
+            ],
+            tasks: [],
+            edges: [],
+          },
+          templateVersion: 1,
+          planRepair: {
+            enabled: true,
+            maxAttemptsPerContext: 2,
+            agent: invalidAgent,
+          },
+        },
+      ],
+    });
+
+    expect(
+      validateResolvedWorkflow(resolved).errors.map(({ code, field }) => ({
+        code,
+        field,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          code: "plan-repair-model-selection-invalid",
+          field: "executionContexts.0.planRepair.agent.modelSelection",
+        },
+        {
+          code: "collaboration-model-selection-invalid",
+          field:
+            "executionContexts.0.collaboration.secondAgent.value.modelSelection",
+        },
+        {
+          code: "plan-repair-model-selection-invalid",
+          field: "loopGroups.0.planRepair.agent.modelSelection",
+        },
+        {
+          code: "implementer-model-selection-invalid",
+          field:
+            "loopGroups.0.template.contexts.0.implementer.agent.modelSelection",
+        },
+      ]),
+    );
+  });
+
+  it("passes when every resolved context's complete model selections are valid", () => {
     const resolved = createResolvedWorkflowDefinition();
     const result = validateResolvedWorkflow(resolved);
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
+  });
+
+  it("admits only the globally configured custom Codex model", () => {
+    const base = createResolvedWorkflowDefinition();
+    const customSelection = {
+      modelId: "company-codex-model",
+      parameters: { reasoning: "high", fast: "false" },
+    };
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((context, index) =>
+        index === 0
+          ? {
+              ...context,
+              implementer: {
+                ...context.implementer,
+                agent: {
+                  backend: "codex" as const,
+                  modelSelection: customSelection,
+                },
+              },
+            }
+          : context,
+      ),
+    });
+
+    expect(
+      validateResolvedWorkflow(resolved).errors.some(
+        ({ code }) => code === "implementer-model-selection-invalid",
+      ),
+    ).toBe(true);
+    expect(
+      validateResolvedWorkflow(resolved, {
+        configuredModelSelectionFor: (backend) =>
+          backend === "codex" ? customSelection : undefined,
+      }).errors,
+    ).toEqual([]);
+    expect(
+      validateResolvedWorkflow(resolved, {
+        configuredModelSelectionFor: (backend) =>
+          backend === "codex"
+            ? {
+                modelId: "different-custom-model",
+                parameters: { reasoning: "high", fast: "false" },
+              }
+            : undefined,
+      }).errors.some(
+        ({ code }) => code === "implementer-model-selection-invalid",
+      ),
+    ).toBe(true);
   });
 
   it("flags implementer-effort-unsupported for a claude model that does not support the effort", () => {
@@ -1153,8 +1301,10 @@ describe("validateResolvedWorkflow", () => {
                 profileSnapshot: makeProfileSnapshot(),
                 agent: {
                   backend: "claude",
-                  model: "haiku",
-                  reasoningEffort: "xhigh",
+                  modelSelection: {
+                    modelId: "haiku",
+                    parameters: { effort: "xhigh" },
+                  },
                 },
               },
             }
@@ -1167,7 +1317,7 @@ describe("validateResolvedWorkflow", () => {
     expect(
       result.errors.some(
         (e) =>
-          e.code === "implementer-effort-unsupported" &&
+          e.code === "implementer-model-selection-invalid" &&
           e.contextId === resolved.executionContexts[0]?.id,
       ),
     ).toBe(true);
@@ -1186,8 +1336,10 @@ describe("validateResolvedWorkflow", () => {
                 profileSnapshot: makeProfileSnapshot(),
                 agent: {
                   backend: "codex",
-                  model: "gpt-5.4",
-                  reasoningEffort: "minimal",
+                  modelSelection: {
+                    modelId: "gpt-5.4",
+                    parameters: { reasoning: "minimal", fast: "false" },
+                  },
                 },
               },
             }
@@ -1200,7 +1352,7 @@ describe("validateResolvedWorkflow", () => {
     expect(
       result.errors.some(
         (e) =>
-          e.code === "implementer-effort-unsupported" &&
+          e.code === "implementer-model-selection-invalid" &&
           e.contextId === resolved.executionContexts[0]?.id,
       ),
     ).toBe(true);
@@ -1219,8 +1371,10 @@ describe("validateResolvedWorkflow", () => {
                 profileSnapshot: makeProfileSnapshot(),
                 agent: {
                   backend: "codex",
-                  model: "gpt-5.3-codex-spark",
-                  reasoningEffort: "xhigh",
+                  modelSelection: {
+                    modelId: "gpt-5.3-codex-spark",
+                    parameters: { reasoning: "xhigh", fast: "false" },
+                  },
                 },
               },
             }
@@ -1230,7 +1384,9 @@ describe("validateResolvedWorkflow", () => {
 
     const result = validateResolvedWorkflow(resolved);
     expect(
-      result.errors.filter((e) => e.code === "implementer-effort-unsupported"),
+      result.errors.filter(
+        (e) => e.code === "implementer-model-selection-invalid",
+      ),
     ).toEqual([]);
   });
 
@@ -1247,8 +1403,10 @@ describe("validateResolvedWorkflow", () => {
                 profileSnapshot: makeProfileSnapshot(),
                 agent: {
                   backend: "codex",
-                  model: "gpt-5.3-codex-spark",
-                  reasoningEffort: "ultra",
+                  modelSelection: {
+                    modelId: "gpt-5.3-codex-spark",
+                    parameters: { reasoning: "ultra", fast: "false" },
+                  },
                 },
               },
             }
@@ -1260,7 +1418,7 @@ describe("validateResolvedWorkflow", () => {
     expect(
       result.errors.some(
         (e) =>
-          e.code === "implementer-effort-unsupported" &&
+          e.code === "implementer-model-selection-invalid" &&
           e.contextId === resolved.executionContexts[0]?.id,
       ),
     ).toBe(true);
@@ -1284,8 +1442,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "codex",
-                      model: "gpt-5.4",
-                      reasoningEffort: "minimal",
+                      modelSelection: {
+                        modelId: "gpt-5.4",
+                        parameters: { reasoning: "minimal", fast: "false" },
+                      },
                     },
                     continuity: { enabled: true },
                   },
@@ -1301,7 +1461,7 @@ describe("validateResolvedWorkflow", () => {
     expect(
       result.errors.some(
         (e) =>
-          e.code === "validator-effort-unsupported" &&
+          e.code === "validator-model-selection-invalid" &&
           e.contextId === resolved.executionContexts[0]?.id,
       ),
     ).toBe(true);
@@ -1325,8 +1485,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "codex",
-                      model: "gpt-5.4",
-                      reasoningEffort: "minimal",
+                      modelSelection: {
+                        modelId: "gpt-5.4",
+                        parameters: { reasoning: "minimal", fast: "false" },
+                      },
                     },
                     continuity: { enabled: true },
                   },
@@ -1342,23 +1504,25 @@ describe("validateResolvedWorkflow", () => {
     expect(
       result.errors.some(
         (e) =>
-          e.code === "validator-effort-unsupported" &&
+          e.code === "validator-model-selection-invalid" &&
           e.contextId === resolved.executionContexts[0]?.id,
       ),
     ).toBe(true);
   });
 
-  it("addresses the offending cohort entry by index and skips a disabled cohort", () => {
+  it("addresses every offending cohort entry by index, including dormant assignments", () => {
     const base = createResolvedWorkflowDefinition();
-    const reviewer = (id: string, reasoningEffort: "medium" | "minimal") => ({
+    const reviewer = (id: string, reasoning: "medium" | "minimal") => ({
       id,
       profile: { tier: "builtin" as const, id: "general-reviewer" },
       strategy: "task" as const,
       authority: "blocking" as const,
       agent: {
         backend: "codex" as const,
-        model: "gpt-5.4" as const,
-        reasoningEffort,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning, fast: "false" },
+        },
       },
       continuity: { enabled: true },
     });
@@ -1379,7 +1543,8 @@ describe("validateResolvedWorkflow", () => {
           : index === 1
             ? {
                 ...ctx,
-                // Disabled: dormant config, so it contributes no error.
+                // Dormant selections are still persisted and must be valid
+                // before a later edit can enable the cohort.
                 contextValidator: {
                   enabled: false,
                   assignments: [seedAssignment(reviewer("dormant", "minimal"))],
@@ -1392,13 +1557,14 @@ describe("validateResolvedWorkflow", () => {
     const result = validateResolvedWorkflow(resolved);
 
     const errors = result.errors.filter(
-      (e) => e.code === "validator-effort-unsupported",
+      (e) => e.code === "validator-model-selection-invalid",
     );
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.field).toBe(
-      "executionContexts.0.contextValidator.assignments.1.agent.reasoningEffort",
-    );
+    expect(errors.map(({ field }) => field)).toEqual([
+      "executionContexts.0.contextValidator.assignments.1.agent.modelSelection",
+      "executionContexts.1.contextValidator.assignments.0.agent.modelSelection",
+    ]);
     expect(errors[0]?.message).toContain('"bad"');
+    expect(errors[1]?.message).toContain('"dormant"');
   });
 
   it("refuses a validator assignment on a backend without an enforceable write envelope (R7.2)", () => {
@@ -1418,8 +1584,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "claude",
-                      model: "sonnet",
-                      reasoningEffort: "medium",
+                      modelSelection: {
+                        modelId: "sonnet",
+                        parameters: { effort: "medium" },
+                      },
                     },
                     continuity: { enabled: true },
                   }),
@@ -1430,8 +1598,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "codex",
-                      model: "gpt-5.4",
-                      reasoningEffort: "medium",
+                      modelSelection: {
+                        modelId: "gpt-5.4",
+                        parameters: { reasoning: "medium", fast: "false" },
+                      },
                     },
                     continuity: { enabled: true },
                   }),
@@ -1505,8 +1675,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "codex",
-                      model: "gpt-5.4",
-                      reasoningEffort: "medium",
+                      modelSelection: {
+                        modelId: "gpt-5.4",
+                        parameters: { reasoning: "medium", fast: "false" },
+                      },
                     },
                     continuity: { enabled: true },
                   }),
@@ -1543,8 +1715,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "codex",
-                      model: "gpt-5.4",
-                      reasoningEffort: "medium",
+                      modelSelection: {
+                        modelId: "gpt-5.4",
+                        parameters: { reasoning: "medium", fast: "false" },
+                      },
                     },
                     continuity: { enabled: true },
                   }),
@@ -1604,8 +1778,10 @@ describe("validateResolvedWorkflow", () => {
                     authority: "blocking",
                     agent: {
                       backend: "claude",
-                      model: "sonnet",
-                      reasoningEffort: "medium",
+                      modelSelection: {
+                        modelId: "sonnet",
+                        parameters: { effort: "medium" },
+                      },
                     },
                     continuity: { enabled: true },
                   },

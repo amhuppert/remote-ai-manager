@@ -85,7 +85,10 @@ function makeContext(
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },
       profileSnapshot: makeProfileSnapshot(),
-      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+      agent: {
+        backend: "claude",
+        modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+      },
     },
     contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { commands: [] },

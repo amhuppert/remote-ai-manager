@@ -7,6 +7,7 @@ export const AUTHORED_WORKFLOW_LAUNCH_ADMISSION_CALLERS = {
   "project-create": { documentScopes: ["project"], persists: true },
   "project-replace": { documentScopes: ["project"], persists: true },
   "project-edit": { documentScopes: ["project"], persists: true },
+  "project-run": { documentScopes: ["project"], persists: false },
   "global-template-create": { documentScopes: ["global"], persists: true },
   "global-template-replace": { documentScopes: ["global"], persists: true },
   "global-template-edit": { documentScopes: ["global"], persists: true },

@@ -1,9 +1,4 @@
 import { z } from "zod";
-import {
-  getDefaultModelForBackend,
-  getEffortLevelsForBackend,
-  isModelCompatibleWithBackend,
-} from "@/lib/agent-backends/catalog";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
@@ -141,19 +136,6 @@ function firstNonEmptyLine(text: string | null): string | null {
   return null;
 }
 
-function resolveReasoningEffort(
-  backend: Parameters<typeof getTaskRunner>[0],
-  modelId: string,
-  configuredEffort: ReturnType<
-    typeof resolveConversationNamingConfig
-  >["effort"],
-): string | undefined {
-  const supported = getEffortLevelsForBackend(backend, modelId);
-  if (supported.length === 0) return undefined;
-  if (supported.includes(configuredEffort)) return configuredEffort;
-  return supported.at(-1);
-}
-
 function errorType(error: unknown): string {
   if (error instanceof Error) return error.name;
   return typeof error;
@@ -166,14 +148,7 @@ async function runGeneration(
   const config = resolveConversationNamingConfig(await deps.readConfig());
   if (input.trigger === "auto" && !config.enabled) return null;
 
-  const modelId = isModelCompatibleWithBackend(config.backend, config.model)
-    ? config.model
-    : getDefaultModelForBackend(config.backend);
-  const reasoningEffort = resolveReasoningEffort(
-    config.backend,
-    modelId,
-    config.effort,
-  );
+  const modelSelection = config.modelSelection;
   const scopeFields = conversationEventScopeFields(
     input.projectName,
     input.sessionName,
@@ -186,7 +161,7 @@ async function runGeneration(
     ...scopeFields,
     trigger: input.trigger,
     backend: config.backend,
-    modelId,
+    modelSelection,
   });
 
   try {
@@ -194,8 +169,7 @@ async function runGeneration(
     const result = await runner.run({
       workingDirectory: input.projectPath,
       prompt: buildNamingPrompt("Conversation naming basis", input.content),
-      modelId,
-      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      modelSelection,
       outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
       timeoutMs: config.timeoutMs ?? DEFAULT_NAMING_TIMEOUT_MS,
       executionProfile: "isolated-one-shot",
@@ -258,7 +232,7 @@ async function runGeneration(
         ...scopeFields,
         trigger: input.trigger,
         backend: config.backend,
-        modelId,
+        modelSelection,
         applied: false,
       });
       return null;
@@ -287,7 +261,7 @@ async function runGeneration(
       ...scopeFields,
       trigger: input.trigger,
       backend: config.backend,
-      modelId,
+      modelSelection,
       applied: true,
     });
     return name;
@@ -296,7 +270,7 @@ async function runGeneration(
       ...scopeFields,
       trigger: input.trigger,
       backend: config.backend,
-      modelId,
+      modelSelection,
       stage,
       failureKind: failureKind ?? "thrown",
       errorType: errorType(error),

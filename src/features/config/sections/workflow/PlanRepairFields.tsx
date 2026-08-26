@@ -2,6 +2,8 @@ import {
   PLAN_REPAIR_DEFAULT_AGENT,
   type GraphWorkflowPlanRepairPolicy,
 } from "@/lib/workflow-graph/config-schemas";
+import { modelSelectionParametersLabel } from "@/components/model-selection-presentation";
+import { modelDisplayLabel } from "@/lib/agent-backends/catalog";
 import { ConfigField } from "../../components/ConfigField";
 import { ConfigNumericInput } from "../../components/ConfigNumericInput";
 import { ConfigToggle } from "../../components/ConfigToggle";
@@ -56,7 +58,7 @@ export function PlanRepairFields({
         hint={
           value.agent
             ? undefined
-            : `Off — uses the default repair agent (${PLAN_REPAIR_DEFAULT_AGENT.model}, ${PLAN_REPAIR_DEFAULT_AGENT.reasoningEffort} reasoning)`
+            : `Off — uses the default repair agent (${modelDisplayLabel(PLAN_REPAIR_DEFAULT_AGENT.backend, PLAN_REPAIR_DEFAULT_AGENT.modelSelection.modelId)}, ${modelSelectionParametersLabel(PLAN_REPAIR_DEFAULT_AGENT.modelSelection)})`
         }
       >
         <ConfigToggle

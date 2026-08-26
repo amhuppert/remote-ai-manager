@@ -49,10 +49,22 @@ import {
 } from "./workflow-envelope-store";
 import { createWorkflowEnvelopeRepository } from "./workflow-envelope-repository";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
-import type { AgentTaskRunner } from "@/lib/agent-backends/task";
+import type {
+  AgentTaskRequest,
+  AgentTaskRunner,
+} from "@/lib/agent-backends/task";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
 
 const CLAUDE_CAPABILITY_VIEW = capabilityViewForBackend("claude");
+const CLAUDE_MODEL_SELECTION: BackendModelSelection = {
+  modelId: "sonnet",
+  parameters: { effort: "high" },
+};
+const CODEX_MODEL_SELECTION: BackendModelSelection = {
+  modelId: "gpt-5.2",
+  parameters: { reasoning: "high", fast: "false" },
+};
 
 interface CapturedLog {
   level: "debug" | "info" | "warn" | "error";
@@ -102,16 +114,20 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
     it("AgentCall task_run failure log includes requestKind, backend, workflowId, laneId, and outcome — but not the prompt text", async () => {
       const { logger, logs } = captureLogger();
       const SECRET_PROMPT = "SECRET_PROMPT_BODY_DO_NOT_LOG_ME";
+      const requests: AgentTaskRequest[] = [];
 
       const runner: AgentTaskRunner = {
         backend: "codex",
-        run: vi.fn().mockResolvedValue({
-          backendRef: { backend: "codex", threadId: "t1" },
-          structuredOutput: undefined,
-          usage: null,
-          error: "synthetic runner error",
-          timedOut: false,
-          aborted: false,
+        run: vi.fn(async (request: AgentTaskRequest) => {
+          requests.push(request);
+          return {
+            backendRef: { backend: "codex", threadId: "t1" },
+            structuredOutput: undefined,
+            usage: null,
+            error: "synthetic runner error",
+            timedOut: false,
+            aborted: false,
+          };
         }),
       } as unknown as AgentTaskRunner;
 
@@ -126,6 +142,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           runner,
           capabilityView: { ...CLAUDE_CAPABILITY_VIEW, backend: "codex" },
           workingDirectory: workingDir,
+          modelSelection: CODEX_MODEL_SELECTION,
           logger,
         },
       );
@@ -140,6 +157,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
       expect(failureLog?.fields.requestKind).toBe("task_run");
       expect(failureLog?.fields.backend).toBe("codex");
       expect(failureLog?.fields.outcome).toBe("failed");
+      expect(requests[0]?.modelSelection).toEqual(CODEX_MODEL_SELECTION);
       // The prompt body must not appear in any field of any log.
       for (const entry of logs) {
         expect(flattenForPayloadInspection(entry.fields)).not.toContain(
@@ -163,8 +181,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           portableMcpBetweenTurns: true,
           contextWindowMetrics: true,
         },
-        modelId: undefined,
-        reasoningEffort: undefined,
+        modelSelection: CLAUDE_MODEL_SELECTION,
         outputFormat: undefined,
         applyPortableMcpConfig: vi.fn(),
         sendTurn: vi.fn().mockResolvedValue({
@@ -193,6 +210,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
           runtime,
           capabilityView: CLAUDE_CAPABILITY_VIEW,
           signal: new AbortController().signal,
+          modelSelection: CLAUDE_MODEL_SELECTION,
           logger,
         },
       );

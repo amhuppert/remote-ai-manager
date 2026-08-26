@@ -6,7 +6,7 @@ import {
   commandCenterProjectResponseSchema,
   discoveredProjectSchema,
   projectPreferencesResponseSchema,
-} from "@/lib/projects/schemas";
+} from "@/lib/projects/query-schemas";
 
 export function useProjectsQuery() {
   return useQuery({

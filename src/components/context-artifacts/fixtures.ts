@@ -184,9 +184,11 @@ export function buildArtifactListItem(
     sourceHash: "sha256:77aa21",
     status: "complete",
     error: null,
-    modelProvider: "claude",
-    model: "sonnet",
-    effort: "medium",
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
     schemaVersion: 1,
     promptVersion: "cp-1",
     normalizerVersion: "nv-1",
@@ -216,9 +218,11 @@ export function buildProvenance(
   overrides: Partial<CompactionProvenance> = {},
 ): CompactionProvenance {
   return {
-    modelProvider: "claude",
-    model: "sonnet",
-    effort: "medium",
+    backend: "claude",
+    modelSelection: {
+      modelId: "sonnet",
+      parameters: { effort: "medium" },
+    },
     promptVersion: "cp-1",
     normalizerVersion: "nv-1",
     schemaVersion: 1,

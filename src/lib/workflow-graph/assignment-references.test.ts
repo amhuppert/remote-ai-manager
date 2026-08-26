@@ -9,6 +9,8 @@ import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 import { createAssignmentReferenceChecker } from "./assignment-references";
 import type { WorkflowSemanticDefinition } from "./definition-schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
+import type { AgentAssignment, ValidatorAssignment } from "./config-schemas";
 
 const PROJECT_PATH = "/assignment-refs-project";
 
@@ -17,8 +19,10 @@ let checker: ReturnType<typeof createAssignmentReferenceChecker>;
 
 const CLAUDE_AGENT = {
   backend: "claude",
-  model: "sonnet",
-  reasoningEffort: "medium",
+  modelSelection: {
+    modelId: "sonnet",
+    parameters: { effort: "medium" },
+  },
 } as const;
 
 /**
@@ -57,7 +61,7 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-function assignment(profile: { tier: string; id: string }) {
+function assignment(profile: AgentProfileRef): AgentAssignment {
   return {
     id: "implementer",
     profile,
@@ -65,14 +69,12 @@ function assignment(profile: { tier: string; id: string }) {
   };
 }
 
-function validator(
-  id: string,
-  profile: { tier: string; id: string },
-): Record<string, unknown> {
+function validator(id: string, profile: AgentProfileRef): ValidatorAssignment {
   return {
     id,
     profile,
     strategy: "conversation",
+    authority: "advisory",
     agent: CLAUDE_AGENT,
     continuity: { enabled: true },
   };

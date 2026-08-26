@@ -18,9 +18,12 @@ import { _useCockpitViewStore } from "./cockpit/use-cockpit-view-state";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
-  claude: { modelId: "opus", effort: "high" },
-  codex: { modelId: "gpt-5.4", effort: "high" },
-  cursor: { modelId: "composer-2.5", effort: "high" },
+  claude: { modelId: "opus", parameters: { effort: "high" } },
+  codex: {
+    modelId: "gpt-5.4",
+    parameters: { reasoning: "high", fast: "false" },
+  },
+  cursor: { modelId: "composer-2.5", parameters: { fast: "true" } },
 };
 
 function projectDetailView(): React.JSX.Element {

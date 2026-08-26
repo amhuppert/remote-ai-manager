@@ -13,6 +13,7 @@ import {
   useReopenProjectConversation,
   useMarkProjectConversationReadMutation,
   useSendProjectPrompt,
+  useQueueProjectMessage,
   conversationTurnKey,
   type ProjectConversationCreation,
   type ProjectTurnSubmission,
@@ -20,6 +21,53 @@ import {
   type UseSendProjectPromptResult,
 } from "./mutations";
 import { projectConversationKeys } from "./query-keys";
+
+describe("useQueueProjectMessage", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("posts one complete model selection with the queued follow-up", async () => {
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        queued: true,
+        deliveryTiming: "next_turn",
+        message: {
+          id: "q-1",
+          content: [{ type: "text", text: "follow up" }],
+          status: "pending",
+          enqueuedAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deliveredAt: null,
+          cancelledAt: null,
+          failedAt: null,
+          error: null,
+          metadata: null,
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const client = new QueryClient();
+    const { result } = renderHook(() => useQueueProjectMessage("proj"), {
+      wrapper: wrapperFor(client),
+    });
+    const modelSelection = {
+      modelId: "claude-opus-5",
+      parameters: { effort: "xhigh", thinking: "true" },
+    };
+
+    await act(async () => {
+      await result.current.queue({
+        conversationId: "c1",
+        text: "follow up",
+        modelSelection,
+      });
+    });
+
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      text: "follow up",
+      modelSelection,
+    });
+  });
+});
 
 function wrapperFor(client: QueryClient) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
@@ -374,7 +422,10 @@ describe("useSendProjectPrompt", () => {
         target: { kind: "create" },
         text: "hello",
         backend: "codex",
-        modelId: "gpt-5.4",
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "false", reasoning: "high" },
+        },
         profile: { tier: "project", id: "reviewer" },
       }).settled;
     });
@@ -383,7 +434,10 @@ describe("useSendProjectPrompt", () => {
     ).toMatchObject({
       prompt: "hello",
       backend: "codex",
-      modelId: "gpt-5.4",
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { fast: "false", reasoning: "high" },
+      },
       profile: { tier: "project", id: "reviewer" },
     });
   });
@@ -417,9 +471,10 @@ describe("useSendProjectPrompt", () => {
         target: conversationTurnKey("c1"),
         text: "go",
         backend: "codex",
-        modelId: "gpt-5.4",
-        effort: "high",
-        codexFastMode: true,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "true", reasoning: "high" },
+        },
       }).settled;
     });
     const [url, init] = fetchSpy.mock.calls[0]!;
@@ -427,13 +482,14 @@ describe("useSendProjectPrompt", () => {
     expect(JSON.parse(init?.body as string)).toMatchObject({
       prompt: "go",
       backend: "codex",
-      modelId: "gpt-5.4",
-      effort: "high",
-      codexFastMode: true,
+      modelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { fast: "true", reasoning: "high" },
+      },
     });
   });
 
-  it("does not send a Codex speed override to Claude", async () => {
+  it("does not synthesize model parameter fields when no selection is supplied", async () => {
     fetchSpy.mockResolvedValue(sseResponse(["event: done\ndata: {}\n\n"]));
     const { result } = renderHook(() => useSendProjectPrompt("proj"), {
       wrapper: wrapperFor(new QueryClient()),
@@ -443,13 +499,15 @@ describe("useSendProjectPrompt", () => {
         target: conversationTurnKey("c1"),
         text: "go",
         backend: "claude",
-        codexFastMode: true,
       }).settled;
     });
 
     const body = JSON.parse(
       String(fetchSpy.mock.calls[0]?.[1]?.body),
     ) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("modelSelection");
+    expect(body).not.toHaveProperty("modelId");
+    expect(body).not.toHaveProperty("effort");
     expect(body).not.toHaveProperty("codexFastMode");
   });
 

@@ -82,7 +82,11 @@ import { createValidatorRunner } from "./validator-runner";
 import type { ValidatorExecutionStrategy } from "./lane-continuity";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
-import type { SeededValidatorAssignment } from "./config-schemas";
+import type {
+  GraphWorkflowAgentConfig,
+  SeededValidatorAssignment,
+} from "./config-schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type { GraphWorkflowResolvedContext } from "./definition-schemas";
 
 const PROJECT_PATH = "/repo-role-transport";
@@ -172,8 +176,8 @@ function productionTaskRun(
       agentBackend: backend,
       backendRef: null,
       promptText: input.prompt,
-      modelId: input.modelId ?? null,
-      effort: input.effort ?? null,
+      modelSelection: input.modelSelection ?? null,
+      onModelSelectionResolved: async () => {},
       ...(input.outputFormat !== undefined
         ? { outputFormat: input.outputFormat }
         : {}),
@@ -195,6 +199,20 @@ function seededValidator(
   backend: AgentBackendId,
   strategy: ValidatorExecutionStrategy,
 ): SeededValidatorAssignment {
+  if (backend === "cursor") {
+    throw new Error("Cursor has no task facet for validator lanes");
+  }
+  const modelSelection: BackendModelSelection =
+    backend === "claude"
+      ? {
+          modelId: "sonnet",
+          parameters: { effort: "medium" },
+        }
+      : {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "medium", fast: "false" },
+        };
+  const agent: GraphWorkflowAgentConfig = { backend, modelSelection };
   return {
     id: "reviewer",
     profile: { tier: "builtin", id: "general-reviewer" },
@@ -207,9 +225,10 @@ function seededValidator(
       instructions: PROFILE_INSTRUCTIONS,
     }),
     strategy,
-    agent: { backend, model: "sonnet", reasoningEffort: "medium" },
+    authority: "blocking",
+    agent,
     continuity: { enabled: true },
-  } as SeededValidatorAssignment;
+  };
 }
 
 function contextFor(

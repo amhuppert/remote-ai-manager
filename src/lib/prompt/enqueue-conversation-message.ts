@@ -1,5 +1,6 @@
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import { getConversation as defaultGetConversation } from "@/lib/state-store";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 import { queueMessage as defaultQueueMessage } from "./queue";
 
@@ -8,6 +9,7 @@ export interface EnqueueConversationMessageInput {
   sessionName: string;
   conversationId: string;
   message: string;
+  modelSelection?: BackendModelSelection;
   /** Prevent this generated message from steering an in-progress agent turn. */
   deliveryPolicy?: "next_turn";
 }
@@ -65,8 +67,14 @@ export async function enqueueConversationMessage(
   depsOverride?: Partial<EnqueueConversationMessageDeps>,
 ): Promise<void> {
   const deps = { ...defaultDeps, ...depsOverride };
-  const { projectPath, sessionName, conversationId, message, deliveryPolicy } =
-    input;
+  const {
+    projectPath,
+    sessionName,
+    conversationId,
+    message,
+    modelSelection,
+    deliveryPolicy,
+  } = input;
   const conversation = await deps.getConversation(
     projectPath,
     sessionName,
@@ -80,6 +88,7 @@ export async function enqueueConversationMessage(
     conversationId,
     text: message,
     backend,
+    ...(modelSelection !== undefined ? { modelSelection } : {}),
     ...(deliveryPolicy ? { deliveryPolicy } : {}),
   });
 

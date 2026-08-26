@@ -13,7 +13,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
 
 import { ApiCallError } from "@/lib/api/errors";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
@@ -1060,8 +1060,7 @@ export interface StartTicketVars {
   number: number;
   mode: TicketStartMode;
   backend?: AgentBackendId;
-  model?: string;
-  reasoningEffort?: EffortLevel;
+  modelSelection?: BackendModelSelection;
   /** Identity for the provisioned session's initial conversation (R7). */
   profile?: AgentProfileRef;
 }
@@ -1075,8 +1074,7 @@ export function useStartTicketMutation() {
       number,
       mode,
       backend,
-      model,
-      reasoningEffort,
+      modelSelection,
       profile,
     }: StartTicketVars) =>
       mutationFetch(
@@ -1088,8 +1086,7 @@ export function useStartTicketMutation() {
           body: JSON.stringify({
             mode,
             backend,
-            model,
-            reasoningEffort,
+            modelSelection,
             profile,
           }),
         },

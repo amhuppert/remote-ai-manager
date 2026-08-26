@@ -134,8 +134,14 @@ const DB_FILE_NAME = "command-center.db";
  * lifecycle storage and makes assumption citations revision-owned. Older
  * readers cannot interpret either contract and are refused before opening the
  * upgraded database.
+ *
+ * Version 12 is the generalized model-selection cutover: migration
+ * `0035-generalized-model-selection` replaces every live provider-specific
+ * model tuple with one atomic selection and rebuilds context-artifact
+ * provenance storage. Older writers could recreate tuple-shaped config,
+ * workflow, snapshot, transcript, or provenance state that this build refuses.
  */
-export const KNOWN_SCHEMA_VERSION = 11;
+export const KNOWN_SCHEMA_VERSION = 12;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -2065,9 +2071,10 @@ const SCHEMA_DDL = `
     source_hash                TEXT NOT NULL,
     status                     TEXT NOT NULL,             -- pending | complete | failed
     error                      TEXT,
-    model_provider             TEXT NOT NULL,             -- claude | codex
-    model                      TEXT NOT NULL,
-    effort                     TEXT,
+    backend                    TEXT NOT NULL,             -- claude | codex | cursor
+    model_selection_json       TEXT NOT NULL CHECK (
+      json_valid(model_selection_json)
+    ),
     schema_version             INTEGER NOT NULL,
     prompt_version             TEXT NOT NULL,
     normalizer_version         TEXT NOT NULL,

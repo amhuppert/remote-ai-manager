@@ -1,6 +1,7 @@
 "use client";
 
 import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import { modelSelectionParametersLabel } from "@/components/model-selection-presentation";
 import {
   SegmentedControl,
   SegmentedControlItem,
@@ -122,7 +123,10 @@ function seatMeta(assignment: ValidatorAssignment): string {
   const continuity = assignment.continuity.enabled
     ? tokenCount(assignment.continuity.contextLimitTokens)
     : "off";
-  return `${assignment.profile.id} · ${assignment.agent.reasoningEffort} · continuity ${continuity}`;
+  const parameters = modelSelectionParametersLabel(
+    assignment.agent.modelSelection,
+  );
+  return `${assignment.profile.id} · ${parameters || "default parameters"} · continuity ${continuity}`;
 }
 
 export function QualityGatesScreen({
@@ -529,7 +533,6 @@ export function ValidatorSeatScreen({
       <ConfigRowGroup label="Runtime">
         <ConfigAgentRuntimeRows
           rowPrefix="seat"
-          agentLabel={`the ${seat.id} validator`}
           value={seat.agent}
           onChange={(agent) => editSeat({ ...seat, agent })}
           provenance={provenance}

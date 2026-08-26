@@ -4,8 +4,8 @@ import { memo } from "react";
 import { cn } from "@/lib/ui/cn";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
+import ModelSelectionMetadata from "@/components/ModelSelectionMetadata";
 import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
-import { EffortLabel } from "@/components/conversation/EffortLabel";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import { backendLabel } from "@/lib/agent-backends/catalog";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
@@ -178,16 +178,10 @@ const MessageRow = memo(function MessageRow({
             iter {iterationIndex}
           </span>
         )}
-        {!isUserMsg && (msg.model || msg.effort) && (
+        {!isUserMsg && msg.modelSelection && (
           <span className="inline text-[0.7rem] font-medium tracking-[0.02em] normal-case">
             <span className="mx-[5px] text-text-tertiary">&middot;</span>
-            {msg.model && (
-              <span className="text-text-secondary">{msg.model}</span>
-            )}
-            {msg.model && msg.effort && (
-              <span className="mx-[5px] text-text-tertiary">&middot;</span>
-            )}
-            {msg.effort && <EffortLabel effort={msg.effort} />}
+            <ModelSelectionMetadata selection={msg.modelSelection} />
           </span>
         )}
         <MessageTimestamp timestamp={msg.timestamp} />
@@ -223,7 +217,7 @@ const MessageRow = memo(function MessageRow({
             ? {
                 conversationName: conversationName ?? null,
                 timestamp: msg.timestamp,
-                model: msg.model ?? null,
+                model: msg.modelSelection?.modelId ?? null,
               }
             : undefined
         }

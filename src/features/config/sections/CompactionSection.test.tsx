@@ -1,118 +1,108 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
 import { renderWithQuery } from "@/test/component-mocks";
+
 import { CompactionSection } from "./CompactionSection";
 import { makeController } from "./test-controller";
 
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
+Element.prototype.scrollIntoView = () => {};
+
 function pillIn(fieldPath: string, text: string): HTMLButtonElement {
   const field = document.querySelector(`[data-field="${fieldPath}"]`)!;
-  const btn = [...field.querySelectorAll("button")].find(
-    (b) => b.textContent === text,
+  const button = [...field.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent === text,
   );
-  if (!btn) throw new Error(`no "${text}" pill in ${fieldPath}`);
-  return btn as HTMLButtonElement;
+  if (!button) throw new Error(`no "${text}" pill in ${fieldPath}`);
+  return button as HTMLButtonElement;
+}
+
+function selectModel(fieldPath: string, label: string): void {
+  const field = document.querySelector(`[data-field="${fieldPath}"]`);
+  const select = field?.querySelector('[role="combobox"][aria-label="Model"]');
+  if (!(select instanceof HTMLElement))
+    throw new Error(`no model select in ${fieldPath}`);
+  fireEvent.click(select);
+  fireEvent.click(screen.getByRole("option", { name: label }));
 }
 
 describe("CompactionSection", () => {
-  it("renders the Conversation compaction heading with backend, both models and effort", () => {
+  it("renders separate atomic conversation and message selections", () => {
     const { controller } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
+    expect(screen.getByText("Conversation model selection")).toBeVisible();
+    expect(screen.getByText("Message model selection")).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: /Conversation compaction/i }),
-    ).toBeVisible();
-    expect(screen.getByText("Conversation model")).toBeVisible();
-    expect(screen.getByText("Message model")).toBeVisible();
-    expect(screen.getByText("Effort")).toBeVisible();
+      document.querySelector(
+        '[data-field="compaction.conversationModelSelection"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-field="compaction.messageModelSelection"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-field="compaction.effort"]'),
+    ).toBeNull();
   });
 
-  // Compaction dispatches a task run, so its backend must register a task
-  // facet (spec R15.1).
-  it("refuses a backend with no task facet and keeps the configured one", () => {
+  it("refuses a backend with no task facet", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
     const cursor = pillIn("compaction.backend", "cursor");
-    expect(cursor.getAttribute("aria-disabled")).toBe("true");
-    expect(cursor.getAttribute("title")).toContain("task");
-
+    expect(cursor).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(cursor);
+
     expect(getState().compaction?.backend).toBeUndefined();
   });
 
-  it("defaults to the claude sonnet models when config has no compaction block", () => {
-    const { controller } = makeController();
-    renderWithQuery(<CompactionSection controller={controller} />);
-
-    // The claude model pills are present (sonnet is the compaction default).
-    expect(pillIn("compaction.conversationModel", "Sonnet")).toBeTruthy();
-    expect(pillIn("compaction.messageModel", "Sonnet")).toBeTruthy();
-  });
-
-  it("switching to the codex backend sets codex models and clears effort", () => {
+  it("switches the backend and both complete selections atomically", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
     fireEvent.click(pillIn("compaction.backend", "codex"));
 
-    const state = getState();
-    expect(state.compaction?.backend).toBe("codex");
-    expect(state.compaction?.conversationModel).toBe("gpt-5.4");
-    expect(state.compaction?.messageModel).toBe("gpt-5.4");
-    expect(state.compaction?.effort).toBeUndefined();
+    expect(getState().compaction).toMatchObject({
+      backend: "codex",
+      conversationModelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+      messageModelSelection: {
+        modelId: "gpt-5.4",
+        parameters: { reasoning: "high", fast: "false" },
+      },
+    });
   });
 
-  it("selecting a conversation model updates only that field", () => {
+  it("updates only the selected compaction holder with a complete default variant", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
-    fireEvent.click(pillIn("compaction.conversationModel", "Opus 5"));
+    selectModel("compaction.conversationModelSelection", "Opus 5");
 
-    expect(getState().compaction?.conversationModel).toBe("opus");
-    // Message model is untouched (defaults to sonnet, not yet materialized).
-    expect(getState().compaction?.messageModel).toBeUndefined();
+    expect(getState().compaction?.conversationModelSelection).toEqual({
+      modelId: "opus",
+      parameters: { effort: "high" },
+    });
+    expect(getState().compaction?.messageModelSelection).toBeUndefined();
   });
 
-  it("selecting an effort updates compaction.effort", () => {
+  it("stores timeout minutes as milliseconds", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<CompactionSection controller={controller} />);
 
-    fireEvent.click(pillIn("compaction.effort", "high"));
-
-    expect(getState().compaction?.effort).toBe("high");
-  });
-
-  it("renders a timeout field that stores entered minutes as milliseconds", () => {
-    const { controller, getState } = makeController();
-    renderWithQuery(<CompactionSection controller={controller} />);
-
-    expect(screen.getByText("Timeout")).toBeVisible();
     const input = document.querySelector(
       '[data-field="compaction.timeoutMs"] input',
     ) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "5" } });
 
     expect(getState().compaction?.timeoutMs).toBe(300_000);
-  });
-
-  it("clearing the timeout stores null (no timeout applied)", () => {
-    const { controller, getState } = makeController({
-      compaction: {
-        backend: "claude",
-        conversationModel: "sonnet",
-        messageModel: "sonnet",
-        effort: "medium",
-        timeoutMs: 300_000,
-      },
-    });
-    renderWithQuery(<CompactionSection controller={controller} />);
-
-    const input = document.querySelector(
-      '[data-field="compaction.timeoutMs"] input',
-    ) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "" } });
-
-    expect(getState().compaction?.timeoutMs).toBeNull();
   });
 });

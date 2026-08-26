@@ -111,7 +111,7 @@ async function runTurnAfterRestart(
       getConversationBackendFactory: () => ({
         backend,
         createRuntime,
-        validateModelAndEffort: () => {},
+        validateModelSelection: () => {},
       }),
     }),
   );
@@ -132,11 +132,10 @@ async function runTurnAfterRestart(
     promptText: "Hello",
     images: [],
     streamId: "stream-1",
-    modelId: null,
-    effort: null,
+    modelSelection: null,
+    onModelSelectionResolved: async () => {},
     autonomous: false,
     debugMode: null,
-    codexFastMode: null,
   };
 
   registerConversationRuntime(
