@@ -201,6 +201,28 @@ describe("DevServerRegistry", () => {
       );
     });
 
+    it("broadcasts the project name query keys are addressed by, not the project path", async () => {
+      await registry.startServer({
+        projectPath: "/base/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: "/tmp",
+        startMode: startMode(59801),
+      });
+
+      // The client reaction invalidates devServerKeys.list(projectName,
+      // sessionName) from this event; a path here targets a key no query
+      // holds, so the UI never leaves "starting" until a full refetch.
+      expect(deps.broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "dev-server-status",
+          projectName: "proj",
+          sessionName: "s1",
+        }),
+      );
+    });
+
     it("rejects duplicate start for running/starting server", async () => {
       await registry.startServer({
         projectPath: "/proj",

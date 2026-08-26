@@ -20,6 +20,7 @@ import * as defaultTailscale from "../shared/tailscale";
 import * as liveness from "./liveness";
 import { readConfig as defaultReadConfig } from "../config/loader";
 import { getLanUrl as defaultGetLanUrl } from "../shared/network";
+import { getProjectDisplayName } from "../projects/resolver";
 import {
   getGlobalSingleton,
   getGlobalValue,
@@ -132,9 +133,12 @@ function broadcastEntryStatus(
   entry: DevServerEntry,
   broadcast: PublishFn,
 ): void {
+  // Client query keys are addressed by project NAME while the registry keys
+  // entries by path. The resolver builds the path as join(baseDir, name), so
+  // the trailing segment is the name the SSE reaction must invalidate with.
   const event: DevServerStatusEvent = {
     type: "dev-server-status",
-    projectName: entry.projectPath,
+    projectName: getProjectDisplayName(entry.projectPath),
     sessionName: entry.sessionName,
     serverName: entry.serverName,
     status: entry.status,

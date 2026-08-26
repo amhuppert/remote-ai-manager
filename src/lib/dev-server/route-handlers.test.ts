@@ -686,10 +686,12 @@ describe("dev-server START durable-acceptance boundary", () => {
       { timeout: 3000, interval: 10 },
     );
 
+    // The event carries the project NAME the client's query keys are
+    // addressed by (the path's trailing segment), not the resolved path.
     const runningEvent = broadcastEvents.find((e) => e.status === "running");
     expect(runningEvent).toMatchObject({
       type: "dev-server-status",
-      projectName: projectPath,
+      projectName: "accept-boundary",
       sessionName,
       serverName,
       status: "running",
