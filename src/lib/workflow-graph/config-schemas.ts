@@ -131,6 +131,17 @@ export const PLAN_REPAIR_DEFAULT_AGENT: GraphWorkflowAgentConfig = {
   reasoningEffort: "high",
 };
 
+/**
+ * Bounded turn for the one-shot repair agent.
+ *
+ * Lives beside the policy rather than in the supervisor because the halt UI
+ * needs it too: an unsettled round is how the UI knows an agent is working, and
+ * this budget is what says when an unsettled round stopped meaning that. The
+ * supervisor reaches the repository and the logger, so importing it into a
+ * client bundle is not an option.
+ */
+export const PLAN_REPAIR_TURN_TIMEOUT_MS = 15 * 60_000;
+
 export const graphWorkflowLaneContinuityPolicySchema = z.object({
   enabled: z.boolean().default(true),
   contextLimitTokens: z.number().int().positive().optional(),

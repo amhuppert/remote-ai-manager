@@ -1,3 +1,4 @@
+import { openPlanRepairRoundFor } from "@/components/workflow-graph/derive-plan-repair-activity";
 import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import type {
   GraphWorkflowExecutionEvent,
@@ -154,6 +155,11 @@ export function isWorkflowConversationLive(
   contextId: string,
   conversationId: string,
 ): boolean {
+  // Asked before the settled check, because the plan-repair agent's turn runs
+  // against a HALTED context: the round is the only record of a transcript
+  // still being written, and every other clause here would call it ended.
+  const openRepair = openPlanRepairRoundFor(execution, contextId);
+  if (openRepair?.conversationId === conversationId) return true;
   if (contextIsSettled(execution, contextId)) return false;
   const lanes = execution.laneStates[contextId];
   const heldByLane =

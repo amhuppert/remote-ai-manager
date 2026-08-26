@@ -829,10 +829,11 @@ export type GraphWorkflowGraphExpandedEvent = z.infer<
   typeof graphWorkflowGraphExpandedEventSchema
 >;
 
-// One plan-repair round conclusion (docs/design/cc-cli/08) — emitted when a
-// round settles (or repair is exhausted for the halt, outcome `exhausted`,
-// which is event-only and never a round-log outcome). The audit trail for the
-// inspector Events panel; pushes derive from it in the dispatcher.
+// One plan-repair round LIFECYCLE step (docs/design/cc-cli/08) — emitted when a
+// round opens (`started`) and again when it settles (or when repair is
+// exhausted for the halt, outcome `exhausted`, which is event-only and never a
+// round-log outcome). The audit trail for the inspector Events panel; pushes
+// derive from it in the dispatcher.
 export const graphWorkflowPlanRepairEventSchema = z.object({
   type: z.literal("graph-workflow-plan-repair"),
   projectName: z.string(),
@@ -858,6 +859,12 @@ export const graphWorkflowPlanRepairEventSchema = z.object({
   loopGroupId: z.string().nullable().default(null),
   attempt: z.number().int().min(0),
   outcome: z.enum([
+    // The round's agent turn has opened and nothing has been decided yet. A
+    // halt under repair is indistinguishable from an abandoned one in the
+    // execution record — same status, same halt reason — and the turn is
+    // minutes long, so the opening is broadcast rather than left for the
+    // conclusion to reveal in retrospect.
+    "started",
     "repaired",
     "declined",
     "failed",

@@ -10,6 +10,10 @@ import {
   type OutputSchemaHaltEvidenceByContext,
   type OutputSchemaHaltIssue,
 } from "./derive-output-schema-halt";
+import {
+  planRepairStatement,
+  type PlanRepairActivity,
+} from "./derive-plan-repair-activity";
 import { cn } from "@/lib/ui/cn";
 import { validateOutputSchemaDeclaration } from "@/lib/workflows/primitives/output-schema-subset";
 
@@ -617,9 +621,45 @@ function outputSchemaRefusalSentence(
   return `${named} Repair the contract, then resume — resume starts the retry budget fresh.`;
 }
 
+/**
+ * Whether an agent is on this halt, stated on the card that reports it.
+ *
+ * A repair round leaves the execution reading `halted` for as long as its
+ * agent's turn runs, so the card's own chrome — red, stopped, terminal — is the
+ * same in both cases. This line is the difference.
+ */
+function PlanRepairLine({ activity }: { activity: PlanRepairActivity }) {
+  const statement = planRepairStatement(activity);
+  return (
+    <div
+      data-testid="halt-repair-line"
+      className={cn(
+        "flex items-start gap-[6px] text-[0.72rem] leading-[1.45]",
+        statement.working ? "text-cyan" : "text-text-tertiary",
+      )}
+    >
+      {statement.working && (
+        // Pinned to the first line rather than centred: the sentence wraps, and
+        // a dot floating beside the middle of a paragraph reads as a bullet.
+        <span
+          aria-hidden="true"
+          className="mt-[5px] h-[6px] w-[6px] shrink-0 [animation:pulse-dot_2.4s_ease-in-out_infinite] rounded-full bg-cyan shadow-[0_0_8px_var(--color-cyan-glow)] motion-reduce:[animation:none]"
+        />
+      )}
+      <span className="min-w-0">{statement.sentence}</span>
+    </div>
+  );
+}
+
 export interface ContextHaltCardProps {
   primary: GraphWorkflowHaltReason;
   secondary?: GraphWorkflowHaltReason[];
+  /**
+   * The plan-repair rounds standing against this halt. Omitted by a host that
+   * has no execution to read them from; a halt no round has answered says
+   * nothing about repair rather than claiming an absence it cannot see.
+   */
+  planRepairActivity?: PlanRepairActivity | null;
   /**
    * Output-schema evidence keyed by context, covering EVERY reason this card
    * renders. A record rather than one evidence object because a concurrent
@@ -635,6 +675,7 @@ export default function ContextHaltCard({
   primary,
   secondary = [],
   outputSchemaEvidence,
+  planRepairActivity = null,
   onEditSchema,
 }: ContextHaltCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -692,6 +733,9 @@ export default function ContextHaltCard({
         <p className="m-0 font-mono text-[0.72rem] leading-[1.55] text-text-secondary">
           {schemaRefusal.sentence}
         </p>
+      )}
+      {planRepairActivity !== null && planRepairActivity.rounds.length > 0 && (
+        <PlanRepairLine activity={planRepairActivity} />
       )}
       {formatted.detail && (
         <div

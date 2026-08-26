@@ -232,3 +232,79 @@ export const HaltedWithSecondaryFailures: Story = {
     }),
   },
 };
+
+/**
+ * The pair the repair chip exists for. A halt under automatic repair and a halt
+ * nobody is on are the SAME record — same red `halted` state, same headline —
+ * and the repair turn runs for minutes. Read side by side, these are what the
+ * bar used to render identically.
+ */
+const breakerHalt: GraphWorkflowHaltReason = {
+  type: "circuit_breaker",
+  contextId: "context-implement",
+  condition: "retry_exhaustion",
+  failureCount: 3,
+  summary: null,
+};
+
+/** ISO minutes before now, so the chip's tooltip reads a live elapsed time. */
+function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
+export const HaltedUnderRepair: Story = {
+  args: {
+    execution: createWorkflowExecution({
+      status: "halted",
+      haltReason: breakerHalt,
+      planRepairRounds: [
+        {
+          seq: 1,
+          contextId: "context-implement",
+          haltType: "circuit_breaker",
+          loopGroupId: null,
+          startedAt: minutesAgo(6),
+          settledAt: null,
+          outcome: null,
+          planningDefect: null,
+          diagnosis: null,
+          operationCount: 0,
+          resumed: false,
+          conversationId: null,
+        },
+      ],
+    }),
+    onAbandon: fn(),
+  },
+};
+
+export const HaltedAfterRepairDeclined: Story = {
+  args: {
+    execution: createWorkflowExecution({
+      status: "halted",
+      haltReason: {
+        ...breakerHalt,
+        summary:
+          "Plan repair declined (attempt 1): the contract is sound; the work keeps failing the same real test.",
+      },
+      planRepairRounds: [
+        {
+          seq: 1,
+          contextId: "context-implement",
+          haltType: "circuit_breaker",
+          loopGroupId: null,
+          startedAt: minutesAgo(14),
+          settledAt: minutesAgo(6),
+          outcome: "declined",
+          planningDefect: false,
+          diagnosis:
+            "The contract is sound; the work keeps failing the same real test.",
+          operationCount: 0,
+          resumed: false,
+          conversationId: "__plan_repair__:execution-1:context-implement:1",
+        },
+      ],
+    }),
+    onAbandon: fn(),
+  },
+};

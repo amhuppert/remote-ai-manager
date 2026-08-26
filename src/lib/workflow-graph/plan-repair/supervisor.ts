@@ -16,6 +16,7 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   PLAN_REPAIR_DEFAULT_AGENT,
+  PLAN_REPAIR_TURN_TIMEOUT_MS,
   type GraphWorkflowAgentConfig,
 } from "../config-schemas";
 import type {
@@ -51,9 +52,6 @@ import { evaluatePlanRepairTrigger } from "./trigger";
 
 const logger = createLogger("workflow.plan-repair");
 
-/** Bounded turn for the one-shot repair agent. */
-export const PLAN_REPAIR_TURN_TIMEOUT_MS = 15 * 60_000;
-
 export interface PlanRepairAgentInvocation {
   projectPath: string;
   sessionName: string;
@@ -74,7 +72,7 @@ export type PlanRepairAgentResult =
     }
   | { kind: "error"; message: string; conversationId: string };
 
-/** Round-conclusion payload emitted as a `graph-workflow-plan-repair` event. */
+/** Round-lifecycle payload emitted as a `graph-workflow-plan-repair` event. */
 export type PlanRepairRoundConclusion = Omit<
   PublishPlanRepairInput,
   "projectPath" | "sessionName" | "executionId"
@@ -296,8 +294,9 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       }
       const next = structuredClone(current);
       priorRounds = current.planRepairRounds;
+      const seq = (current.planRepairRounds.at(-1)?.seq ?? 0) + 1;
       appended = {
-        seq: (current.planRepairRounds.at(-1)?.seq ?? 0) + 1,
+        seq,
         contextId,
         haltType,
         loopGroupId,
@@ -308,7 +307,11 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         diagnosis: null,
         operationCount: 0,
         resumed: false,
-        conversationId: null,
+        // Filed with the round rather than at settle: the handle is derived
+        // from identity the reducer already holds, and it is the only way to
+        // check the claim that an agent is working — which is a question that
+        // stops mattering the moment the round concludes.
+        conversationId: repairConversationId(executionId, contextId, seq),
       };
       next.planRepairRounds = [...next.planRepairRounds, appended];
       return next;
@@ -319,6 +322,23 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     }
     const round: PlanRepairRound = appended;
 
+    // Announced before the turn opens, never after it: the append changes no
+    // status, no active context and no halt reason, so this is the only thing
+    // that leaves the server while the agent works — and a UI told only at the
+    // conclusion reports an inert halt for the whole of a minutes-long repair.
+    await emitRound(input, executionId, {
+      contextId,
+      haltType,
+      loopGroupId,
+      attempt,
+      outcome: "started",
+      planningDefect: null,
+      diagnosis: null,
+      operationCount: 0,
+      resumed: false,
+      conversationId: round.conversationId,
+    });
+
     const worktreePath = await deps.getSessionWorktreePath(
       projectPath,
       sessionName,
@@ -327,6 +347,10 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         diagnosis: "plan repair could not resolve the session worktree",
+        // The handle the round was filed with never became a conversation —
+        // the turn was refused before the agent ran. Cleared rather than left
+        // pointing at a transcript that does not exist.
+        conversationId: null,
       });
       await populateHaltSummary(
         input,
@@ -355,11 +379,11 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       executionId,
       contextId,
     );
-    const conversationId = repairConversationId(
-      executionId,
-      contextId,
-      round.seq,
-    );
+    // The handle the round was filed with, so the transcript an operator opens
+    // mid-turn is the one the agent is writing.
+    const conversationId =
+      round.conversationId ??
+      repairConversationId(executionId, contextId, round.seq);
     const prompt = buildPlanRepairPrompt({
       execution,
       contextId,

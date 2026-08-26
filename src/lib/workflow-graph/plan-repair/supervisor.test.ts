@@ -91,7 +91,14 @@ function makeHarness(options: HarnessOptions) {
   }[] = [];
   const appliedOperations: WorkflowLiveEditOperation[][] = [];
   const published: PublishPlanRepairInput[] = [];
-  const agentCalls: { prompt: string; roundsAtCall: number }[] = [];
+  const agentCalls: {
+    prompt: string;
+    roundsAtCall: number;
+    /** What had already been broadcast when the turn opened. */
+    publishedAtCall: string[];
+    /** The transcript handle the open round carried when the turn opened. */
+    conversationIdAtCall: string | null;
+  }[] = [];
   const resumedExecutionIds: string[] = [];
   let resumeCalls = 0;
   let pendingAgent: ((result: PlanRepairAgentResult) => void) | null = null;
@@ -146,6 +153,9 @@ function makeHarness(options: HarnessOptions) {
       agentCalls.push({
         prompt: invocation.prompt,
         roundsAtCall: execution?.planRepairRounds.length ?? -1,
+        publishedAtCall: published.map((entry) => entry.outcome),
+        conversationIdAtCall:
+          execution?.planRepairRounds.at(-1)?.conversationId ?? null,
       });
       if (options.duringAgentTurn && execution) {
         execution = options.duringAgentTurn(execution);
@@ -222,6 +232,76 @@ function appliedOutcome(liveRevision: number): LiveEditApplyOutcome {
 }
 
 describe("plan-repair supervisor", () => {
+  /**
+   * The halt state is identical whether or not an agent is on it, and the turn
+   * runs for minutes. Nothing else in the stream moves while it does — the
+   * round append changes no status, no active context and no halt reason — so
+   * without this announcement every open UI keeps reporting an inert halt for
+   * the whole of the repair.
+   */
+  it("announces the round as started before the agent's turn opens", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution(),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: false,
+            diagnosis: "Implementation keeps failing the same real test",
+            operations: [],
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(harness.agentCalls[0]?.publishedAtCall).toEqual(["started"]);
+    expect(harness.published.map((entry) => entry.outcome)).toEqual([
+      "started",
+      "declined",
+    ]);
+    expect(harness.published[0]).toMatchObject({
+      contextId: "context-implement",
+      haltType: "circuit_breaker",
+      attempt: 1,
+    });
+  });
+
+  /**
+   * The transcript is the only way to check the claim that an agent is working:
+   * a round that only learns its conversation id at settle time offers it
+   * exactly when it has stopped being useful.
+   */
+  it("files the round with its transcript handle before the turn opens", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution(),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: false,
+            diagnosis: "Implementation keeps failing the same real test",
+            operations: [],
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    const handle = "__plan_repair__:execution-1:context-implement:1";
+    expect(harness.agentCalls[0]?.conversationIdAtCall).toBe(handle);
+    expect(harness.published[0]).toMatchObject({
+      outcome: "started",
+      conversationId: handle,
+    });
+  });
+
   it("runs the full repair loop: append round → agent → apply (plan-repair source) → resume → settle", async () => {
     const harness = makeHarness({
       initial: haltedExecution(),
@@ -264,6 +344,7 @@ describe("plan-repair supervisor", () => {
     });
     expect(round?.settledAt).not.toBeNull();
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({
         outcome: "repaired",
         attempt: 1,
@@ -308,6 +389,7 @@ describe("plan-repair supervisor", () => {
       resumed: false,
     });
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({ outcome: "declined", planningDefect: false }),
     ]);
   });
@@ -354,6 +436,7 @@ describe("plan-repair supervisor", () => {
         : null,
     ).toContain("A dev server writes into the shared lane worktree");
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({
         outcome: "declined",
         haltType: "candidate_unstable",
@@ -403,6 +486,7 @@ describe("plan-repair supervisor", () => {
         : null,
     ).toContain("A build step regenerates the file");
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({
         outcome: "declined",
         haltType: "ownership_violation",
@@ -529,6 +613,7 @@ describe("plan-repair supervisor", () => {
       outcome: "failed",
     });
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({ outcome: "failed" }),
     ]);
   });
@@ -632,6 +717,7 @@ describe("plan-repair supervisor", () => {
     // Audit-only conclusion — the event records it; the publisher owns push
     // suppression for superseded rounds.
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({ outcome: "superseded" }),
     ]);
   });
@@ -805,6 +891,7 @@ describe("plan-repair supervisor", () => {
       resumed: true,
     });
     expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
       expect.objectContaining({
         haltType: "loop_limit_reached",
         loopGroupId: "refine",
@@ -1235,8 +1322,12 @@ describe("plan-repair fencing across an abandon-plus-relaunch", () => {
 
     // The event is appended through the SESSION's active row, so an unfenced
     // emit files the incumbent's repair round in the successor's ledger —
-    // History would show a run explaining a repair it never ran.
-    expect(harness.published).toEqual([]);
+    // History would show a run explaining a repair it never ran. The opening
+    // announcement is not that: it went out while the incumbent still held the
+    // slot, which is exactly when it was true.
+    expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "started" }),
+    ]);
   });
 
   it("appends no round and commits no write when the successor takes the slot before the round starts", async () => {

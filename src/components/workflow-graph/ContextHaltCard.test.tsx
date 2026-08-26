@@ -719,3 +719,79 @@ describe("ContextHaltCard lane-drift presentation", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ContextHaltCard plan-repair activity", () => {
+  const breakerHalt: GraphWorkflowHaltReason = {
+    type: "circuit_breaker",
+    contextId: "context-plan",
+    condition: "retry_exhaustion",
+    failureCount: 3,
+    summary: null,
+  };
+
+  const round = {
+    seq: 2,
+    contextId: "context-plan",
+    haltType: "circuit_breaker" as const,
+    loopGroupId: null,
+    startedAt: "2026-08-25T12:04:00.000Z",
+    settledAt: null,
+    outcome: null,
+    planningDefect: null,
+    diagnosis: null,
+    operationCount: 0,
+    resumed: false,
+    conversationId: null,
+  };
+
+  it("says the halt is under repair while a round is open", () => {
+    render(
+      <ContextHaltCard
+        primary={breakerHalt}
+        planRepairActivity={{
+          kind: "working",
+          openRound: round,
+          rounds: [round],
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("halt-repair-line")).toHaveTextContent(
+      /repair agent is working on/i,
+    );
+  });
+
+  it("says nobody is working once the rounds have settled", () => {
+    render(
+      <ContextHaltCard
+        primary={breakerHalt}
+        planRepairActivity={{
+          kind: "stopped",
+          openRound: null,
+          rounds: [
+            {
+              ...round,
+              settledAt: "2026-08-25T12:08:00.000Z",
+              outcome: "declined",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("halt-repair-line")).toHaveTextContent(
+      /No agent is working on this halt/i,
+    );
+  });
+
+  it("claims nothing about repair on a halt no round has answered", () => {
+    render(
+      <ContextHaltCard
+        primary={breakerHalt}
+        planRepairActivity={{ kind: "stopped", openRound: null, rounds: [] }}
+      />,
+    );
+
+    expect(screen.queryByTestId("halt-repair-line")).toBeNull();
+  });
+});

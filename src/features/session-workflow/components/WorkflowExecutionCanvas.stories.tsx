@@ -89,14 +89,22 @@ const CONTEXTS: ResolvedContext[] = [
 ];
 
 const EDGES = [
-  { id: "e-survey-api", sourceContextId: "survey", targetContextId: "api-design" },
+  {
+    id: "e-survey-api",
+    sourceContextId: "survey",
+    targetContextId: "api-design",
+  },
   {
     id: "e-design-impl",
     sourceContextId: "api-design",
     targetContextId: "api-impl",
   },
   { id: "e-survey-ui", sourceContextId: "survey", targetContextId: "ui-impl" },
-  { id: "e-impl-report", sourceContextId: "api-impl", targetContextId: "report" },
+  {
+    id: "e-impl-report",
+    sourceContextId: "api-impl",
+    targetContextId: "report",
+  },
   { id: "e-ui-report", sourceContextId: "ui-impl", targetContextId: "report" },
 ];
 
@@ -205,7 +213,9 @@ function deliveryExecution(
   // the engine would never produce, which is how the canvas came to render a
   // state nobody had actually seen.
   const merged = new Set(publishJoin.mergedSourceLaneIds);
-  const laneStatus = (laneId: string): GraphWorkflowExecutionLaneState["status"] =>
+  const laneStatus = (
+    laneId: string,
+  ): GraphWorkflowExecutionLaneState["status"] =>
     merged.has(laneId) ? "merged" : "active";
 
   return createWorkflowExecution({
@@ -390,7 +400,11 @@ export const PublishFailed = {
         status: "conflicts",
         completedAt: NOW,
         conflicts: {
-          files: ["src/api/routes.ts", "src/ui/panel.tsx", "src/shared/types.ts"],
+          files: [
+            "src/api/routes.ts",
+            "src/ui/panel.tsx",
+            "src/shared/types.ts",
+          ],
           message: "Automatic resolution failed on 3 files",
           analysis: null,
         },
@@ -415,6 +429,81 @@ export const AwaitingPublish = {
         status: "pending",
       }),
     ),
+  },
+  play: refitAfterLayout,
+} satisfies Story;
+
+/**
+ * A halt is a state, not an account of whether anything is acting on it. The
+ * plan-repair supervisor leaves the tripped context halted for the whole of its
+ * agent's turn, so these two runs hold the SAME record apart from an unsettled
+ * round — and the card is the only thing that can say so.
+ */
+function haltedRun(
+  planRepairRounds: GraphWorkflowExecution["planRepairRounds"],
+): GraphWorkflowExecution {
+  const base = deliveryExecution(
+    join("join-publish", { sourceLaneIds: ["api", "ui"], status: "pending" }),
+  );
+  return {
+    ...base,
+    status: "halted",
+    haltReason: {
+      type: "circuit_breaker",
+      contextId: "ui-impl",
+      condition: "retry_exhaustion",
+      failureCount: 3,
+      summary: null,
+    },
+    contextStates: {
+      ...base.contextStates,
+      "ui-impl": contextState("ui-impl", {
+        laneId: "ui",
+        status: "halted",
+        completedTaskCount: 0,
+        consecutiveFailureCount: 3,
+        mergeStatus: "not-applicable",
+      }),
+    },
+    planRepairRounds,
+  };
+}
+
+const REPAIR_ROUND = {
+  seq: 1,
+  contextId: "ui-impl",
+  haltType: "circuit_breaker" as const,
+  loopGroupId: null,
+  // Not the fixture's frozen NOW: an open round is only believed while its
+  // agent's turn budget could still be running.
+  startedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+  settledAt: null,
+  outcome: null,
+  planningDefect: null,
+  diagnosis: null,
+  operationCount: 0,
+  resumed: false,
+  conversationId: null,
+};
+
+/** `Implement UI` reads **Repair agent working** under a cyan notice. */
+export const HaltedUnderRepair = {
+  args: { execution: haltedRun([REPAIR_ROUND]) },
+  play: refitAfterLayout,
+} satisfies Story;
+
+/** The same halt with the round settled: red notice, and nothing is on it. */
+export const HaltedWaitingOnYou = {
+  args: {
+    execution: haltedRun([
+      {
+        ...REPAIR_ROUND,
+        settledAt: NOW,
+        outcome: "declined",
+        planningDefect: false,
+        diagnosis: "The contract is sound; the work keeps failing.",
+      },
+    ]),
   },
   play: refitAfterLayout,
 } satisfies Story;

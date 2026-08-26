@@ -1948,9 +1948,11 @@ export function createGraphWorkflowExecutionEventPublisher(
   }
 
   /**
-   * One plan-repair round conclusion (docs/design/cc-cli/08). Superseded
-   * rounds are audit-only (the user is already acting on the execution), so
-   * they append the event but never push.
+   * One plan-repair round lifecycle step (docs/design/cc-cli/08). Two outcomes
+   * are audit-only and never push: a superseded round (the user is already
+   * acting on the execution) and an opening one (`started`) — the run has not
+   * changed hands, and a push per round would announce an automatic mechanism
+   * doing exactly what it is meant to.
    */
   function publishPlanRepairRound(
     input: PublishPlanRepairInput,
@@ -1973,7 +1975,7 @@ export function createGraphWorkflowExecutionEventPublisher(
     };
 
     const pushes: GraphWorkflowPushInfo[] =
-      input.outcome === "superseded"
+      input.outcome === "superseded" || input.outcome === "started"
         ? []
         : [
             {

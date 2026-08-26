@@ -303,6 +303,24 @@ export default function GraphWorkflowPanel({
     [execution, autoSwitchPanel],
   );
 
+  /**
+   * The repair agent's own transcript. It is not a lane conversation — the
+   * repair runs against a halted context that holds no seat — so it opens
+   * through the same viewer with a label of its own rather than through the
+   * lane-kind default.
+   */
+  const handleViewRepairConversation = useCallback(
+    (conversationId: string, contextId: string) => {
+      handleViewConversation(
+        conversationId,
+        "plan_repair",
+        contextId,
+        "Plan repair",
+      );
+    },
+    [handleViewConversation],
+  );
+
   const mergedLayout = useMemo(() => {
     if (!execution) return null;
     return generateWorkflowLayout(execution.workingDefinition, layout ?? null);
@@ -407,6 +425,7 @@ export default function GraphWorkflowPanel({
                   onOpenGates: handleOpenGates,
                   onOpenLaneWorktree: handleOpenLaneWorktree,
                   onEditOwnership: handleEditOwnership,
+                  onViewRepairConversation: handleViewRepairConversation,
                 }
               : {})}
             onPause={onPause}

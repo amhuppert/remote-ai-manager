@@ -17,6 +17,11 @@ import {
   outputSchemaEvidenceForReason,
   type OutputSchemaHaltEvidenceByContext,
 } from "@/components/workflow-graph/derive-output-schema-halt";
+import {
+  planRepairStatement,
+  PLAN_REPAIR_OUTCOME_LABEL,
+  type PlanRepairActivity,
+} from "@/components/workflow-graph/derive-plan-repair-activity";
 import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";
 import type { JoinConflictSummary } from "@/components/workflow-graph/join-conflict-summary";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
@@ -67,6 +72,101 @@ export interface HaltDetailsDialogProps {
   onOpenLaneWorktree?(contextId: string): void;
   /** Opens the blocked member's placement, where its owned paths are edited. */
   onEditOwnership?(contextId: string): void;
+  /**
+   * Whether a repair agent is on this halt, and what earlier rounds decided.
+   * The read view is where the diagnoses live: a declined round is the operator
+   * asking "has anything looked at this?" and getting an answer instead of a
+   * silent halt.
+   */
+  planRepairActivity?: PlanRepairActivity | null;
+  /**
+   * Opens the open round's transcript. The claim that an agent is working is
+   * only worth as much as the operator's ability to check it — this is the
+   * check. Omitted by a host with no transcript surface, in which case the
+   * action is not offered rather than offered dead.
+   */
+  onViewRepairConversation?(conversationId: string, contextId: string): void;
+}
+
+function PlanRepairActivitySection({
+  activity,
+  onViewRepairConversation,
+}: {
+  activity: PlanRepairActivity;
+  onViewRepairConversation:
+    | ((conversationId: string, contextId: string) => void)
+    | undefined;
+}): React.JSX.Element {
+  const statement = planRepairStatement(activity);
+  const openRound = activity.openRound;
+  const watchable =
+    openRound !== null &&
+    openRound.conversationId !== null &&
+    onViewRepairConversation !== undefined
+      ? {
+          conversationId: openRound.conversationId,
+          contextId: openRound.contextId,
+        }
+      : null;
+  return (
+    <section
+      data-testid="halt-repair-activity"
+      className={cn(
+        "flex flex-col gap-xs rounded-sm border border-solid px-md py-sm",
+        statement.working
+          ? "border-[var(--cc-cyan-a25)] bg-[var(--cc-cyan-a08)]"
+          : "border-border-dim bg-bg-raised",
+      )}
+    >
+      <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+        Plan repair
+      </span>
+      <p
+        className={cn(
+          "m-0 text-[0.74rem] leading-[1.5]",
+          statement.working ? "text-cyan" : "text-text-secondary",
+        )}
+      >
+        {statement.sentence}
+      </p>
+      {statement.working && (
+        // The one consequence of acting during a repair turn: the round
+        // withdraws as `superseded` and its diagnosis is never written.
+        <p className="m-0 text-[0.72rem] text-text-tertiary italic">
+          Resuming or aborting now supersedes the open round — its diagnosis is
+          discarded.
+        </p>
+      )}
+      {watchable !== null && (
+        <DialogClose asChild>
+          <Button
+            size="sm"
+            touch
+            layoutClassName="w-fit"
+            onClick={() =>
+              onViewRepairConversation?.(
+                watchable.conversationId,
+                watchable.contextId,
+              )
+            }
+          >
+            Watch the repair agent
+          </Button>
+        </DialogClose>
+      )}
+      <ul className="m-0 flex list-none flex-col gap-[2px] p-0 font-mono text-[0.7rem] text-text-secondary">
+        {activity.rounds.map((round) => (
+          <li key={round.seq}>
+            <span className="mr-[6px] text-amber">round {round.seq}</span>
+            {round.outcome === null
+              ? "in flight"
+              : PLAN_REPAIR_OUTCOME_LABEL[round.outcome]}
+            {round.diagnosis === null ? "" : ` — ${round.diagnosis}`}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 export default function HaltDetailsDialog({
@@ -85,6 +185,8 @@ export default function HaltDetailsDialog({
   joinConflict = null,
   onOpenLaneWorktree,
   onEditOwnership,
+  planRepairActivity = null,
+  onViewRepairConversation,
 }: HaltDetailsDialogProps): React.JSX.Element {
   const hasConflictRecovery =
     canResume &&
@@ -141,6 +243,15 @@ export default function HaltDetailsDialog({
           {formatted.headline}
         </DialogTitle>
         <div className="flex max-h-[60vh] min-h-0 flex-col gap-md overflow-y-auto">
+          {/* Above the evidence: whether anything is acting on this halt is
+              the first question the read view has to answer. */}
+          {planRepairActivity !== null &&
+            planRepairActivity.rounds.length > 0 && (
+              <PlanRepairActivitySection
+                activity={planRepairActivity}
+                onViewRepairConversation={onViewRepairConversation}
+              />
+            )}
           {formatted.detail && (
             <div className="text-[0.74rem] leading-[1.5] text-text-secondary [&_p]:m-0">
               {formatted.detail}

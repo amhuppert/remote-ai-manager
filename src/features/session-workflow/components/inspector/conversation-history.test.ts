@@ -784,6 +784,76 @@ describe("isWorkflowConversationLive", () => {
     ).toBe(true);
   });
 
+  /**
+   * The repair agent's turn runs against a HALTED context, so every other
+   * clause here answers "ended" for it: no lane holds the conversation, no task
+   * names it, and the context is halted. The open round is the one record that
+   * says the turn is still being written.
+   */
+  it("calls the open plan-repair round's conversation live on the halted context it is repairing", () => {
+    const execution = runningExecution({});
+    const halted: GraphWorkflowExecution = {
+      ...execution,
+      status: "halted",
+      haltReason: {
+        type: "circuit_breaker",
+        contextId: CONTEXT_ID,
+        condition: "retry_exhaustion",
+        failureCount: 3,
+        summary: null,
+      },
+      laneStates: {},
+      contextStates: {
+        ...execution.contextStates,
+        [CONTEXT_ID]: {
+          ...execution.contextStates[CONTEXT_ID]!,
+          status: "halted",
+        },
+      },
+      planRepairRounds: [
+        {
+          seq: 1,
+          contextId: CONTEXT_ID,
+          haltType: "circuit_breaker",
+          loopGroupId: null,
+          startedAt: new Date(Date.now() - 60_000).toISOString(),
+          settledAt: null,
+          outcome: null,
+          planningDefect: null,
+          diagnosis: null,
+          operationCount: 0,
+          resumed: false,
+          conversationId: "__plan_repair__:execution-1:context-plan:1",
+        },
+      ],
+    };
+
+    expect(
+      isWorkflowConversationLive(
+        halted,
+        CONTEXT_ID,
+        "__plan_repair__:execution-1:context-plan:1",
+      ),
+    ).toBe(true);
+    // A settled round's transcript is history, like every other ended turn.
+    expect(
+      isWorkflowConversationLive(
+        {
+          ...halted,
+          planRepairRounds: [
+            {
+              ...halted.planRepairRounds[0]!,
+              settledAt: new Date().toISOString(),
+              outcome: "declined",
+            },
+          ],
+        },
+        CONTEXT_ID,
+        "__plan_repair__:execution-1:context-plan:1",
+      ),
+    ).toBe(false);
+  });
+
   it("calls every conversation of a settled context ended, whatever its lanes still name", () => {
     const execution = runningExecution({
       laneStates: implementerLane("conv_b41f", "2026-03-27T11:09:00.000Z"),

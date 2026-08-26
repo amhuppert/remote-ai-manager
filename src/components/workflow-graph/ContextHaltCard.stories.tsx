@@ -274,3 +274,54 @@ export const WithSecondaryHalts: Story = {
     secondary: [maxIterations, mergeFailure],
   },
 };
+
+/**
+ * The same halt, twice, differing only in whether its repair round has settled
+ * — which is the whole distinction the line exists to draw. Nothing else on the
+ * card moves between them.
+ */
+const repairRound = {
+  seq: 1,
+  contextId: "context-implement",
+  haltType: "circuit_breaker" as const,
+  loopGroupId: null,
+  startedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+  settledAt: null,
+  outcome: null,
+  planningDefect: null,
+  diagnosis: null,
+  operationCount: 0,
+  resumed: false,
+  conversationId: null,
+};
+
+export const UnderPlanRepair: Story = {
+  args: {
+    primary: circuitBreaker,
+    planRepairActivity: {
+      kind: "working",
+      openRound: repairRound,
+      rounds: [repairRound],
+    },
+  },
+};
+
+export const PlanRepairDeclined: Story = {
+  args: {
+    primary: circuitBreaker,
+    planRepairActivity: {
+      kind: "stopped",
+      openRound: null,
+      rounds: [
+        {
+          ...repairRound,
+          settledAt: new Date(Date.now() - 60_000).toISOString(),
+          outcome: "declined",
+          planningDefect: false,
+          diagnosis:
+            "The contract is sound; the work keeps failing the same real test.",
+        },
+      ],
+    },
+  },
+};

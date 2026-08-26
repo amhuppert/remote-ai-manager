@@ -10,6 +10,7 @@ import {
   isUpstreamVisibleToLane,
 } from "@/lib/workflow-graph/lane-readiness";
 import { laneDisplayName } from "@/lib/workflow-graph/lane-bands";
+import { openPlanRepairRoundFor } from "./derive-plan-repair-activity";
 import type {
   CascadeWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
@@ -49,7 +50,13 @@ export type ContextWaitState =
    */
   | { kind: "awaiting-merge"; targetLaneName: string | null }
   | { kind: "completed" }
-  | { kind: "halted" }
+  /**
+   * `repairInFlight` is what keeps a halt under automatic repair from reading
+   * as an abandoned one: the plan-repair supervisor's round leaves the context
+   * halted for the whole of its agent's turn, so the card's own state cannot
+   * tell the two apart.
+   */
+  | { kind: "halted"; repairInFlight: boolean }
   | { kind: "published" }
   /** Terminal: an incoming route resolved false, so this branch never runs. */
   | { kind: "skipped" };
@@ -71,7 +78,10 @@ export function deriveContextWaitState(input: {
   }
 
   if (ctxState.status === "halted") {
-    return { kind: "halted" };
+    return {
+      kind: "halted",
+      repairInFlight: openPlanRepairRoundFor(execution, contextId) !== null,
+    };
   }
 
   if (ctxState.mergeStatus === "in-progress") {
@@ -226,7 +236,8 @@ function pendingMergeTargetName(
 ): string | null {
   if (laneId === null) return null;
   const owed = Object.values(execution.joins ?? {}).find(
-    (join) => join.status !== "succeeded" && join.sourceLaneIds.includes(laneId),
+    (join) =>
+      join.status !== "succeeded" && join.sourceLaneIds.includes(laneId),
   );
   return owed ? laneDisplayName(owed.targetLaneId) : null;
 }
