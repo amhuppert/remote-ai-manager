@@ -107,7 +107,6 @@ const FROZEN_CONVERSATION_NAMING_DEFAULTS = {
 interface FrozenSelectionDefaults {
   readonly modelId?: string;
   readonly effort?: string;
-  readonly omitUnsupportedEffort?: boolean;
 }
 
 type FrozenNonCursorBackend = Exclude<FrozenBackend, "cursor">;
@@ -314,13 +313,13 @@ function frozenClaudeSelection(
     );
   }
   if (supported.length === 0) {
-    if (input.effort !== undefined && !input.defaults.omitUnsupportedEffort) {
-      throw new GeneralizedModelSelectionMigrationError(
-        input.holder,
-        "unsupported_parameter_value",
-        `Claude model ${JSON.stringify(input.modelId)} has no effort parameter.`,
-      );
-    }
+    // A Claude model without an effort parameter has exactly one valid
+    // variant, so a legacy effort recorded beside it is unambiguous rather
+    // than ambiguous: it never reached the provider and it maps to the empty
+    // parameter set. The legacy shape stored model and effort as independent
+    // fields, so holders can carry an effort the model never accepted --
+    // FROZEN_CONVERSATION_NAMING_DEFAULTS pairs haiku with one. Refusing here
+    // would halt startup over an inert field.
     return { modelId: input.modelId, parameters: {} };
   }
   const effectiveEffort = input.effort ?? input.defaults.effort ?? "high";
@@ -987,7 +986,6 @@ function transformConversationNaming(
   const transformed = transformSelectionHolder(naming, namingHolder, backend, {
     modelId: FROZEN_CONVERSATION_NAMING_DEFAULTS.model,
     effort: FROZEN_CONVERSATION_NAMING_DEFAULTS.effort,
-    omitUnsupportedEffort: true,
   });
   if (!transformed.changed) return false;
   config.conversationNaming = transformed.value;

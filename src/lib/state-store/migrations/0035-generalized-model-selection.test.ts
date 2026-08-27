@@ -998,6 +998,35 @@ describe("0035 generalized model selection cutover", () => {
     expect(migrated.raw).toEqual(raw);
   });
 
+  it("migrates a transcript effort recorded against a Claude model that has no effort parameter", async () => {
+    const world = makeWorld();
+    world.db
+      .prepare("UPDATE conversations SET agent_backend = ? WHERE id = ?")
+      .run("claude", CONVERSATION_ID);
+    writeFileSync(
+      world.transcriptPath,
+      `${JSON.stringify({
+        timestamp: "2026-08-01T00:00:00.000Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "test" }],
+        model: "haiku",
+        effort: "xhigh",
+      })}\n`,
+    );
+
+    await runMigration(world);
+
+    const migrated = JSON.parse(
+      readFileSync(world.transcriptPath, "utf8").trim(),
+    ) as Record<string, unknown>;
+    expect(migrated.modelSelection).toEqual({
+      modelId: "haiku",
+      parameters: {},
+    });
+    expect(migrated).not.toHaveProperty("effort");
+  });
+
   it("migrates documented holders while preserving opaque config, snapshot, and workflow payloads", async () => {
     const world = makeWorld();
     const opaqueProviderPayload = {
