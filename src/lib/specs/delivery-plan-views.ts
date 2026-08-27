@@ -182,6 +182,10 @@ export const deliveryPlanOpenRequestSchema = z
 export const deliveryPlanReopenRequestSchema = z
   .object({ reason: z.string().min(1) })
   .strict();
+/** Prelaunch retirement: the reason lands on the attempt's audit row. */
+export const deliveryPlanAbandonRequestSchema = z
+  .object({ reason: z.string().min(1) })
+  .strict();
 export const deliveryPlanSignOffRequestSchema =
   finalizedDeliveryPlanCandidateIdentitySchema;
 /**

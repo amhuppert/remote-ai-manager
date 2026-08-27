@@ -28,6 +28,7 @@ import {
 import {
   specCommentsViewSchema,
   specDetailViewSchema,
+  specDiffViewSchema,
   specEditContextViewSchema,
   specSectionViewSchema,
   specShowOutlineViewSchema,
@@ -4937,5 +4938,167 @@ describe("spec comments route handler", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+});
+
+describe("spec diff route handler", () => {
+  const approvedBase: SpecRevision = {
+    ...revision,
+    id: "base-revision",
+    state: "approved",
+    authoringStage: "requirements",
+    approvedAt: "2026-07-18T01:00:00.000Z",
+  };
+  const proposedAmendment: SpecRevision = {
+    ...revision,
+    id: "amendment-revision",
+    number: 2,
+    state: "proposed",
+    authoringStage: "design",
+    basedOnRevisionId: approvedBase.id,
+    proposedAt: "2026-07-19T00:00:00.000Z",
+  };
+  const requirementRow = {
+    element: {
+      id: "requirement-1",
+      specId: spec.id,
+      kind: "requirement" as const,
+      number: 1,
+      parentElementId: null,
+      createdAt: revision.createdAt,
+    },
+    version: {
+      revisionId: approvedBase.id,
+      elementId: "requirement-1",
+      position: 0,
+      payload: {
+        kind: "requirement" as const,
+        statement: "The route resolves renamed specs",
+        priority: "must" as const,
+        risk: "medium" as const,
+      },
+      payloadHash: "requirement-hash",
+      elementVersion: 1,
+      createdAt: revision.createdAt,
+      updatedAt: revision.createdAt,
+    },
+  };
+  const addedDecisionRow = {
+    element: {
+      id: "decision-new",
+      specId: spec.id,
+      kind: "decision" as const,
+      number: 1,
+      parentElementId: null,
+      createdAt: revision.createdAt,
+    },
+    version: {
+      revisionId: proposedAmendment.id,
+      elementId: "decision-new",
+      position: 1,
+      payload: {
+        kind: "decision" as const,
+        title: "Adopt agent write modes",
+        chosenApproach: "Write modes gate agent edits",
+        rejectedAlternatives: [],
+        reason: "Citation-bearing decisions are the amendment shape",
+        tracedRequirementElementIds: ["requirement-1"],
+      },
+      payloadHash: "decision-new-hash",
+      elementVersion: 1,
+      createdAt: revision.createdAt,
+      updatedAt: revision.createdAt,
+    },
+  };
+  const citationSnapshot = {
+    schemaVersion: 1 as const,
+    captureKind: "native" as const,
+    capturedAt: "2026-07-19T00:00:00.000Z",
+    assumptionId: assumption.id,
+    number: 1,
+    recordVersion: 1,
+    text: assumption.text,
+    elementId: "requirement-1",
+    proposedBy: { kind: "agent" as const, conversationId: "conv-1" },
+    disposition: "confirmed" as const,
+    disposedAt: "2026-07-19T00:00:00.000Z",
+    withdrawnAt: null,
+    supersedesAssumptionId: null,
+    createdAt: revision.createdAt,
+    updatedAt: "2026-07-19T00:00:00.000Z",
+  };
+  const citationOn = (elementId: string) => ({
+    revisionId: proposedAmendment.id,
+    specId: spec.id,
+    elementId,
+    assumptionId: assumption.id,
+    snapshot: citationSnapshot,
+    createdAt: revision.createdAt,
+    updatedAt: "2026-07-19T00:00:00.000Z",
+  });
+  const baseSnapshot: SpecRevisionSnapshot = {
+    revision: approvedBase,
+    elements: [requirementRow],
+    assumptionCitations: [],
+  };
+  const amendmentSnapshot: SpecRevisionSnapshot = {
+    revision: proposedAmendment,
+    elements: [requirementRow, addedDecisionRow],
+    assumptionCitations: [
+      citationOn("decision-new"),
+      citationOn("requirement-1"),
+    ],
+  };
+  const diffDeps = () =>
+    createDeps({
+      listRevisions: async () => [approvedBase, proposedAmendment],
+      getRevisionSnapshot: async (revisionId) =>
+        revisionId === approvedBase.id
+          ? baseSnapshot
+          : revisionId === proposedAmendment.id
+            ? amendmentSnapshot
+            : null,
+    });
+
+  it("classifies citation-bearing elements within the four-value diff vocabulary", async () => {
+    const handlers = createSpecRouteHandlers(diffDeps());
+
+    const response = await handlers.getSpecDiffGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/diff"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    // The CLI's own strict schema is the contract that broke: citation-change
+    // kinds leaked into `classification` and every reader refused the body.
+    const parsed = specDiffViewSchema.safeParse(await response.json());
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.baseline).toBe("review");
+    expect(parsed.data.from).toMatchObject({ revisionId: approvedBase.id });
+    expect(parsed.data.to).toMatchObject({ revisionId: proposedAmendment.id });
+    const byId = new Map(
+      parsed.data.elements.map((element) => [element.elementId, element]),
+    );
+    // Payload unchanged, citation added: the engine's classification (modified)
+    // is the answer, and the citation change is the story the summary tells.
+    expect(byId.get("requirement-1")).toMatchObject({
+      classification: "modified",
+      directlyChanged: true,
+      summary: "Added assumption A1 citation to requirement-1.",
+    });
+    // Added element with a citation: the citation change must not overwrite
+    // the addition — both facts belong to the one element row.
+    expect(byId.get("decision-new")).toMatchObject({
+      classification: "added",
+      directlyChanged: true,
+    });
+    expect(byId.get("decision-new")?.summary).toContain(
+      "Added decision: Adopt agent write modes",
+    );
+    expect(byId.get("decision-new")?.summary).toContain(
+      "Added assumption A1 citation to decision-new.",
+    );
   });
 });

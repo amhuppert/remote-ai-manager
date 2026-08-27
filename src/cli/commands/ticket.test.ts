@@ -1670,7 +1670,11 @@ describe("cctl ticket start", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("unexpected response");
+    // Evidence over hypothesis: name the validation failure and the check
+    // that separates build skew from a contract defect (command-center#91).
+    expect(result.stderr).toContain("failed this CLI's validation");
+    expect(result.stderr).not.toContain("same build as this CLI");
+    expect(result.stderr).toContain("cctl doctor");
   });
 
   it("maps the active-session 409 through the shared failure path", async () => {

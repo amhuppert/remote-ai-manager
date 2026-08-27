@@ -67,6 +67,7 @@ import {
   deliveryPlanEditRequestSchema,
   deliveryPlanOpenRequestSchema,
   deliveryPlanPreviewRequestSchema,
+  deliveryPlanAbandonRequestSchema,
   deliveryPlanReopenRequestSchema,
   deliveryPlanCommentRequestSchema,
   deliveryPlanReaffirmRequestSchema,
@@ -3371,9 +3372,27 @@ export function createSpecRouteHandlers(
       toDiffRows(toSnapshot),
       toCitationDiffContext(fromSnapshot, toSnapshot),
     );
-    const changeByElementId = new Map(
-      diff.changeList.map((change) => [change.elementId, change]),
+    // `changeList` mixes two vocabularies keyed by the same element id: element
+    // changes (added/modified/removed) and citation changes (citation_*). Only
+    // the element changes may feed this view's four-value `classification` —
+    // a citation entry overwriting an element's slot is what leaked
+    // `citation_added` into a field every strict reader refuses.
+    const elementChangeByElementId = new Map(
+      diff.changeList.flatMap((change) =>
+        change.kind === "assumption_citation" ||
+        change.kind === "citation_contract"
+          ? []
+          : [[change.elementId, change] as const],
+      ),
     );
+    const citationSummariesByElementId = new Map<string, string[]>();
+    for (const change of diff.changeList) {
+      if (change.kind !== "assumption_citation") continue;
+      const summaries =
+        citationSummariesByElementId.get(change.elementId) ?? [];
+      summaries.push(change.summary);
+      citationSummariesByElementId.set(change.elementId, summaries);
+    }
     logger.debug("specs.routes.diff.complete", {
       specId: spec.id,
       baseline,
@@ -3388,7 +3407,15 @@ export function createSpecRouteHandlers(
       from: from === null ? null : toDiffRevisionRef(from),
       to: toDiffRevisionRef(to),
       elements: diff.classifications.map((entry) => {
-        const change = changeByElementId.get(entry.elementId);
+        const elementChange = elementChangeByElementId.get(entry.elementId);
+        // An element can carry both a payload change and citation changes;
+        // one row tells both, payload first. A citation-only change has no
+        // element entry, so its citation summaries are the whole story — which
+        // keeps `summary` null exactly when the element is unchanged.
+        const summaryParts = [
+          ...(elementChange === undefined ? [] : [elementChange.summary]),
+          ...(citationSummariesByElementId.get(entry.elementId) ?? []),
+        ];
         return {
           elementId: entry.elementId,
           // A removed element is absent from the compared revision, so its
@@ -3399,9 +3426,9 @@ export function createSpecRouteHandlers(
               ? null
               : elementHandleInSnapshot(fromSnapshot, entry.elementId)),
           kind: entry.kind,
-          classification: change?.change ?? "unchanged",
+          classification: entry.classification,
           directlyChanged: entry.directlyChanged,
-          summary: change?.summary ?? null,
+          summary: summaryParts.length === 0 ? null : summaryParts.join(" "),
         };
       }),
       planStale: diff.planStale,
@@ -3758,6 +3785,7 @@ const emptyBodySchema = z.object({}).strict();
 const planOpenBodySchema = deliveryPlanOpenRequestSchema;
 const planEditBodySchema = deliveryPlanEditRequestSchema;
 const planReopenBodySchema = deliveryPlanReopenRequestSchema;
+const planAbandonBodySchema = deliveryPlanAbandonRequestSchema;
 const planSignOffBodySchema = deliveryPlanSignOffRequestSchema;
 const planCommentBodySchema = deliveryPlanCommentRequestSchema;
 const planReaffirmBodySchema = deliveryPlanReaffirmRequestSchema;
@@ -4659,6 +4687,17 @@ export function createSpecWriteRouteHandlers(
         case "plan-reopen":
           return invokeAction(request, planReopenBodySchema, (input) =>
             services.deliveryPlan.reopen({
+              spec: resolved.value.spec,
+              reason: input.reason,
+              actor: actor.value,
+            }),
+          );
+        // The prelaunch retirement (command-center#92): a never-launched
+        // attempt whose pin the spec amended past is retired so a fresh open
+        // can pin the current approved revision.
+        case "plan-abandon":
+          return invokeAction(request, planAbandonBodySchema, (input) =>
+            services.deliveryPlan.abandonPrelaunch({
               spec: resolved.value.spec,
               reason: input.reason,
               actor: actor.value,

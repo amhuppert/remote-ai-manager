@@ -22,6 +22,7 @@ import {
   encodePathSegment,
   failure,
   failureFromRequest,
+  invalidResponseFailure,
   render,
   resolveProjectConversationContext,
   resolveProseArg,
@@ -67,20 +68,6 @@ const notepadResponseSchema = z.object({ notepad: notepadSchema });
 const notepadListResponseSchema = z.object({
   notepads: z.array(notepadListItemSchema),
 });
-
-/**
- * A 2xx body that does not match the expected schema. Success output is an
- * agent-facing contract, so a response we cannot parse must fail loudly rather
- * than claim an operation completed without its authoritative result.
- */
-function invalidResponseFailure(what: string, json: boolean): CliResult {
-  return failure({
-    exitCode: EXIT_OPERATION_FAILED,
-    message: `${what} returned an unexpected response — is the CC server the same build as this CLI?`,
-    code: "invalid_response",
-    json,
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Arguments
@@ -360,7 +347,13 @@ async function runNotepadList(
   if (result.kind !== "ok") return failureFromRequest(result, json);
 
   const parsed = notepadListResponseSchema.safeParse(result.body);
-  if (!parsed.success) return invalidResponseFailure("the notepad list", json);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: "the notepad list",
+      issues: parsed.error.issues,
+      json,
+    });
+  }
   const notepads = parsed.data.notepads;
 
   // One cap over the items bounds both serializations, so the rows printed and
@@ -415,7 +408,13 @@ async function runNotepadGet(
   if (result.kind !== "ok") return failureFromRequest(result, json);
 
   const parsed = notepadResponseSchema.safeParse(result.body);
-  if (!parsed.success) return invalidResponseFailure("notepad get", json);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: "notepad get",
+      issues: parsed.error.issues,
+      json,
+    });
+  }
   const notepad = parsed.data.notepad;
 
   // A notepad grows without bound, so the content goes through the disclosure
@@ -532,7 +531,13 @@ async function runNotepadCreate(
   if (result.kind !== "ok") return failureFromRequest(result, json);
 
   const parsed = notepadResponseSchema.safeParse(result.body);
-  if (!parsed.success) return invalidResponseFailure("notepad create", json);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: "notepad create",
+      issues: parsed.error.issues,
+      json,
+    });
+  }
   const notepad = parsed.data.notepad;
 
   return {
@@ -602,7 +607,11 @@ async function runNotepadWrite(
 
   const parsed = notepadResponseSchema.safeParse(result.body);
   if (!parsed.success) {
-    return invalidResponseFailure(`notepad ${operation}`, json);
+    return invalidResponseFailure({
+      what: `notepad ${operation}`,
+      issues: parsed.error.issues,
+      json,
+    });
   }
   const notepad = parsed.data.notepad;
   const verb = operation === "update" ? "updated" : "appended to";

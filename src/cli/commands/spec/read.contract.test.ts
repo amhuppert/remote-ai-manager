@@ -2980,6 +2980,52 @@ describe("cctl spec read verbs against seeded read routes", () => {
       expect(result.stderr).toContain("revision-from-another-spec");
       expect(result.stderr).toContain("cctl spec show native-sdd --full");
     });
+
+    it("surfaces the validation paths when a 2xx body fails this CLI's schema", async () => {
+      // The body shape that shipped command-center#91: a citation-change kind
+      // leaked into `classification`. A server that drifts this way again must
+      // produce a failure naming the refusing path, not a build-skew claim.
+      const driftedHost: CliHost = {
+        fetch: async () =>
+          new Response(
+            JSON.stringify({
+              slug: "native-sdd",
+              baseline: "review",
+              from: null,
+              to: { revisionId: "revision-1", number: 1, state: "draft" },
+              elements: [
+                {
+                  elementId: "decision-1",
+                  handle: "D1",
+                  kind: "decision",
+                  classification: "citation_added",
+                  directlyChanged: true,
+                  summary: "Added assumption A1 citation to decision-1.",
+                },
+              ],
+              planStale: false,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        readTextFile: async () => null,
+        readFileBytes: async () => null,
+        sleep: async () => {},
+        platform: "darwin",
+        homedir: "/Users/test",
+      };
+
+      const result = await runCli(
+        ["spec", "diff", "native-sdd"],
+        baseEnv,
+        driftedHost,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("failed this CLI's validation");
+      expect(result.stderr).toContain("elements.0.classification");
+      expect(result.stderr).not.toContain("same build as this CLI");
+      expect(result.stderr).toContain("cctl doctor");
+    });
     it("defaults to the pair Spec Studio diffs and classes it identically", async () => {
       const host = makeHost({ lineage: true });
       const shown = await runCli(

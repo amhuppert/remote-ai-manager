@@ -645,6 +645,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec plan sign-off <slug> [--candidate <id> --candidate-hash <hash>]`
 - `cctl spec plan reopen` — return an unlaunched attempt to draft, invalidating its approval
   - `cctl spec plan reopen <slug> --reason <why>`
+- `cctl spec plan abandon` — retire a never-launched attempt so a fresh open can pin
+  - `cctl spec plan abandon <slug> --reason <why>`
 - `cctl spec plan get` — read the plan document the attempt carries
   - `cctl spec plan get <slug>`
 - `cctl spec plan status` — read the attempt's state, findings, and the act it owes next

@@ -66,6 +66,7 @@ import {
   encodePathSegment,
   failure,
   failureFromRequest,
+  invalidResponseFailure,
   render,
   resolveProjectContext,
   usageFailure,
@@ -197,10 +198,9 @@ async function requestTyped<T>(
     });
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: `spec ${command} returned an unexpected response — is the CC server the same build as this CLI?`,
-        code: "invalid_response",
+      result: invalidResponseFailure({
+        what: `spec ${command}`,
+        issues: parsed.error.issues,
         json,
       }),
     };
@@ -2186,11 +2186,9 @@ function exportSummary(
   if (!parsed.success) {
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message:
-          "spec export returned a manifest this CLI cannot summarize — is the CC server the same build as this CLI?",
-        code: "invalid_response",
+      result: invalidResponseFailure({
+        what: "spec export's manifest",
+        issues: parsed.error.issues,
         json,
       }),
     };

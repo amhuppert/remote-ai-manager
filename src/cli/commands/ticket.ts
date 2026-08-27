@@ -44,6 +44,7 @@ import {
   encodePathSegment,
   failure,
   failureFromRequest,
+  invalidResponseFailure,
   render,
   readSessionEnv,
   resolveProjectContext,
@@ -75,20 +76,6 @@ import {
  */
 
 const REF_USAGE = "<number> or <project>#<number>";
-
-/**
- * A 2xx body that does not match the expected schema. Success output is an
- * agent-facing contract, so a response we cannot parse must fail loudly rather
- * than claim an operation completed without its authoritative result.
- */
-function invalidResponseFailure(what: string, json: boolean): CliResult {
-  return failure({
-    exitCode: EXIT_OPERATION_FAILED,
-    message: `${what} returned an unexpected response — is the CC server the same build as this CLI?`,
-    code: "invalid_response",
-    json,
-  });
-}
 
 const LIST_HINT =
   "read one in full with 'cctl ticket get <number | project#number>'";
@@ -405,7 +392,12 @@ async function runTicketCreate(
   if (result.kind !== "ok") return failureFromRequest(result, json);
 
   const parsed = createTicketResponseSchema.safeParse(result.body);
-  if (!parsed.success) return invalidResponseFailure("ticket create", json);
+  if (!parsed.success)
+    return invalidResponseFailure({
+      what: "ticket create",
+      issues: parsed.error.issues,
+      json,
+    });
   const humanBody = `created ${identifierOf(parsed.data.ticket)}  ${parsed.data.ticket.title}\n`;
   // Terminal: no hint.
   return {
@@ -473,7 +465,12 @@ async function runTicketList(
   if (result.kind !== "ok") return failureFromRequest(result, json);
 
   const parsed = z.array(ticketListItemSchema).safeParse(result.body);
-  if (!parsed.success) return invalidResponseFailure("the ticket list", json);
+  if (!parsed.success)
+    return invalidResponseFailure({
+      what: "the ticket list",
+      issues: parsed.error.issues,
+      json,
+    });
   const tickets = parsed.data;
 
   // Only the rows the cap keeps are enriched, so the attachment index costs at
@@ -607,10 +604,11 @@ async function fetchBoundedIndex(
   if (!parsed.success) {
     return {
       ok: false,
-      result: invalidResponseFailure(
-        `the attachment index for ${identifierOf(item)}`,
+      result: invalidResponseFailure({
+        what: `the attachment index for ${identifierOf(item)}`,
+        issues: parsed.error.issues,
         json,
-      ),
+      }),
     };
   }
   return {
@@ -652,10 +650,11 @@ async function runTicketGet(
 
   const parsed = ticketDetailSchema.safeParse(result.body);
   if (!parsed.success) {
-    return invalidResponseFailure(
-      `ticket ${projectName}#${ref.ref.number}`,
+    return invalidResponseFailure({
+      what: `ticket ${projectName}#${ref.ref.number}`,
+      issues: parsed.error.issues,
       json,
-    );
+    });
   }
 
   const detail = parsed.data;
@@ -741,10 +740,11 @@ async function runTicketUpdate(
 
   const parsed = ticketDetailSchema.safeParse(result.body);
   if (!parsed.success) {
-    return invalidResponseFailure(
-      `ticket update for ${projectName}#${ref.ref.number}`,
+    return invalidResponseFailure({
+      what: `ticket update for ${projectName}#${ref.ref.number}`,
+      issues: parsed.error.issues,
       json,
-    );
+    });
   }
   const identifier = identifierOf(parsed.data);
   // Terminal: no hint.
@@ -787,10 +787,11 @@ async function runTicketDelete(
 
   const parsed = deletedTicketSchema.safeParse(result.body);
   if (!parsed.success) {
-    return invalidResponseFailure(
-      `ticket delete for ${projectName}#${ref.ref.number}`,
+    return invalidResponseFailure({
+      what: `ticket delete for ${projectName}#${ref.ref.number}`,
+      issues: parsed.error.issues,
       json,
-    );
+    });
   }
   const identifier = `${parsed.data.projectName}#${parsed.data.number}`;
   // Terminal: no hint.
@@ -870,7 +871,11 @@ async function runTicketStart(
 
   const parsed = startTicketOutputSchema.safeParse(result.body);
   if (!parsed.success) {
-    return invalidResponseFailure(`ticket start for ${identifier}`, json);
+    return invalidResponseFailure({
+      what: `ticket start for ${identifier}`,
+      issues: parsed.error.issues,
+      json,
+    });
   }
 
   const output = parsed.data;
@@ -1277,10 +1282,11 @@ function attachedResult(
 ): CliResult {
   const parsed = ticketAttachmentSchema.safeParse(body);
   if (!parsed.success) {
-    return invalidResponseFailure(
-      `ticket attach ${kindArg} for ${identifier}`,
+    return invalidResponseFailure({
+      what: `ticket attach ${kindArg} for ${identifier}`,
+      issues: parsed.error.issues,
       json,
-    );
+    });
   }
   const payload = parsed.data.payload;
   const idText = ` ${parsed.data.id}`;
@@ -1671,10 +1677,11 @@ async function runTicketAttachmentVerb(
 
     const parsed = resolvedAttachmentSchema.safeParse(result.body);
     if (!parsed.success) {
-      return invalidResponseFailure(
-        `attachment ${attachmentId} on ${identifier}`,
+      return invalidResponseFailure({
+        what: `attachment ${attachmentId} on ${identifier}`,
+        issues: parsed.error.issues,
         json,
-      );
+      });
     }
     if (parsed.data.kind === "file") {
       return fileAttachmentResult(host, parsed.data, identifier, json);
@@ -1703,10 +1710,11 @@ async function runTicketAttachmentVerb(
 
     const parsed = ticketAttachmentSchema.safeParse(result.body);
     if (!parsed.success) {
-      return invalidResponseFailure(
-        `attachment update ${attachmentId} on ${identifier}`,
+      return invalidResponseFailure({
+        what: `attachment update ${attachmentId} on ${identifier}`,
+        issues: parsed.error.issues,
         json,
-      );
+      });
     }
     // Terminal: no hint.
     return {
@@ -1732,10 +1740,11 @@ async function runTicketAttachmentVerb(
 
     const parsed = ticketAttachmentSchema.safeParse(result.body);
     if (!parsed.success) {
-      return invalidResponseFailure(
-        `attachment refresh ${attachmentId} on ${identifier}`,
+      return invalidResponseFailure({
+        what: `attachment refresh ${attachmentId} on ${identifier}`,
+        issues: parsed.error.issues,
         json,
-      );
+      });
     }
     const unresolved = unresolvedConversationRefreshResult(
       parsed.data,
@@ -1772,10 +1781,11 @@ async function runTicketAttachmentVerb(
   if (result.kind !== "ok") return failureFromRequest(result, json);
   const parsed = removedAttachmentSchema.safeParse(result.body);
   if (!parsed.success) {
-    return invalidResponseFailure(
-      `attachment remove ${attachmentId} on ${identifier}`,
+    return invalidResponseFailure({
+      what: `attachment remove ${attachmentId} on ${identifier}`,
+      issues: parsed.error.issues,
       json,
-    );
+    });
   }
 
   // Terminal: no hint.

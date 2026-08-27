@@ -535,7 +535,14 @@ describe("cctl notepad response handling", () => {
     const result = await runCli(["notepad", "get", NOTEPAD_ID], baseEnv, host);
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("unexpected response");
+    // The failure reports the validation evidence — the paths that refused —
+    // rather than asserting build skew, which misleads when builds match
+    // (command-center#91). `cctl doctor` is named as the check that separates
+    // skew from a genuine server/CLI contract defect.
+    expect(result.stderr).toContain("failed this CLI's validation");
+    expect(result.stderr).toContain("notepad.id");
+    expect(result.stderr).not.toContain("same build as this CLI");
+    expect(result.stderr).toContain("cctl doctor");
   });
 
   it("renders a server refusal with its code and reason", async () => {

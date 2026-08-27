@@ -35,6 +35,7 @@ import {
   runSpecDismissSuperseded,
   runSpecDraft,
   runSpecImport,
+  runSpecPlanAbandon,
   runSpecPlanEdit,
   runSpecPlanOpen,
   runSpecPlanPropose,
@@ -139,6 +140,8 @@ export async function runSpec(
               runSpecPlanPropose(planRest, flags, values, env, host),
             reopen: (planRest) =>
               runSpecPlanReopen(planRest, flags, values, env, host),
+            abandon: (planRest) =>
+              runSpecPlanAbandon(planRest, flags, values, env, host),
             "sign-off": (planRest) =>
               runSpecPlanSignOff(planRest, flags, values, env, host),
             get: (planRest) =>

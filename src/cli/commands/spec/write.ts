@@ -71,6 +71,7 @@ import {
   encodePathSegment,
   failure,
   failureFromRequest,
+  invalidResponseFailure,
   readJsonObjectFile,
   render,
   resolveConversationContext,
@@ -483,10 +484,9 @@ async function requestTyped<T>(
     });
     return {
       ok: false,
-      result: failure({
-        exitCode: EXIT_OPERATION_FAILED,
-        message: `spec ${input.command} returned an unexpected response — is the CC server the same build as this CLI?`,
-        code: "invalid_response",
+      result: invalidResponseFailure({
+        what: `spec ${input.command}`,
+        issues: parsed.error.issues,
         json,
       }),
     };
@@ -1636,11 +1636,9 @@ async function submitDraftBatch(
             command: "draft",
             issueCount: refused.error.issues.length,
           });
-          return failure({
-            exitCode: EXIT_OPERATION_FAILED,
-            message:
-              "spec draft returned an unexpected batch refusal — is the CC server the same build as this CLI?",
-            code: "invalid_response",
+          return invalidResponseFailure({
+            what: "spec draft's batch refusal",
+            issues: refused.error.issues,
             json,
           });
         }
@@ -4046,6 +4044,66 @@ export async function runSpecPlanReopen(
     `returned plan attempt ${view.attempt.id} to draft at revision ${view.attempt.draftRevision}`,
     view,
   );
+}
+
+const planAbandonReceiptSchema = z
+  .object({ attemptId: z.string().min(1) })
+  .strict();
+
+/**
+ * The prelaunch exit (command-center#92). A never-launched attempt pins the
+ * revision it opened against and blocks every replacement `open`; when the
+ * spec legitimately amends past that pin, retiring the attempt is the only
+ * honest way forward, and the fresh open pins the current approved revision.
+ */
+export async function runSpecPlanAbandon(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "spec plan abandon", json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "plan abandon", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "plan abandon", json);
+  if (!slug.ok) return slug.result;
+  const reason = values["reason"];
+  if (reason === undefined) {
+    return usageFailure(
+      "spec plan abandon requires --reason <why> — the reason lands in the durable audit row beside the retired attempt",
+      json,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "plan-abandon"),
+      body: { reason },
+      schema: planAbandonReceiptSchema,
+      command: "plan abandon",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  const attemptId = response.value.attemptId;
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `abandoned plan attempt ${attemptId} before launch — a fresh cctl spec plan open ${slug.value} pins the current approved revision\n`,
+      { ok: true, attemptId },
+    ),
+    stderr: "",
+  };
 }
 
 /**

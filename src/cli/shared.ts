@@ -513,6 +513,53 @@ export function usageFailure(message: string, json: boolean): CliResult {
   };
 }
 
+/** Issues an invalid-response failure names before counting the rest. */
+const INVALID_RESPONSE_ISSUE_LIMIT = 5;
+
+/**
+ * A 2xx body that fails the caller's response schema. Success output is an
+ * agent-facing contract, so the operation must fail loudly — and with the
+ * validation evidence itself. Build skew is only one possible cause of the
+ * mismatch: asserting it misled whenever `cctl doctor` showed matching builds
+ * (command-center#91), so the instruction names the check that separates skew
+ * from a genuine server/CLI contract defect rather than the diagnosis.
+ */
+export function invalidResponseFailure(input: {
+  what: string;
+  issues: ReadonlyArray<{
+    readonly path: ReadonlyArray<PropertyKey>;
+    readonly message: string;
+  }>;
+  json: boolean;
+}): CliResult {
+  const named: RequestIssue[] = input.issues
+    .slice(0, INVALID_RESPONSE_ISSUE_LIMIT)
+    .map((issue) => ({
+      path:
+        issue.path.length === 0
+          ? "(response root)"
+          : issue.path.map(String).join("."),
+      message: issue.message,
+    }));
+  const omitted = input.issues.length - named.length;
+  const detailLines = [
+    ...issueDetailLines(named),
+    ...(omitted > 0
+      ? [`  …and ${omitted} more validation issue${omitted === 1 ? "" : "s"}`]
+      : []),
+  ];
+  return failure({
+    exitCode: EXIT_OPERATION_FAILED,
+    message: `${input.what} returned a response that failed this CLI's validation`,
+    ...(detailLines.length > 0 ? { detail: detailLines.join("\n") } : {}),
+    ...(named.length > 0 ? { issues: named } : {}),
+    code: "invalid_response",
+    instruction:
+      "Run cctl doctor: a build mismatch explains this and updating the skewed side fixes it; matching builds mean a server/CLI contract defect.",
+    json: input.json,
+  });
+}
+
 export type TokenSource = "flag" | "env" | "file";
 
 export interface ResolvedToken {

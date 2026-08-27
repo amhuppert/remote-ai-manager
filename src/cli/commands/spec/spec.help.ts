@@ -1599,6 +1599,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
         oneLiner: "read what the seeded plan still owes",
       },
       {
+        command: "spec plan abandon",
+        oneLiner: "retire a stranded prelaunch attempt blocking this open",
+      },
+      {
         command: "spec delta",
         oneLiner: "read the delivery classes the seed was derived from",
       },
@@ -1749,7 +1753,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Reopen is the exit every unlaunched plan state has. Once a plan launches, its scope is pinned: capture a discovery for the next plan, or abandon the run and open a seeded replacement.",
+      "Reopen redrafts the same attempt against the same pinned revision. When the spec has amended past that pin, redrafting cannot help — retire the attempt with `spec plan abandon` instead. Once a plan launches, its scope is pinned: capture a discovery for the next plan, or abandon the run and open a seeded replacement.",
     related: [
       {
         command: "spec plan propose",
@@ -1760,8 +1764,51 @@ export const specHelpEntries: CommandHelpEntry[] = [
         oneLiner: "the post-launch path for discovered work",
       },
       {
+        command: "spec plan abandon",
+        oneLiner: "retire the attempt instead of redrafting it",
+      },
+      {
         command: "spec plan status",
         oneLiner: "read the attempt's status and its exits",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "abandon"],
+    summary: "retire a never-launched attempt so a fresh open can pin",
+    usage: ["cctl spec plan abandon <slug> --reason <why>"],
+    description:
+      "Retire the live delivery-plan attempt before launch, whatever its prelaunch state (draft, proposed, approved, or parked). The attempt's pin is immutable, so when the spec amends past it the attempt can neither validate new criteria nor launch honestly — retiring it is the exit, and the `cctl spec plan open` that follows pins the current approved revision. A LAUNCHED attempt is refused, naming its two post-launch paths and the execution id they address.",
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<why>",
+        description: "durable reason recorded beside the retired attempt",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          'cctl spec plan abandon native-sdd --reason "revision 4 added criteria this attempt cannot bind"',
+        explanation:
+          "retire the stranded attempt, then open a fresh plan pinned to the current approved revision",
+      },
+    ],
+    domainContext:
+      "The retired attempt and its snapshots stay readable in history; nothing is rewritten. A fresh `spec plan open` starts from an empty document — pass `--seed-from last` to seed from the previous delivery, not from the retired draft.",
+    related: [
+      {
+        command: "spec plan open",
+        oneLiner: "open the replacement pinned to the current revision",
+      },
+      {
+        command: "spec plan reopen",
+        oneLiner: "redraft the same attempt when the pin still holds",
+      },
+      {
+        command: "spec capture",
+        oneLiner: "the post-launch path once an execution owns the plan",
       },
     ],
   },

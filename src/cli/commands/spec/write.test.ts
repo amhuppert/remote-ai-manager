@@ -3452,3 +3452,96 @@ describe("cctl spec start against a delivery plan", () => {
     );
   });
 });
+
+describe("cctl spec plan abandon", () => {
+  function abandonHost(respond: () => Response): CliHost & {
+    requests: RecordedRequest[];
+  } {
+    const requests: RecordedRequest[] = [];
+    return {
+      requests,
+      async fetch(url, init) {
+        requests.push({ url, init });
+        return respond();
+      },
+      readTextFile: async () => null,
+      readFileBytes: async () => null,
+      sleep: async () => {},
+      platform: "darwin",
+      homedir: "/Users/test",
+    };
+  }
+
+  it("retires the prelaunch attempt through the plan-abandon action", async () => {
+    const host = abandonHost(
+      () =>
+        new Response(JSON.stringify({ attemptId: "attempt-9" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const result = await runCli(
+      [
+        "spec",
+        "plan",
+        "abandon",
+        "native-sdd",
+        "--reason",
+        "the spec amended past this attempt's pin",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const posted = host.requests[0];
+    expect(new URL(posted?.url ?? "").pathname).toBe(
+      "/api/specs/demo/native-sdd/actions/plan-abandon",
+    );
+    expect(JSON.parse(String(posted?.init.body))).toEqual({
+      reason: "the spec amended past this attempt's pin",
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      attemptId: "attempt-9",
+    });
+  });
+
+  it("names the fresh open that follows in the human receipt", async () => {
+    const host = abandonHost(
+      () =>
+        new Response(JSON.stringify({ attemptId: "attempt-9" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const result = await runCli(
+      ["spec", "plan", "abandon", "native-sdd", "--reason", "stale pin"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("attempt-9");
+    expect(result.stdout).toContain("cctl spec plan open native-sdd");
+  });
+
+  it("requires --reason before any request", async () => {
+    const host = abandonHost(() => {
+      throw new Error("no request expected");
+    });
+
+    const result = await runCli(
+      ["spec", "plan", "abandon", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--reason");
+    expect(host.requests).toHaveLength(0);
+  });
+});

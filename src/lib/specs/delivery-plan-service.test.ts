@@ -849,3 +849,122 @@ describe("delivery-plan service reaffirmation", () => {
     expect(reaffirmed.value.attempt.draftRevision).toBe(2);
   });
 });
+
+describe("delivery-plan service prelaunch abandon", () => {
+  let db: Db;
+
+  beforeEach(() => {
+    db = _createTestDb({ inMemory: true });
+    seedDeliveryPlanParents(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  const AMENDED_REVISION_ID = "revision-amended";
+
+  /** The pinned revision's successor: the spec amended past the pin. */
+  function amendedRevision(): SpecRevisionSnapshot {
+    const snapshot = pinnedRevision();
+    return {
+      ...snapshot,
+      revision: {
+        ...snapshot.revision,
+        id: AMENDED_REVISION_ID,
+        number: snapshot.revision.number + 1,
+        basedOnRevisionId: PINNED_REVISION_ID,
+      },
+    };
+  }
+
+  it("retires a never-launched attempt so a fresh open pins the current approved revision", async () => {
+    const repos = createDeliveryPlanTestRepos(db);
+    db.prepare(
+      `INSERT INTO spec_revisions (
+         id, spec_id, number, state, content_hash, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(AMENDED_REVISION_ID, SPEC_ID, 3, "approved", "sha256:amended", NOW);
+    openAttempt(repos, {
+      id: "attempt-stranded",
+      document: maximalPlanDocument(),
+    });
+    const service = serviceWith(db, repos, {
+      currentApprovedRevision: async () => amendedRevision(),
+    });
+
+    // The command-center#92 deadlock: the draft blocks a replacement, and no
+    // verb retires it — the spec legitimately amended past the pin.
+    const blocked = await service.open({
+      spec: SPEC,
+      seedFromLast: false,
+      actor: AGENT,
+    });
+    expect(blocked.ok).toBe(false);
+
+    const abandoned = await service.abandonPrelaunch({
+      spec: SPEC,
+      reason: "The spec amended past this attempt's pin.",
+      actor: HUMAN,
+    });
+    if (!abandoned.ok) {
+      throw new Error(abandoned.refusal.unmetConditions.join(" "));
+    }
+    expect(abandoned.value.attemptId).toBe("attempt-stranded");
+
+    const reopened = await service.open({
+      spec: SPEC,
+      seedFromLast: false,
+      actor: AGENT,
+    });
+    if (!reopened.ok) {
+      throw new Error(reopened.refusal.unmetConditions.join(" "));
+    }
+
+    // Reloaded through the repo: the retirement and the fresh pin are durable.
+    const attempts = repos.plans.findAttemptsBySpecId(SPEC_ID);
+    expect(attempts.map((attempt) => attempt.status)).toEqual([
+      "abandoned",
+      "draft",
+    ]);
+    expect(attempts[1]?.pinned_revision_id).toBe(AMENDED_REVISION_ID);
+  });
+
+  it("refuses a launched attempt, naming the post-launch paths", async () => {
+    const repos = createDeliveryPlanTestRepos(db);
+    repos.plans.open({
+      attempt: {
+        id: "attempt-launched",
+        spec_id: SPEC_ID,
+        pinned_revision_id: PINNED_REVISION_ID,
+        delta_basis_execution_id: null,
+        status: "launched",
+        draft_revision: 1,
+        content_json: canonicalDeliveryPlanEnvelopeBytes(maximalPlanDocument()),
+        proposed_snapshot_id: null,
+        approval_json: null,
+        prelaunch_json: null,
+        launched_execution_id: LAUNCHED_EXECUTION_ID,
+        created_at: NOW,
+        updated_at: NOW,
+      },
+      occurredAt: NOW,
+      actor: AGENT,
+    });
+    const service = serviceWith(db, repos);
+
+    const refused = await service.abandonPrelaunch({
+      spec: SPEC,
+      reason: "Trying to retire a running delivery.",
+      actor: HUMAN,
+    });
+
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error("expected a refusal");
+    expect(refused.refusal.code).toBe("plan_status_conflict");
+    expect(refused.refusal.instruction).toContain("cctl spec capture");
+    expect(repos.plans.findAttemptById("attempt-launched")?.status).toBe(
+      "launched",
+    );
+  });
+});

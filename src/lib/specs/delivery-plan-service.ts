@@ -25,6 +25,7 @@ import {
   finalizedDeliveryPlanApprovalSchema,
   finalizedDeliveryPlanPrelaunchSchema,
   liveDeliveryPlanAttempt,
+  postLaunchPathsSentence,
   type DeliveryPlanBinding,
   type DeliveryPlanCandidateRecord,
   type DeliveryPlanDocument,
@@ -260,6 +261,11 @@ export interface DeliveryPlanService {
   abandonLaunch(input: {
     spec: Spec;
     executionId: string;
+    reason: string;
+    actor: ActorProvenance;
+  }): Promise<PlanResult<{ attemptId: string }>>;
+  abandonPrelaunch(input: {
+    spec: Spec;
     reason: string;
     actor: ActorProvenance;
   }): Promise<PlanResult<{ attemptId: string }>>;
@@ -1057,6 +1063,55 @@ export function createDeliveryPlanService(
       }
     },
 
+    /**
+     * The prelaunch exit (command-center#92): a never-launched attempt pinned
+     * to a revision the spec has amended past can neither be re-pinned (the
+     * pin is immutable by design) nor launched honestly, and it blocks a
+     * replacement `open` forever. Retiring it is the escape that lets a fresh
+     * attempt pin the current approved revision. A launched attempt is owned
+     * by its execution, so its retirement stays with the post-launch paths.
+     */
+    async abandonPrelaunch(input) {
+      const attempt = liveAttempt(input.spec.id);
+      if (attempt === null) return noAttempt(input.spec.slug);
+      if (attempt.status === "launched") {
+        return {
+          ok: false,
+          refusal: {
+            code: "plan_status_conflict",
+            unmetConditions: [
+              `Attempt ${attempt.id} launched execution ${attempt.launched_execution_id}; a launched attempt is retired through its run, not from prelaunch.`,
+            ],
+            instruction: postLaunchPathsSentence({
+              slug: input.spec.slug,
+              executionId: attempt.launched_execution_id ?? "unknown",
+            }),
+          },
+        };
+      }
+      try {
+        const abandoned = deps.plans.recordTransition({
+          attemptId: attempt.id,
+          transition: { kind: "abandon", reason: input.reason },
+          occurredAt: deps.now(),
+          actor: input.actor,
+        });
+        logger.info("specs.delivery-plan.abandoned", {
+          specId: input.spec.id,
+          attemptId: abandoned.id,
+          executionId: null,
+        });
+        publishPlanChange(
+          input.spec,
+          await project(abandoned, input.spec),
+          "abandoned",
+        );
+        return { ok: true, value: { attemptId: abandoned.id } };
+      } catch (error) {
+        return planFailure(error, input.spec.slug);
+      }
+    },
+
     async abandonLaunch(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
@@ -1497,7 +1552,7 @@ function liveAttemptAlreadyOpen(slug: string): PlanResult<never> {
     refusal: {
       code: "plan_status_conflict",
       unmetConditions: ["A delivery-plan attempt is already open."],
-      instruction: `Read it with \`cctl spec plan status ${slug}\`, or reopen the candidate when a new draft is needed.`,
+      instruction: `Read it with \`cctl spec plan status ${slug}\`; reopen the candidate with \`cctl spec plan reopen ${slug} --reason <why>\` when a new draft is needed, or retire a never-launched attempt with \`cctl spec plan abandon ${slug} --reason <why>\` so a fresh open pins the current approved revision.`,
     },
   };
 }
