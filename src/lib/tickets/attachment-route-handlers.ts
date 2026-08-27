@@ -31,9 +31,7 @@ import {
   getTicketService,
 } from "./service-factory";
 import type { TicketService } from "./service";
-import { readBodyBounded } from "./bounded-body";
-
-export { readBodyBounded } from "./bounded-body";
+import { readBodyBounded } from "@/lib/shared/bounded-body";
 
 const logger = createLogger("tickets.attachments.routes");
 

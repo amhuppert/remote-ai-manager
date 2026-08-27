@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import type { AllConversationsResponse } from "@/lib/conversations/schemas";
+import type { NotepadListItem } from "@/lib/notepads/schemas";
 import type { SpecPickerSpec } from "@/lib/prompt-editor/reference-registry";
 import type { PickerTrigger } from "@/lib/prompt-editor/reference-picker";
 import type { TicketListItem } from "@/lib/tickets/schemas";
@@ -164,6 +165,48 @@ const files = [
   { path: "docs/reports/combobox-autocomplete-decision.md" },
 ];
 
+const notepads: NotepadListItem[] = [
+  {
+    id: "np-working-context",
+    scope: "project",
+    projectPath: "/repos/command-center",
+    projectName: "command-center",
+    name: "slice-1 working context",
+    revision: 12,
+    writeMode: "full-edit",
+    pinned: true,
+    archived: false,
+    createdAt: "2026-08-01T12:00:00Z",
+    updatedAt: "2026-08-16T09:30:00Z",
+  },
+  {
+    id: "np-house-rules",
+    scope: "global",
+    projectPath: null,
+    projectName: null,
+    name: "Standing house rules",
+    revision: 4,
+    writeMode: "read-only",
+    pinned: false,
+    archived: false,
+    createdAt: "2026-06-02T12:00:00Z",
+    updatedAt: "2026-08-10T18:05:00Z",
+  },
+  {
+    id: "np-review-log",
+    scope: "project",
+    projectPath: "/repos/command-center",
+    projectName: "command-center",
+    name: "Review findings log",
+    revision: 31,
+    writeMode: "append-only",
+    pinned: false,
+    archived: false,
+    createdAt: "2026-07-11T12:00:00Z",
+    updatedAt: "2026-08-15T14:20:00Z",
+  },
+];
+
 const idle = { isLoading: false, isError: false, error: null } as const;
 
 const Popup = createReferencePickerPopup({
@@ -171,6 +214,7 @@ const Popup = createReferencePickerPopup({
   useTickets: () => ({ data: tickets, ...idle }),
   useSpecs: () => ({ data: specs, ...idle }),
   useFiles: () => ({ data: { items: files }, ...idle }),
+  useNotepads: () => ({ data: notepads, ...idle }),
 });
 
 function Demo({

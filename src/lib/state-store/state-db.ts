@@ -1630,6 +1630,100 @@ export const GRAPH_PLAN_REVIEWS_SCHEMA_DDL = `
     ON graph_plan_reviews (definition_hash, reviewed_at);
 `;
 
+/**
+ * Notepads: durable, reference-aware working context shared by the user and
+ * agents. Three tables — the head row, its append-only revision history, and
+ * the metadata for images whose bytes live in the notepad content store.
+ *
+ * `project_path` is nullable because a notepad is either global or owned by one
+ * project, and the CHECK pins that pairing in both directions so a project-scoped
+ * row can never lose its owner and a global row can never acquire one. Name
+ * uniqueness is an expression index over `IFNULL(project_path, '')` rather than
+ * a plain UNIQUE constraint: SQLite treats every NULL as distinct, so a plain
+ * constraint would let the global scope hold unlimited same-named notepads.
+ *
+ * `revision` is the monotonic per-notepad compare-and-swap token agent writes
+ * state; `write_mode` is the user's cooperative guardrail over agent writes and
+ * defaults to `full-edit` at the storage layer so the UI and the agent `create`
+ * verb inherit one default.
+ *
+ * `notepad_revisions.author_conversation_id` deliberately carries NO foreign key
+ * (the `graph_plan_reviews` precedent): deleting or compacting a conversation
+ * must not delete the history it authored. Content is a full snapshot per
+ * revision, which makes restore a row copy instead of a reconstruction.
+ *
+ * Row cascades cover only the database — image BYTES are removed by the notepad
+ * content store, which the notepad and project deletion paths call explicitly.
+ *
+ * Exported so migration 0035 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy. Purely additive, so no
+ * KNOWN_SCHEMA_VERSION bump: an older build sharing `command-center.db` simply
+ * ignores tables it has no reader for.
+ */
+export const NOTEPADS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS notepads (
+    id           TEXT PRIMARY KEY,
+    scope        TEXT NOT NULL CHECK (scope IN ('global', 'project')),
+    project_path TEXT,
+    name         TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    revision     INTEGER NOT NULL,
+    write_mode   TEXT NOT NULL DEFAULT 'full-edit' CHECK (write_mode IN (
+      'read-only', 'append-only', 'full-edit'
+    )),
+    pinned       INTEGER NOT NULL DEFAULT 0,
+    archived     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    CHECK ((scope = 'project') = (project_path IS NOT NULL)),
+    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
+  );
+
+  -- Names are unique per scope. The IFNULL collapses the global scope's NULL
+  -- project onto one bucket so its names actually collide.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_notepads_scope_name
+    ON notepads (scope, IFNULL(project_path, ''), name);
+
+  -- The panel and picker read shape: one scope's unarchived notepads, pinned
+  -- first, most recently touched first.
+  CREATE INDEX IF NOT EXISTS idx_notepads_scope_listing
+    ON notepads (scope, project_path, archived, pinned DESC, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS notepad_revisions (
+    id                     TEXT PRIMARY KEY,
+    notepad_id             TEXT NOT NULL,
+    revision               INTEGER NOT NULL,
+    content                TEXT NOT NULL,
+    author_kind            TEXT NOT NULL CHECK (author_kind IN (
+      'user', 'agent'
+    )),
+    author_conversation_id TEXT,
+    origin                 TEXT NOT NULL CHECK (origin IN (
+      'create', 'edit', 'append', 'restore'
+    )),
+    base_revision          INTEGER,
+    restored_from_revision INTEGER,
+    created_at             TEXT NOT NULL,
+    UNIQUE (notepad_id, revision),
+    FOREIGN KEY (notepad_id) REFERENCES notepads(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS notepad_images (
+    id           TEXT PRIMARY KEY,
+    notepad_id   TEXT NOT NULL,
+    file_name    TEXT NOT NULL,
+    media_type   TEXT NOT NULL,
+    size_bytes   INTEGER NOT NULL,
+    sha256       TEXT NOT NULL,
+    snapshot_key TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (notepad_id) REFERENCES notepads(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notepad_images_notepad_created
+    ON notepad_images (notepad_id, created_at);
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -2180,6 +2274,8 @@ const SCHEMA_DDL = `
   ${GRAPH_WORKFLOW_PENDING_ARTIFACTS_SCHEMA_DDL}
 
   ${GRAPH_PLAN_REVIEWS_SCHEMA_DDL}
+
+  ${NOTEPADS_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {

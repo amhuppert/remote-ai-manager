@@ -321,6 +321,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     executeAgentCall,
     getTaskRunner: (backend) => getTaskRunner(backend),
     getLiveTicketBlock: async () => null,
+    readNotepadForInjection: async () => null,
     claimWorkflowResults: async () => [],
     settleWorkflowResults: async () => 0,
     releaseWorkflowResults: async () => 0,

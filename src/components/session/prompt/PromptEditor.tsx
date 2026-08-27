@@ -25,6 +25,7 @@ import {
   ImageMarker,
   ImagePasteHandler,
   MessageMentionNode,
+  NotepadMentionNode,
   DecisionMentionNode,
   QuestionMentionNode,
   RefPasteHandler,
@@ -384,6 +385,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         TaskMentionNode,
         QuestionMentionNode,
         AssumptionMentionNode,
+        NotepadMentionNode,
         RefPasteHandler,
         ArgumentHint,
         ImagePasteHandler.configure({

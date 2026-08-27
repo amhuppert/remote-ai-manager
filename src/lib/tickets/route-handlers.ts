@@ -29,7 +29,7 @@ import {
   type TicketService,
 } from "./service";
 import { resolveTicketProjectOr404 } from "./route-resolution";
-import { readBodyBounded } from "./bounded-body";
+import { readBodyBounded } from "@/lib/shared/bounded-body";
 
 const logger = createLogger("tickets.routes");
 

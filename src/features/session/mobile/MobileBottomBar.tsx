@@ -2,12 +2,19 @@
 
 import MobileActionMenu from "@/components/MobileActionMenu";
 
-export type MobilePanelTab = "chat" | "diff" | "docs" | "specs" | "info";
+export type MobilePanelTab =
+  | "chat"
+  | "diff"
+  | "docs"
+  | "notepad"
+  | "specs"
+  | "info";
 
 const TABS: { id: MobilePanelTab; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "diff", label: "Diff" },
   { id: "docs", label: "Docs" },
+  { id: "notepad", label: "Notepad" },
   { id: "specs", label: "Specs" },
   { id: "info", label: "Info" },
 ];

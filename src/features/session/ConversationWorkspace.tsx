@@ -313,6 +313,8 @@ export default function ConversationWorkspace({
         store.switchMobilePanel("docs");
       } else if (view === "specs") {
         store.switchMobilePanel("specs");
+      } else if (view === "notepad") {
+        store.switchMobilePanel("notepad");
       } else {
         store.switchMobilePanel("diff");
       }

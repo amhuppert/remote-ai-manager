@@ -25,6 +25,8 @@ import type { ConversationScopeRef } from "@/lib/conversations/conversation-targ
 import type { AllConversationsResponse } from "@/lib/conversations/schemas";
 import { useProjectFilesQuery } from "@/lib/files/queries";
 import type { FileItem } from "@/lib/files/schemas";
+import { useNotepadPickerListQuery } from "@/lib/notepads/queries";
+import type { NotepadListItem } from "@/lib/notepads/schemas";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   buildPickerView,
@@ -106,6 +108,9 @@ export interface ReferencePickerPopupDeps {
     projectName: string;
     scopeRef: ConversationScopeRef;
   }): QueryShape<{ items: FileItem[] }>;
+  useNotepads(params: {
+    currentProjectName: string;
+  }): QueryShape<readonly NotepadListItem[]>;
 }
 
 export function createReferencePickerPopup(
@@ -147,6 +152,7 @@ export function createReferencePickerPopup(
         projectName: currentProjectName,
         scopeRef,
       });
+      const notepadsQuery = deps.useNotepads({ currentProjectName });
 
       const context = useMemo<ReferencePickerContext>(
         () => ({
@@ -155,6 +161,7 @@ export function createReferencePickerPopup(
           conversations: conversationsQuery.data?.items ?? [],
           tickets: ticketsQuery.data ?? [],
           specs: specsQuery.data ?? [],
+          notepads: notepadsQuery.data ?? [],
           selectedSpec: null,
           includeFinishedTickets: includeDone,
           includeArchivedConversations: includeArchived,
@@ -165,6 +172,7 @@ export function createReferencePickerPopup(
           currentProjectName,
           includeArchived,
           includeDone,
+          notepadsQuery.data,
           specsQuery.data,
           ticketsQuery.data,
         ],
@@ -373,19 +381,21 @@ export function createReferencePickerPopup(
       );
       useImperativeHandle(ref, () => ({ handleKeyDown }), [handleKeyDown]);
 
-      // Four sources feed one list, so they are reported progressively: rows
+      // Five sources feed one list, so they are reported progressively: rows
       // that have arrived stay on screen while a slower source loads, and a
       // failing source only takes over the body when nothing else matched.
       const settling =
         conversationsQuery.isLoading ||
         ticketsQuery.isLoading ||
         specsQuery.isLoading ||
-        filesQuery.isLoading;
+        filesQuery.isLoading ||
+        notepadsQuery.isLoading;
       const failure = firstError([
         [conversationsQuery, "Failed to load conversations"],
         [ticketsQuery, "Failed to load tickets"],
         [specsQuery, "Failed to load specs"],
         [filesQuery, "Failed to load files"],
+        [notepadsQuery, "Failed to load notepads"],
       ]);
       const hasRows = view.rows.length > 0;
 
@@ -476,6 +486,7 @@ const TAB_ACCENT_CLASS: Record<string, string> = {
   conversation: "border-b-cyan text-text-primary",
   spec: "border-b-violet text-text-primary",
   ticket: "border-b-amber text-text-primary",
+  notepad: "border-b-blue text-text-primary",
 };
 
 const TAB_COUNT_CLASS: Record<string, string> = {
@@ -484,6 +495,7 @@ const TAB_COUNT_CLASS: Record<string, string> = {
   conversation: "text-cyan",
   spec: "text-violet",
   ticket: "text-amber",
+  notepad: "text-blue",
 };
 
 function ScopeTabs({
@@ -865,4 +877,6 @@ export const ReferencePickerPopup = createReferencePickerPopup({
         ? { projectName }
         : { projectName, sessionName: scopeRef.sessionName },
     ),
+  useNotepads: ({ currentProjectName }) =>
+    useNotepadPickerListQuery(currentProjectName),
 });

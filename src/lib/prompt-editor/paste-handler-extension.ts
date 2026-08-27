@@ -2,11 +2,16 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { ImageMarkerAttrs } from "./image-marker-node";
 
-interface AddImageResult {
+export interface AddImageResult {
   attachmentId: string;
   thumbnailUrl: string;
   mediaType: string;
   fileName: string | null;
+}
+
+export interface PastedImageNode {
+  type: string;
+  attrs: Record<string, unknown>;
 }
 
 export interface ImagePasteHandlerOptions {
@@ -16,6 +21,12 @@ export interface ImagePasteHandlerOptions {
    * if the file was rejected (over-limit, unsupported type, etc.).
    */
   onAddImage: (file: File) => Promise<AddImageResult | null>;
+  /**
+   * Build the node inserted for an accepted image. Defaults to the prompt
+   * editor's `imageMarker`; the notepad editor swaps in its id-addressed
+   * `notepadImage` node without duplicating the paste/drop plumbing.
+   */
+  buildNode: (result: AddImageResult) => PastedImageNode;
 }
 
 const SUPPORTED_IMAGE_RE = /^image\/(png|jpeg|gif|webp)$/;
@@ -34,11 +45,21 @@ export const ImagePasteHandler = Extension.create<ImagePasteHandlerOptions>({
   addOptions() {
     return {
       onAddImage: async () => null,
+      buildNode: (result: AddImageResult): PastedImageNode => ({
+        type: "imageMarker",
+        attrs: {
+          index: 0,
+          attachmentId: result.attachmentId,
+          mediaType: result.mediaType,
+          thumbnailUrl: result.thumbnailUrl,
+          fileName: result.fileName,
+        } satisfies ImageMarkerAttrs,
+      }),
     };
   },
 
   addProseMirrorPlugins() {
-    const { onAddImage } = this.options;
+    const { onAddImage, buildNode } = this.options;
 
     return [
       new Plugin({
@@ -55,6 +76,7 @@ export const ImagePasteHandler = Extension.create<ImagePasteHandlerOptions>({
               view,
               imageFiles,
               onAddImage,
+              buildNode,
               view.state.selection.from,
             );
             event.preventDefault();
@@ -77,7 +99,7 @@ export const ImagePasteHandler = Extension.create<ImagePasteHandlerOptions>({
             const pos =
               view.posAtCoords(coords)?.pos ?? view.state.doc.content.size;
 
-            void insertAfterAdd(view, imageFiles, onAddImage, pos);
+            void insertAfterAdd(view, imageFiles, onAddImage, buildNode, pos);
             event.preventDefault();
             return true;
           },
@@ -102,26 +124,19 @@ async function insertAfterAdd(
   view: import("@tiptap/pm/view").EditorView,
   files: File[],
   onAddImage: ImagePasteHandlerOptions["onAddImage"],
+  buildNode: ImagePasteHandlerOptions["buildNode"],
   insertPos: number,
 ): Promise<void> {
-  const schema = view.state.schema;
-  const markerType = schema.nodes["imageMarker"];
-  if (!markerType) return;
-
   let pos = insertPos;
   for (const file of files) {
     const result = await onAddImage(file);
     if (!result) continue;
 
-    const attrs: ImageMarkerAttrs = {
-      index: 0,
-      attachmentId: result.attachmentId,
-      mediaType: result.mediaType,
-      thumbnailUrl: result.thumbnailUrl,
-      fileName: result.fileName,
-    };
+    const node = buildNode(result);
+    const nodeType = view.state.schema.nodes[node.type];
+    if (!nodeType) return;
 
-    const tr = view.state.tr.insert(pos, markerType.create(attrs));
+    const tr = view.state.tr.insert(pos, nodeType.create(node.attrs));
     view.dispatch(tr);
     pos += 1;
   }

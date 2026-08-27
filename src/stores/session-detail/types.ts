@@ -9,10 +9,24 @@ import type {
   DocumentFeedbackTarget,
 } from "@/lib/document-comments/schemas";
 import type { LayoutMode } from "@/lib/sessions/schemas";
+import type { NotepadSort } from "@/lib/notepads/schemas";
+import type { NotepadExternalWrite } from "@/lib/notepads/sse-reactions";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
-export type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
-export type RightPaneTab = "diff" | "docs" | "specs" | "alignment" | "artifact";
+export type MobilePanel =
+  | "chat"
+  | "diff"
+  | "docs"
+  | "notepad"
+  | "specs"
+  | "info";
+export type RightPaneTab =
+  | "diff"
+  | "docs"
+  | "specs"
+  | "alignment"
+  | "artifact"
+  | "notepad";
 
 /**
  * A one-shot "scroll the transcript to this message" request, set by surfaces
@@ -221,6 +235,23 @@ export interface DocumentViewerSlice {
   setFeedbackTarget: (target: DocumentFeedbackTarget) => void;
 }
 
+export interface NotepadPanelSlice {
+  /** The notepad open in the right-pane Notepad tab, or null when browsing. */
+  openNotepadId: string | null;
+  /** The browse list's sort preference. */
+  notepadSort: NotepadSort;
+  /**
+   * The latest externally written notepad head, recorded by the SSE reaction
+   * so an open editor can attribute the update (clean-adopt strip vs dirty
+   * collision banner). Transient signal state — never stashed per session.
+   */
+  notepadExternalWrite: NotepadExternalWrite | null;
+  openNotepad: (notepadId: string) => void;
+  closeNotepad: () => void;
+  setNotepadSort: (sort: NotepadSort) => void;
+  recordNotepadExternalWrite: (write: NotepadExternalWrite) => void;
+}
+
 export interface SessionUiSlice {
   isVoiceRecording: boolean;
   promptPlaceholder: string | null;
@@ -254,6 +285,8 @@ export interface PanelSessionSnapshot {
   activeDocPath: string | null;
   specBrowserSelection: SpecBrowserSelection | null;
   pendingTrayExpanded: boolean;
+  openNotepadId: string | null;
+  notepadSort: NotepadSort;
 }
 
 export interface PanelSessionSlice {
@@ -284,6 +317,7 @@ export type SessionDetailStore = LayoutSlice &
   InFlightSlice &
   SidebarSlice &
   DocumentViewerSlice &
+  NotepadPanelSlice &
   SessionUiSlice &
   PanelSessionSlice &
   ResetSlice;
@@ -307,6 +341,9 @@ export type SessionDetailState = Pick<
   | "docActivationNonce"
   | "pendingTrayExpanded"
   | "feedbackTarget"
+  | "openNotepadId"
+  | "notepadSort"
+  | "notepadExternalWrite"
   | "panelSessionKey"
   | "panelSessionMemory"
   | "isVoiceRecording"
@@ -411,6 +448,9 @@ export const initialState: SessionDetailState = {
   docActivationNonce: 0,
   pendingTrayExpanded: false,
   feedbackTarget: null,
+  openNotepadId: null,
+  notepadSort: "recency",
+  notepadExternalWrite: null,
   messageNavRequest: null,
   panelSessionKey: null,
   panelSessionMemory: {},

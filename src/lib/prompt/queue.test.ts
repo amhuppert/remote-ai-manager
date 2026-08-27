@@ -55,6 +55,7 @@ const saveTranscriptImageMock = vi.fn();
 const getNextImageIndexMock = vi.fn();
 const getProjectDisplayNameMock = vi.fn();
 const queueCapabilityForBackendMock = vi.fn();
+const readNotepadForInjectionMock = vi.fn(async () => null);
 
 const deps: QueueMessageDeps = {
   enqueue: enqueueMock,
@@ -67,6 +68,7 @@ const deps: QueueMessageDeps = {
   getNextImageIndex: getNextImageIndexMock,
   getProjectDisplayName: getProjectDisplayNameMock,
   queueCapabilityForBackend: queueCapabilityForBackendMock,
+  readNotepadForInjection: readNotepadForInjectionMock,
 };
 
 const baseParams = {
@@ -657,5 +659,141 @@ describe("queueMessage in_turn", () => {
     expect(markDeliveredMock).not.toHaveBeenCalled();
     expect(markPendingMock).not.toHaveBeenCalled();
     expect(result.deliveryTiming).toBe("in_turn");
+  });
+});
+
+// ===========================================================================
+// D5: notepad references expand to full content on the delivery path only
+// ===========================================================================
+
+describe("queueMessage notepad injection", () => {
+  const NOTEPAD_REF =
+    '<notepad-ref notepad-id="np-1" name="Design Notes" scope="global" read-command="cctl notepad get \'np-1\'" />';
+  const NESTED_REF =
+    '<notepad-ref notepad-id="np-2" name="Nested" scope="global" read-command="cctl notepad get \'np-2\'" />';
+
+  function deliveredText(queueUserInputMock: ReturnType<typeof vi.fn>): string {
+    const call = queueUserInputMock.mock.calls.at(-1)![0] as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    return call.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("");
+  }
+
+  function blockText(content: Array<{ type: string; text?: string }>): string {
+    return content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("");
+  }
+
+  beforeEach(() => {
+    queueCapabilityForBackendMock.mockReturnValue({
+      acceptsWhileRunning: true,
+      deliveryTiming: "in_turn",
+    });
+    claimLiveDeliveryMock.mockResolvedValue(
+      makePendingEntry({ status: "delivering", deliveryAttemptId: "att-9" }),
+    );
+  });
+
+  it("delivers full notepad content while the durable row and transcript keep the reference", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      ...baseParams,
+      text: `Read ${NOTEPAD_REF} first.`,
+      backend: "claude",
+      deps: {
+        ...deps,
+        readNotepadForInjection: vi.fn(async (notepadId: string) =>
+          notepadId === "np-1"
+            ? {
+                id: "np-1",
+                name: "Design Notes",
+                revision: 4,
+                writeMode: "read-only" as const,
+                content: `Canonical body.\n\n[Image: img-a]\n\n${NESTED_REF}`,
+              }
+            : null,
+        ),
+      },
+    });
+
+    const delivered = deliveredText(queueUserInputMock);
+    expect(delivered).toContain("id: np-1");
+    expect(delivered).toContain("name: Design Notes");
+    expect(delivered).toContain("revision: 4");
+    expect(delivered).toContain("write-mode: read-only");
+    expect(delivered).toContain("read: cctl notepad get 'np-1'");
+    expect(delivered).toContain("Canonical body.");
+    expect(delivered).toContain("[Image: img-a]");
+    // Nested reference is delivered as a reference, not expanded content.
+    expect(delivered).toContain(NESTED_REF);
+
+    const enqueued = enqueueMock.mock.calls.at(-1)![0] as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(blockText(enqueued.content)).toBe(`Read ${NOTEPAD_REF} first.`);
+
+    const appended = appendTranscriptEntryMock.mock.calls.at(-1)![1] as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(blockText(appended.content)).toBe(`Read ${NOTEPAD_REF} first.`);
+  });
+
+  it("injects a not-found block naming the id for a deleted notepad", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: `Read ${NOTEPAD_REF}`,
+      backend: "claude",
+      deps: { ...deps, readNotepadForInjection: vi.fn(async () => null) },
+    });
+
+    expect(result.deliveryTiming).toBe("in_turn");
+    const delivered = deliveredText(queueUserInputMock);
+    expect(delivered).toContain("id: np-1");
+    expect(delivered).toContain("not found");
+  });
+
+  it("delivers the un-expanded text when the notepad read fails", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      ...baseParams,
+      text: `Resilient ${NOTEPAD_REF}`,
+      backend: "claude",
+      deps: {
+        ...deps,
+        readNotepadForInjection: vi.fn(async () => {
+          throw new Error("state store unavailable");
+        }),
+      },
+    });
+
+    expect(deliveredText(queueUserInputMock)).toBe(`Resilient ${NOTEPAD_REF}`);
+  });
+
+  it("does not read notepads for a prompt with no notepad reference", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+    const readNotepadForInjection = vi.fn(async () => null);
+
+    await queueMessage({
+      ...baseParams,
+      text: "plain message",
+      backend: "claude",
+      deps: { ...deps, readNotepadForInjection },
+    });
+
+    expect(readNotepadForInjection).not.toHaveBeenCalled();
+    expect(deliveredText(queueUserInputMock)).toBe("plain message");
   });
 });

@@ -201,6 +201,15 @@ export interface SessionDeps {
     projectPath: string,
     ticketIds: string[],
   ): Promise<void>;
+  /**
+   * Capture notepad ids before the project-row cascade removes the lookup rows.
+   */
+  captureNotepadContentForProject(projectPath: string): Promise<string[]>;
+  /** Best-effort removal of captured notepad image bytes after cascade. */
+  cleanupNotepadContentForProject(
+    projectPath: string,
+    notepadIds: string[],
+  ): Promise<void>;
   runSessionLifecycleOperation<T>(
     projectPath: string,
     sessionName: string,
@@ -311,6 +320,15 @@ const defaultSessionDeps: SessionDeps = {
       await import("@/lib/tickets/service-factory");
     await getTicketContentStore().deleteProject(projectPath, ticketIds);
   },
+  captureNotepadContentForProject: async (projectPath) => {
+    const { getNotepadsRepo } = await import("@/lib/notepads/service-factory");
+    return getNotepadsRepo().listNotepadIds(projectPath);
+  },
+  cleanupNotepadContentForProject: async (projectPath, notepadIds) => {
+    const { getNotepadContentStore } =
+      await import("@/lib/notepads/service-factory");
+    await getNotepadContentStore().deleteProject(projectPath, notepadIds);
+  },
   runSessionLifecycleOperation: (projectPath, sessionName, operation) =>
     getSessionLifecycleGate().runExclusive(projectPath, sessionName, operation),
   runSessionLifecycleOperations: (projectPath, sessionNames, operation) =>
@@ -389,6 +407,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     deleteContextArtifactsForScope,
     captureTicketContentForProject,
     cleanupTicketContentForProject,
+    captureNotepadContentForProject,
+    cleanupNotepadContentForProject,
     runSessionLifecycleOperation,
     runSessionLifecycleOperations,
     runSessionProjectDeletion,
@@ -1257,6 +1277,19 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       });
     }
 
+    let notepadContentIds: string[] | null = null;
+    try {
+      notepadContentIds = await captureNotepadContentForProject(projectPath);
+    } catch (err) {
+      logger.warn("project.delete.notepad_content_capture_failure", {
+        projectPath,
+        orphanPathKey: await import("@/lib/notepads/content-store")
+          .then((m) => m.NOTEPAD_CONTENT_ROOT_DIRNAME)
+          .catch(() => "notepad-content"),
+        error: getErrorMessage(err),
+      });
+    }
+
     const sessionNames = (await getProjectSessionListItems(projectPath)).map(
       (s) => s.sessionName,
     );
@@ -1304,6 +1337,23 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           orphanPathKey: await import("@/lib/tickets/content-store")
             .then((m) => m.TICKET_CONTENT_ROOT_DIRNAME)
             .catch(() => "ticket-content"),
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
+    // Notepad image bytes are the same shape of problem as ticket blobs: the
+    // row cascade cannot reach the filesystem, so the ids captured above drive
+    // a best-effort sweep once no live row can reference them.
+    if (notepadContentIds !== null) {
+      try {
+        await cleanupNotepadContentForProject(projectPath, notepadContentIds);
+      } catch (err) {
+        logger.warn("project.delete.notepad_content_cleanup_failure", {
+          projectPath,
+          orphanPathKey: await import("@/lib/notepads/content-store")
+            .then((m) => m.NOTEPAD_CONTENT_ROOT_DIRNAME)
+            .catch(() => "notepad-content"),
           error: getErrorMessage(err),
         });
       }

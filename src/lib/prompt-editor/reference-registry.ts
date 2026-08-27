@@ -37,7 +37,18 @@ import {
   type TicketListItem,
   type TicketStatus,
 } from "@/lib/tickets/schemas";
+import {
+  NotepadRefEditorChip,
+  NotepadRefTranscriptChip,
+} from "@/components/references/NotepadRefChips";
+import { buildNotepadRefXml } from "@/lib/notepads/references";
+import {
+  notepadRefAttrsSchema,
+  type NotepadListItem,
+  type NotepadWriteMode,
+} from "@/lib/notepads/schemas";
 import { conversationRefAttrsToMentionAttrs } from "./conversation-mention-node";
+import { notepadRefAttrsToMentionAttrs } from "./notepad-mention-node";
 import { messageRefAttrsToMentionAttrs } from "./message-mention-node";
 import { ticketRefAttrsToMentionAttrs } from "./ticket-mention-node";
 import {
@@ -58,7 +69,8 @@ export type ReferenceType =
   | "decision"
   | "task"
   | "question"
-  | "assumption";
+  | "assumption"
+  | "notepad";
 export type ReferenceNodeName =
   | "conversationMention"
   | "ticketMention"
@@ -68,7 +80,8 @@ export type ReferenceNodeName =
   | "decisionMention"
   | "taskMention"
   | "questionMention"
-  | "assumptionMention";
+  | "assumptionMention"
+  | "notepadMention";
 export type ReferenceXmlTag =
   | "conversation-ref"
   | "ticket-ref"
@@ -78,7 +91,8 @@ export type ReferenceXmlTag =
   | "decision-ref"
   | "task-ref"
   | "question-ref"
-  | "assumption-ref";
+  | "assumption-ref"
+  | "notepad-ref";
 
 export interface ReferencePickerSource {
   groupLabel: string;
@@ -95,6 +109,8 @@ export interface ReferencePickerContext {
   conversations: readonly ConversationListItem[];
   tickets: readonly TicketListItem[];
   specs: readonly SpecPickerSpec[];
+  /** Everything reachable from here: global notepads plus this project's. */
+  notepads: readonly NotepadListItem[];
   selectedSpec: SpecPickerSpec | null;
   /** Offer tickets that are `done` or `closed` (the Alt+D filter). */
   includeFinishedTickets: boolean;
@@ -239,6 +255,21 @@ function buildTicketMentionXml(attrs: Record<string, unknown>): string {
   });
 }
 
+/**
+ * Convert a `notepadMention` node's string attributes back into the canonical
+ * `<notepad-ref />` tag. The read command is re-derived from the immutable id,
+ * so the emitted XML stays canonical regardless of what was pasted.
+ */
+function buildNotepadMentionXml(attrs: Record<string, unknown>): string {
+  const projectName = stringAttr(attrs, "projectName");
+  return buildNotepadRefXml({
+    notepadId: stringAttr(attrs, "notepadId"),
+    name: stringAttr(attrs, "name"),
+    scope: stringAttr(attrs, "scope") === "project" ? "project" : "global",
+    projectName: projectName || null,
+  });
+}
+
 function stringAttr(attrs: Record<string, unknown>, key: string): string {
   const raw = attrs[key];
   return typeof raw === "string" ? raw : "";
@@ -355,6 +386,70 @@ function conversationPickerItems(
       },
     };
   });
+}
+
+/**
+ * The write mode is the user's leash on agent writes, so a row advertises it
+ * only when it actually constrains one — the permissive default stays silent.
+ */
+const NOTEPAD_WRITE_MODE_PRESENTATION: Record<
+  NotepadWriteMode,
+  { label: string; tone: ReferenceStatusTone } | null
+> = {
+  "read-only": { label: "read only", tone: "neutral" },
+  "append-only": { label: "append only", tone: "amber" },
+  "full-edit": null,
+};
+
+function notepadPickerItems(
+  query: string,
+  context: ReferencePickerContext,
+): ReferencePickerItem[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  return (
+    context.notepads
+      .filter(
+        (item) =>
+          !item.archived &&
+          (item.scope === "global" ||
+            item.projectName === context.currentProjectName) &&
+          (normalizedQuery.length === 0 ||
+            item.name.toLowerCase().includes(normalizedQuery)),
+      )
+      .map((item, inputIndex) => ({ item, inputIndex }))
+      // Pins are the working set, so they lead; everything else keeps the
+      // server's ordering rather than being re-sorted client-side.
+      .sort(
+        (left, right) =>
+          Number(right.item.pinned) - Number(left.item.pinned) ||
+          left.inputIndex - right.inputIndex,
+      )
+      .map(({ item }) => ({
+        type: "notepad" as const,
+        id: `notepad:${item.id}`,
+        label: item.name,
+        description:
+          item.scope === "global" ? "Global" : (item.projectName ?? ""),
+        matchIndices: matchingIndices(item.name, normalizedQuery),
+        attrs: {
+          notepadId: item.id,
+          name: item.name,
+          scope: item.scope,
+          projectName: item.scope === "global" ? "" : (item.projectName ?? ""),
+        },
+        presentation: {
+          idLabel: null,
+          meta: { kind: "relative-time" as const, iso: item.updatedAt },
+          status: NOTEPAD_WRITE_MODE_PRESENTATION[item.writeMode],
+          dimPrefixLength: 0,
+          facts: item.pinned
+            ? ([{ label: "pinned", tone: "accent" }] as const)
+            : [],
+          muted: false,
+          completion: item.name,
+        },
+      }))
+  );
 }
 
 function specPickerItems(
@@ -650,6 +745,26 @@ export const REFERENCE_REGISTRY = [
       queryAliases: ["assumption", "assumptions"],
       getItems: (query, context) =>
         specElementPickerItems("assumption", query, context),
+    },
+  },
+  {
+    type: "notepad",
+    nodeName: "notepadMention",
+    xmlTag: "notepad-ref",
+    attrsSchema: notepadRefAttrsSchema,
+    buildXml: buildNotepadMentionXml,
+    parseAttrs: (attrs: unknown) => ({
+      ...notepadRefAttrsToMentionAttrs(notepadRefAttrsSchema.parse(attrs)),
+    }),
+    EditorChip: NotepadRefEditorChip,
+    TranscriptChip: transcriptChip(
+      notepadRefAttrsSchema,
+      NotepadRefTranscriptChip,
+    ),
+    pickerSource: {
+      groupLabel: "Notepads",
+      queryAliases: ["notepad", "notepads"],
+      getItems: notepadPickerItems,
     },
   },
 ] as const satisfies readonly ReferenceRegistryEntry[];

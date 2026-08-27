@@ -262,14 +262,24 @@ export function parseArgv(
       return { kind: "error", message: `invalid flag "${arg}"` };
     }
     let value: string | undefined;
+    // `--flag value` cannot tell a value from the next flag, so a `--`-prefixed
+    // token there is a forgotten value — refusing it is what turns that slip
+    // into an error instead of a silently wrong identity. `--flag=value` has no
+    // such ambiguity: the value is attached, so it may start with dashes. That
+    // is the conventional escape hatch, and the only way to name an identity
+    // whose value does — a project whose directory basename begins with `--`
+    // is otherwise unaddressable by any command.
     if (eq === -1) {
       value = argv[i + 1];
       i++;
+      if (value === undefined || value === "" || value.startsWith("--")) {
+        return { kind: "error", message: `flag --${name} requires a value` };
+      }
     } else {
       value = arg.slice(eq + 1);
-    }
-    if (value === undefined || value === "" || value.startsWith("--")) {
-      return { kind: "error", message: `flag --${name} requires a value` };
+      if (value === "") {
+        return { kind: "error", message: `flag --${name} requires a value` };
+      }
     }
     values[name] = value;
     (lists[name] ??= []).push(value);

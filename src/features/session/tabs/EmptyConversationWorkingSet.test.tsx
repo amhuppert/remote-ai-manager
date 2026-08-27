@@ -32,6 +32,23 @@ function conversation(id: string): SessionActiveConversation {
 }
 
 describe("EmptyConversationWorkingSet", () => {
+  it("shell-gates itself off the mobile notepad surface so the full-screen panel replaces it", () => {
+    const { container } = render(
+      <EmptyConversationWorkingSet
+        addableConversations={[conversation("a")]}
+        onAdd={vi.fn()}
+      />,
+    );
+
+    // jsdom computes no stylesheet, so the CSS gate is pinned by its class:
+    // the empty state hides when the .app shell carries
+    // data-mobile-panel="notepad" at mobile width (the notepad panel is
+    // full-screen there and must not be blocked by the empty working set).
+    expect(container.firstElementChild?.className).toContain(
+      "[.app[data-mobile-panel=notepad]_&]:hidden",
+    );
+  });
+
   it("focuses the recovery action when the final tab closes", () => {
     render(
       <EmptyConversationWorkingSet

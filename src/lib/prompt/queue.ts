@@ -22,6 +22,11 @@ import {
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
+import {
+  expandNotepadRefsForAgent,
+  type NotepadInjectionSource,
+} from "@/lib/notepads/injection";
+import { getNotepadInjectionReader } from "@/lib/notepads/service-factory";
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
@@ -118,6 +123,14 @@ export interface QueueMessageDeps {
   queueCapabilityForBackend(
     backend: AgentBackendId,
   ): ReturnType<typeof defaultQueueCapabilityForBackend>;
+  /**
+   * Reads one notepad for the agent-facing expansion pass (D5). Null means the
+   * notepad is gone, so the pass reports a dangling reference rather than
+   * failing delivery.
+   */
+  readNotepadForInjection(
+    notepadId: string,
+  ): Promise<NotepadInjectionSource | null>;
 }
 
 const defaultDeps: QueueMessageDeps = {
@@ -131,6 +144,8 @@ const defaultDeps: QueueMessageDeps = {
   getNextImageIndex: defaultGetNextImageIndex,
   getProjectDisplayName: defaultGetProjectDisplayName,
   queueCapabilityForBackend: defaultQueueCapabilityForBackend,
+  readNotepadForInjection: (notepadId) =>
+    getNotepadInjectionReader().readForInjection(notepadId),
 };
 
 export interface QueueMessageParams {
@@ -257,8 +272,29 @@ export async function queueMessage(
   // Backend-delivery content (in-turn live delivery): the agent receives prose,
   // never a `document_feedback` block (not a valid SDK block). Derive the prose
   // from the items when feedback is present.
-  const agentFacingText =
-    text && !documentFeedback ? expandNativeSpecCommandForAgent(text) : text;
+  // Agent-facing only: `content` above (the durable row) and the transcript
+  // entry below both keep the un-expanded text, so notepad chips still render.
+  // A notepad read failure degrades to the un-expanded text rather than losing
+  // delivery.
+  let specExpandedText = text;
+  let agentFacingText = text;
+  if (text && !documentFeedback) {
+    specExpandedText = expandNativeSpecCommandForAgent(text);
+    agentFacingText = specExpandedText;
+    try {
+      agentFacingText = await expandNotepadRefsForAgent(specExpandedText, {
+        readForInjection: (notepadId) =>
+          deps.readNotepadForInjection(notepadId),
+      });
+    } catch (err) {
+      logger.warn("queue.notepad_expansion_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
   const deliveryContent = documentFeedback
     ? buildQueueContent({
         text: formatDocumentFeedbackPrompt(documentFeedback.items),
@@ -392,7 +428,7 @@ export async function queueMessage(
   }
 
   try {
-    if (text && agentFacingText !== text) {
+    if (text && specExpandedText !== text) {
       logger.info("queue.native_spec_command_expanded", {
         projectName: deps.getProjectDisplayName(projectPath),
         ...scopeRef,
@@ -400,6 +436,17 @@ export async function queueMessage(
         messageIds: [entry.id],
         deliveryAttemptId,
         requestLength: text.length,
+      });
+    }
+    if (agentFacingText !== specExpandedText) {
+      logger.info("queue.notepad_refs_expanded", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        messageIds: [entry.id],
+        deliveryAttemptId,
+        requestLength: specExpandedText?.length ?? 0,
+        expandedLength: agentFacingText?.length ?? 0,
       });
     }
     await runtime.queueUserInput({ content: deliveryContent });

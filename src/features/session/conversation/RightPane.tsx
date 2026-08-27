@@ -14,6 +14,7 @@ import SpecBrowser from "@/features/session/conversation/SpecBrowser";
 import DocsPanel from "@/features/session/conversation/DocsPanel";
 import AlignmentPanel from "@/features/session/conversation/AlignmentPanel";
 import ContextArtifactPanel from "@/features/session/conversation/ContextArtifactPanel";
+import NotepadPanel from "@/features/session/conversation/NotepadPanel";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import {
@@ -84,14 +85,18 @@ export default function RightPane({
         }
         layoutClassName="flex min-h-0 flex-1 flex-col"
       >
-        {/* Tab bar — always visible */}
-        <div className="shrink-0 rounded-t-lg border border-b-0 border-solid border-border-subtle bg-bg-surface px-md py-sm max-768:hidden">
-          <TabsList>
+        {/* Tab bar — always visible. Horizontally scrollable so all six
+            triggers stay reachable at narrow split-pane widths (~340px),
+            where the non-wrapping strip would otherwise clip the last tabs;
+            arrow-key roving focus scrolls the focused tab into view. */}
+        <div className="shrink-0 overflow-x-auto rounded-t-lg border border-b-0 border-solid border-border-subtle bg-bg-surface px-md py-sm max-768:hidden">
+          <TabsList layoutClassName="w-max min-w-full">
             <TabsTrigger value="diff">Diff</TabsTrigger>
             <TabsTrigger value="docs">Docs</TabsTrigger>
             <TabsTrigger value="alignment">Alignment</TabsTrigger>
             <TabsTrigger value="specs">Specs</TabsTrigger>
             <TabsTrigger value="artifact">Artifact</TabsTrigger>
+            <TabsTrigger value="notepad">Notepad</TabsTrigger>
           </TabsList>
         </div>
 
@@ -160,6 +165,18 @@ export default function RightPane({
               target={artifactTarget}
               conversationName={conversationName}
               archived={archived}
+            />
+          </TabsContent>
+          <TabsContent
+            value="notepad"
+            forceMount
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            <NotepadPanel
+              projectName={projectName}
+              sessionName={sessionName}
+              conversationId={conversationId}
+              active={rightPaneTab === "notepad"}
             />
           </TabsContent>
         </div>

@@ -150,6 +150,7 @@ export function createActorImplementationDepsFixture(
     getActiveAlignmentInjection: vi.fn(async () => null),
     getActiveAlignmentVersion: vi.fn(async () => null),
     getLiveTicketBlock: vi.fn(async () => null),
+    readNotepadForInjection: vi.fn(async () => null),
     claimWorkflowResults: vi.fn(async () => []),
     settleWorkflowResults: vi.fn(async () => 0),
     releaseWorkflowResults: vi.fn(async () => 0),

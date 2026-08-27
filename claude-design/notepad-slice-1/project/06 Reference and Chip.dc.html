@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); } a:hover { color: var(--cyan-dim); }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);padding:40px;display:flex;flex-direction:column;gap:20px;">
+  <div style="display:flex;flex-direction:column;gap:4px;max-width:760px;">
+    <div style="font-family:var(--font-display);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;">Notepad &mdash; the tenth reference kind</div>
+    <div style="font-size:0.74rem;color:var(--text-secondary);line-height:1.6;">Picker entry, prompt chip, and what the agent actually receives. One gesture hands an agent the whole curated bundle.</div>
+  </div>
+
+  <div style="display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;">
+
+    <!-- A: picker open -->
+    <div data-screen-label="Reference picker" style="display:flex;flex-direction:column;gap:8px;width:620px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">A &middot; the picker on query &ldquo;note&rdquo; &mdash; notepads join it</div>
+      <div style="display:flex;flex-direction:column;border-top:1px solid var(--border-subtle);background:var(--bg-base);padding:12px 16px;border-radius:var(--radius-md);">
+        <!-- popup -->
+        <div style="position:relative;border:1px solid var(--border-default);border-bottom:none;border-radius:var(--radius-lg) var(--radius-lg) 0 0;background:var(--bg-surface);overflow:hidden;box-shadow:0 -8px 24px rgba(0,0,0,0.45);">
+          <div style="position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan) 20%,var(--cyan) 80%,transparent);opacity:0.6;"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-raised);border-bottom:1px solid var(--border-subtle);padding:4px 8px;font-size:0.7rem;color:var(--text-tertiary);">
+            <span style="font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">Notepads</span>
+            <span style="color:var(--text-secondary);">matching &ldquo;note&rdquo; &middot; 5 of 6</span>
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:2px;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);padding:4px 8px 0;">
+            <span style="display:inline-flex;align-items:center;gap:5px;border-bottom:2px solid transparent;padding:3px 8px 5px;font-size:0.72rem;font-weight:600;color:var(--text-tertiary);">All <span>24</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;border-bottom:2px solid transparent;padding:3px 8px 5px;font-size:0.72rem;font-weight:600;color:var(--text-tertiary);">Files <span>9</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;border-bottom:2px solid transparent;padding:3px 8px 5px;font-size:0.72rem;font-weight:600;color:var(--text-tertiary);">Convos <span>5</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;border-bottom:2px solid transparent;padding:3px 8px 5px;font-size:0.72rem;font-weight:600;color:var(--text-tertiary);">Tickets <span>3</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;border-bottom:2px solid transparent;padding:3px 8px 5px;font-size:0.72rem;font-weight:600;color:var(--text-tertiary);">Specs <span>1</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;border-bottom:2px solid var(--blue);padding:3px 8px 5px;font-size:0.72rem;font-weight:600;color:var(--text-primary);">Notepads <span style="color:var(--blue);">6</span></span>
+            <span style="margin-left:auto;padding:0 4px 6px;font-size:0.65rem;color:var(--text-tertiary);"><kbd style="display:inline-block;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-sm);padding:0 4px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;color:var(--text-secondary);">Tab</kbd> scope</span>
+          </div>
+          <!-- rows -->
+          <div style="position:relative;display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-left:2px solid var(--blue);background:var(--bg-hover);">
+            <span style="position:absolute;inset:0;background:linear-gradient(90deg,var(--blue-glow) 0%,transparent 60%);pointer-events:none;"></span>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;position:relative;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="position:relative;font-size:0.78rem;font-weight:500;"><span>slice-1 worki</span><span style="color:var(--blue);">n</span><span>g c</span><span style="color:var(--blue);">o</span><span>n</span><span style="color:var(--blue);">te</span><span>xt</span></span>
+            <span style="position:relative;font-size:0.72rem;color:var(--text-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">pinned &middot; rev 15</span>
+            <span style="position:relative;font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">current &middot; 2m</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-left:2px solid transparent;">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="font-size:0.78rem;font-weight:500;">auth-migration <span style="color:var(--blue);">note</span>s</span>
+            <span style="font-size:0.72rem;color:var(--text-tertiary);flex:1;">rev 15</span>
+            <span style="font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">current &middot; 6m</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-left:2px solid transparent;">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="font-size:0.78rem;font-weight:500;">worktree cleanup <span style="color:var(--blue);">note</span>s</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-secondary);"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>read only</span>
+            <span style="font-size:0.72rem;color:var(--text-tertiary);flex:1;"></span>
+            <span style="font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">current &middot; 1d</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-left:2px solid transparent;">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg>
+            <span style="font-size:0.78rem;font-weight:500;">model picker <span style="color:var(--blue);">note</span>s</span>
+            <span style="font-size:0.72rem;color:var(--text-tertiary);flex:1;"></span>
+            <span style="font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">global &middot; 1w</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;border-left:2px solid transparent;">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg>
+            <span style="font-size:0.78rem;font-weight:500;">conference <span style="color:var(--blue);">note</span>s</span>
+            <span style="font-size:0.72rem;color:var(--text-tertiary);flex:1;"></span>
+            <span style="font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">global &middot; 3mo</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--bg-raised);border-top:1px solid var(--border-subtle);padding:4px 8px;font-size:0.7rem;color:var(--text-tertiary);">
+            <span><kbd style="display:inline-block;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-sm);padding:0 4px;font-size:0.7rem;line-height:1.4;color:var(--text-secondary);">&uarr;&darr;</kbd> navigate</span>
+            <span><kbd style="display:inline-block;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-sm);padding:0 4px;font-size:0.7rem;line-height:1.4;color:var(--text-secondary);">Enter</kbd> select</span>
+            <span><kbd style="display:inline-block;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-sm);padding:0 4px;font-size:0.7rem;line-height:1.4;color:var(--text-secondary);">&rarr;</kbd> complete</span>
+            <span><kbd style="display:inline-block;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-sm);padding:0 4px;font-size:0.7rem;line-height:1.4;color:var(--text-secondary);">Esc</kbd> close</span>
+          </div>
+        </div>
+        <!-- editor box -->
+        <div style="border:1px solid var(--cyan-dim);border-radius:0 0 var(--radius-md) var(--radius-md);background:var(--bg-surface);box-shadow:0 0 0 3px var(--cyan-glow);padding:12px 14px;min-height:52px;font-size:0.85rem;line-height:1.5;color:var(--text-primary);">Take <span style="color:var(--text-tertiary);">&hellip;</span><span style="color:var(--cyan);">note</span><span style="display:inline-block;width:2px;height:15px;background:var(--cyan);vertical-align:text-bottom;"></span></div>
+      </div>
+      <div style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.6;max-width:600px;">Notepads become a scope tab like every other kind. Rows carry the scope at a glance &mdash; blue page for project, globe for global &mdash; plus write mode when it isn&rsquo;t the default. Pinned notepads rank first: pins are the working set. The trigger character is elided on purpose: it belongs to the existing picker and is unspecified here; the group filters on the query, fuzzily.</div>
+    </div>
+
+    <!-- B: chip + peek -->
+    <div data-screen-label="Prompt chip" style="display:flex;flex-direction:column;gap:8px;width:620px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">B &middot; the chip &mdash; and its hover peek</div>
+      <div style="border-top:1px solid var(--border-subtle);background:var(--bg-base);padding:12px 16px;border-radius:var(--radius-md);">
+        <div style="border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-surface);padding:12px 14px;min-height:52px;font-size:0.85rem;line-height:1.9;color:var(--text-primary);">Take
+          <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--cyan-dim);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 6px;font-size:0.78rem;line-height:1;vertical-align:baseline;white-space:nowrap;box-shadow:0 0 0 2px var(--cyan-glow);"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span>slice-1 working context</span><button aria-label="Remove notepad reference" style="width:16px;height:16px;border:none;border-radius:3px;background:transparent;padding:0;font-size:12px;line-height:1;color:var(--text-tertiary);cursor:pointer;" style-hover="background:var(--red-glow);color:var(--red-text);">&times;</button></span>
+          and start on the rollout plan. Track blockers in
+          <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 6px;font-size:0.78rem;line-height:1;vertical-align:baseline;white-space:nowrap;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.2"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path><path d="M6.5 4.5v8" stroke-dasharray="1.5 1.5"></path></svg><span>notepad data model</span><button aria-label="Remove ticket reference" style="width:16px;height:16px;border:none;border-radius:3px;background:transparent;padding:0;font-size:12px;line-height:1;color:var(--text-tertiary);cursor:pointer;">&times;</button></span>.
+        </div>
+      </div>
+      <!-- peek card -->
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <div style="width:340px;border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--bg-elevated);box-shadow:0 8px 24px rgba(0,0,0,0.5);padding:12px;display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="font-size:0.78rem;font-weight:600;">slice-1 working context</span>
+            <span style="margin-left:auto;font-size:0.64rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);border:1px solid var(--border-subtle);border-radius:9999px;padding:1px 7px;">project</span>
+          </div>
+          <div style="font-size:0.66rem;color:var(--text-tertiary);">rev 15 &middot; updated 2m ago &middot; agents: full edit</div>
+          <div style="border-top:1px solid var(--border-subtle);padding-top:8px;font-size:0.7rem;line-height:1.6;color:var(--text-secondary);">
+            <div># slice-1 working context</div>
+            <div>Everything an agent needs before picking up&hellip;</div>
+            <div style="color:var(--text-tertiary);">3 references &middot; 1 image &middot; 1 nested notepad</div>
+          </div>
+          <div style="border-top:1px solid var(--border-subtle);padding-top:8px;font-size:0.64rem;line-height:1.55;color:var(--text-tertiary);">Sent with a prompt, this delivers the notepad&rsquo;s <span style="color:var(--text-secondary);">full current content</span>. Its references arrive as XML the agent can fetch; nested notepads stay references.</div>
+        </div>
+        <div style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.6;max-width:230px;padding-top:8px;">&larr; hover peek on the chip. It answers &ldquo;what am I about to hand the agent?&rdquo; in kind, not in numbers &mdash; token estimates are a later slice.</div>
+      </div>
+    </div>
+
+    <!-- C: delivered payload -->
+    <div data-screen-label="Delivered payload" style="display:flex;flex-direction:column;gap:8px;width:640px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">C &middot; what the agent receives on send</div>
+      <div style="border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+        <div style="padding:12px 14px;background:var(--bg-base);font-size:0.7rem;line-height:1.75;color:var(--text-secondary);white-space:pre;overflow-x:auto;">Take the notepad and start on the rollout plan.
+
+<span style="color:var(--blue);">&lt;notepad id="np_7c1f" name="slice-1 working context" &hellip;&gt;</span>
+# slice-1 working context
+
+Everything an agent needs before picking up slice-1 work.
+
+## open threads
+- [ ] rollout comms draft — align in
+  <span style="color:var(--cyan);">&lt;conversation-ref id="c_9d12" &hellip;/&gt;</span>
+- [ ] picker group ordering for <span style="color:var(--amber);">&lt;ticket-ref &hellip;/&gt;</span>
+
+<span style="color:var(--text-tertiary);">[Image: img_3fd1]</span> diff-panel spike
+
+## related
+<span style="color:var(--blue);">&lt;notepad-ref id="np_02ba" &hellip;/&gt;</span> covers the house rules.
+<span style="color:var(--blue);">&lt;/notepad&gt;</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;padding:10px 14px;border-top:1px solid var(--border-subtle);font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;">
+          <div><span style="color:var(--blue);">&#9632;</span> full content of the current revision, inlined once (R7.2)</div>
+          <div><span style="color:var(--cyan);">&#9632;</span> embedded references arrive as registry XML the agent can fetch (R6.2) &mdash; shown elided; exact attributes and read-commands are owned by the reference registry</div>
+          <div><span style="color:var(--blue);">&#9632;</span> a nested notepad is never auto-expanded &mdash; one level, no cascades; the agent reads it explicitly (R7.3)</div>
+        </div>
+      </div>
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);margin-top:12px;">the sent message in the transcript</div>
+      <div style="border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);padding:14px 16px;">
+        <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;color:var(--amber);">You <span style="font-weight:500;letter-spacing:0.02em;text-transform:none;"><span style="margin:0 5px;color:var(--text-tertiary);">&middot;</span><span style="color:var(--text-tertiary);">10:58</span></span></div>
+        <div style="font-family:var(--font-body);font-size:0.9rem;line-height:1.75;color:var(--text-primary);">Take
+          <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(68,138,255,0.3);background:var(--blue-glow);color:var(--blue);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span style="font-weight:600;">slice-1 working context</span></span>
+          and start on the rollout plan. Track blockers in
+          <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid var(--border-default);background:var(--bg-raised);color:var(--text-secondary);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.2"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path></svg><span style="color:var(--text-primary);">notepad data model</span></span>.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{ &quot;$preview&quot;: { &quot;width&quot;: 1400, &quot;height&quot;: 1050 } }"></script>
+</body>
+</html>

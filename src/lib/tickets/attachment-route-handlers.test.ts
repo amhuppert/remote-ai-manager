@@ -25,10 +25,10 @@ import {
   createTicketAttachmentService,
   type TicketAttachmentService,
 } from "./attachment-service";
+import { readBodyBounded } from "@/lib/shared/bounded-body";
 import {
   createTicketAttachmentRouteHandlers,
   MAX_TICKET_FILE_UPLOAD_BYTES,
-  readBodyBounded,
   type TicketAttachmentRouteHandlers,
 } from "./attachment-route-handlers";
 import {

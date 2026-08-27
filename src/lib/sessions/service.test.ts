@@ -209,6 +209,8 @@ function createTestDeps() {
     deleteContextArtifactsForScope: vi.fn().mockReturnValue(0),
     captureTicketContentForProject: vi.fn().mockResolvedValue([]),
     cleanupTicketContentForProject: vi.fn().mockResolvedValue(undefined),
+    captureNotepadContentForProject: vi.fn().mockResolvedValue([]),
+    cleanupNotepadContentForProject: vi.fn().mockResolvedValue(undefined),
     runSessionLifecycleOperation: (projectPath, sessionName, operation) =>
       lifecycleGate.runExclusive(projectPath, sessionName, operation),
     runSessionLifecycleOperations: (projectPath, sessionNames, operation) =>
@@ -1882,6 +1884,85 @@ describe("deleteProject", () => {
       "project cascade failed",
     );
     expect(deps.cleanupTicketContentForProject).not.toHaveBeenCalled();
+  });
+
+  it("captures notepad ids before the project cascade and cleans their content afterward", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.captureNotepadContentForProject as Mock).mockResolvedValue([
+      "notepad-a",
+      "notepad-b",
+    ]);
+
+    await service.deleteProject("/projects/repo");
+
+    const captureMock = deps.captureNotepadContentForProject as Mock;
+    const cleanupMock = deps.cleanupNotepadContentForProject as Mock;
+    expect(cleanupMock).toHaveBeenCalledWith("/projects/repo", [
+      "notepad-a",
+      "notepad-b",
+    ]);
+    const projectRowWriteOrder = writeStateMock.mock.invocationCallOrder.at(-1);
+    expect(captureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      projectRowWriteOrder ?? 0,
+    );
+    expect(cleanupMock.mock.invocationCallOrder[0]).toBeGreaterThan(
+      projectRowWriteOrder ?? 0,
+    );
+  });
+
+  it("does not remove notepad content when the project cascade fails", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.captureNotepadContentForProject as Mock).mockResolvedValue([
+      "notepad-a",
+    ]);
+    (deps.deleteProjectRow as Mock).mockRejectedValueOnce(
+      new Error("project cascade failed"),
+    );
+
+    await expect(service.deleteProject("/projects/repo")).rejects.toThrow(
+      "project cascade failed",
+    );
+    expect(deps.cleanupNotepadContentForProject).not.toHaveBeenCalled();
+  });
+
+  it("does not fail deletion when notepad-content cleanup throws and logs a stable orphan path key", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.cleanupNotepadContentForProject as Mock).mockRejectedValue(
+      new Error("notepad blob cleanup exploded"),
+    );
+
+    const result = await service.deleteProject("/projects/repo");
+
+    expect(result.sessionsRemoved).toBe(0);
+    const lastWriteState =
+      writeStateMock.mock.calls[writeStateMock.mock.calls.length - 1]![0];
+    expect(lastWriteState.projects["/projects/repo"]).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "project.delete.notepad_content_cleanup_failure",
+      expect.objectContaining({
+        projectPath: "/projects/repo",
+        orphanPathKey: "notepad-content",
+        error: "notepad blob cleanup exploded",
+      }),
+    );
+  });
+
+  it("still deletes the project when notepad-id capture fails", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
+    (deps.captureNotepadContentForProject as Mock).mockRejectedValue(
+      new Error("notepad lookup failed"),
+    );
+
+    await expect(service.deleteProject("/projects/repo")).resolves.toBeTruthy();
+    expect(deps.cleanupNotepadContentForProject).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "project.delete.notepad_content_capture_failure",
+      expect.objectContaining({
+        projectPath: "/projects/repo",
+        orphanPathKey: "notepad-content",
+        error: "notepad lookup failed",
+      }),
+    );
   });
 
   it("captures ticket identities before the project cascade and publishes their deletion afterward", async () => {

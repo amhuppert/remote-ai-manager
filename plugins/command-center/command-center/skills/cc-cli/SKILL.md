@@ -475,6 +475,19 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl ticket attachment remove` — remove an attachment
   - `cctl ticket attachment remove <number | project#number> <attachmentId>`
 
+- `cctl notepad` — list, read, create, update, and append to notepads
+  - `cctl notepad <list|get|create|update|append>`
+- `cctl notepad list` — list notepads in scope with their ids and revisions
+  - `cctl notepad list [--global] [--archived] [--limit <n>]`
+- `cctl notepad get` — read a notepad's canonical content by id
+  - `cctl notepad get <notepadId>`
+- `cctl notepad create` — create a notepad in the ambient project or the global scope
+  - `cctl notepad create --name "<name>" [--global] [--content "<markdown>"]`
+- `cctl notepad update` — replace a notepad's content, stating the revision you read
+  - `cctl notepad update <notepadId> --if-revision <n> --content "<markdown>"`
+- `cctl notepad append` — append to a notepad, stating the revision you read
+  - `cctl notepad append <notepadId> --if-revision <n> --content "<markdown>"`
+
 - `cctl spec` — author, review, execute, and verify durable specs
   - `cctl spec list`
   - `cctl spec measures`

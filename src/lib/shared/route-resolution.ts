@@ -35,8 +35,8 @@ export type RouteResolution<T> =
 
 /**
  * Build a JSON `{ error }` Response with the given HTTP status. The optional
- * `code`, `details`, and `instruction` map to the corresponding `ApiError`
- * fields. Omitted fields are absent from the body (not `undefined`),
+ * `code`, `details`, `instruction`, and `rationale` map to the corresponding
+ * `ApiError` fields. Omitted fields are absent from the body (not `undefined`),
  * preserving the wire shape of handlers that never sent them.
  */
 export function jsonError(
@@ -45,10 +45,12 @@ export function jsonError(
   code?: string,
   details?: ApiError["details"],
   instruction?: string,
+  rationale?: string,
 ): Response {
   const body: ApiError = { error: message };
   if (code !== undefined) body.code = code;
   if (details !== undefined) body.details = details;
+  if (rationale !== undefined) body.rationale = rationale;
   if (instruction !== undefined) body.instruction = instruction;
   return NextResponse.json(body, { status });
 }
@@ -63,8 +65,9 @@ export function notFound(
   code?: string,
   details?: ApiError["details"],
   instruction?: string,
+  rationale?: string,
 ): Response {
-  return jsonError(message, 404, code, details, instruction);
+  return jsonError(message, 404, code, details, instruction, rationale);
 }
 
 /**

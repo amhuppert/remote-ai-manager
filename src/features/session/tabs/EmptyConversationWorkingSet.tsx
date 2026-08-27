@@ -15,7 +15,11 @@ export interface EmptyConversationWorkingSetProps {
   onAdd: (id: string) => void;
 }
 
-const rootClass = "relative flex min-h-0 flex-1 bg-bg-base";
+// The notepad shell gate (data-mobile-panel on the .app root) hides the empty
+// state below the mobile breakpoint while the full-screen notepad panel is
+// active; above it the panel hides itself and the empty state keeps rendering.
+const rootClass =
+  "relative flex min-h-0 flex-1 bg-bg-base max-768:[.app[data-mobile-panel=notepad]_&]:hidden";
 const actionHostClass = "relative mt-lg";
 
 export default function EmptyConversationWorkingSet({

@@ -127,6 +127,21 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
   };
 }
 
+/** A notepad the group's response parsing accepts, for the route sweep below. */
+const NOTEPAD_BODY = {
+  id: "notepad-1",
+  scope: "project",
+  projectPath: "/repos/cc",
+  name: "Notes",
+  content: "# Notes",
+  revision: 1,
+  writeMode: "full-edit",
+  pinned: false,
+  archived: false,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+};
+
 /**
  * Project-supported commands that issue a request with inline arguments. Each
  * entry is a real `cctl` invocation driven through the production dispatch; the
@@ -173,6 +188,37 @@ const PROJECT_SCOPE_INVOCATIONS: {
     },
   },
   { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },
+  // The notepad group reads no session env, so it carries no entry in the
+  // session-env inventory — but its routes are exactly what a CLI unit test
+  // cannot see, and the flat id-addressed shape is new to this surface.
+  {
+    name: "notepad list",
+    argv: ["notepad", "list"],
+    body: { notepads: [] },
+  },
+  {
+    name: "notepad get",
+    argv: ["notepad", "get", "notepad-1"],
+    body: { notepad: NOTEPAD_BODY },
+  },
+  {
+    name: "notepad create",
+    argv: ["notepad", "create", "--name", "Notes"],
+    body: { notepad: NOTEPAD_BODY },
+  },
+  {
+    name: "notepad append",
+    argv: [
+      "notepad",
+      "append",
+      "notepad-1",
+      "--if-revision",
+      "1",
+      "--content",
+      "more",
+    ],
+    body: { notepad: NOTEPAD_BODY },
+  },
   {
     name: "agent list",
     argv: ["agent", "list"],

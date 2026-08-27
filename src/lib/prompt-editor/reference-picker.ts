@@ -36,6 +36,7 @@ export const PICKER_KIND_ORDER = [
   "conversation",
   "spec",
   "ticket",
+  "notepad",
 ] as const;
 export type PickerKind = (typeof PICKER_KIND_ORDER)[number];
 
@@ -73,6 +74,7 @@ const KIND_LABELS: Record<PickerKind, string> = {
   conversation: "Conversations",
   spec: "Specs",
   ticket: "Tickets",
+  notepad: "Notepads",
 };
 
 /** What selecting a row inserts into the document. */
@@ -181,6 +183,7 @@ const GLYPH_BY_ITEM_KIND: Record<PickerItemKind, PickerGlyph> = {
   task: "spec",
   question: "spec",
   assumption: "spec",
+  notepad: "notepad",
 };
 
 /** A row before it knows its position in the flat list. */
@@ -228,6 +231,7 @@ function buildScopeView(input: PickerViewInput): PickerView {
     conversation: conversations.shown,
     spec: referenceRows("spec", searchQuery, context),
     ticket: tickets.shown,
+    notepad: referenceRows("notepad", searchQuery, context),
   };
 
   const kinds =

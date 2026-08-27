@@ -43,6 +43,7 @@ import { graphWorkflowCandidateUnstableHalt } from "./0031-graph-workflow-candid
 import { addGraphPlanReviews } from "./0032-add-graph-plan-reviews";
 import { conversationOwnership } from "./0033-conversation-ownership";
 import { nativeSddAttentionCitations } from "./0034-native-sdd-attention-citations";
+import { addNotepads } from "./0035-add-notepads";
 import { generalizedModelSelection } from "./0035-generalized-model-selection";
 
 /**
@@ -99,6 +100,10 @@ export const migrations: readonly StateMigration[] = [
   addGraphPlanReviews,
   conversationOwnership,
   nativeSddAttentionCitations,
+  // Additive before the version flip: the notepad tables are purely additive
+  // and stamp no schema version, so they apply ahead of the model-selection
+  // cutover that does.
+  addNotepads,
   generalizedModelSelection,
 ];
 

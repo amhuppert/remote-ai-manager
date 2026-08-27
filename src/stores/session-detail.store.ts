@@ -3,6 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import { createDocumentViewerSlice } from "./session-detail/document-viewer-slice";
 import { createInFlightSlice } from "./session-detail/in-flight-slice";
 import { createLayoutSlice } from "./session-detail/layout-slice";
+import { createNotepadPanelSlice } from "./session-detail/notepad-panel-slice";
 import { createPanelSessionSlice } from "./session-detail/panel-session-slice";
 import { createResetSlice } from "./session-detail/reset-slice";
 import { createSessionUiSlice } from "./session-detail/session-ui-slice";
@@ -34,6 +35,7 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
     ...createInFlightSlice(...args),
     ...createSidebarSlice(...args),
     ...createDocumentViewerSlice(...args),
+    ...createNotepadPanelSlice(...args),
     ...createSessionUiSlice(...args),
     ...createPanelSessionSlice(...args),
     ...createResetSlice(...args),
@@ -106,6 +108,11 @@ export const usePendingTrayExpanded = () =>
   useSessionDetailStore((s) => s.pendingTrayExpanded);
 export const useFeedbackTarget = () =>
   useSessionDetailStore((s) => s.feedbackTarget);
+export const useOpenNotepadId = () =>
+  useSessionDetailStore((s) => s.openNotepadId);
+export const useNotepadSort = () => useSessionDetailStore((s) => s.notepadSort);
+export const useNotepadExternalWrite = () =>
+  useSessionDetailStore((s) => s.notepadExternalWrite);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -121,6 +128,13 @@ export const useSwitchRightPaneTab = () =>
   useSessionDetailStore((s) => s.switchRightPaneTab);
 export const useOpenContextArtifactPanel = () =>
   useSessionDetailStore((s) => s.openContextArtifactPanel);
+export const useOpenNotepad = () => useSessionDetailStore((s) => s.openNotepad);
+export const useCloseNotepad = () =>
+  useSessionDetailStore((s) => s.closeNotepad);
+export const useSetNotepadSort = () =>
+  useSessionDetailStore((s) => s.setNotepadSort);
+export const useRecordNotepadExternalWrite = () =>
+  useSessionDetailStore((s) => s.recordNotepadExternalWrite);
 export const useRequestMessageNav = () =>
   useSessionDetailStore((s) => s.requestMessageNav);
 export const useClearMessageNavRequest = () =>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); } a:hover { color: var(--cyan-dim); }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);padding:40px;display:flex;flex-direction:column;gap:20px;">
+  <div style="display:flex;flex-direction:column;gap:4px;max-width:720px;">
+    <div style="font-family:var(--font-display);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;">Notepad &mdash; editor states</div>
+    <div style="font-size:0.74rem;color:var(--text-secondary);line-height:1.6;">Write-mode surfaces, the minimum pane width, degraded states, and export. All notepad chrome at 340px &mdash; the narrowest the right pane gets.</div>
+  </div>
+  <div style="display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;">
+
+    <!-- A: write-mode surfaces -->
+    <div data-screen-label="Write modes" style="display:flex;flex-direction:column;gap:16px;width:340px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">A &middot; agent write mode on the surface</div>
+
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+          <span style="font-size:0.8rem;font-weight:600;">auth-migration notes</span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-subtle);border-radius:9999px;padding:2px 9px;font-size:0.68rem;color:var(--text-tertiary);"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M11.5 2.5l2 2L6 12l-2.6.6L4 10z"></path></svg>agents: full edit</span>
+        </div>
+        <div style="padding:12px 14px;background:var(--bg-base);font-size:0.8rem;line-height:1.7;color:var(--text-primary);">
+          <div>## rollout order</div>
+          <div>- staging first, 24h soak</div>
+          <div>- CLI clients next &mdash; they retry cleanly</div>
+        </div>
+        <div style="padding:6px 12px;border-top:1px solid var(--border-subtle);font-size:0.66rem;color:var(--text-tertiary);">full edit is the default &mdash; history + restore is the safety net</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+          <span style="font-size:0.8rem;font-weight:600;">flaky test ledger</span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-subtle);border-radius:9999px;padding:2px 9px;font-size:0.68rem;color:var(--text-tertiary);"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 4v8M4 8h8"></path></svg>agents: append only</span>
+        </div>
+        <div style="padding:12px 14px;background:var(--bg-base);font-size:0.8rem;line-height:1.7;color:var(--text-primary);">
+          <div>- 2026-08-24 `queue.drain.test` &mdash; timeout, virtuoso</div>
+          <div>- 2026-08-25 `sse.reconnect.test` &mdash; port reuse</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px;color:var(--text-tertiary);font-size:0.66rem;">
+            <span style="flex:1;border-top:1px dashed var(--border-default);"></span>
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 4v8M4 8h8"></path></svg>
+            agents append below this line
+            <span style="flex:1;border-top:1px dashed var(--border-default);"></span>
+          </div>
+        </div>
+        <div style="padding:6px 12px;border-top:1px solid var(--border-subtle);font-size:0.66rem;color:var(--text-tertiary);">an agent rewrite is refused and told the notepad is append-only &middot; appends are accepted</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+          <span style="font-size:0.8rem;font-weight:600;">release 0.4 checklist</span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(255,179,0,0.25);background:var(--amber-glow);border-radius:9999px;padding:2px 9px;font-size:0.68rem;color:var(--amber);"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>agents: read only</span>
+        </div>
+        <div style="padding:12px 14px;background:var(--bg-base);font-size:0.8rem;line-height:1.7;color:var(--text-primary);">
+          <div>- [x] tag v0.4.0-rc1</div>
+          <div>- [ ] merge notepad slice-1</div>
+          <div>- [ ] rotate changelog</div>
+        </div>
+        <div style="padding:6px 12px;border-top:1px solid var(--border-subtle);font-size:0.66rem;color:var(--text-tertiary);">your checklist stays yours &mdash; agents read it; a write is refused and told the notepad is read-only</div>
+      </div>
+    </div>
+
+    <!-- B: degraded states -->
+    <div data-screen-label="Degraded states" style="display:flex;flex-direction:column;gap:16px;width:400px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">B &middot; degraded, never broken</div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);padding:14px;">
+        <div style="font-size:0.7rem;font-weight:600;color:var(--text-secondary);">Deleted notepad &mdash; the chip degrades to a missing state</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-primary);">Rollout notes lived in
+          <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px dashed var(--border-default);background:transparent;color:var(--text-tertiary);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M3 13L13 3"></path></svg><span style="text-decoration:line-through;text-decoration-color:var(--text-tertiary);">0.3 rollout notes</span><span style="font-size:0.62rem;">missing</span></span>
+          before we archived that plan.</div>
+        <div style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;">Label resolves by id; deletion leaves the last known name struck through. The surface holding the chip never errors (R3.1). An agent that follows the stale reference is told the notepad was deleted.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);padding:14px;">
+        <div style="font-size:0.7rem;font-weight:600;color:var(--text-secondary);">Missing image &mdash; placeholder keeps its slot</div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;border:1px dashed var(--border-default);border-radius:var(--radius-md);background:var(--bg-base);padding:18px;color:var(--text-tertiary);">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M3 17l5-5 4 4 3-3 6 6"></path></svg>
+          <span style="font-size:0.68rem;">image unavailable &mdash; its data was removed with a past revision</span>
+        </div>
+        <div style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;">Agents always see the stable token <span style="color:var(--text-secondary);">[Image: img_7a2f]</span> whether or not the pixels resolve (R12.2).</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);padding:14px;">
+        <div style="font-size:0.7rem;font-weight:600;color:var(--text-secondary);">Rename &mdash; old references follow the id</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-primary);">A prompt sent last week said
+          <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(68,138,255,0.3);background:var(--blue-glow);color:var(--blue);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span style="font-weight:600;">slice-1 working context</span></span>
+          &mdash; captured back when it was named <span style="font-family:var(--font-mono);font-size:0.78rem;color:var(--text-tertiary);text-decoration:line-through;">&ldquo;notepad scratch&rdquo;</span>.</div>
+        <div style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;">Chips resolve their label live from the immutable id, so every rendered chip shows the current name (R4.1).</div>
+      </div>
+    </div>
+
+    <!-- C: export -->
+    <div data-screen-label="Export" style="display:flex;flex-direction:column;gap:16px;width:400px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">C &middot; copy as markdown &mdash; the stored string is the export</div>
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <span style="font-size:0.74rem;font-weight:600;">Copy as Markdown</span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(0,230,118,0.2);background:var(--green-glow);border-radius:9999px;padding:2px 9px;font-size:0.68rem;color:var(--green);"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>copied &middot; 1,482 chars</span>
+        </div>
+        <div style="padding:12px 14px;background:var(--bg-base);font-size:0.72rem;line-height:1.7;color:var(--text-secondary);white-space:pre;overflow-x:auto;"># slice-1 working context
+
+Everything an agent needs before picking up
+slice-1 work. Ship behind the `cc.notepad` flag.
+
+## open threads
+- [ ] rollout comms draft — align in
+  <span style="color:var(--cyan);">&lt;conversation-ref id="c_9d12" &hellip;/&gt;</span>
+- [ ] picker group ordering for
+  <span style="color:var(--amber);">&lt;ticket-ref &hellip;/&gt;</span>
+
+<span style="color:var(--text-tertiary);">[Image: img_3fd1]</span> diff-panel spike
+
+## related
+<span style="color:var(--blue);">&lt;notepad-ref id="np_02ba" &hellip;/&gt;</span> covers the house rules.</div>
+        <div style="padding:8px 12px;border-top:1px solid var(--border-subtle);font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;">What you copy is byte-for-byte the stored string and the agent-visible text: references as registry XML, images as id tokens. R13.1 holds because no transformation exists. Ref tags are shown elided &mdash; exact attributes and read-commands are owned by the reference registry.</div>
+      </div>
+
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);margin-top:8px;">chip anatomy &mdash; one kind, three surfaces</div>
+      <div style="display:flex;flex-direction:column;gap:12px;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);padding:14px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="width:74px;flex-shrink:0;font-size:0.64rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);">editor</span>
+          <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 6px;font-size:0.78rem;line-height:1;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span>agent onboarding brief</span><span style="font-size:0.62rem;color:var(--text-tertiary);">global</span><span style="width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-tertiary);">&times;</span></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="width:74px;flex-shrink:0;font-size:0.64rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);">rendered</span>
+          <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(68,138,255,0.3);background:var(--blue-glow);color:var(--blue);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span style="font-weight:600;">agent onboarding brief</span><span style="opacity:0.7;font-size:0.62rem;">global</span></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="width:74px;flex-shrink:0;font-size:0.64rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);">agent sees</span>
+          <span style="font-size:0.68rem;color:var(--blue);">&lt;notepad-ref id="np_02ba" &hellip; /&gt;</span>
+        </div>
+        <div style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;border-top:1px solid var(--border-subtle);padding-top:10px;">Same grammar as the nine existing kinds: squared chip in editors, pill in rendered surfaces, XML for agents. Notepad claims <span style="color:var(--blue);">blue</span> &mdash; the one unreserved accent.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{ &quot;$preview&quot;: { &quot;width&quot;: 1640, &quot;height&quot;: 1060 } }"></script>
+</body>
+</html>

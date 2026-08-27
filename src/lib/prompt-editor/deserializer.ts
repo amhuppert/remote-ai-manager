@@ -3,6 +3,7 @@ import {
   segmentTextByRefs,
   type RefSegment,
 } from "@/lib/conversations/ref-segments";
+import { findNotepadImageTokens } from "./notepad-image-token";
 import { getReferenceByXmlTag } from "./reference-registry";
 import type { SerializedPromptDoc } from "./serializer";
 
@@ -14,9 +15,19 @@ interface InlineTextSegment {
 type ReferenceSegment = Exclude<RefSegment, { type: "text" }>;
 type InlineToken = InlineTextSegment | ReferenceSegment | { type: "delimiter" };
 
+export interface DeserializePromptDocOptions {
+  /**
+   * Rebuild `notepadImage` nodes from id-addressed `[Image: <id>]` tokens.
+   * Only notepad editors register that node, so prompt input leaves the
+   * option off and the token stays literal text there.
+   */
+  notepadImages?: boolean;
+}
+
 /** Rebuild the editor document represented by canonical prompt markup. */
 export function deserializePromptDoc(
   document: SerializedPromptDoc,
+  options: DeserializePromptDocOptions = {},
 ): JSONContent {
   const inlineImages = new Map(
     document.images.flatMap((image, imageIndex) =>
@@ -88,6 +99,22 @@ export function deserializePromptDoc(
       }
       pushText(text.slice(cursor));
     };
+    const pushInline = (text: string) => {
+      if (!options.notepadImages) {
+        pushTextAndImages(text);
+        return;
+      }
+      let cursor = 0;
+      for (const token of findNotepadImageTokens(text)) {
+        pushTextAndImages(text.slice(cursor, token.start));
+        content.push({
+          type: "notepadImage",
+          attrs: { imageId: token.imageId, fileName: "" },
+        });
+        cursor = token.end;
+      }
+      pushTextAndImages(text.slice(cursor));
+    };
 
     const tokens = tokenizeInlineContent(lines[lineIndex]!);
     const delimiterCount = tokens.filter(
@@ -112,7 +139,7 @@ export function deserializePromptDoc(
         if (code) {
           pushText(token.text, true);
         } else {
-          pushTextAndImages(token.text);
+          pushInline(token.text);
         }
         continue;
       }

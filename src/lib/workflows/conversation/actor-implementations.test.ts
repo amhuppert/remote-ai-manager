@@ -3411,6 +3411,131 @@ describe("executePromptForMachine", () => {
     });
   });
 
+  // D5: the agent-facing rewrite seam expands notepad references to full
+  // canonical content; the durable transcript keeps the un-expanded reference
+  // so the chip still renders in history.
+  describe("notepad reference injection", () => {
+    const NOTEPAD_REF =
+      '<notepad-ref notepad-id="np-1" name="Design Notes" scope="global" read-command="cctl notepad get \'np-1\'" />';
+
+    function registerRuntime(input: ExecutePromptInput): void {
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+    }
+
+    function deliveredPromptText(): string {
+      const call = mockSendTurn.mock.calls.at(-1)! as unknown[];
+      return (call[0] as ConversationBackendTurnInput).promptText;
+    }
+
+    function userTranscriptText(deps: ActorImplementationDeps): string {
+      const call = vi
+        .mocked(deps.safeAppendTranscriptEntry)
+        .mock.calls.find(
+          ([, entry]) => (entry as { role?: string }).role === "user",
+        )!;
+      const content = (call[1] as { content: Array<{ text?: string }> })
+        .content;
+      return content.map((block) => block.text ?? "").join("");
+    }
+
+    it("delivers full notepad content to the agent while the transcript keeps the un-expanded reference", async () => {
+      const nested =
+        '<notepad-ref notepad-id="np-2" name="Nested" scope="global" read-command="cctl notepad get \'np-2\'" />';
+      const notepadDeps = createMockDeps({
+        readNotepadForInjection: vi.fn(async (notepadId: string) =>
+          notepadId === "np-1"
+            ? {
+                id: "np-1",
+                name: "Design Notes",
+                revision: 4,
+                writeMode: "full-edit" as const,
+                content: `Body line.\n\n[Image: img-a]\n\nSee ${nested}`,
+              }
+            : null,
+        ),
+      });
+      setActorDeps(notepadDeps);
+      const input = makeExecutePromptInput({
+        promptText: `Please review ${NOTEPAD_REF} today.`,
+      });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      const delivered = deliveredPromptText();
+      expect(delivered).toContain("id: np-1");
+      expect(delivered).toContain("name: Design Notes");
+      expect(delivered).toContain("revision: 4");
+      expect(delivered).toContain("read: cctl notepad get 'np-1'");
+      expect(delivered).toContain("Body line.");
+      // Nested reference arrives as a reference, with its read command intact.
+      expect(delivered).toContain(nested);
+      expect(delivered).toContain("[Image: img-a]");
+
+      // The durable transcript keeps what the user composed.
+      expect(userTranscriptText(notepadDeps)).toBe(
+        `Please review ${NOTEPAD_REF} today.`,
+      );
+    });
+
+    it("injects a not-found block naming the id when the notepad was deleted", async () => {
+      setActorDeps(
+        createMockDeps({
+          readNotepadForInjection: vi.fn(async () => null),
+        }),
+      );
+      const input = makeExecutePromptInput({
+        promptText: `Look: ${NOTEPAD_REF}`,
+      });
+      registerRuntime(input);
+
+      const result = await executePromptForMachine(input);
+
+      expect(result.error).toBeNull();
+      const delivered = deliveredPromptText();
+      expect(delivered).toContain("id: np-1");
+      expect(delivered).toContain("not found");
+    });
+
+    it("does not read notepads for a prompt with no notepad reference", async () => {
+      const readNotepadForInjection = vi.fn(async () => null);
+      setActorDeps(createMockDeps({ readNotepadForInjection }));
+      const input = makeExecutePromptInput({ promptText: "plain turn" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(readNotepadForInjection).not.toHaveBeenCalled();
+      expect(deliveredPromptText()).toBe("plain turn");
+    });
+
+    it("delivers the un-expanded text when the notepad read fails", async () => {
+      setActorDeps(
+        createMockDeps({
+          readNotepadForInjection: vi.fn(async () => {
+            throw new Error("state store unavailable");
+          }),
+        }),
+      );
+      const input = makeExecutePromptInput({
+        promptText: `Resilient ${NOTEPAD_REF}`,
+      });
+      registerRuntime(input);
+
+      const result = await executePromptForMachine(input);
+
+      expect(result.error).toBeNull();
+      expect(deliveredPromptText()).toBe(`Resilient ${NOTEPAD_REF}`);
+    });
+  });
+
   describe("workflow result injection", () => {
     function claimedResults(): GraphWorkflowResultDelivery[] {
       return [

@@ -49,7 +49,10 @@ export default function PanesGrid({
     // mounts in panes mode, composer focus has no pane effect in any
     // single-conversation layout (5.5).
     <div
-      className="group flex h-full min-h-0 w-full min-w-0 flex-col"
+      // The notepad shell gate (data-mobile-panel on the .app root) hides the
+      // grid below the mobile breakpoint while the full-screen notepad panel
+      // is active; above it the panel hides itself and panes keep rendering.
+      className="group flex h-full min-h-0 w-full min-w-0 flex-col max-768:[.app[data-mobile-panel=notepad]_&]:hidden"
       data-composer-focused={composerFocused ? "true" : undefined}
     >
       <PanesToolbar

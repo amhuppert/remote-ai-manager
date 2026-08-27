@@ -3,6 +3,7 @@ import type {
   ConversationListItem,
   SessionConversationListItem,
 } from "@/lib/conversations/schemas";
+import type { NotepadListItem } from "@/lib/notepads/schemas";
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import {
   buildPickerView,
@@ -94,6 +95,27 @@ const SPEC: SpecPickerSpec = {
   ],
 };
 
+function notepad(
+  overrides: Partial<NotepadListItem> & { id: string },
+): NotepadListItem {
+  const scope = overrides.scope ?? "project";
+  return {
+    id: overrides.id,
+    scope,
+    projectPath:
+      overrides.projectPath ?? (scope === "project" ? "/repos/alpha" : null),
+    projectName:
+      overrides.projectName ?? (scope === "project" ? "alpha" : null),
+    name: overrides.name ?? "Release checklist",
+    revision: overrides.revision ?? 1,
+    writeMode: overrides.writeMode ?? "full-edit",
+    pinned: overrides.pinned ?? false,
+    archived: overrides.archived ?? false,
+    createdAt: overrides.createdAt ?? "2026-07-01T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-07-01T00:00:00.000Z",
+  };
+}
+
 function context(
   overrides: Partial<ReferencePickerContext> = {},
 ): ReferencePickerContext {
@@ -103,6 +125,7 @@ function context(
     conversations: [],
     tickets: [],
     specs: [],
+    notepads: [],
     selectedSpec: null,
     includeFinishedTickets: false,
     includeArchivedConversations: false,
@@ -144,6 +167,7 @@ describe("buildPickerView — scopes", () => {
           conversations: [conversation({ conversationId: "c1" })],
           specs: [SPEC],
           tickets: [ticket({ id: "t1" })],
+          notepads: [notepad({ id: "np-1" })],
         }),
       }),
     );
@@ -154,6 +178,7 @@ describe("buildPickerView — scopes", () => {
       "conversation",
       "spec",
       "ticket",
+      "notepad",
     ]);
     expect(view.sections.every((section) => section.showHeader)).toBe(true);
     expect(view.sections.map((section) => section.label)).toEqual([
@@ -161,6 +186,7 @@ describe("buildPickerView — scopes", () => {
       "Conversations",
       "Specs",
       "Tickets",
+      "Notepads",
     ]);
   });
 
@@ -359,6 +385,159 @@ describe("buildPickerView — rows", () => {
       completion: "alpha#142",
       muted: false,
     });
+  });
+
+  it("carries a notepad's scope, recency, and the id the chip resolves by", () => {
+    const view = buildPickerView(
+      input({
+        scope: "notepad",
+        context: context({
+          notepads: [
+            notepad({
+              id: "np-7f3a",
+              name: "Release checklist",
+              updatedAt: "2026-07-09T00:00:00.000Z",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    expect(itemRows(view.rows)[0]).toMatchObject({
+      itemKind: "notepad",
+      label: "Release checklist",
+      description: "alpha",
+      meta: { kind: "relative-time", iso: "2026-07-09T00:00:00.000Z" },
+      status: null,
+      completion: "Release checklist",
+      muted: false,
+      // The immutable id is what the inserted chip resolves by; the name is a
+      // display snapshot.
+      selection: {
+        kind: "reference",
+        type: "notepad",
+        attrs: {
+          notepadId: "np-7f3a",
+          name: "Release checklist",
+          scope: "project",
+          projectName: "alpha",
+        },
+      },
+    });
+  });
+
+  it("labels a global notepad by its scope rather than a project", () => {
+    const view = buildPickerView(
+      input({
+        scope: "notepad",
+        context: context({
+          notepads: [notepad({ id: "np-1", scope: "global" })],
+        }),
+      }),
+    );
+
+    expect(itemRows(view.rows)[0]).toMatchObject({
+      description: "Global",
+      selection: {
+        kind: "reference",
+        type: "notepad",
+        attrs: { scope: "global", projectName: "" },
+      },
+    });
+  });
+
+  it("flags a write mode that constrains agents, and stays silent on the default", () => {
+    const view = buildPickerView(
+      input({
+        scope: "notepad",
+        context: context({
+          notepads: [
+            notepad({ id: "np-1", name: "Read only", writeMode: "read-only" }),
+            notepad({
+              id: "np-2",
+              name: "Append only",
+              writeMode: "append-only",
+            }),
+            notepad({ id: "np-3", name: "Full edit", writeMode: "full-edit" }),
+          ],
+        }),
+      }),
+    );
+
+    expect(itemRows(view.rows).map((row) => row.status)).toEqual([
+      { label: "read only", tone: "neutral" },
+      { label: "append only", tone: "amber" },
+      null,
+    ]);
+  });
+
+  it("ranks pinned notepads ahead of the rest — pins are the working set", () => {
+    const view = buildPickerView(
+      input({
+        scope: "notepad",
+        context: context({
+          notepads: [
+            notepad({ id: "np-1", name: "Ordinary" }),
+            notepad({ id: "np-2", name: "Pinned", pinned: true }),
+            notepad({ id: "np-3", name: "Also ordinary" }),
+          ],
+        }),
+      }),
+    );
+
+    expect(itemRows(view.rows).map((row) => row.label)).toEqual([
+      "Pinned",
+      "Ordinary",
+      "Also ordinary",
+    ]);
+    expect(itemRows(view.rows)[0]?.facts).toEqual([
+      { label: "pinned", tone: "accent" },
+    ]);
+  });
+
+  it("offers only notepads reachable from here: unarchived, global or this project", () => {
+    const view = buildPickerView(
+      input({
+        scope: "notepad",
+        context: context({
+          notepads: [
+            notepad({ id: "np-1", name: "This project" }),
+            notepad({ id: "np-2", name: "Everywhere", scope: "global" }),
+            notepad({
+              id: "np-3",
+              name: "Another project",
+              projectName: "beta",
+              projectPath: "/repos/beta",
+            }),
+            notepad({ id: "np-4", name: "Archived", archived: true }),
+          ],
+        }),
+      }),
+    );
+
+    expect(itemRows(view.rows).map((row) => row.label)).toEqual([
+      "This project",
+      "Everywhere",
+    ]);
+  });
+
+  it("filters notepads by name against the query", () => {
+    const view = buildPickerView(
+      input({
+        scope: "notepad",
+        query: "check",
+        context: context({
+          notepads: [
+            notepad({ id: "np-1", name: "Release checklist" }),
+            notepad({ id: "np-2", name: "Meeting notes" }),
+          ],
+        }),
+      }),
+    );
+
+    expect(itemRows(view.rows).map((row) => row.label)).toEqual([
+      "Release checklist",
+    ]);
   });
 
   it("carries a conversation's status and last activity instant", () => {

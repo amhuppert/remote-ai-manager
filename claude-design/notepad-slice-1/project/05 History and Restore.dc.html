@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); } a:hover { color: var(--cyan-dim); }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);padding:40px;display:flex;flex-direction:column;gap:20px;">
+  <div style="display:flex;flex-direction:column;gap:4px;max-width:720px;">
+    <div style="font-family:var(--font-display);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;">Notepad &mdash; history &amp; restore</div>
+    <div style="font-size:0.74rem;color:var(--text-secondary);line-height:1.6;">Every persisted change is a revision with an author. Select a revision to preview it, flip to a diff &mdash; what it changed (vs previous) or what restoring it would change (vs current) &mdash; and restore &mdash; immediate, no confirm dialog: a restore is a new head, never a rewrite. Try it: pick rev 14, then Restore.</div>
+  </div>
+
+  <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;" data-comment-anchor="5284cf7c29-div">
+
+    <!-- History list -->
+    <div data-screen-label="Revision history" style="width:400px;flex-shrink:0;display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+        <button aria-label="Back to notepad" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"></path></svg></button>
+        <span style="font-size:0.74rem;font-weight:600;">History</span>
+        <span style="font-size:0.7rem;color:var(--text-tertiary);">auth-migration notes</span>
+        <span style="margin-left:auto;font-size:0.68rem;color:var(--text-tertiary);">{{ revCount }} revisions</span>
+      </div>
+      <div style="max-height:560px;overflow-y:auto;overflow-x:hidden;">
+        <sc-for list="{{ revs }}" as="rev" hint-placeholder-count="7">
+          <div onClick="{{ rev.select }}" style="display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 12px;border-left:2px solid {{ rev.rail }};background:{{ rev.bg }};cursor:pointer;" style-hover="background:var(--bg-hover);">
+            <span style="width:38px;flex-shrink:0;font-size:0.72rem;font-weight:700;color:{{ rev.numColor }};">r{{ rev.num }}</span>
+            <span style="display:flex;flex-direction:column;gap:1px;min-width:0;">
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.72rem;color:var(--text-primary);">
+                <span style="width:6px;height:6px;border-radius:9999px;background:{{ rev.dot }};flex-shrink:0;"></span>
+                {{ rev.author }}
+              </span>
+              <span style="font-size:0.64rem;color:var(--text-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ rev.origin }}</span>
+            </span>
+            <span style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:1px;flex-shrink:0;">
+              <sc-if value="{{ rev.isHead }}" hint-placeholder-val="{{ false }}"><span style="font-size:0.62rem;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--green);border:1px solid rgba(0,230,118,0.2);background:var(--green-glow);border-radius:9999px;padding:0 7px;">current</span></sc-if>
+              <span style="font-size:0.66rem;color:var(--text-tertiary);">{{ rev.time }}</span>
+            </span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- Snapshot preview -->
+    <div data-screen-label="Snapshot preview" style="width:540px;flex-shrink:0;display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+        <span style="font-size:0.74rem;font-weight:700;color:{{ selColor }};">r{{ selNum }}</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.72rem;color:var(--text-primary);"><span style="width:6px;height:6px;border-radius:9999px;background:{{ selDot }};"></span>{{ selAuthor }}</span>
+        <span style="font-size:0.68rem;color:var(--text-tertiary);">{{ selTime }}</span>
+        <span style="margin-left:auto;display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);">
+          <button onClick="{{ showSnap }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ snapBg }};color:{{ snapColor }};">snapshot</button>
+          <button onClick="{{ showPrev }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ prevBg }};color:{{ prevColor }};">vs previous</button>
+          <button onClick="{{ showDiff }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ diffBg }};color:{{ diffColor }};" data-comment-anchor="7d57434a12-button">vs current</button>
+        </span>
+      </div>
+
+      <sc-if value="{{ restoredBanner }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(0,230,118,0.2);background:var(--green-glow);font-size:0.7rem;color:var(--green);">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>
+          Restored &mdash; rev 16 created from rev 14. Earlier history unchanged.
+        </div>
+      </sc-if>
+
+      <div style="height:430px;overflow-y:auto;overflow-x:hidden;padding:14px 16px;background:var(--bg-base);font-size:0.78rem;line-height:1.75;">
+        <sc-for list="{{ body }}" as="line" hint-placeholder-count="10">
+          <div style="padding:0 8px;margin:0 -8px;background:{{ line.bg }};color:{{ line.color }};border-radius:2px;text-decoration:{{ line.deco }};">{{ line.text }}</div>
+        </sc-for>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border-subtle);background:var(--bg-surface);">
+        <span style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.5;">copies this snapshot forward as the new head &mdash; nothing behind it changes</span>
+        <button onClick="{{ doRestore }}" style="margin-left:auto;flex-shrink:0;border:none;border-radius:var(--radius-sm);background:{{ restoreBtnBg }};color:{{ restoreBtnColor }};padding:6px 14px;font-family:var(--font-mono);font-size:0.72rem;font-weight:600;cursor:{{ restoreCursor }};" style-hover="background:var(--cyan-dim);">{{ restoreLabel }}</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">in the app &mdash; history opens inside the notepad pane; list rail and snapshot sit together</div>
+    <div data-screen-label="History in pane" style="width:880px;display:flex;flex-direction:column;background:var(--bg-void);border:1px solid var(--border-dim);border-radius:var(--radius-lg);padding:12px;">
+      <div style="flex-shrink:0;border:1px solid var(--border-subtle);border-bottom:none;border-radius:var(--radius-lg) var(--radius-lg) 0 0;background:var(--bg-surface);padding:8px 12px;">
+        <div style="display:flex;gap:2px;padding:3px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);width:fit-content;">
+          <span style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border-radius:var(--radius-sm);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-secondary);">Diff</span>
+          <span style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border-radius:var(--radius-sm);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-secondary);">Docs</span>
+          <span style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border-radius:var(--radius-sm);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-secondary);">Alignment</span>
+          <span style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border-radius:var(--radius-sm);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-secondary);">Specs</span>
+          <span style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border-radius:var(--radius-sm);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-secondary);">Artifact</span>
+          <span style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border-radius:var(--radius-sm);background:var(--cyan);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-inverse);">Notepad</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:0 0 var(--radius-lg) var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);color:var(--text-secondary);"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"></path></svg></span>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+          <span style="font-size:0.8rem;font-weight:600;">auth-migration notes</span>
+          <span style="font-size:0.7rem;color:var(--text-tertiary);">/ history</span>
+          <span style="margin-left:auto;font-size:0.68rem;color:var(--text-tertiary);">8 revisions</span>
+        </div>
+        <div style="display:grid;grid-template-columns:240px minmax(0,1fr);">
+          <div style="border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;">
+            <div style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 10px;"><span style="width:28px;font-size:0.7rem;font-weight:700;color:var(--text-secondary);">r15</span><span style="width:6px;height:6px;border-radius:9999px;background:var(--amber);"></span><span style="font-size:0.7rem;">you</span><span style="margin-left:auto;font-size:0.62rem;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--green);border:1px solid rgba(0,230,118,0.2);background:var(--green-glow);border-radius:9999px;padding:0 6px;">current</span></div>
+            <div style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 10px;border-left:2px solid var(--cyan);background:var(--bg-hover);margin-left:-2px;"><span style="width:28px;font-size:0.7rem;font-weight:700;color:var(--cyan);">r14</span><span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);"></span><span style="font-size:0.7rem;">claude</span><span style="margin-left:auto;font-size:0.64rem;color:var(--text-tertiary);">6m</span></div>
+            <div style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 10px;"><span style="width:28px;font-size:0.7rem;font-weight:700;color:var(--text-secondary);">r13</span><span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);"></span><span style="font-size:0.7rem;">claude</span><span style="margin-left:auto;font-size:0.64rem;color:var(--text-tertiary);">9m</span></div>
+            <div style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 10px;"><span style="width:28px;font-size:0.7rem;font-weight:700;color:var(--text-secondary);">r12</span><span style="width:6px;height:6px;border-radius:9999px;background:var(--amber);"></span><span style="font-size:0.7rem;">you</span><span style="margin-left:auto;font-size:0.64rem;color:var(--text-tertiary);">24m</span></div>
+            <div style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 10px;"><span style="width:28px;font-size:0.7rem;font-weight:700;color:var(--text-secondary);">r11</span><span style="width:6px;height:6px;border-radius:9999px;background:var(--amber);"></span><span style="font-size:0.7rem;">you</span><span style="margin-left:auto;font-size:0.64rem;color:var(--text-tertiary);">1h</span></div>
+            <div style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 10px;"><span style="width:28px;font-size:0.7rem;font-weight:700;color:var(--text-secondary);">r10</span><span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);"></span><span style="font-size:0.7rem;">claude</span><span style="margin-left:auto;font-size:0.64rem;color:var(--text-tertiary);">1h</span></div>
+            <div style="padding:8px 10px;font-size:0.66rem;color:var(--text-tertiary);">+ 2 older</div>
+          </div>
+          <div style="display:flex;flex-direction:column;min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+              <span style="font-size:0.72rem;font-weight:700;color:var(--cyan);">r14</span>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.7rem;"><span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);"></span>claude</span>
+              <span style="font-size:0.66rem;color:var(--text-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">plan the auth cutover</span>
+              <span style="margin-left:auto;display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);flex-shrink:0;">
+                <span style="border-radius:3px;padding:2px 7px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">snapshot</span>
+                <span style="border-radius:3px;padding:2px 7px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.04em;background:var(--bg-raised);color:var(--text-primary);">vs previous</span>
+                <span style="border-radius:3px;padding:2px 7px;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">vs current</span>
+              </span>
+            </div>
+            <div style="height:238px;overflow:hidden;padding:10px 14px;background:var(--bg-base);font-size:0.72rem;line-height:1.7;">
+              <div style="color:var(--text-secondary);"># auth-migration notes</div>
+              <div style="color:var(--text-secondary);">&nbsp;</div>
+              <div style="color:var(--text-secondary);">## rollout order</div>
+              <div style="color:var(--text-secondary);">- staging first, 24h soak</div>
+              <div style="color:var(--text-secondary);">- CLI clients next &mdash; they retry cleanly</div>
+              <div style="color:var(--text-secondary);">- dashboards last &mdash; they hold long sessions</div>
+              <div style="background:var(--green-glow);color:var(--green);border-radius:2px;padding:0 6px;margin:0 -6px;">## risks</div>
+              <div style="background:var(--green-glow);color:var(--green);border-radius:2px;padding:0 6px;margin:0 -6px;">- long dashboard sessions pin the old issuer</div>
+              <div style="background:var(--green-glow);color:var(--green);border-radius:2px;padding:0 6px;margin:0 -6px;">- rollback is the flag, not a redeploy</div>
+            </div>
+            <div style="display:flex;align-items:center;padding:8px 10px;border-top:1px solid var(--border-subtle);">
+              <button style="margin-left:auto;border:none;border-radius:var(--radius-sm);background:var(--cyan);color:var(--text-inverse);padding:5px 12px;font-family:var(--font-mono);font-size:0.7rem;font-weight:600;cursor:pointer;" style-hover="background:var(--cyan-dim);">Restore rev 14</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{ &quot;$preview&quot;: { &quot;width&quot;: 1080, &quot;height&quot;: 820 } }">
+class Component extends DCLogic {
+  state = { sel: 15, mode: "snap", restored: false };
+  renderVals() {
+    const s = this.state;
+    const you = { author: "you", dot: "var(--amber)", origin: "autosave" };
+    const cl = { author: "claude", dot: "var(--cyan)", origin: "conversation: plan the auth cutover" };
+    let data = [
+      { num: 15, ...you, time: "2m" },
+      { num: 14, ...cl, time: "6m" },
+      { num: 13, ...cl, time: "9m" },
+      { num: 12, ...you, time: "24m" },
+      { num: 11, ...you, time: "1h" },
+      { num: 10, ...cl, origin: "conversation: draft rollout order", time: "1h" },
+      { num: 9, ...you, time: "2h" },
+      { num: 8, ...you, time: "3h" },
+    ];
+    if (s.restored) data = [{ num: 16, ...you, origin: "restore of rev 14", time: "just now" }, ...data];
+    const head = data[0].num;
+    const revs = data.map((r) => ({
+      ...r,
+      num: String(r.num),
+      isHead: r.num === head,
+      rail: r.num === s.sel ? "var(--cyan)" : "transparent",
+      bg: r.num === s.sel ? "var(--bg-hover)" : "transparent",
+      numColor: r.num === s.sel ? "var(--cyan)" : "var(--text-secondary)",
+      select: () => this.setState({ sel: r.num, mode: "snap" }),
+    }));
+    const selRow = data.find((r) => r.num === s.sel) ?? data[0];
+
+    const plain = (t) => ({ text: t, bg: "transparent", color: "var(--text-primary)", deco: "none" });
+    const dim = (t) => ({ text: t, bg: "transparent", color: "var(--text-secondary)", deco: "none" });
+    const add = (t) => ({ text: t, bg: "var(--green-glow)", color: "var(--green)", deco: "none" });
+    const del = (t) => ({ text: t, bg: "var(--red-glow)", color: "var(--red-text)", deco: "line-through" });
+    const baseDoc = [
+      plain("# auth-migration notes"), plain("\u00a0"),
+      plain("Cutover to the new session service, one surface at a time."), plain("\u00a0"),
+      plain("## done"),
+      plain("- token issuer behind a flag"),
+      plain("- session table backfilled"), plain("\u00a0"),
+      plain("## rollout order"),
+      plain("- staging first, 24h soak"),
+      plain("- CLI clients next \u2014 they retry cleanly"),
+      plain("- dashboards last \u2014 they hold long sessions"),
+    ];
+    const failureModes = [
+      plain("\u00a0"), plain("## risks"),
+      plain("- long dashboard sessions pin the old issuer"),
+      plain("- rollback is the flag, not a redeploy"),
+    ];
+    const heartbeat = [plain("\u00a0"), plain("- [ ] confirm soak window with infra")];
+    // r13: base; r14: base+failureModes; r15/head: base+failureModes+heartbeat (restored r16 = r14 content)
+    const snapFor = (n) => {
+      if (n <= 13) return baseDoc;
+      if (n === 14 || n === 16) return [...baseDoc, ...failureModes];
+      return [...baseDoc, ...failureModes, ...heartbeat];
+    };
+    const isHeadSel = s.sel === head;
+    const idx = data.findIndex((r) => r.num === s.sel);
+    const prevNum = idx >= 0 && idx < data.length - 1 ? data[idx + 1].num : null;
+    const render = (fromLines, toLines) => {
+      const from = fromLines.map((l) => l.text);
+      const to = toLines.map((l) => l.text);
+      const out = [];
+      for (const t of from) out.push(to.includes(t) ? dim(t) : del(t));
+      for (const t of to) if (!from.includes(t)) out.push(add(t));
+      return out;
+    };
+    let body;
+    if (s.mode === "cur" && !isHeadSel) {
+      body = render(snapFor(head), snapFor(s.sel));
+    } else if (s.mode === "prev") {
+      body = render(prevNum === null ? [] : snapFor(prevNum), snapFor(s.sel));
+    } else {
+      body = snapFor(s.sel);
+    }
+
+    const canRestore = !isHeadSel && !(s.restored && s.sel === 16);
+    return {
+      revCount: String(data.length),
+      revs,
+      selNum: String(selRow.num),
+      selColor: "var(--cyan)",
+      selDot: selRow.dot,
+      selAuthor: selRow.author,
+      selTime: selRow.time === "just now" ? "just now" : selRow.time + " ago",
+      showSnap: () => this.setState({ mode: "snap" }),
+      showPrev: () => this.setState({ mode: "prev" }),
+      showDiff: () => this.setState({ mode: "cur" }),
+      snapBg: s.mode === "snap" ? "var(--bg-raised)" : "transparent",
+      snapColor: s.mode === "snap" ? "var(--text-primary)" : "var(--text-tertiary)",
+      prevBg: s.mode === "prev" ? "var(--bg-raised)" : "transparent",
+      prevColor: s.mode === "prev" ? "var(--text-primary)" : "var(--text-tertiary)",
+      diffBg: s.mode === "cur" ? "var(--bg-raised)" : "transparent",
+      diffColor: s.mode === "cur" ? "var(--text-primary)" : "var(--text-tertiary)",
+      body,
+      restoredBanner: s.restored && s.sel === 16,
+      restoreLabel: isHeadSel ? "Current" : "Restore rev " + selRow.num,
+      restoreBtnBg: canRestore ? "var(--cyan)" : "var(--bg-raised)",
+      restoreBtnColor: canRestore ? "var(--text-inverse)" : "var(--text-tertiary)",
+      restoreCursor: canRestore ? "pointer" : "default",
+      doRestore: () => { if (canRestore) this.setState({ restored: true, sel: 16, mode: "snap" }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

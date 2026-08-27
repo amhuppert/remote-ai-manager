@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); } a:hover { color: var(--cyan-dim); }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);padding:40px;display:flex;flex-direction:column;gap:20px;">
+  <div style="display:flex;flex-direction:column;gap:4px;max-width:760px;">
+    <div style="font-family:var(--font-display);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;">Notepad &mdash; mobile (&le;768px)</div>
+    <div style="font-size:0.74rem;color:var(--text-secondary);line-height:1.6;">The notepad joins the mobile bottom bar as a full-screen panel: browse, open, read, and the write-mode control. No Markdown-with-chips editing surface on mobile this slice; quick capture stays deferred. All hit targets &ge;44px.</div>
+  </div>
+
+  <div style="display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;">
+
+    <!-- A: bottom bar + browse -->
+    <div data-screen-label="Mobile browse" style="display:flex;flex-direction:column;gap:8px;width:390px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">A &middot; bottom-bar entry &middot; browse</div>
+      <div style="height:720px;display:flex;flex-direction:column;border:1px solid var(--border-default);border-radius:24px;background:var(--bg-void);overflow:hidden;">
+        <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:10px 20px 6px;font-size:0.7rem;color:var(--text-secondary);">
+          <span>9:41</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:14px;height:8px;border:1px solid var(--text-tertiary);border-radius:2px;display:inline-block;"></span></span>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:48px;padding:4px 16px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <span style="font-size:0.78rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-secondary);">Notepads</span>
+          <span style="font-size:0.72rem;color:var(--text-tertiary);">12</span>
+          <button style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;min-height:36px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-raised);padding:6px 14px;font-family:var(--font-mono);font-size:0.76rem;color:var(--text-primary);cursor:pointer;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"></path></svg>New</button>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;background:var(--bg-surface);">
+          <div style="display:flex;align-items:center;background:var(--bg-raised);padding:4px 16px;font-size:0.68rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">Pinned</div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;border-left:2px solid transparent;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">slice-1 working context</span>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">2m</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">release 0.4 checklist</span>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">1h</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">agent onboarding brief</span>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">4h</span>
+          </div>
+          <div style="display:flex;align-items:center;background:var(--bg-raised);padding:4px 16px;font-size:0.68rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">Recent</div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">auth-migration notes</span>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">18m</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">notepad picker parity</span>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">41m</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">error copy sweep</span>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">5h</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">worktree cleanup notes</span>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">1d</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;min-height:48px;padding:4px 16px;">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.84rem;font-weight:500;">cctl cheatsheet</span>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>
+            <span style="margin-left:auto;font-size:0.72rem;color:var(--text-tertiary);flex-shrink:0;">2d</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:48px;border-top:1px solid var(--border-subtle);padding:4px 16px;font-size:0.74rem;color:var(--text-tertiary);">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"></path></svg>
+            Archived 6
+          </div>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:stretch;border-top:1px solid var(--border-default);background:var(--bg-base);padding:4px 8px 14px;">
+          <span style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;color:var(--text-tertiary);font-size:0.6rem;letter-spacing:0.04em;text-transform:uppercase;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>Convos</span>
+          <span style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;color:var(--text-tertiary);font-size:0.6rem;letter-spacing:0.04em;text-transform:uppercase;"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 3v7M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM11 13V6M11 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"></path></svg>Diff</span>
+          <span style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;color:var(--text-tertiary);font-size:0.6rem;letter-spacing:0.04em;text-transform:uppercase;"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path></svg>Tickets</span>
+          <span style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;color:var(--cyan);font-size:0.6rem;letter-spacing:0.04em;text-transform:uppercase;"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>Notepad</span>
+          <span style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:48px;color:var(--text-tertiary);font-size:0.6rem;letter-spacing:0.04em;text-transform:uppercase;"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"></circle><circle cx="8" cy="8" r="1.3"></circle><circle cx="12.5" cy="8" r="1.3"></circle></svg>More</span>
+        </div>
+      </div>
+      <div style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.6;">Same list anatomy as desktop &mdash; pins, recency, scope glyphs, lock for non-default write mode, collapsed archive &mdash; at 48px row height. New notepad works here; writing content does not.</div>
+    </div>
+
+    <!-- B: open, read -->
+    <div data-screen-label="Mobile read" style="display:flex;flex-direction:column;gap:8px;width:390px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">B &middot; open &middot; reading view</div>
+      <div style="height:720px;display:flex;flex-direction:column;border:1px solid var(--border-default);border-radius:24px;background:var(--bg-void);overflow:hidden;">
+        <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:10px 20px 6px;font-size:0.7rem;color:var(--text-secondary);">
+          <span>9:41</span>
+          <span style="width:14px;height:8px;border:1px solid var(--text-tertiary);border-radius:2px;display:inline-block;"></span>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:48px;padding:4px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <button aria-label="All notepads" style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"></path></svg></button>
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.86rem;font-weight:600;">slice-1 working context</span>
+          <span style="flex-shrink:0;font-size:0.64rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);border:1px solid var(--border-subtle);border-radius:9999px;padding:2px 8px;">project</span>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 16px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+          <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.72rem;color:var(--text-tertiary);">
+            <span style="width:6px;height:6px;border-radius:9999px;background:var(--green);"></span>
+            rev 15 &middot; you &middot; 2m
+          </span>
+          <button style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;min-height:36px;border:1px solid var(--border-subtle);border-radius:9999px;background:transparent;padding:6px 12px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-tertiary);cursor:pointer;">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M11.5 2.5l2 2L6 12l-2.6.6L4 10z"></path></svg>
+            agents: full edit
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"></path></svg>
+          </button>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:16px 18px;background:var(--bg-surface);font-family:var(--font-body);font-size:0.92rem;line-height:1.7;color:var(--text-primary);">
+          <div style="font-family:var(--font-display);font-size:1.2rem;font-weight:700;line-height:1.3;margin:0 0 10px;">slice-1 working context</div>
+          <p style="margin:0 0 10px;">Everything an agent needs before picking up slice-1 work. Ship behind the <code style="background:var(--bg-raised);border-radius:var(--radius-sm);padding:1px 5px;font-family:var(--font-mono);font-size:0.8em;color:var(--cyan);">cc.notepad</code> flag.</p>
+          <div style="font-family:var(--font-display);font-size:1.02rem;font-weight:700;line-height:1.3;margin:14px 0 6px;">ground rules</div>
+          <div style="display:flex;flex-direction:column;gap:5px;margin:0 0 10px;padding-left:16px;">
+            <div style="position:relative;"><span style="position:absolute;left:-14px;color:var(--cyan);font-weight:700;">&rsaquo;</span>one canonical markdown string &mdash; no second representation</div>
+            <div style="position:relative;"><span style="position:absolute;left:-14px;color:var(--cyan);font-weight:700;">&rsaquo;</span>ids are immutable; names are display-only</div>
+            <div style="position:relative;"><span style="position:absolute;left:-14px;color:var(--cyan);font-weight:700;">&rsaquo;</span>your edits always win &mdash; agent writes land as new revisions</div>
+          </div>
+          <div style="font-family:var(--font-display);font-size:1.02rem;font-weight:700;line-height:1.3;margin:14px 0 6px;">open threads</div>
+          <div style="display:flex;flex-direction:column;gap:6px;margin:0 0 10px;">
+            <div style="display:flex;align-items:baseline;gap:8px;"><span style="flex-shrink:0;width:13px;height:13px;border:1px solid var(--border-strong);border-radius:3px;position:relative;top:1px;"></span><span>rollout comms draft &mdash; align in <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(0,229,255,0.25);background:var(--cyan-glow);color:var(--cyan);padding:1px 8px;font-family:var(--font-mono);font-size:0.72rem;line-height:1.5;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>plan the 0.4 release</span></span></div>
+            <div style="display:flex;align-items:baseline;gap:8px;"><span style="flex-shrink:0;width:13px;height:13px;border:1px solid var(--border-strong);border-radius:3px;position:relative;top:1px;"></span><span>picker group ordering for <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid var(--border-default);background:var(--bg-raised);color:var(--text-secondary);padding:1px 8px;font-family:var(--font-mono);font-size:0.72rem;line-height:1.5;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.2"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path></svg><span style="color:var(--text-primary);">notepad data model</span></span></span></div>
+            <div style="display:flex;align-items:baseline;gap:8px;color:var(--text-tertiary);"><span style="flex-shrink:0;width:13px;height:13px;border:1px solid var(--cyan-dim);border-radius:3px;background:var(--cyan-glow);position:relative;top:1px;display:inline-flex;align-items:center;justify-content:center;"><svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="var(--cyan)" stroke-width="2"><path d="M3 8.5l3.5 3.5L13 5"></path></svg></span><span style="text-decoration:line-through;">restore lands as a new head &mdash; settled</span></div>
+          </div>
+          <img src="assets/pasted-diff-spike.png" alt="diff-panel spike" style="max-width:100%;border-radius:var(--radius-md);border:1px solid var(--border-subtle);margin:4px 0 2px;">
+          <div style="font-size:0.74rem;color:var(--text-tertiary);font-family:var(--font-mono);margin:0 0 10px;">diff-panel spike, keep for reference</div>
+        </div>
+        <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;padding:8px 16px 16px;border-top:1px solid var(--border-subtle);background:var(--bg-base);font-size:0.68rem;color:var(--text-tertiary);">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.5M8 11h.01"></path></svg>
+          reading view &mdash; editing lives on desktop this slice
+        </div>
+      </div>
+      <div style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.6;">The rendered preview, full-screen. Header keeps identity, scope, rev + author, and the one control that acts from anywhere: agent write mode. No editor, no composer chips.</div>
+    </div>
+
+    <!-- C: write-mode sheet -->
+    <div data-screen-label="Mobile write-mode sheet" style="display:flex;flex-direction:column;gap:8px;width:390px;flex-shrink:0;">
+      <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">C &middot; the write-mode control &middot; bottom sheet</div>
+      <div style="height:720px;position:relative;display:flex;flex-direction:column;justify-content:flex-end;border:1px solid var(--border-default);border-radius:24px;background:var(--bg-void);overflow:hidden;">
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;opacity:0.35;pointer-events:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 20px 6px;font-size:0.7rem;color:var(--text-secondary);"><span>9:41</span><span style="width:14px;height:8px;border:1px solid var(--text-tertiary);border-radius:2px;display:inline-block;"></span></div>
+          <div style="display:flex;align-items:center;gap:8px;min-height:48px;padding:4px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+            <span style="font-size:0.86rem;font-weight:600;">slice-1 working context</span>
+          </div>
+          <div style="flex:1;background:var(--bg-surface);"></div>
+        </div>
+        <div style="position:absolute;inset:0;background:rgba(6,9,15,0.55);"></div>
+        <div style="position:relative;display:flex;flex-direction:column;border-top:1px solid var(--border-default);border-radius:20px 20px 0 0;background:var(--bg-elevated);box-shadow:0 -12px 32px rgba(0,0,0,0.6);padding-bottom:12px;">
+          <div style="align-self:center;width:36px;height:4px;border-radius:9999px;background:var(--border-strong);margin:8px 0 4px;"></div>
+          <div style="padding:8px 18px;font-size:0.7rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">Agent write mode</div>
+          <div style="display:flex;gap:12px;align-items:flex-start;min-height:56px;padding:10px 18px;border-left:2px solid transparent;">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--text-secondary)" stroke-width="1.3" style="flex-shrink:0;margin-top:2px;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>
+            <span style="display:flex;flex-direction:column;gap:2px;"><span style="font-size:0.84rem;font-weight:600;">read only</span><span style="font-size:0.72rem;color:var(--text-tertiary);line-height:1.5;">agents can read, never write</span></span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:flex-start;min-height:56px;padding:10px 18px;border-left:2px solid transparent;">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--text-secondary)" stroke-width="1.3" style="flex-shrink:0;margin-top:2px;"><path d="M8 4v8M4 8h8"></path></svg>
+            <span style="display:flex;flex-direction:column;gap:2px;"><span style="font-size:0.84rem;font-weight:600;">append only</span><span style="font-size:0.72rem;color:var(--text-tertiary);line-height:1.5;">agents add to the end, never rewrite</span></span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:flex-start;min-height:56px;padding:10px 18px;border-left:2px solid var(--cyan);background:var(--bg-hover);">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--text-secondary)" stroke-width="1.3" style="flex-shrink:0;margin-top:2px;"><path d="M11.5 2.5l2 2L6 12l-2.6.6L4 10z"></path></svg>
+            <span style="display:flex;flex-direction:column;gap:2px;flex:1;"><span style="font-size:0.84rem;font-weight:600;">full edit</span><span style="font-size:0.72rem;color:var(--text-tertiary);line-height:1.5;">agents edit anywhere &middot; history covers restores</span></span>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="var(--cyan)" stroke-width="2" style="flex-shrink:0;margin-top:4px;"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>
+          </div>
+          <div style="padding:10px 18px 4px;border-top:1px solid var(--border-subtle);margin-top:6px;font-size:0.7rem;color:var(--text-tertiary);">governs agents only &mdash; you can always edit</div>
+          <button style="margin:10px 18px 6px;min-height:48px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:transparent;color:var(--text-secondary);font-family:var(--font-mono);font-size:0.8rem;cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+      <div style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.6;">Same three modes, same one-line explanations, same closing sentence as the desktop menu &mdash; presented as a sheet. Selection applies immediately; the sheet dismisses.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{ &quot;$preview&quot;: { &quot;width&quot;: 1320, &quot;height&quot;: 900 } }"></script>
+</body>
+</html>

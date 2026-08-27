@@ -1,6 +1,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { ImagePayload, ImageMediaType } from "@/lib/images/schemas";
+import { buildNotepadImageToken } from "./notepad-image-token";
 import { getReferenceByNodeName } from "./reference-registry";
 export interface SerializePromptDocArgs {
   doc: ProseMirrorNode;
@@ -87,6 +88,13 @@ function serializeInline(
       out += `[Image #${index}]`;
       if (typeof attachmentId === "string" && attachmentId.length > 0) {
         markerByAttachmentId.set(attachmentId, index);
+      }
+      return;
+    }
+    if (child.type.name === "notepadImage") {
+      const imageId = child.attrs["imageId"];
+      if (typeof imageId === "string" && imageId.length > 0) {
+        out += buildNotepadImageToken(imageId);
       }
       return;
     }

@@ -27,9 +27,9 @@ afterEach(() => {
 });
 
 describe("MobileBottomBar", () => {
-  it("renders all five panel tabs", () => {
+  it("renders all six panel tabs", () => {
     render(<MobileBottomBar {...makeProps()} />);
-    for (const label of ["Chat", "Diff", "Docs", "Specs", "Info"]) {
+    for (const label of ["Chat", "Diff", "Docs", "Notepad", "Specs", "Info"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
   });

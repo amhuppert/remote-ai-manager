@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import SessionContent from "@/features/session/conversation/SessionContent";
 import type { ComponentProps } from "react";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -330,6 +331,110 @@ describe("SessionContent", () => {
     expect(slot).not.toBeNull();
     expect(slot!.tagName).toBe("BUTTON");
     expect(slot!.textContent).toBe("Send prompt");
+  });
+
+  describe("mobile notepad panel routing", () => {
+    // The real panel renders over a stubbed notepads API (no component stub —
+    // the seam ratchet forbids new internal vi.mocks).
+    let api: FetchFixture;
+    beforeEach(() => {
+      api = installFetchFixture();
+      api.reply("GET", /\/api\/notepads/, { json: { notepads: [] } });
+    });
+    afterEach(() => {
+      api.restore();
+    });
+
+    it("renders the notepad panel in the content area when mobilePanel is notepad", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({ layout: "conversation", mobilePanel: "notepad" })}
+        />,
+      );
+      const contentArea = container.querySelector(".session-content-area");
+      expect(
+        contentArea!.querySelector('[data-testid="mobile-notepad-panel"]'),
+      ).not.toBeNull();
+      // The panel stands alone beside the (CSS-hidden) conversation panel —
+      // the right pane is not part of the mobile notepad surface.
+      expect(
+        container.querySelector('[data-testid="stub-right-pane"]'),
+      ).toBeNull();
+    });
+
+    it("does not render the notepad panel for other mobile panels", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({ layout: "conversation", mobilePanel: "chat" })}
+        />,
+      );
+      expect(
+        container.querySelector('[data-testid="mobile-notepad-panel"]'),
+      ).toBeNull();
+    });
+
+    it("renders the notepad panel in the panes layout so the bottom-bar entry opens it there too", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({
+            layout: "panes",
+            openTabs: makeOpenTabs(),
+            mobilePanel: "notepad",
+          })}
+        />,
+      );
+      const contentArea = container.querySelector(".session-content-area");
+      expect(
+        contentArea!.querySelector('[data-testid="mobile-notepad-panel"]'),
+      ).not.toBeNull();
+      // The grid stays mounted: the shell gate (data-mobile-panel on the .app
+      // root) hides it below the breakpoint, and above it — where the panel is
+      // itself hidden — panes must keep rendering.
+      expect(
+        container.querySelector('[data-testid="stub-panes-grid"]'),
+      ).not.toBeNull();
+    });
+
+    it("renders the notepad panel alongside the empty working-set state so the bottom-bar entry is never inert", () => {
+      const { container, getByText } = renderWithQuery(
+        <SessionContent
+          {...makeProps({
+            layout: "split",
+            openTabs: makeOpenTabs({ workingSet: [] }),
+            mobilePanel: "notepad",
+          })}
+        />,
+      );
+      expect(
+        container.querySelector('[data-testid="mobile-notepad-panel"]'),
+      ).not.toBeNull();
+      // The empty state stays mounted: its shell gate hides it below the
+      // breakpoint while the notepad panel is active, and above it — where the
+      // panel hides itself — the empty state must keep rendering.
+      expect(getByText("No conversations open")).toBeInTheDocument();
+    });
+
+    it("shell-gates the pinned composer row off the mobile notepad surface (read-first: no composer under the full-screen panel)", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({
+            layout: "conversation",
+            mobilePanel: "notepad",
+            promptInputSlot: <div data-testid="composer-slot" />,
+          })}
+        />,
+      );
+      const composerRow =
+        container.querySelector('[data-testid="composer-slot"]')
+          ?.parentElement ?? null;
+      expect(composerRow).not.toBeNull();
+      // jsdom computes no stylesheet, so the CSS gate is pinned by its class:
+      // the row hides when the .app shell carries data-mobile-panel="notepad"
+      // at mobile width.
+      expect(composerRow!.className).toContain(
+        "[.app[data-mobile-panel=notepad]_&]:hidden",
+      );
+    });
   });
 
   describe("tab strip + panes grid by layout", () => {

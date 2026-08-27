@@ -18,13 +18,15 @@ import { cn } from "@/lib/ui/cn";
 
 // One row shape serves every kind, so a kind only chooses which slots it fills.
 // Kind identity is carried by the leading glyph's colour: files read as neutral
-// chrome, conversations cyan, specs violet, tickets amber.
+// chrome, conversations cyan, specs violet, tickets amber, notepads blue.
 const GLYPH_PATHS: Record<PickerGlyph, string> = {
   file: "M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9l-6-6ZM13 3v6h6",
   conversation: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z",
   spec: "M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01",
   ticket:
     "M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4Z",
+  notepad:
+    "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6M8 13h7M8 17h4",
 };
 
 const GLYPH_COLOR_CLASS: Record<PickerGlyph, string> = {
@@ -32,6 +34,7 @@ const GLYPH_COLOR_CLASS: Record<PickerGlyph, string> = {
   conversation: "text-cyan",
   spec: "text-violet",
   ticket: "text-amber",
+  notepad: "text-blue",
 };
 
 const STATUS_DOT_CLASS: Record<ReferenceStatusTone, string> = {

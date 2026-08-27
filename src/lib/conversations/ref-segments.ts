@@ -1,5 +1,6 @@
 import { findRegisteredRefs } from "./ref-parser";
 import { type ConversationRefAttrs, type MessageRefAttrs } from "./schemas";
+import type { NotepadRefAttrs } from "@/lib/notepads/schemas";
 import type { TicketRefAttrs } from "@/lib/tickets/schemas";
 import {
   getReferenceByType,
@@ -24,7 +25,8 @@ export type RefSegment =
   | { type: "decision-ref"; attrs: SpecElementRefAttrs; raw: string }
   | { type: "task-ref"; attrs: SpecElementRefAttrs; raw: string }
   | { type: "question-ref"; attrs: SpecElementRefAttrs; raw: string }
-  | { type: "assumption-ref"; attrs: SpecElementRefAttrs; raw: string };
+  | { type: "assumption-ref"; attrs: SpecElementRefAttrs; raw: string }
+  | { type: "notepad-ref"; attrs: NotepadRefAttrs; raw: string };
 
 /**
  * Split text into plain-text runs interleaved with schema-valid

@@ -22,6 +22,8 @@ function arrangePanelState() {
   });
   s.selectSpecFile("steering", "design.md");
   s.setPendingTrayExpanded(true);
+  s.openNotepad("np-1");
+  s.setNotepadSort("name");
 }
 
 describe("session-detail.store — side-panel persistence across conversations", () => {
@@ -44,6 +46,8 @@ describe("session-detail.store — side-panel persistence across conversations",
       file: "design.md",
     });
     expect(after.pendingTrayExpanded).toBe(true);
+    expect(after.openNotepadId).toBe("np-1");
+    expect(after.notepadSort).toBe("name");
   });
 
   it("resetConversationState still resets conversation-scoped state", () => {
@@ -94,6 +98,8 @@ describe("session-detail.store — activatePanelSession", () => {
     expect(after.activeDocPath).toBeNull();
     expect(after.specBrowserSelection).toBeNull();
     expect(after.pendingTrayExpanded).toBe(false);
+    expect(after.openNotepadId).toBeNull();
+    expect(after.notepadSort).toBe("recency");
   });
 
   it("returning to a previous session restores its panel snapshot", () => {
@@ -124,6 +130,8 @@ describe("session-detail.store — activatePanelSession", () => {
       file: "design.md",
     });
     expect(restored.pendingTrayExpanded).toBe(true);
+    expect(restored.openNotepadId).toBe("np-1");
+    expect(restored.notepadSort).toBe("name");
     // A restored active document bumps the nonce so the viewer re-presents it
     // (breaks DocsPanel's browse latch and flashes the body).
     expect(restored.docActivationNonce).toBeGreaterThan(nonceBeforeReturn);

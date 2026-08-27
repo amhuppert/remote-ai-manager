@@ -123,3 +123,88 @@ describe("deserializePromptDoc code formatting", () => {
     );
   });
 });
+
+describe("deserializePromptDoc notepad image tokens", () => {
+  it("keeps notepad image tokens literal without the notepad option", () => {
+    expect(
+      deserializePromptDoc({ prompt: "see [Image: img-1] here", images: [] }),
+    ).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "see [Image: img-1] here" }],
+        },
+      ],
+    });
+  });
+
+  it("rebuilds a notepadImage node from a token when the notepad option is set", () => {
+    expect(
+      deserializePromptDoc(
+        { prompt: "see [Image: img-1] here", images: [] },
+        { notepadImages: true },
+      ),
+    ).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "see " },
+            { type: "notepadImage", attrs: { imageId: "img-1", fileName: "" } },
+            { type: "text", text: " here" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("keeps tokens literal inside code contexts even with the notepad option", () => {
+    expect(
+      deserializePromptDoc(
+        {
+          prompt: "`[Image: img-1]`\n```\n[Image: img-2]\n```",
+          images: [],
+        },
+        { notepadImages: true },
+      ),
+    ).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "[Image: img-1]",
+              marks: [{ type: "code" }],
+            },
+          ],
+        },
+        {
+          type: "codeBlock",
+          attrs: { language: null },
+          content: [{ type: "text", text: "[Image: img-2]" }],
+        },
+      ],
+    });
+  });
+
+  it("leaves prompt-style positional markers untouched by the notepad option", () => {
+    expect(
+      deserializePromptDoc(
+        { prompt: "old [Image #2] marker", images: [] },
+        { notepadImages: true },
+      ),
+    ).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "old [Image #2] marker" }],
+        },
+      ],
+    });
+  });
+});

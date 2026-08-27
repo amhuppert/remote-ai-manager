@@ -109,6 +109,16 @@ const schema = new Schema({
         title: { default: "" },
       },
     },
+    notepadImage: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        imageId: { default: "" },
+        fileName: { default: "" },
+      },
+    },
     codeBlock: {
       group: "block",
       content: "text*",
@@ -425,6 +435,24 @@ describe("serializePromptDoc", () => {
 
     expect(result.prompt).toBe("orphan: [Image #9]");
     expect(result.images).toEqual([]);
+  });
+
+  it("serializes a notepadImage node as the id-addressed token", () => {
+    const doc = schema.nodes["doc"]!.create(null, [
+      p(
+        t("shot: "),
+        schema.nodes["notepadImage"]!.create({
+          imageId: "img-7a2f",
+          fileName: "diff-spike.png",
+        }),
+        t(" done"),
+      ),
+    ]);
+
+    expect(serializePromptDoc({ doc, attachments: [] })).toEqual({
+      prompt: "shot: [Image: img-7a2f] done",
+      images: [],
+    });
   });
 
   it("serializes a slash command chip as its name verbatim", () => {

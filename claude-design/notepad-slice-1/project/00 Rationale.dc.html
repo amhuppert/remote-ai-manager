@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); text-decoration: none; } a:hover { color: var(--cyan-dim); text-decoration: underline; }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);display:flex;justify-content:center;padding:56px 24px;">
+  <div style="width:100%;max-width:820px;display:flex;flex-direction:column;gap:28px;">
+
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div style="font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-tertiary);">Command Center &middot; Notepad &middot; slice 1 &middot; design rationale</div>
+      <div style="font-family:var(--font-display);font-weight:800;font-size:1.7rem;letter-spacing:-0.03em;line-height:1.2;">Notepad: the calls I made, and why</div>
+      <div style="font-family:var(--font-body);font-size:0.88rem;line-height:1.7;color:var(--text-secondary);">Seven pages cover the surface. Everything below §6 of the brief was mine to decide; here is each decision and what I rejected. Review decisions are settled. This bundle ships alongside the approved spec: the spec owns the data model, protocol, event vocabulary, XML forms and CLI &mdash; these pages own how the UI looks and behaves.</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <a href="01 Notepad Split Screen.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">01 &middot; Split screen</span><span style="font-size:0.68rem;color:var(--text-tertiary);">the R14 centerpiece &mdash; full conversation view, interactive pane</span></a>
+      <a href="02 Browse and Organize.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">02 &middot; Browse &amp; organize</span><span style="font-size:0.68rem;color:var(--text-tertiary);">40 notepads, no search &middot; creation &middot; duplicate refusal &middot; empty</span></a>
+      <a href="03 Editor States.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">03 &middot; Editor states</span><span style="font-size:0.68rem;color:var(--text-tertiary);">write modes on the surface &middot; degraded states &middot; export</span></a>
+      <a href="04 Composer Loop.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">04 &middot; Composer loop</span><span style="font-size:0.68rem;color:var(--text-tertiary);">scripted simulation &mdash; agent drafts, you edit, collision resolves</span></a>
+      <a href="05 History and Restore.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">05 &middot; History &amp; restore</span><span style="font-size:0.68rem;color:var(--text-tertiary);">interactive &mdash; select, diff, restore-as-new-head</span></a>
+      <a href="06 Reference and Chip.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">06 &middot; Reference &amp; chip</span><span style="font-size:0.68rem;color:var(--text-tertiary);">picker entry &middot; prompt chip &middot; peek &middot; delivered XML</span></a>
+      <a href="07 Mobile.dc.html" style="display:flex;flex-direction:column;gap:2px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);padding:10px 12px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">07 &middot; Mobile</span><span style="font-size:0.68rem;color:var(--text-tertiary);">&le;768px &mdash; bottom-bar entry &middot; browse &middot; open &middot; read &middot; write mode</span></a>
+    </div>
+
+    <div style="height:1px;background:var(--border-subtle);"></div>
+
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--cyan);">Decisions</div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Where it lives: sixth tab, list &rarr; open</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">Notepad is a sixth right-pane tab. Inside it, the Docs pattern: a browse list opens one notepad, a back chevron returns, list state survives. One notepad open per pane &mdash; the working-set machinery (tabs inside the pane) is ceremony this slice doesn&rsquo;t need; the list is one click away. <span style="color:var(--text-primary);">Rejected:</span> a dedicated page (breaks R14&rsquo;s side-by-side contract), a floating window (CC has no floating-window vocabulary), multiple simultaneously open notepads.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Editor / preview: stacked, both live, three postures</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">Editor above, rendered preview below, a WRITE / SPLIT / READ segmented control. Stacking keeps both at full pane width &mdash; a vertical pane sharing the screen cannot afford to halve its line length. <span style="color:var(--text-primary);">Rejected:</span> side-by-side (line length), edit-vs-rendered swap (the ticket editor&rsquo;s pattern, explicitly not R5.2), and WYSIWYG &mdash; I agree with the brief&rsquo;s baseline: a Markdown&rarr;doc&rarr;Markdown round-trip that corrupts one agent-authored construct costs more than literal Markdown ever will with this audience.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Scope legibility: structure first, glyphs second, never color-coding</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">In the list, scope is structural &mdash; PROJECT and GLOBAL sections, project first because it&rsquo;s the local context. Everywhere else a glyph carries it: page for project, globe for global, plus a quiet pill in the open header, a meta cell in the picker, and a small &ldquo;global&rdquo; suffix inside chips. Scope never gets an accent color; accents are semantic in CC and scope is not a status.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Identity: Notepad claims blue</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">Picker glyphs are kind-colored (conversations cyan, tickets amber, specs violet). Notepad needs an identity or it disappears among ten kinds. Blue is the one accent the system reserves &ldquo;rarely used&rdquo; with no semantic load; every alternative lies (green = success, amber = awaiting, violet = Codex). Approved in review &mdash; blue is Notepad&rsquo;s.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Organization without search</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">Pins are the working set and always surface first. Scope sections cut the field in half; recency is the default order, name sort for known targets; archive collapses dead weight behind a count. Forty notepads is ~2.5 screens of 33px rows &mdash; scannable. &ldquo;I know its name&rdquo; is already served by the picker&rsquo;s type-to-filter, which is not full-text search and stays within the exclusion.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Write mode: quiet by default, loud only when it bites</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">A chip in the open header reads &ldquo;agents: full edit&rdquo; in tertiary &mdash; present, not shouting. Only <span style="color:var(--amber);">read only</span> gets the amber lock treatment: it is the exception state, the one you set deliberately. Append-only marks the surface with an end-of-document rail (&ldquo;agents append below this line&rdquo;) so the guarantee is visible where it acts. The mode menu explains each option in one line and ends with the sentence that matters: <span style="color:var(--text-primary);">governs agents only &mdash; you can always edit</span>. Non-default modes also surface as a small lock in list and picker rows. Full edit is the default in both scopes &mdash; per-notepad tightening plus history/restore is the mechanism.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Attribution: revision-grain, honestly</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">Revisions are full snapshots, so authorship exists at revision grain &mdash; the UI never pretends finer. There is no presence signal: the app learns about agent activity only when a write lands, so the first agent-visible moment is the landed draft (&ldquo;claude wrote rev 13&rdquo;). New lines carry the author&rsquo;s rail (cyan agent, amber you) with a rev tag, and the meta line re-attributes (&ldquo;rev 13 &middot; claude &middot; just now&rdquo;).</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">The collision: a banner, not a dialog</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">When an external write lands on a dirty buffer: one amber strip &mdash; &ldquo;claude wrote rev 14 while you were editing. Your draft is untouched and will save as the new head.&rdquo; Actions: Review rev 14 (opens history) or Dismiss. It never blocks typing, never offers a merge (merging is explicitly out of scope), and resolves itself into a quiet green note when your autosave flushes. The user&rsquo;s buffer is sacred; the machinery already guarantees it &mdash; the banner&rsquo;s only job is to say so.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">History: restore needs a diff</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">List (author dot, origin conversation, time, head badge) &rarr; snapshot preview &rarr; two diffs &mdash; what a revision changed (vs previous) and what restoring it would change (vs current) &rarr; restore. Every diff affordance routes here: &ldquo;View diff&rdquo; on a landed draft opens this panel &mdash; one destination, one presentation. Restore is immediate, no confirm dialog; the button carries the contract: &ldquo;copies this snapshot forward as rev N+1; nothing behind it changes.&rdquo;</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">The chip: qualitative weight, no numbers</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">The prompt chip is name + scope. Its hover peek answers &ldquo;what am I handing over?&rdquo;: revision, freshness, write mode, a two-line content preview, and counts of embedded refs &mdash; plus the delivery contract in one sentence. No character or token figures; the cost estimate is deferred and half-numbers would anchor wrong.</div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--border-subtle);"></div>
+
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--green);">Settled in review</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Write-mode default: full edit stays, both scopes</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">The global-read-only recommendation was considered and declined. Per-notepad tightening plus history/restore is the mechanism; the <span style="color:var(--text-primary);">agents: full edit</span> default presentation is unchanged.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">History diff: in scope</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">The snapshot / vs-previous / vs-current design ships in slice 1. &ldquo;View diff&rdquo; on a landed draft (<a href="04 Composer Loop.dc.html">04</a>) and the history panel (<a href="05 History and Restore.dc.html">05</a>) are one destination, one presentation.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Mobile: in scope</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">On &le;768px the notepad joins the mobile bottom bar as a full-screen panel &mdash; browse, open, read, and the write-mode control. No Markdown-with-chips editing surface on mobile this slice; quick capture stays deferred. Designed in <a href="07 Mobile.dc.html">07</a>.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Restore stays immediate</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">No confirm dialog. The restore button carries the contract: a restore is a new head, never a rewrite.</div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--border-subtle);"></div>
+
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--amber);">Remaining flags</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">R14&rsquo;s 340px legacy width can&rsquo;t hold SPLIT</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">In the 50/50 split layout the pane is comfortable. At the legacy 340px right-pane width, editor-plus-preview stacked still works but each half is a slot, not a surface. The design degrades deliberately: below ~420px the pane opens in WRITE with the preview one tap away, rather than pretending SPLIT is usable. Shown as the &ldquo;narrow&rdquo; tweak in 01.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.82rem;font-weight:700;">Small flags</div>
+        <div style="font-family:var(--font-body);font-size:0.85rem;line-height:1.7;color:var(--text-secondary);">Archived notepads should be reachable in the picker behind the existing Alt+A idiom, matching conversations. The picker group answers to &ldquo;notepad&rdquo;/&ldquo;notepads&rdquo; aliases; the trigger is whatever the picker already uses &mdash; unspecified here.</div>
+      </div>
+    </div>
+
+    <div style="height:1px;background:var(--border-subtle);"></div>
+    <div style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.6;padding-bottom:40px;">Prototypes are design artifacts against the CC design system (tokens, chip grammar, picker anatomy read from source). A coding agent re-implements in React; visual + interaction intent is the contract.</div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{ &quot;$preview&quot;: { &quot;width&quot;: 960, &quot;height&quot;: 1200 } }"></script>
+</body>
+</html>

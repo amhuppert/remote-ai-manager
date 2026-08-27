@@ -61,9 +61,16 @@ describe("RightPane", () => {
     cleanup();
   });
 
-  it("registers all five tabs including Artifact", () => {
+  it("registers all six tabs including Artifact and Notepad", () => {
     renderPane();
-    for (const name of ["Diff", "Docs", "Alignment", "Specs", "Artifact"]) {
+    for (const name of [
+      "Diff",
+      "Docs",
+      "Alignment",
+      "Specs",
+      "Artifact",
+      "Notepad",
+    ]) {
       expect(screen.getByRole("tab", { name })).toBeInTheDocument();
     }
   });

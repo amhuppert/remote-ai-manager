@@ -43,6 +43,13 @@ export interface ApiError {
   /** Optional structured details consumers can use for richer UI handling */
   details?: Record<string, unknown>;
   /**
+   * Optional server-authored reason the request was refused. `cctl` classifies
+   * it off the response body and renders it as its `why:` line, above the
+   * instruction — so a refusal can explain itself rather than only naming a
+   * remedy the caller has no reason to trust.
+   */
+  rationale?: string;
+  /**
    * Optional server-authored next step. `cctl` renders it as its load-bearing
    * `instruction:` line, so a read miss with an exact recovery command can
    * hand the caller that command instead of only naming what is absent.

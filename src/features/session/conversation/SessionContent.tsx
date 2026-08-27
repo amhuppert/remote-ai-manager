@@ -5,6 +5,7 @@ import ConversationPanelContainer from "@/features/session/conversation/Conversa
 import { FinishedBanner } from "@/components/conversation/ConversationBanners";
 import SessionInfoStrip from "@/features/session/conversation/SessionInfoStrip";
 import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
+import MobileNotepadPanel from "@/features/session/mobile/MobileNotepadPanel";
 import RightPane from "@/features/session/conversation/RightPane";
 import ConversationTabStrip from "@/features/session/tabs/ConversationTabStrip";
 import AddConversationMenu from "@/features/session/tabs/AddConversationMenu";
@@ -15,7 +16,7 @@ import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
 
-type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
+type MobilePanel = "chat" | "diff" | "docs" | "notepad" | "specs" | "info";
 
 type PanelContainerProps = ComponentProps<typeof ConversationPanelContainer>;
 type SessionInfoStripProps = ComponentProps<typeof SessionInfoStrip>;
@@ -41,8 +42,11 @@ const DOCKED_STAGE_CLASS =
 // minimum to zero so the column stays viewport-width and the markdown wraps.
 const CONTENT_AREA_CLASS =
   "session-content-area grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-[250ms] ease-[ease] data-[layout=split]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] data-[layout=conversation]:grid-cols-[minmax(0,1fr)] data-[layout=diff]:grid-cols-[minmax(0,1fr)] data-[layout=panes]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=split]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=diff]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=conversation]:grid-cols-[minmax(0,1fr)]";
+// The notepad shell gate: the panel is full-screen and read-first on mobile,
+// so the pinned composer row hides with it active — unlike diff/docs/specs,
+// where the composer stays under the pane.
 const PROMPT_SLOT_CLASS =
-  "min-w-0 shrink-0 border-x-0 border-b-0 border-t border-solid border-border-default bg-bg-base";
+  "min-w-0 shrink-0 border-x-0 border-b-0 border-t border-solid border-border-default bg-bg-base max-768:[.app[data-mobile-panel=notepad]_&]:hidden";
 
 export interface SessionContentProps {
   session: SessionState;
@@ -219,10 +223,19 @@ export default function SessionContent({
           stages. Without it the overlay has no positioned ancestor. */}
         <div className={DOCKED_STAGE_CLASS}>
           {showEmptyWorkingSet && openTabs ? (
-            <EmptyConversationWorkingSet
-              addableConversations={openTabs.addableConversations}
-              onAdd={openTabs.addTab}
-            />
+            <>
+              <EmptyConversationWorkingSet
+                addableConversations={openTabs.addableConversations}
+                onAdd={openTabs.addTab}
+              />
+              {/* Notepads are session-independent, so the bottom-bar Notepad
+                entry must work even with nothing open; the empty state
+                shell-gates itself off this surface, and the panel hides itself
+                above the mobile breakpoint. */}
+              {mobilePanel === "notepad" && (
+                <MobileNotepadPanel projectName={projectName} />
+              )}
+            </>
           ) : (
             <>
               <div className={CONTENT_AREA_CLASS} data-layout={layout}>
@@ -282,6 +295,14 @@ export default function SessionContent({
                       />
                     )}
                   </>
+                )}
+
+                {/* Outside the panes ternary: the bottom-bar Notepad entry must
+                  open the full-screen panel from every layout, including panes
+                  (whose grid shell-gates itself off this surface). The panel
+                  hides itself above the mobile breakpoint. */}
+                {mobilePanel === "notepad" && (
+                  <MobileNotepadPanel projectName={projectName} />
                 )}
               </div>
 

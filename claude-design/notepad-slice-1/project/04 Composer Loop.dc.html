@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); } a:hover { color: var(--cyan-dim); }
+    @keyframes ccPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @keyframes ccBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+    @keyframes ccLand { from { background: var(--cyan-glow-strong); } to { background: transparent; } }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);padding:40px;display:flex;flex-direction:column;gap:20px;">
+  <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;">
+    <div style="display:flex;flex-direction:column;gap:4px;max-width:620px;">
+      <div style="font-family:var(--font-display);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;">Notepad &mdash; the composer loop</div>
+      <div style="font-size:0.74rem;color:var(--text-secondary);line-height:1.6;">An agent drafts while you watch and edit. Scripted simulation: five moments, including the dirty-buffer collision. Click a step or replay.</div>
+    </div>
+    <button onClick="{{ replay }}" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-raised);padding:6px 14px;font-family:var(--font-mono);font-size:0.74rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-elevated);border-color:var(--border-strong);">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M4 1.5v3h3"></path></svg>
+      Replay
+    </button>
+  </div>
+
+  <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;">
+
+    <!-- Notepad panel -->
+    <div data-screen-label="Composer loop notepad" style="width:560px;flex-shrink:0;display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+        <button aria-label="All notepads" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"></path></svg></button>
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+        <span style="font-size:0.8rem;font-weight:600;">auth-migration notes</span>
+        <span style="font-size:0.66rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);border:1px solid var(--border-subtle);border-radius:9999px;padding:1px 7px;">project</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-subtle);border-radius:9999px;padding:2px 9px;font-size:0.68rem;color:var(--text-tertiary);"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M11.5 2.5l2 2L6 12l-2.6.6L4 10z"></path></svg>agents: full edit</span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-surface);">
+        <span style="display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);">
+          <span style="border-radius:3px;padding:2px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;background:var(--bg-raised);color:var(--text-primary);">write</span>
+          <span style="border-radius:3px;padding:2px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">split</span>
+          <span style="border-radius:3px;padding:2px 8px;font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">read</span>
+        </span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:0.68rem;color:var(--text-tertiary);">
+          <span style="width:6px;height:6px;border-radius:9999px;background:{{ metaDot }};"></span>
+          {{ metaText }}
+        </span>
+      </div>
+
+      <sc-if value="{{ showWrote }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);font-size:0.7rem;color:var(--text-secondary);">
+          <span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);"></span>
+          <span><span style="color:var(--cyan);font-weight:600;">claude</span> wrote rev 13 &middot; just now</span>
+          <span style="margin-left:auto;display:inline-flex;gap:6px;">
+            <button style="border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;cursor:pointer;" style-hover="color:var(--text-primary);background:var(--bg-hover);">View diff</button>
+          </span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showCollision }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(255,179,0,0.25);background:var(--amber-glow);font-size:0.7rem;color:var(--text-secondary);">
+          <span style="width:6px;height:6px;border-radius:9999px;background:var(--amber);margin-top:4px;flex-shrink:0;animation:ccPulse 2s ease-in-out infinite;"></span>
+          <span style="line-height:1.5;"><span style="color:var(--amber);font-weight:600;">claude wrote rev 14 while you were editing.</span> Your draft is untouched and will save as the new head. Rev 14 is already in history.</span>
+          <span style="margin-left:auto;display:inline-flex;gap:6px;flex-shrink:0;">
+            <button style="border:1px solid rgba(255,179,0,0.35);border-radius:var(--radius-sm);background:transparent;color:var(--amber);padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;cursor:pointer;white-space:nowrap;" style-hover="background:var(--amber-glow);">Review rev 14</button>
+            <button style="border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;cursor:pointer;" style-hover="color:var(--text-primary);">Dismiss</button>
+          </span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showResolved }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);font-size:0.7rem;color:var(--text-secondary);">
+          <span style="width:6px;height:6px;border-radius:9999px;background:var(--green);"></span>
+          <span>Saved as rev 15. Rev 14 (<span style="color:var(--cyan);">claude</span>) is preserved in history &mdash; nothing lost.</span>
+          <button style="margin-left:auto;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;cursor:pointer;" style-hover="color:var(--text-primary);background:var(--bg-hover);">History</button>
+        </div>
+      </sc-if>
+
+      <div style="height:400px;overflow-y:auto;overflow-x:hidden;padding:14px 16px;background:var(--bg-base);font-size:0.8rem;line-height:1.75;color:var(--text-primary);">
+        <sc-for list="{{ lines }}" as="line" hint-placeholder-count="8">
+          <div style="padding-left:10px;margin-left:-12px;border-left:2px solid {{ line.bar }};background:{{ line.bg }};animation:{{ line.anim }};color:{{ line.color }};">
+            <sc-if value="{{ line.tag }}" hint-placeholder-val="{{ false }}">
+              <span style="float:right;font-size:0.62rem;color:var(--cyan);opacity:0.8;border:1px solid rgba(0,229,255,0.25);border-radius:9999px;padding:0 6px;margin-top:3px;">rev 13 &middot; claude</span>
+            </sc-if>
+            {{ line.text }}<sc-if value="{{ line.caret }}" hint-placeholder-val="{{ false }}"><span style="display:inline-block;width:7px;height:14px;background:var(--cyan);vertical-align:text-bottom;margin-left:1px;animation:ccBlink 1s step-end infinite;"></span></sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- Harness: steps + protocol -->
+    <div style="width:420px;flex-shrink:0;display:flex;flex-direction:column;gap:16px;">
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:0.68rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">Moments</div>
+        <sc-for list="{{ steps }}" as="st" hint-placeholder-count="6">
+          <div onClick="{{ st.jump }}" style="display:flex;gap:10px;padding:8px 12px;border:1px solid {{ st.border }};border-left:2px solid {{ st.rail }};border-radius:var(--radius-md);background:{{ st.bg }};cursor:pointer;" style-hover="background:var(--bg-hover);">
+            <span style="font-size:0.68rem;color:{{ st.numColor }};font-weight:700;flex-shrink:0;width:14px;">{{ st.num }}</span>
+            <span style="display:flex;flex-direction:column;gap:2px;">
+              <span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">{{ st.title }}</span>
+              <span style="font-size:0.66rem;color:var(--text-tertiary);line-height:1.45;">{{ st.desc }}</span>
+            </span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="border:1px dashed var(--border-default);border-radius:var(--radius-md);padding:10px 12px;font-size:0.68rem;color:var(--text-tertiary);line-height:1.6;">
+        <span style="color:var(--text-secondary);font-weight:600;">No presence signal.</span> The app learns about agent activity only when a write lands &mdash; the landed draft (&ldquo;claude wrote rev 13&rdquo;) is the first agent-visible moment. &ldquo;View diff&rdquo; opens History with that revision against its previous &mdash; one destination, one presentation (see <a href="05 History and Restore.dc.html">05</a>).
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{ &quot;$preview&quot;: { &quot;width&quot;: 1180, &quot;height&quot;: 900 } }">
+class Component extends DCLogic {
+  state = { step: 0 };
+  componentDidMount() { this.play(0); }
+  componentWillUnmount() { clearTimeout(this.timer); }
+  play(from) {
+    clearTimeout(this.timer);
+    this.setState({ step: from });
+    const advance = () => {
+      if (this.state.step >= 4) return;
+      this.setState((s) => ({ step: s.step + 1 }));
+      this.timer = setTimeout(advance, 3200);
+    };
+    this.timer = setTimeout(advance, 2600);
+  }
+  renderVals() {
+    const step = this.state.step;
+    const quiet = { bar: "transparent", bg: "transparent", anim: "none", color: "var(--text-primary)" };
+    const agent = { bar: "var(--cyan-dim)", bg: "rgba(0,229,255,0.04)", anim: "ccLand 1.6s ease", color: "var(--text-primary)" };
+    const mine = { bar: "var(--amber-dim)", bg: "rgba(255,179,0,0.04)", anim: "none", color: "var(--text-primary)" };
+    const L = (text, k) => ({ text, tag: false, caret: false, ...(k || quiet) });
+    const base = [
+      L("# auth-migration notes"),
+      L("\u00a0"),
+      L("Cutover to the new session service, one surface at a time."),
+      L("\u00a0"),
+      L("## done"),
+      L("- token issuer behind a flag"),
+      L("- session table backfilled"),
+    ];
+    const agentLines = [
+      { ...L("\u00a0"), ...agent },
+      { ...L("## rollout order", agent), tag: true },
+      L("- staging first, 24h soak", agent),
+      L("- CLI clients next \u2014 they retry cleanly", agent),
+      L("- dashboards last \u2014 they hold long sessions", agent),
+    ];
+    const userLines = [
+      { ...L("\u00a0"), ...mine },
+      { ...L("- [ ] confirm soak window with infra", mine), caret: step >= 2 && step < 4 },
+    ];
+    const lines = [...base, ...(step >= 1 ? agentLines : []), ...(step >= 2 ? userLines : [])];
+
+    const metas = [
+      { dot: "var(--green)", text: "saved \u00b7 rev 12 \u00b7 you \u00b7 4m ago" },
+      { dot: "var(--green)", text: "saved \u00b7 rev 13 \u00b7 claude \u00b7 just now" },
+      { dot: "var(--amber)", text: "editing \u00b7 draft ahead of rev 13" },
+      { dot: "var(--amber)", text: "editing \u00b7 draft ahead of rev 14" },
+      { dot: "var(--green)", text: "saved \u00b7 rev 15 \u00b7 you \u00b7 just now" },
+    ];
+
+    const stepDefs = [
+      ["Idle", "Notepad open in the right pane. Head is rev 12, yours. Nothing precedes an agent write \u2014 there is no signal to show."],
+      ["Draft lands", "The first agent-visible moment: \u201cclaude wrote rev 13\u201d. New lines carry the author\u2019s rail; the meta line re-attributes. View diff opens History, rev 13 vs previous."],
+      ["You edit", "You type into the same buffer. Local draft goes dirty \u2014 amber, never blocking."],
+      ["Collision", "Claude\u2019s rev 14 lands mid-edit. Your buffer is never clobbered; the banner offers rev 14, non-blocking."],
+      ["Resolution", "Your autosave flushes as the new head, rev 15. Rev 14 stays in history. Nothing lost, nobody refused."],
+    ];
+    const steps = stepDefs.map(([title, desc], i) => ({
+      num: String(i), title, desc,
+      jump: () => this.play(i),
+      border: i === step ? "var(--border-strong)" : "var(--border-subtle)",
+      rail: i === step ? "var(--cyan)" : "transparent",
+      bg: i === step ? "var(--bg-surface)" : "transparent",
+      numColor: i === step ? "var(--cyan)" : "var(--text-tertiary)",
+    }));
+
+    return {
+      lines,
+      metaDot: metas[step].dot,
+      metaText: metas[step].text,
+      showWrote: step === 1,
+      showCollision: step === 3,
+      showResolved: step === 4,
+      steps,
+      replay: () => this.play(0),
+    };
+  }
+}
+</script>
+</body>
+</html>

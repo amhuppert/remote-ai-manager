@@ -17,6 +17,7 @@ import {
 import { showBrowserNotification } from "@/lib/notifications/browser-notification";
 import { registerNotificationSseReactions } from "@/lib/notifications/sse-reactions";
 import { registerMcpSseReactions } from "@/lib/mcp/sse-reactions";
+import { registerNotepadSseReactions } from "@/lib/notepads/sse-reactions";
 import { registerSessionAlignmentSseReactions } from "@/lib/session-alignment/sse-reactions";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import { registerTicketSseReactions } from "@/lib/tickets/sse-reactions";
@@ -30,7 +31,10 @@ import {
   useEnqueueMergeDonePrompt,
   useEnqueuePromptErrorToast,
 } from "@/stores/notification.store";
-import { useSettleOptimisticQueueEntry } from "@/stores/session-detail.store";
+import {
+  useRecordNotepadExternalWrite,
+  useSettleOptimisticQueueEntry,
+} from "@/stores/session-detail.store";
 
 /**
  * Client assembly point for the shared `/api/events` EventSource: opens the
@@ -47,6 +51,7 @@ export default function NotificationListener(): null {
   const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
   const enqueueMergeDonePrompt = useEnqueueMergeDonePrompt();
   const settleOptimisticQueueEntry = useSettleOptimisticQueueEntry();
+  const recordNotepadExternalWrite = useRecordNotepadExternalWrite();
   const actionsRef = useRef({
     addOrUpdateJob,
     reconcileJobs,
@@ -55,6 +60,7 @@ export default function NotificationListener(): null {
     enqueuePromptErrorToast,
     enqueueMergeDonePrompt,
     settleOptimisticQueueEntry,
+    recordNotepadExternalWrite,
   });
   // eslint-disable-next-line react-hooks/refs -- event handlers read this after render without reconnecting the SSE effect.
   actionsRef.current = {
@@ -65,6 +71,7 @@ export default function NotificationListener(): null {
     enqueuePromptErrorToast,
     enqueueMergeDonePrompt,
     settleOptimisticQueueEntry,
+    recordNotepadExternalWrite,
   };
 
   useEffect(() => {
@@ -100,6 +107,11 @@ export default function NotificationListener(): null {
       showBrowserNotification,
     });
     registerMcpSseReactions(es, { queryClient });
+    registerNotepadSseReactions(es, {
+      queryClient,
+      recordNotepadExternalWrite: (write) =>
+        actionsRef.current.recordNotepadExternalWrite(write),
+    });
     registerAgentCapabilitySseReactions(es, { queryClient });
     registerAgentProfileSseReactions(es, { queryClient });
     registerSessionAlignmentSseReactions(es, { queryClient });

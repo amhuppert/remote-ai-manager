@@ -513,7 +513,7 @@ interface CodeContainerProps {
   "data-cc-heading"?: string;
 }
 
-function stringProperty(
+export function stringProperty(
   value: Element["properties"][string],
 ): string | undefined {
   if (typeof value === "string" || typeof value === "number") {
@@ -568,7 +568,7 @@ function fencedCodeFromNode(node: Element | undefined): {
   };
 }
 
-function createMarkdownComponents(intent: MarkdownIntent): Components {
+export function createMarkdownComponents(intent: MarkdownIntent): Components {
   return {
     h1({ node: _node, className, ...props }) {
       return (

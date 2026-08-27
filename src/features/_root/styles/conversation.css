@@ -256,9 +256,10 @@
   cursor: not-allowed;
 }
 
-/* `.prompt-editor__content`'s own box is authored as utilities in PromptEditor;
-   the class is retained ONLY as the anchor for the preserved Tiptap
-   `.ProseMirror` editor DOM below (R6 / conventions §5). */
+/* `.prompt-editor__content`'s own box is authored as utilities in its
+   consumers (PromptEditor, NotepadEditor); the class is retained ONLY as the
+   anchor for the preserved Tiptap `.ProseMirror` editor DOM below
+   (R6 / conventions §5). */
 .prompt-editor__content .ProseMirror {
   outline: none;
   min-height: 56px;

@@ -288,6 +288,41 @@ describe("usage errors", () => {
     expect(result.stderr).toContain("--frob");
   });
 
+  /**
+   * `--flag value` is genuinely ambiguous when the value looks like a flag, so
+   * the spaced form still refuses one — that guard is what turns a forgotten
+   * value into an error instead of a silently wrong identity. The attached form
+   * carries no such ambiguity: `--flag=--value` names its value positionally,
+   * which is the conventional way to pass a value that starts with dashes and
+   * the only way to address a project whose directory basename does.
+   */
+  it("accepts a dash-leading value in the attached form and still refuses it spaced", async () => {
+    const attached = await runCli(
+      ["doctor", "--project=--team", "--json"],
+      baseEnv,
+      makeHost(),
+    );
+    expect(attached.stderr).not.toContain("requires a value");
+
+    const spaced = await runCli(
+      ["doctor", "--project", "--team", "--json"],
+      baseEnv,
+      makeHost(),
+    );
+    expect(spaced.exitCode).toBe(2);
+    expect(JSON.parse(spaced.stdout).error).toContain("requires a value");
+  });
+
+  it("still refuses an attached flag with an empty value", async () => {
+    const result = await runCli(
+      ["doctor", "--project=", "--json"],
+      baseEnv,
+      makeHost(),
+    );
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout).error).toContain("requires a value");
+  });
+
   it("rejects a known boolean flag on commands that do not declare it", async () => {
     const result = await runCli(
       ["version", "--queue-if-busy"],

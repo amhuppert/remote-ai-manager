@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.css">
+  <link rel="stylesheet" href="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/styles.css">
+  <script src="_ds/design-system-002d1d37-29da-4794-bb0a-ed0e4310c5f8/_ds_bundle.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; background: var(--bg-void); }
+    a { color: var(--cyan); } a:hover { color: var(--cyan-dim); }
+    @keyframes ccPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</helmet>
+<div data-screen-label="Notepad split screen" style="height:100vh;display:flex;flex-direction:column;background:var(--bg-void);color:var(--text-primary);font-family:var(--font-mono);overflow:hidden;">
+
+  <!-- Topbar -->
+  <div style="flex-shrink:0;display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 16px;background:rgba(11,16,25,0.85);backdrop-filter:blur(16px) saturate(140%);border-bottom:1px solid var(--border-subtle);">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-family:var(--font-display);font-weight:800;font-size:1.1rem;letter-spacing:-0.02em;color:var(--cyan);text-shadow:0 0 20px var(--cyan-glow-text);">CC</span>
+      <span style="width:1px;height:20px;background:var(--border-default);"></span>
+      <span style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--text-secondary);">
+        <span>command-center</span>
+        <span style="color:var(--text-tertiary);">/</span>
+        <span style="color:var(--text-primary);font-weight:600;">notepad-slice-1</span>
+      </span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:0.72rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;">
+      <span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow);animation:ccPulse 1.5s ease-in-out infinite;"></span>
+      3 running
+    </div>
+  </div>
+
+  <!-- Session info strip -->
+  <div style="flex-shrink:0;display:flex;align-items:center;gap:16px;padding:6px 12px;background:var(--bg-base);border-bottom:1px solid var(--border-default);font-size:0.72rem;">
+    <span style="display:inline-flex;align-items:center;gap:6px;min-width:0;">
+      <span style="color:var(--text-tertiary);text-transform:lowercase;">worktree</span>
+      <span style="color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;">~/cc/worktrees/notepad-slice-1</span>
+    </span>
+    <span style="width:1px;height:16px;background:var(--border-default);flex-shrink:0;"></span>
+    <span style="display:inline-flex;align-items:center;gap:6px;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-secondary);">
+      <span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan);box-shadow:0 0 6px var(--cyan-glow);animation:ccPulse 1.5s ease-in-out infinite;"></span>
+      Running
+    </span>
+    <span style="display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:9999px;padding:2px 8px;font-size:0.7rem;color:var(--text-secondary);">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.2" aria-hidden="true"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path></svg>
+      notepad data model
+    </span>
+    <span style="width:1px;height:16px;background:var(--border-default);flex-shrink:0;"></span>
+    <span style="display:inline-flex;align-items:center;gap:8px;color:var(--text-tertiary);">
+      <span>context</span>
+      <span style="width:72px;height:4px;border-radius:9999px;background:var(--bg-raised);overflow:hidden;display:inline-block;"><span style="display:block;width:42%;height:100%;background:var(--cyan);"></span></span>
+      <span style="color:var(--text-secondary);">42%</span>
+    </span>
+    <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;">
+      <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--cc-green-a20, rgba(0,230,118,0.2));background:var(--green-glow);color:var(--green);border-radius:9999px;padding:2px 8px;font-size:0.7rem;font-weight:500;">aligned v3</span>
+      <span style="width:1px;height:16px;background:var(--border-default);"></span>
+      <span style="display:inline-flex;gap:4px;">
+        <button title="Conversation layout" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"></rect></svg></button>
+        <button title="Split layout" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--cyan-dim);border-radius:var(--radius-sm);background:var(--bg-raised);color:var(--cyan);cursor:pointer;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"></rect><path d="M8 2.5v11"></path></svg></button>
+        <button title="Panes layout" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"></rect><path d="M8 2.5v11M2.5 8h11"></path></svg></button>
+      </span>
+    </span>
+  </div>
+
+  <!-- Content area: conversation | right pane -->
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);">
+
+    <!-- Conversation panel -->
+    <div data-screen-label="Transcript" style="display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--bg-surface);border-right:1px solid var(--border-subtle);">
+      <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid rgba(0,229,255,0.18);background:linear-gradient(90deg,var(--cyan-glow),var(--bg-base) 55%);">
+        <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;padding:2px 8px;font-size:0.68rem;font-weight:600;text-transform:lowercase;letter-spacing:0.02em;background:var(--cyan-glow);color:var(--cyan);border:1px solid var(--cyan-glow-strong);">
+          <span style="width:6px;height:6px;border-radius:9999px;background:currentColor;box-shadow:0 0 6px currentColor;"></span>
+          claude
+        </span>
+        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-body);font-size:0.92rem;font-weight:600;color:var(--text-primary);">plan the 0.4 release</span>
+        <span style="flex-shrink:0;font-size:0.7rem;color:var(--text-tertiary);">4 messages</span>
+        <span style="margin-left:auto;flex-shrink:0;display:inline-flex;align-items:center;gap:6px;">
+          <span style="font-size:0.7rem;color:var(--text-tertiary);">4 / 4</span>
+          <button aria-label="Previous message" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"></path></svg></button>
+          <button aria-label="Next message" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"></path></svg></button>
+        </span>
+      </div>
+      <div style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px;display:flex;flex-direction:column;gap:24px;">
+
+        <div>
+          <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;color:var(--amber);">You <span style="font-weight:500;letter-spacing:0.02em;text-transform:none;"><span style="margin:0 5px;color:var(--text-tertiary);">&middot;</span><span style="color:var(--text-tertiary);">09:41</span></span></div>
+          <div style="font-family:var(--font-body);font-size:0.9rem;line-height:1.65;color:var(--text-primary);">Read
+            <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(68,138,255,0.3);background:var(--blue-glow);color:var(--blue);padding:2px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span style="font-weight:600;">slice-1 working context</span></span>
+            before you draft the release plan, and keep
+            <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid var(--border-default);background:var(--bg-raised);color:var(--text-secondary);padding:2px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.2"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path></svg><span style="color:var(--text-primary);">notepad data model</span></span>
+            updated as you go.</div>
+        </div>
+
+        <div>
+          <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;color:var(--cyan);">claude <span style="font-weight:500;letter-spacing:0.02em;text-transform:none;"><span style="margin:0 5px;color:var(--text-tertiary);">&middot;</span><span style="color:var(--text-tertiary);">09:42</span></span></div>
+          <div style="font-family:var(--font-body);font-size:0.9rem;line-height:1.65;color:var(--text-primary);">Read it. The open threads are clear &mdash; I&rsquo;ll draft the rollout comms first and flag anything that moves the launch date. I can draft the plan where you can edit it inline.</div>
+        </div>
+
+        <div>
+          <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;color:var(--amber);">You <span style="font-weight:500;letter-spacing:0.02em;text-transform:none;"><span style="margin:0 5px;color:var(--text-tertiary);">&middot;</span><span style="color:var(--text-tertiary);">09:44</span></span></div>
+          <div style="font-family:var(--font-body);font-size:0.9rem;line-height:1.65;color:var(--text-primary);">Draft it in the notepad. Append only what you can verify against the running code.</div>
+        </div>
+
+        <div>
+          <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;color:var(--cyan);">claude <span style="font-weight:500;letter-spacing:0.02em;text-transform:none;"><span style="margin:0 5px;color:var(--text-tertiary);">&middot;</span><span style="color:var(--text-tertiary);">09:45</span></span></div>
+          <div style="font-family:var(--font-body);font-size:0.9rem;line-height:1.65;color:var(--text-primary);">Appending the comms draft under <strong style="font-weight:700;">Open threads</strong>. Working from rev 15 &mdash; if you edit meanwhile I&rsquo;ll re-read before retrying.</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Right pane -->
+    <div data-screen-label="Notepad pane" style="display:flex;flex-direction:column;min-height:0;min-width:0;padding:12px;background:var(--bg-void);" data-comment-anchor="d25d74d7de-div">
+      <!-- Tab bar -->
+      <div style="flex-shrink:0;border:1px solid var(--border-subtle);border-bottom:none;border-radius:var(--radius-lg) var(--radius-lg) 0 0;background:var(--bg-surface);padding:8px 12px;">
+        <div style="display:flex;gap:2px;padding:3px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);width:fit-content;max-width:100%;overflow-x:auto;">
+          <button style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border:none;border-radius:var(--radius-sm);background:transparent;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);">Diff</button>
+          <button style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border:none;border-radius:var(--radius-sm);background:transparent;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);">Docs</button>
+          <button style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border:none;border-radius:var(--radius-sm);background:transparent;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);">Alignment</button>
+          <button style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border:none;border-radius:var(--radius-sm);background:transparent;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);">Specs</button>
+          <button style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border:none;border-radius:var(--radius-sm);background:transparent;font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);">Artifact</button>
+          <button style="min-height:28px;display:flex;align-items:center;padding:5px 10px;border:none;border-radius:var(--radius-sm);background:var(--cyan);font-family:var(--font-mono);font-size:0.72rem;font-weight:500;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap;color:var(--text-inverse);cursor:pointer;">Notepad</button>
+        </div>
+      </div>
+
+      <!-- Panel body -->
+      <div style="flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--border-subtle);border-radius:0 0 var(--radius-lg) var(--radius-lg);background:var(--bg-surface);overflow:hidden;">
+
+        <!-- ============ LIST VIEW ============ -->
+        <sc-if value="{{ showList }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;min-height:0;flex:1;">
+            <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-subtle);">
+              <span style="font-size:0.72rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-secondary);">Notepads</span>
+              <span style="font-size:0.7rem;color:var(--text-tertiary);">{{ noteCount }}</span>
+              <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);">
+                  <button onClick="{{ sortRecency }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ sortRecencyBg }};color:{{ sortRecencyColor }};">recency</button>
+                  <button onClick="{{ sortName }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ sortNameBg }};color:{{ sortNameColor }};">name</button>
+                </span>
+                <button style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-raised);padding:4px 10px;font-family:var(--font-mono);font-size:0.72rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-elevated);border-color:var(--border-strong);"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"></path></svg>New</button>
+              </span>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto;">
+              <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-raised);padding:3px 12px;font-size:0.68rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">
+                <span>Pinned</span>
+              </div>
+              <sc-for list="{{ pinnedNotes }}" as="note" hint-placeholder-count="2">
+                <div onClick="{{ note.open }}" style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 12px;border-left:2px solid transparent;cursor:pointer;" style-hover="background:var(--bg-hover);">
+                  <sc-if value="{{ note.isGlobal }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg></sc-if><sc-if value="{{ note.isProject }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg></sc-if>
+                  <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.78rem;font-weight:500;color:var(--text-primary);">{{ note.name }}</span>
+                  <sc-if value="{{ note.locked }}" hint-placeholder-val="{{ false }}"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg></sc-if>
+                  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;flex-shrink:0;">
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3"><path d="M10 2l4 4-2.5.8-1.4 4.2L4.5 5.4 8.7 4z"></path><path d="M6 10l-3.5 3.5"></path></svg>
+                    <span style="font-size:0.68rem;color:var(--text-tertiary);">{{ note.time }}</span>
+                  </span>
+                </div>
+              </sc-for>
+              <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-raised);padding:3px 12px;font-size:0.68rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">
+                <span>{{ sectionTwoLabel }}</span>
+              </div>
+              <sc-for list="{{ projectNotes }}" as="note" hint-placeholder-count="4">
+                <div onClick="{{ note.open }}" style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 12px;border-left:2px solid transparent;cursor:pointer;" style-hover="background:var(--bg-hover);">
+                  <sc-if value="{{ note.isGlobal }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg></sc-if><sc-if value="{{ note.isProject }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg></sc-if>
+                  <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.78rem;font-weight:500;color:var(--text-primary);">{{ note.name }}</span>
+                  <sc-if value="{{ note.locked }}" hint-placeholder-val="{{ false }}"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg></sc-if>
+                  <span style="margin-left:auto;font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">{{ note.time }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ showGlobalSection }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-raised);padding:3px 12px;font-size:0.68rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">
+                <span>Global</span>
+                <span style="font-weight:500;letter-spacing:normal;text-transform:none;">reachable everywhere</span>
+              </div>
+              <sc-for list="{{ globalNotes }}" as="note" hint-placeholder-count="3">
+                <div onClick="{{ note.open }}" style="display:flex;align-items:center;gap:8px;min-height:34px;padding:4px 12px;border-left:2px solid transparent;cursor:pointer;" style-hover="background:var(--bg-hover);">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><circle cx="8" cy="8" r="6"></circle><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12-2-2.2-2-9.8 0-12z"></path></svg>
+                  <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.78rem;font-weight:500;color:var(--text-primary);">{{ note.name }}</span>
+                  <sc-if value="{{ note.locked }}" hint-placeholder-val="{{ false }}"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.3" style="flex-shrink:0;"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg></sc-if>
+                  <span style="margin-left:auto;font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">{{ note.time }}</span>
+                </div>
+              </sc-for>
+              </sc-if>
+              <button onClick="{{ toggleArchived }}" style="width:100%;display:flex;align-items:center;gap:6px;background:transparent;border:none;border-top:1px solid var(--border-subtle);padding:8px 12px;font-family:var(--font-mono);font-size:0.7rem;color:var(--text-tertiary);cursor:pointer;text-align:left;" style-hover="color:var(--text-secondary);">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="transform:{{ archivedChevron }};transition:transform 0.15s ease;"><path d="M6 3l5 5-5 5"></path></svg>
+                Archived <span>{{ archivedCount }}</span>
+              </button>
+              <sc-if value="{{ archivedOpen }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ archivedNotes }}" as="note" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 12px 4px 28px;opacity:0.55;cursor:pointer;" style-hover="background:var(--bg-hover);">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path></svg>
+                    <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.76rem;color:var(--text-secondary);">{{ note.name }}</span>
+                    <span style="margin-left:auto;font-size:0.68rem;color:var(--text-tertiary);flex-shrink:0;">{{ note.time }}</span>
+                  </div>
+                </sc-for>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ============ OPEN VIEW ============ -->
+        <sc-if value="{{ showOpen }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;min-height:0;flex:1;">
+            <!-- Notepad header -->
+            <div data-comment-anchor="5560c5f83d-div" style="flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);background:var(--bg-base);">
+              <button onClick="{{ backToList }}" aria-label="All notepads" title="All notepads" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;flex-shrink:0;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3L5 8l5 5"></path></svg></button>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5" style="flex-shrink:0;"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg>
+              <span style="min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.8rem;font-weight:600;color:var(--text-primary);">{{ openName }}</span>
+              <span style="flex-shrink:0;font-size:0.66rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-tertiary);border:1px solid var(--border-subtle);border-radius:9999px;padding:1px 7px;">{{ openScope }}</span>
+              <span style="margin-left:auto;position:relative;display:inline-flex;align-items:center;gap:8px;min-width:0;">
+                <span style="display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);">
+                  <button onClick="{{ setModeWrite }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ writeBg }};color:{{ writeColor }};">write</button>
+                  <button onClick="{{ setModeSplit }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ splitBg }};color:{{ splitColor }};">split</button>
+                  <button onClick="{{ setModeRead2 }}" style="border:none;border-radius:3px;padding:2px 8px;font-family:var(--font-mono);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;background:{{ readBg }};color:{{ readColor }};">read</button>
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:6px;font-size:0.68rem;color:var(--text-tertiary);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;">
+                  <span style="width:6px;height:6px;border-radius:9999px;background:var(--green);flex-shrink:0;"></span>
+                  rev 15 &middot; you &middot; 2m
+                </span>
+                <button onClick="{{ toggleModeMenu }}" title="Agent write mode" style="display:inline-flex;align-items:center;gap:5px;border:1px solid {{ modeChipBorder }};border-radius:9999px;background:{{ modeChipBg }};padding:2px 9px;font-family:var(--font-mono);font-size:0.68rem;font-weight:500;color:{{ modeChipColor }};cursor:pointer;white-space:nowrap;">
+                  <span style="display:inline-flex;">{{ modeGlyph }}</span>
+                  agents: {{ modeLabel }}
+                </button>
+                <button onClick="{{ toggleMenu }}" aria-label="Notepad actions" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="background:var(--bg-hover);color:var(--text-primary);"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.2"></circle><circle cx="8" cy="8" r="1.2"></circle><circle cx="12.5" cy="8" r="1.2"></circle></svg></button>
+
+                <sc-if value="{{ modeMenuOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;top:30px;right:0;z-index:40;width:264px;background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:var(--radius-md);box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;">
+                    <div style="padding:6px 10px;border-bottom:1px solid var(--border-subtle);font-size:0.66rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);">Agent write mode</div>
+                    <div onClick="{{ setModeRead }}" style="display:flex;gap:8px;padding:8px 10px;border-left:2px solid {{ readSel }};background:{{ readSelBg }};cursor:pointer;" style-hover="background:var(--bg-hover);">
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" style="flex-shrink:0;margin-top:2px;color:var(--text-secondary);"><rect x="4" y="7.5" width="8" height="6" rx="1"></rect><path d="M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2"></path></svg>
+                      <span style="display:flex;flex-direction:column;gap:2px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">read only</span><span style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.4;">agents can read, never write</span></span>
+                    </div>
+                    <div onClick="{{ setModeAppend }}" style="display:flex;gap:8px;padding:8px 10px;border-left:2px solid {{ appendSel }};background:{{ appendSelBg }};cursor:pointer;" style-hover="background:var(--bg-hover);">
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" style="flex-shrink:0;margin-top:2px;color:var(--text-secondary);"><path d="M8 4v8M4 8h8"></path></svg>
+                      <span style="display:flex;flex-direction:column;gap:2px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">append only</span><span style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.4;">agents add to the end, never rewrite</span></span>
+                    </div>
+                    <div onClick="{{ setModeFull }}" style="display:flex;gap:8px;padding:8px 10px;border-left:2px solid {{ fullSel }};background:{{ fullSelBg }};cursor:pointer;" style-hover="background:var(--bg-hover);">
+                      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" style="flex-shrink:0;margin-top:2px;color:var(--text-secondary);"><path d="M11.5 2.5l2 2L6 12l-2.6.6L4 10z"></path></svg>
+                      <span style="display:flex;flex-direction:column;gap:2px;"><span style="font-size:0.74rem;font-weight:600;color:var(--text-primary);">full edit</span><span style="font-size:0.68rem;color:var(--text-tertiary);line-height:1.4;">agents edit anywhere &middot; history covers restores</span></span>
+                    </div>
+                    <div style="padding:6px 10px;border-top:1px solid var(--border-subtle);font-size:0.64rem;color:var(--text-tertiary);">governs agents only &mdash; you can always edit</div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="position:absolute;top:30px;right:0;z-index:40;width:196px;background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:var(--radius-md);box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;padding:4px;">
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:0.74rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-hover);">Rename</div>
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:0.74rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-hover);">Pin</div>
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:0.74rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-hover);">History&hellip;</div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:0.74rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-hover);">Copy as Markdown</div>
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:0.74rem;color:var(--text-primary);cursor:pointer;" style-hover="background:var(--bg-hover);">Archive</div>
+                    <div style="height:1px;background:var(--border-subtle);margin:4px 0;"></div>
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-sm);font-size:0.74rem;color:var(--red);cursor:pointer;" style-hover="background:var(--red-glow);">Delete&hellip;</div>
+                  </div>
+                </sc-if>
+              </span>
+            </div>
+
+            <!-- Editor + preview stack -->
+            <div style="flex:1;min-height:0;display:flex;flex-direction:column;">
+              <sc-if value="{{ showEditor }}" hint-placeholder-val="{{ true }}">
+                <div data-screen-label="Notepad editor" style="flex:{{ editorFlex }};min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px 16px;background:var(--bg-base);font-family:var(--font-mono);font-size:0.82rem;line-height:1.7;color:var(--text-primary);word-break:break-word;">
+                  <div># slice-1 working context</div>
+                  <div>&nbsp;</div>
+                  <div>Everything an agent needs before picking up slice-1 work. Ship behind the `cc.notepad` flag.</div>
+                  <div>&nbsp;</div>
+                  <div>## ground rules</div>
+                  <div>- one canonical markdown string &mdash; no second representation</div>
+                  <div>- ids are immutable; names are display-only</div>
+                  <div>- your edits always win &mdash; agent writes land as new revisions</div>
+                  <div>&nbsp;</div>
+                  <div>## open threads</div>
+                  <div>- [ ] rollout comms draft &mdash; align in <span contenteditable="false" style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 6px;font-size:0.78rem;line-height:1;vertical-align:baseline;white-space:nowrap;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="1.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg><span>plan the 0.4 release</span><button aria-label="Remove reference" style="width:16px;height:16px;border:none;border-radius:3px;background:transparent;padding:0;font-size:12px;line-height:1;color:var(--text-tertiary);cursor:pointer;" style-hover="background:var(--red-glow);color:var(--red-text);">&times;</button></span></div>
+                  <div>- [ ] picker group ordering for <span contenteditable="false" style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 6px;font-size:0.78rem;line-height:1;vertical-align:baseline;white-space:nowrap;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--cyan)" stroke-width="1.2"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path><path d="M6.5 4.5v8" stroke-dasharray="1.5 1.5"></path></svg><span>notepad data model</span><button aria-label="Remove reference" style="width:16px;height:16px;border:none;border-radius:3px;background:transparent;padding:0;font-size:12px;line-height:1;color:var(--text-tertiary);cursor:pointer;" style-hover="background:var(--red-glow);color:var(--red-text);">&times;</button></span></div>
+                  <div>- [x] restore lands as a new head &mdash; settled</div>
+                  <div>&nbsp;</div>
+                  <div><span contenteditable="false" style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 2px;font-size:0.78rem;line-height:1;vertical-align:baseline;white-space:nowrap;"><img src="assets/pasted-diff-spike.png" alt="" style="width:20px;height:20px;border-radius:3px;object-fit:cover;"><span style="color:var(--text-secondary);">diff-spike.png</span><button aria-label="Remove image" style="width:16px;height:16px;border:none;border-radius:3px;background:transparent;padding:0;font-size:12px;line-height:1;color:var(--text-tertiary);cursor:pointer;" style-hover="background:var(--red-glow);color:var(--red-text);">&times;</button></span> diff-panel spike, keep for reference</div>
+                  <div>&nbsp;</div>
+                  <div>## related</div>
+                  <div><span contenteditable="false" style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);background:var(--bg-raised);border-radius:var(--radius-md);padding:2px 4px 2px 6px;font-size:0.78rem;line-height:1;vertical-align:baseline;white-space:nowrap;"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span>agent onboarding brief</span><span style="font-size:0.62rem;color:var(--text-tertiary);">global</span><button aria-label="Remove reference" style="width:16px;height:16px;border:none;border-radius:3px;background:transparent;padding:0;font-size:12px;line-height:1;color:var(--text-tertiary);cursor:pointer;" style-hover="background:var(--red-glow);color:var(--red-text);">&times;</button></span> covers the house rules &mdash; agents fetch it themselves.</div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ showBoth }}" hint-placeholder-val="{{ true }}">
+                <div style="flex-shrink:0;display:flex;align-items:center;gap:8px;padding:3px 12px;background:var(--bg-raised);border-top:1px solid var(--border-subtle);border-bottom:1px solid var(--border-subtle);">
+                  <span style="font-size:0.64rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-tertiary);">Preview</span>
+                  <span style="font-size:0.64rem;color:var(--text-tertiary);">live</span>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ showPreview }}" hint-placeholder-val="{{ true }}">
+                <div data-screen-label="Notepad preview" style="flex:{{ previewFlex }};min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px 16px;background:var(--bg-surface);font-family:var(--font-body);font-size:0.85rem;line-height:1.65;color:var(--text-primary);">
+                  <div style="font-family:var(--font-display);font-size:1.15rem;font-weight:700;line-height:1.3;margin:0 0 8px;">slice-1 working context</div>
+                  <p style="margin:0 0 8px;">Everything an agent needs before picking up slice-1 work. Ship behind the <code style="background:var(--bg-raised);border-radius:var(--radius-sm);padding:1px 5px;font-family:var(--font-mono);font-size:0.8em;color:var(--cyan);">cc.notepad</code> flag.</p>
+                  <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;line-height:1.3;margin:12px 0 6px;">ground rules</div>
+                  <div style="display:flex;flex-direction:column;gap:4px;margin:0 0 8px;padding-left:16px;">
+                    <div style="position:relative;"><span style="position:absolute;left:-14px;color:var(--cyan);font-weight:700;">&rsaquo;</span>one canonical markdown string &mdash; no second representation</div>
+                    <div style="position:relative;"><span style="position:absolute;left:-14px;color:var(--cyan);font-weight:700;">&rsaquo;</span>ids are immutable; names are display-only</div>
+                    <div style="position:relative;"><span style="position:absolute;left:-14px;color:var(--cyan);font-weight:700;">&rsaquo;</span>your edits always win &mdash; agent writes land as new revisions</div>
+                  </div>
+                  <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;line-height:1.3;margin:12px 0 6px;">open threads</div>
+                  <div style="display:flex;flex-direction:column;gap:4px;margin:0 0 8px;">
+                    <div style="display:flex;align-items:baseline;gap:8px;"><span style="flex-shrink:0;width:12px;height:12px;border:1px solid var(--border-strong);border-radius:3px;position:relative;top:1px;"></span><span>rollout comms draft &mdash; align in <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(0,229,255,0.25);background:var(--cyan-glow);color:var(--cyan);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"></path></svg>plan the 0.4 release</span></span></div>
+                    <div style="display:flex;align-items:baseline;gap:8px;"><span style="flex-shrink:0;width:12px;height:12px;border:1px solid var(--border-strong);border-radius:3px;position:relative;top:1px;"></span><span>picker group ordering for <span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid var(--border-default);background:var(--bg-raised);color:var(--text-secondary);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--amber)" stroke-width="1.2"><path d="M2 5.75A1.25 1.25 0 0 1 3.25 4.5h9.5A1.25 1.25 0 0 1 14 5.75v1a1.75 1.75 0 0 0 0 3.5v1a1.25 1.25 0 0 1-1.25 1.25h-9.5A1.25 1.25 0 0 1 2 11.25v-1a1.75 1.75 0 0 0 0-3.5z"></path></svg><span style="color:var(--text-primary);">notepad data model</span></span></span></div>
+                    <div style="display:flex;align-items:baseline;gap:8px;color:var(--text-tertiary);"><span style="flex-shrink:0;width:12px;height:12px;border:1px solid var(--cyan-dim);border-radius:3px;background:var(--cyan-glow);position:relative;top:1px;display:inline-flex;align-items:center;justify-content:center;"><svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="var(--cyan)" stroke-width="2"><path d="M3 8.5l3.5 3.5L13 5"></path></svg></span><span style="text-decoration:line-through;">restore lands as a new head &mdash; settled</span></div>
+                  </div>
+                  <img src="assets/pasted-diff-spike.png" alt="diff-panel spike" style="max-width:100%;border-radius:var(--radius-md);border:1px solid var(--border-subtle);margin:4px 0 2px;">
+                  <div style="font-size:0.72rem;color:var(--text-tertiary);font-family:var(--font-mono);margin:0 0 8px;">diff-panel spike, keep for reference</div>
+                  <div style="font-family:var(--font-display);font-size:1rem;font-weight:700;line-height:1.3;margin:12px 0 6px;">related</div>
+                  <p style="margin:0;"><span style="display:inline-flex;align-items:center;gap:5px;border-radius:9999px;border:1px solid rgba(68,138,255,0.3);background:var(--blue-glow);color:var(--blue);padding:1px 8px;font-family:var(--font-mono);font-size:0.7rem;line-height:1.4;vertical-align:middle;white-space:nowrap;"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"></path><path d="M9.5 2v3.5H13"></path><path d="M5.5 8.5h5M5.5 11h3.5"></path></svg><span style="font-weight:600;">agent onboarding brief</span><span style="opacity:0.7;font-size:0.62rem;">global</span></span> covers the house rules &mdash; agents fetch it themselves.</p>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt composer -->
+  <div style="flex-shrink:0;border-top:1px solid var(--border-subtle);background:var(--bg-base);padding:12px 16px;display:flex;flex-direction:column;gap:8px;">
+    <div style="border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-surface);padding:12px 14px;min-height:56px;font-size:0.85rem;line-height:1.5;color:var(--text-tertiary);">Send a prompt to claude&hellip;</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button title="Attach image" style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="border-color:var(--cyan-dim);color:var(--text-primary);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></button>
+        <span style="display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-base);">
+          <span style="border-radius:3px;padding:3px 10px;font-size:0.72rem;background:var(--bg-raised);color:var(--text-primary);">claude</span>
+          <span style="border-radius:3px;padding:3px 10px;font-size:0.72rem;color:var(--text-tertiary);">codex</span>
+        </span>
+        <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:5px 10px;font-size:0.72rem;color:var(--text-secondary);">opus-4.5 <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"></path></svg></span>
+        <span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:5px 10px;font-size:0.72rem;color:var(--text-secondary);">high <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"></path></svg></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button title="Voice input" style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);cursor:pointer;" style-hover="border-color:var(--cyan-dim);color:var(--text-primary);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg></button>
+        <button title="Send prompt" style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:none;border-radius:var(--radius-md);background:var(--cyan);color:var(--text-inverse);font-size:0.9rem;cursor:pointer;" style-hover="background:var(--cyan-dim);box-shadow:0 0 24px var(--cyan-glow-strong);">&#9654;</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 1680, &quot;height&quot;: 950 },
+  &quot;agentWriteMode&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;full-edit&quot;, &quot;append-only&quot;, &quot;read-only&quot;], &quot;default&quot;: &quot;full-edit&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Notepad&quot; }
+}">
+class Component extends DCLogic {
+  state = {
+    view: "open",
+    openName: "slice-1 working context",
+    openScope: "project",
+    edMode: "split",
+    sort: "recency",
+    menuOpen: false,
+    modeMenuOpen: false,
+    archivedOpen: false,
+    writeMode: null,
+  };
+
+  renderVals() {
+    const s = this.state;
+    const notes = [
+      { name: "slice-1 working context", scope: "project", time: "2m", mins: 2, pinned: true, mode: "full-edit" },
+      { name: "auth-migration notes", scope: "project", time: "18m", mins: 18, pinned: false, mode: "full-edit" },
+      { name: "release 0.4 checklist", scope: "project", time: "1h", mins: 60, pinned: true, mode: "read-only" },
+      { name: "agent onboarding brief", scope: "global", time: "4h", mins: 240, pinned: false, mode: "read-only" },
+      { name: "error copy sweep", scope: "project", time: "2d", mins: 2880, pinned: false, mode: "full-edit" },
+      { name: "cctl cheatsheet", scope: "global", time: "2d", mins: 3000, pinned: false, mode: "read-only" },
+      { name: "diff-panel perf findings", scope: "project", time: "3d", mins: 4320, pinned: false, mode: "append-only" },
+      { name: "prompt patterns", scope: "global", time: "5d", mins: 7200, pinned: false, mode: "full-edit" },
+      { name: "worktree cleanup notes", scope: "project", time: "6d", mins: 8640, pinned: false, mode: "read-only" },
+      { name: "review rubric", scope: "global", time: "9d", mins: 12960, pinned: false, mode: "full-edit" },
+    ];
+    const archived = [
+      { name: "spike: crdt merge (rejected)", time: "3w" },
+      { name: "pre-0.3 release notes", time: "1mo" },
+      { name: "onboarding draft v1", time: "2mo" },
+    ];
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    const decorate = (n) => ({
+      ...n,
+      isGlobal: n.scope === "global",
+      isProject: n.scope !== "global",
+      locked: n.mode === "read-only",
+      open: () => this.setState({ view: "open", openName: n.name, openScope: n.scope, menuOpen: false, modeMenuOpen: false }),
+    });
+    const isName = s.sort === "name";
+    const pool = notes.slice().sort(isName ? byName : (a, b) => a.mins - b.mins);
+    const pinnedNotes = pool.filter((n) => n.pinned).map(decorate);
+    const projectNotes = (isName
+      ? pool.filter((n) => !n.pinned && n.scope === "project")
+      : pool.filter((n) => !n.pinned)
+    ).map(decorate);
+    const globalNotes = (isName ? pool.filter((n) => !n.pinned && n.scope === "global") : []).map(decorate);
+
+    const writeMode = s.writeMode ?? this.props.agentWriteMode ?? "full-edit";
+    const modeLabels = { "full-edit": "full edit", "append-only": "append only", "read-only": "read only" };
+    const glyphs = {
+      "read-only": React.createElement("svg", { width: 11, height: 11, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3 },
+        React.createElement("rect", { x: 4, y: 7.5, width: 8, height: 6, rx: 1 }),
+        React.createElement("path", { d: "M5.5 7.5V5.5a2.5 2.5 0 0 1 5 0v2" })),
+      "append-only": React.createElement("svg", { width: 11, height: 11, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3 },
+        React.createElement("path", { d: "M8 4v8M4 8h8" })),
+      "full-edit": React.createElement("svg", { width: 11, height: 11, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3 },
+        React.createElement("path", { d: "M11.5 2.5l2 2L6 12l-2.6.6L4 10z" })),
+    };
+    // read-only stands out (agents locked out); append/full stay quiet
+    const chipTone = writeMode === "read-only"
+      ? { border: "rgba(255,179,0,0.25)", bg: "var(--amber-glow)", color: "var(--amber)" }
+      : { border: "var(--border-subtle)", bg: "transparent", color: "var(--text-tertiary)" };
+
+    const seg = (on) => ({ bg: on ? "var(--bg-raised)" : "transparent", color: on ? "var(--text-primary)" : "var(--text-tertiary)" });
+    const w = seg(s.edMode === "write"), sp = seg(s.edMode === "split"), r = seg(s.edMode === "read");
+    const sr = seg(s.sort === "recency"), sn = seg(s.sort === "name");
+    const sel = (on) => (on ? "var(--cyan)" : "transparent");
+    const selBg = (on) => (on ? "var(--bg-hover)" : "transparent");
+
+    return {
+      showList: s.view === "list",
+      showOpen: s.view === "open",
+      noteCount: String(notes.length),
+      pinnedNotes, projectNotes, globalNotes,
+      archivedNotes: archived,
+      archivedCount: String(archived.length),
+      archivedOpen: s.archivedOpen,
+      archivedChevron: s.archivedOpen ? "rotate(90deg)" : "rotate(0deg)",
+      toggleArchived: () => this.setState({ archivedOpen: !s.archivedOpen }),
+      sortRecency: () => this.setState({ sort: "recency" }),
+      sortName: () => this.setState({ sort: "name" }),
+      sortRecencyBg: sr.bg, sortRecencyColor: sr.color, sortNameBg: sn.bg, sortNameColor: sn.color,
+      openName: s.openName,
+      openScope: s.openScope === "global" ? "global" : "project",
+      backToList: () => this.setState({ view: "list", menuOpen: false, modeMenuOpen: false }),
+      toggleMenu: () => this.setState({ menuOpen: !s.menuOpen, modeMenuOpen: false }),
+      toggleModeMenu: () => this.setState({ modeMenuOpen: !s.modeMenuOpen, menuOpen: false }),
+      menuOpen: s.menuOpen,
+      modeMenuOpen: s.modeMenuOpen,
+      modeLabel: modeLabels[writeMode],
+      modeGlyph: glyphs[writeMode],
+      modeChipBorder: chipTone.border, modeChipBg: chipTone.bg, modeChipColor: chipTone.color,
+      setModeRead: () => this.setState({ writeMode: "read-only", modeMenuOpen: false }),
+      setModeAppend: () => this.setState({ writeMode: "append-only", modeMenuOpen: false }),
+      setModeFull: () => this.setState({ writeMode: "full-edit", modeMenuOpen: false }),
+      readSel: sel(writeMode === "read-only"), readSelBg: selBg(writeMode === "read-only"),
+      appendSel: sel(writeMode === "append-only"), appendSelBg: selBg(writeMode === "append-only"),
+      fullSel: sel(writeMode === "full-edit"), fullSelBg: selBg(writeMode === "full-edit"),
+      setModeWrite: () => this.setState({ edMode: "write" }),
+      setModeSplit: () => this.setState({ edMode: "split" }),
+      setModeRead2: () => this.setState({ edMode: "read" }),
+      writeBg: w.bg, writeColor: w.color, splitBg: sp.bg, splitColor: sp.color, readBg: r.bg, readColor: r.color,
+      showEditor: s.edMode !== "read",
+      showPreview: s.edMode !== "write",
+      showBoth: s.edMode === "split",
+      editorFlex: s.edMode === "split" ? "0 0 46%" : "1",
+      previewFlex: "1",
+      sectionTwoLabel: isName ? "Project \u00b7 command-center" : "Recent",
+      showGlobalSection: isName,
+    };
+  }
+}
+</script>
+</body>
+</html>

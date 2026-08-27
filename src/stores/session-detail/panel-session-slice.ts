@@ -32,6 +32,8 @@ export const createPanelSessionSlice: SessionDetailSliceCreator<
             ? { ...state.specBrowserSelection }
             : null,
           pendingTrayExpanded: state.pendingTrayExpanded,
+          openNotepadId: state.openNotepadId,
+          notepadSort: state.notepadSort,
         };
         state.panelSessionMemory[state.panelSessionKey] = snapshot;
       }
@@ -46,6 +48,8 @@ export const createPanelSessionSlice: SessionDetailSliceCreator<
         ? { ...saved.specBrowserSelection }
         : null;
       state.pendingTrayExpanded = saved?.pendingTrayExpanded ?? false;
+      state.openNotepadId = saved?.openNotepadId ?? initialState.openNotepadId;
+      state.notepadSort = saved?.notepadSort ?? initialState.notepadSort;
       // Re-presenting a restored document counts as an activation: the bump
       // breaks DocsPanel's browse latch (its browseAtNonce no longer matches)
       // and flashes the viewer body, exactly as re-opening the document would.

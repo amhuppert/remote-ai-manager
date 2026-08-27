@@ -400,6 +400,20 @@ describe("0034-native-sdd-attention-citations", () => {
   it("is a registered schema-11 compatibility cutover", () => {
     expect(NATIVE_SDD_ATTENTION_CITATIONS_SCHEMA_VERSION).toBe(11);
     expect(migrations).toContain(nativeSddAttentionCitations);
+    const index = migrations.findIndex(
+      (migration) => migration.name === "0034-native-sdd-attention-citations",
+    );
+    expect(index).toBeGreaterThanOrEqual(0);
+    // This migration stamps schema 11, but it is no longer the last cutover, so
+    // its expectation is pinned to its own frozen constant rather than the
+    // moving KNOWN_SCHEMA_VERSION. Everything registered after it is declared
+    // here so an append is deliberate rather than silent: purely additive
+    // migrations (a table no older build reads) are compatibility-neutral on
+    // either side of the stamp, and a later cutover that flips the version
+    // again must order after them.
+    expect(
+      migrations.slice(index + 1).map((migration) => migration.name),
+    ).toEqual(["0035-add-notepads", "0035-generalized-model-selection"]);
   });
 
   it.each([

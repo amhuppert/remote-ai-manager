@@ -206,10 +206,12 @@
      MobileInfoPanel.tsx (each rule carries the `max-768:` variant; the panel's
      shell-gated layout uses the `[.app[data-mobile-panel=info]_&]` variant). */
 
-  /* ---- Mobile panel switching: info hides conversation + diff ---- */
+  /* ---- Mobile panel switching: info/notepad hide conversation + diff ---- */
 
   .app[data-mobile-panel="info"] .prompt-panel,
-  .app[data-mobile-panel="info"] .sidebar-diff-panel {
+  .app[data-mobile-panel="info"] .sidebar-diff-panel,
+  .app[data-mobile-panel="notepad"] .prompt-panel,
+  .app[data-mobile-panel="notepad"] .sidebar-diff-panel {
     display: none;
   }
 }

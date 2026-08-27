@@ -124,6 +124,10 @@ import {
 import { persistTurnImages } from "./pre-turn/image-persistence";
 import { assembleWorkflowResultsBlock } from "./assemble-user-blocks";
 import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
+import {
+  expandNotepadRefsForAgent,
+  type NotepadInjectionSource,
+} from "@/lib/notepads/injection";
 import type {
   CapabilitySeed,
   ProjectCapabilitySeed,
@@ -257,6 +261,12 @@ export interface TurnExecutionDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | null>;
+  // Reads one notepad for the agent-facing expansion pass (D5). Null means the
+  // notepad is gone, so the pass reports a dangling reference instead of
+  // failing delivery. Ids are global, so no project scope is threaded.
+  readNotepadForInjection(
+    notepadId: string,
+  ): Promise<NotepadInjectionSource | null>;
   claimWorkflowResults(input: {
     projectPath: string;
     sessionName: string;
@@ -550,6 +560,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     messageQueueMod,
     alignmentServiceFactoryMod,
     ticketServiceFactoryMod,
+    notepadServiceFactoryMod,
     agentGatewayTokenMod,
     modelSelectionAdmissionMod,
   ] = await Promise.all([
@@ -575,6 +586,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/conversations/message-queue-service"),
     import("@/lib/session-alignment/service-factory"),
     import("@/lib/tickets/service-factory"),
+    import("@/lib/notepads/service-factory"),
     import("@/lib/agent-gateway/token"),
     import("@/lib/agent-backends/model-selection-admission"),
   ]);
@@ -665,6 +677,10 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       ticketServiceFactoryMod
         .getLiveTicketContextProvider()
         .getForSession(projectPath, sessionName),
+    readNotepadForInjection: (notepadId: string) =>
+      notepadServiceFactoryMod
+        .getNotepadInjectionReader()
+        .readForInjection(notepadId),
     claimWorkflowResults: ({
       projectPath,
       sessionName,
@@ -2022,14 +2038,43 @@ export async function executePromptForMachine(
   // Prepend debug mode instructions to the rewritten prompt text. Backends
   // receive a single string with `[Image #N]` markers; image data is carried
   // separately on `imageRefs`.
-  const agentFacingPromptText = expandNativeSpecCommandForAgent(
+  const specExpandedPromptText = expandNativeSpecCommandForAgent(
     assembled.rewrittenPromptText,
   );
-  if (agentFacingPromptText !== assembled.rewrittenPromptText) {
+  if (specExpandedPromptText !== assembled.rewrittenPromptText) {
     deps.log.info("prompt.native_spec_command_expanded", {
       ...scopeRef,
       conversationId: input.conversationId,
       requestLength: assembled.rewrittenPromptText.length,
+    });
+  }
+
+  // Notepad references expand to full canonical content for the agent only —
+  // `transcriptBlocks` above already captured the un-expanded text, so the chip
+  // still renders in history. A read failure degrades to the un-expanded text
+  // rather than losing the turn.
+  let agentFacingPromptText = specExpandedPromptText;
+  try {
+    agentFacingPromptText = await expandNotepadRefsForAgent(
+      specExpandedPromptText,
+      {
+        readForInjection: (notepadId) =>
+          deps.readNotepadForInjection(notepadId),
+      },
+    );
+    if (agentFacingPromptText !== specExpandedPromptText) {
+      deps.log.info("prompt.notepad_refs_expanded", {
+        ...scopeRef,
+        conversationId: input.conversationId,
+        requestLength: specExpandedPromptText.length,
+        expandedLength: agentFacingPromptText.length,
+      });
+    }
+  } catch (err) {
+    deps.log.warn("prompt.notepad_expansion_failed", {
+      ...scopeRef,
+      conversationId: input.conversationId,
+      error: getErrorMessage(err),
     });
   }
 

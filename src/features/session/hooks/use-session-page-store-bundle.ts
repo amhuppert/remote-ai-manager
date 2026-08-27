@@ -38,7 +38,7 @@ import {
   useCloseDevServerDrawer,
 } from "@/stores/dev-server-drawer.store";
 
-type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
+type MobilePanel = "chat" | "diff" | "docs" | "notepad" | "specs" | "info";
 
 export function useSessionPageStoreBundle(conversationId: string) {
   const layout = useLayout();
@@ -61,6 +61,7 @@ export function useSessionPageStoreBundle(conversationId: string) {
       if (panel === "docs") switchRightPaneTab("docs");
       if (panel === "diff") switchRightPaneTab("diff");
       if (panel === "specs") switchRightPaneTab("specs");
+      if (panel === "notepad") switchRightPaneTab("notepad");
     },
     [switchMobilePanelRaw, switchRightPaneTab],
   );

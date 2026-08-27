@@ -143,6 +143,18 @@ describe("PanesGrid", () => {
     },
   );
 
+  it("shell-gates itself off the mobile notepad surface so the full-screen panel replaces the grid", () => {
+    const workingSet = [makeConversation("a")];
+    const { container } = renderGrid({ workingSet, activeId: "a" });
+
+    // jsdom computes no stylesheet, so the CSS gate is pinned by its class:
+    // the grid hides when the .app shell carries data-mobile-panel="notepad"
+    // at mobile width (the notepad panel is full-screen there).
+    expect(panesRoot(container).className).toContain(
+      "[.app[data-mobile-panel=notepad]_&]:hidden",
+    );
+  });
+
   it("reflects composer focus via data-composer-focused and reverts on blur (5.3/5.4)", () => {
     const workingSet = [makeConversation("a"), makeConversation("b")];
     const { container } = renderGrid({ workingSet, activeId: "a" });

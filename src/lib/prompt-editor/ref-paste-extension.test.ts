@@ -4,8 +4,10 @@ import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { RefPasteHandler } from "./ref-paste-extension";
+import { NotepadMentionNode } from "./notepad-mention-node";
 import { TicketMentionNode } from "./ticket-mention-node";
 import { serializePromptDoc } from "./serializer";
+import { buildNotepadRefXml } from "@/lib/notepads/references";
 import { buildTicketRefXml } from "@/lib/tickets/references";
 
 beforeEach(() => {
@@ -59,6 +61,7 @@ function makeEditor() {
         trailingNode: false,
       }),
       TicketMentionNode,
+      NotepadMentionNode,
       RefPasteHandler,
     ],
     content: "<p></p>",
@@ -87,14 +90,21 @@ function paste(editor: Editor, text: string): void {
   editor.view.pasteText(text, pasteEvent(text));
 }
 
-function findTicketMentions(
+function findMentions(
   editor: Editor,
+  nodeName: string,
 ): Array<{ node: ProseMirrorNode; pos: number }> {
   const found: Array<{ node: ProseMirrorNode; pos: number }> = [];
   editor.state.doc.descendants((node, pos) => {
-    if (node.type.name === "ticketMention") found.push({ node, pos });
+    if (node.type.name === nodeName) found.push({ node, pos });
   });
   return found;
+}
+
+function findTicketMentions(
+  editor: Editor,
+): Array<{ node: ProseMirrorNode; pos: number }> {
+  return findMentions(editor, "ticketMention");
 }
 
 const TICKET_XML = buildTicketRefXml({
@@ -156,6 +166,71 @@ describe("RefPasteHandler ticket refs", () => {
     paste(editor, `see ${malformed} here`);
 
     expect(findTicketMentions(editor)).toHaveLength(0);
+    expect(editor.state.doc.textContent).toContain(malformed);
+  });
+});
+
+const NOTEPAD_XML = buildNotepadRefXml({
+  notepadId: "np-7f3a",
+  name: "Release checklist",
+  scope: "project",
+  projectName: "command-center",
+});
+
+const GLOBAL_NOTEPAD_XML = buildNotepadRefXml({
+  notepadId: "np-0001",
+  name: "Standing house rules",
+  scope: "global",
+  projectName: null,
+});
+
+describe("RefPasteHandler notepad refs", () => {
+  it("renders a pasted notepad ref among text as a notepadMention atom", () => {
+    const editor = makeEditor();
+    paste(editor, `before ${NOTEPAD_XML} after`);
+
+    const mentions = findMentions(editor, "notepadMention");
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.node.attrs).toMatchObject({
+      notepadId: "np-7f3a",
+      name: "Release checklist",
+      scope: "project",
+      projectName: "command-center",
+    });
+    expect(editor.state.doc.textContent).toContain("before");
+    expect(editor.state.doc.textContent).toContain("after");
+  });
+
+  it("serializes the pasted chip back to canonical notepad-ref XML in place", () => {
+    const editor = makeEditor();
+    paste(editor, `before ${NOTEPAD_XML} after`);
+
+    const { prompt } = serializePromptDoc({
+      doc: editor.state.doc,
+      attachments: [],
+    });
+    expect(prompt).toBe(`before ${NOTEPAD_XML} after`);
+  });
+
+  it("pastes a global notepad ref, which carries no project attribute", () => {
+    const editor = makeEditor();
+    paste(editor, GLOBAL_NOTEPAD_XML);
+
+    expect(findMentions(editor, "notepadMention")[0]!.node.attrs).toMatchObject(
+      { notepadId: "np-0001", scope: "global", projectName: "" },
+    );
+    expect(
+      serializePromptDoc({ doc: editor.state.doc, attachments: [] }).prompt,
+    ).toBe(GLOBAL_NOTEPAD_XML);
+  });
+
+  it("leaves a notepad ref missing its immutable id as plain text", () => {
+    const editor = makeEditor();
+    const malformed =
+      '<notepad-ref name="Release checklist" scope="project" />';
+    paste(editor, `see ${malformed} here`);
+
+    expect(findMentions(editor, "notepadMention")).toHaveLength(0);
     expect(editor.state.doc.textContent).toContain(malformed);
   });
 });

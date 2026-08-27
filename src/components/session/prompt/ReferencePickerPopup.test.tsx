@@ -7,6 +7,7 @@ import type {
   ConversationListItem,
   SessionConversationListItem,
 } from "@/lib/conversations/schemas";
+import type { NotepadListItem } from "@/lib/notepads/schemas";
 import type { SpecPickerSpec } from "@/lib/prompt-editor/reference-registry";
 import type { PickerTrigger } from "@/lib/prompt-editor/reference-picker";
 import type { TicketListItem } from "@/lib/tickets/schemas";
@@ -84,6 +85,24 @@ const SPEC: SpecPickerSpec = {
   ],
 };
 
+function notepadItem(
+  overrides: Partial<NotepadListItem> & { id: string },
+): NotepadListItem {
+  return {
+    id: overrides.id,
+    scope: overrides.scope ?? "project",
+    projectPath: overrides.projectPath ?? "/repos/alpha",
+    projectName: overrides.projectName ?? "alpha",
+    name: overrides.name ?? "Release checklist",
+    revision: overrides.revision ?? 3,
+    writeMode: overrides.writeMode ?? "full-edit",
+    pinned: overrides.pinned ?? false,
+    archived: overrides.archived ?? false,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+}
+
 const idle = { isLoading: false, isError: false, error: null } as const;
 
 interface RenderOptions {
@@ -93,6 +112,7 @@ interface RenderOptions {
   conversations?: ConversationListItem[];
   tickets?: TicketListItem[];
   specs?: SpecPickerSpec[];
+  notepads?: NotepadListItem[];
   sessionScoped?: boolean;
 }
 
@@ -111,6 +131,10 @@ function renderPicker(options: RenderOptions = {}) {
     useSpecs: () => ({ data: options.specs ?? [SPEC], ...idle }),
     useFiles: () => ({
       data: { items: options.files ?? [{ path: "src/lib/prompt.ts" }] },
+      ...idle,
+    }),
+    useNotepads: () => ({
+      data: options.notepads ?? [notepadItem({ id: "np-7f3a" })],
       ...idle,
     }),
   });
@@ -172,10 +196,45 @@ describe("ReferencePickerPopup", () => {
     renderPicker({ trigger: "#" });
 
     expect(screen.getByText("# reference — all types")).toBeVisible();
-    for (const label of ["Files", "Conversations", "Specs", "Tickets"]) {
+    for (const label of [
+      "Files",
+      "Conversations",
+      "Specs",
+      "Tickets",
+      "Notepads",
+    ]) {
       expect(screen.getByRole("rowgroup", { name: label })).toBeVisible();
     }
-    expect(screen.getByRole("button", { name: "All (4)" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "All (5)" })).toBeVisible();
+  });
+
+  it("offers notepads and inserts a notepad chip when one is selected", () => {
+    const { ref, onSelect } = renderPicker({
+      trigger: "#",
+      notepads: [notepadItem({ id: "np-7f3a", name: "Release checklist" })],
+    });
+
+    act(() => {
+      screen.getByRole("button", { name: /^Notepads/ }).click();
+    });
+    expect(
+      within(screen.getByRole("rowgroup", { name: "Notepads" })).getByText(
+        "Release checklist",
+      ),
+    ).toBeVisible();
+
+    press(ref, { key: "Enter" });
+
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: "reference",
+      type: "notepad",
+      attrs: {
+        notepadId: "np-7f3a",
+        name: "Release checklist",
+        scope: "project",
+        projectName: "alpha",
+      },
+    });
   });
 
   it("cycles scope with Tab and back with Shift+Tab", () => {
@@ -221,7 +280,9 @@ describe("ReferencePickerPopup", () => {
   it("selects a file from a trigger that did not preselect files", () => {
     const { ref, onSelect } = renderPicker({ trigger: "!" });
 
-    press(ref, { key: "Tab" });
+    act(() => {
+      screen.getByRole("button", { name: /^Files/ }).click();
+    });
     press(ref, { key: "Enter" });
 
     expect(onSelect).toHaveBeenCalledWith({
@@ -253,6 +314,7 @@ describe("ReferencePickerPopup", () => {
       useTickets: () => ({ data: [ticket({ id: "t1" })], ...idle }),
       useSpecs: () => ({ data: [], ...idle }),
       useFiles: () => ({ data: { items: [] }, ...idle }),
+      useNotepads: () => ({ data: [], ...idle }),
     });
     const onComplete = vi.fn();
     render(
@@ -328,6 +390,7 @@ describe("ReferencePickerPopup", () => {
       files: [],
       specs: [],
       tickets: [],
+      notepads: [],
     });
 
     expect(rowNames()).toHaveLength(1);
@@ -415,6 +478,7 @@ describe("ReferencePickerPopup", () => {
       useTickets: () => ({ data: [ticket({ id: "t1" })], ...idle }),
       useSpecs: () => ({ data: [], ...idle }),
       useFiles: () => ({ data: { items: [] }, ...idle }),
+      useNotepads: () => ({ data: [], ...idle }),
     });
     render(
       <Popup
@@ -450,6 +514,7 @@ describe("ReferencePickerPopup", () => {
       useTickets: () => ({ data: [], ...idle }),
       useSpecs: () => failing,
       useFiles: () => ({ data: { items: [] }, ...idle }),
+      useNotepads: () => ({ data: [], ...idle }),
     });
     render(
       <Popup

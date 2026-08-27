@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { ConversationMentionNode } from "./conversation-mention-node";
 import { deserializePromptDoc } from "./deserializer";
 import { MessageMentionNode } from "./message-mention-node";
-import { REFERENCE_REGISTRY } from "./reference-registry";
+import { NotepadMentionNode } from "./notepad-mention-node";
+import { REFERENCE_REGISTRY, getReferenceByType } from "./reference-registry";
 import { serializePromptDoc } from "./serializer";
 import {
   AssumptionMentionNode,
@@ -63,7 +64,19 @@ const REFERENCE_FIXTURES = [
     nodeName: "assumptionMention",
     xml: '<assumption-ref project-name="command-center" slug="native-sdd" handle="A1" name="SQLite remains authoritative" revision="3" read-command="cctl spec get &apos;native-sdd/A1&apos; --project &apos;command-center&apos;" />',
   },
+  {
+    type: "notepad",
+    nodeName: "notepadMention",
+    xml: '<notepad-ref notepad-id="np-7f3a" name="Release checklist" scope="project" project-name="command-center" read-command="cctl notepad get &apos;np-7f3a&apos;" />',
+  },
 ] as const;
+
+/**
+ * A global notepad carries no owning project, so its tag omits `project-name`
+ * entirely rather than carrying an empty one.
+ */
+const GLOBAL_NOTEPAD_XML =
+  '<notepad-ref notepad-id="np-0001" name="Standing house rules" scope="global" read-command="cctl notepad get &apos;np-0001&apos;" />';
 
 function roundTrip(xml: string): {
   prompt: string;
@@ -81,6 +94,7 @@ function roundTrip(xml: string): {
       TaskMentionNode,
       QuestionMentionNode,
       AssumptionMentionNode,
+      NotepadMentionNode,
     ],
     content: deserializePromptDoc({ prompt: xml, images: [] }),
   });
@@ -217,6 +231,40 @@ describe("existing reference serialization/parser parity", () => {
         hasTranscriptChip: true,
         hasPickerSource: true,
       },
+      {
+        type: "notepad",
+        nodeName: "notepadMention",
+        xmlTag: "notepad-ref",
+        hasAttrsSchema: true,
+        hasBuildXml: true,
+        hasParseAttrs: true,
+        hasEditorChip: true,
+        hasTranscriptChip: true,
+        hasPickerSource: true,
+      },
     ]);
+  });
+
+  it("round-trips a global notepad reference without a project attribute", () => {
+    expect(roundTrip(GLOBAL_NOTEPAD_XML)).toEqual({
+      prompt: GLOBAL_NOTEPAD_XML,
+      nodeName: "notepadMention",
+    });
+  });
+
+  it("re-derives the notepad read command from the immutable id", () => {
+    const entry = getReferenceByType("notepad");
+    const attrs = entry.parseAttrs({
+      "notepad-id": "np-7f3a",
+      name: "Release checklist",
+      scope: "project",
+      "project-name": "command-center",
+      // A stale command captured before a rename must not survive the chip.
+      "read-command": "cctl notepad get 'stale-id'",
+    });
+
+    expect(entry.buildXml(attrs)).toContain(
+      'read-command="cctl notepad get &apos;np-7f3a&apos;"',
+    );
   });
 });

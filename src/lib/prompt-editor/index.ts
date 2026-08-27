@@ -24,6 +24,11 @@ export {
 } from "./ticket-mention-node";
 export type { TicketMentionAttrs } from "./ticket-mention-node";
 export {
+  NotepadMentionNode,
+  notepadRefAttrsToMentionAttrs,
+} from "./notepad-mention-node";
+export type { NotepadMentionAttrs } from "./notepad-mention-node";
+export {
   AssumptionMentionNode,
   DecisionMentionNode,
   QuestionMentionNode,
@@ -44,12 +49,27 @@ export type {
   SpecRefAttrs,
   SpecReferenceType,
 } from "./spec-mention-nodes";
+export { NotepadImageNode } from "./notepad-image-node";
+export type {
+  NotepadImageAttrs,
+  NotepadImageNodeOptions,
+} from "./notepad-image-node";
+export {
+  buildNotepadImageToken,
+  findNotepadImageTokens,
+} from "./notepad-image-token";
+export type { FoundNotepadImageToken } from "./notepad-image-token";
 export { RefPasteHandler } from "./ref-paste-extension";
 export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
 export type { SerializedPromptDoc } from "./serializer";
 export { deserializePromptDoc } from "./deserializer";
+export type { DeserializePromptDocOptions } from "./deserializer";
 export { ImagePasteHandler } from "./paste-handler-extension";
+export type {
+  AddImageResult,
+  PastedImageNode,
+} from "./paste-handler-extension";
 export { SlashCommand } from "./slash-command-extension";
 export type { SlashCommandTrigger } from "./slash-command-extension";
 export {

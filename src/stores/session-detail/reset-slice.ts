@@ -36,6 +36,8 @@ export const createResetSlice: SessionDetailSliceCreator<ResetSlice> = (
       docActivationNonce: state.docActivationNonce,
       specBrowserSelection: state.specBrowserSelection,
       pendingTrayExpanded: state.pendingTrayExpanded,
+      openNotepadId: state.openNotepadId,
+      notepadSort: state.notepadSort,
       panelSessionKey: state.panelSessionKey,
       panelSessionMemory: state.panelSessionMemory,
     })),
