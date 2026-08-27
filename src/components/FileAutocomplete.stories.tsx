@@ -17,7 +17,7 @@ const MOCK_FILES = [
   "src/components/ConfirmDialog.stories.tsx",
   "src/components/FileAutocomplete.tsx",
   "src/components/Topbar.tsx",
-  "src/components/ModelSelector.tsx",
+  "src/components/MessageActions.tsx",
   "src/app/globals.css",
   "src/app/layout.tsx",
   "src/app/page.tsx",

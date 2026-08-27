@@ -33,7 +33,7 @@ const MODELS = [
   { id: "haiku", label: "Haiku", desc: "Fastest" },
 ];
 
-/** Single-value model picker with right-aligned descriptions (the ModelSelector shape). */
+/** Single-value model picker with right-aligned descriptions. */
 export const Default: Story = {
   render: () => {
     const [value, setValue] = useState("opus");

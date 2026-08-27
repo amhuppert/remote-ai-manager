@@ -11,10 +11,9 @@ interface BackendToggleProps {
   disabled?: boolean;
   readOnly?: boolean;
   /**
-   * Per-option refusal — the disabled-with-reason convention
-   * `ReasoningLevelSelector` and `McpConfigButton` already use, narrowed from
-   * one control-wide `disabledTooltip` to one reason per option. Returning null
-   * leaves the option selectable.
+   * Per-option refusal — the disabled-with-reason convention `McpConfigButton`
+   * already uses, narrowed from one control-wide `disabledTooltip` to one
+   * reason per option. Returning null leaves the option selectable.
    *
    * Asked per catalog entry rather than supplied as a backend-keyed map so the
    * answer comes from the entry the toggle is rendering — the live catalog —

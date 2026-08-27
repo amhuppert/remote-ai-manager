@@ -17,7 +17,6 @@ import {
   getDefaultStallTimeoutForBackend,
   isModelCompatibleWithBackend,
   isSelectableModelForBackend,
-  modelOptionsForCatalogEntry,
 } from "./catalog";
 import { validateModelSelection } from "./model-selection";
 import { getBackendDescriptor } from "./registry";
@@ -156,18 +155,6 @@ describe("backend model ownership", () => {
     );
     expect(isModelCompatibleWithBackend("codex", "opus")).toBe(false);
   });
-
-  it.each(getBackendCatalogEntry("claude").models)(
-    "does not present the Claude $id model as a custom Codex option",
-    ({ id }) => {
-      const options = modelOptionsForCatalogEntry(
-        getBackendCatalogEntry("codex"),
-        id,
-      );
-
-      expect(options.map((option) => option.id)).not.toContain(id);
-    },
-  );
 });
 
 describe("unknown backend ids", () => {
@@ -259,5 +246,53 @@ describe("catalogBackendSelectionDefaults", () => {
       modelId: "composer-2.5",
       parameters: { fast: "true" },
     });
+  });
+});
+
+describe("reasoning-tier emphasis in the static catalogs", () => {
+  function reasoningValues(
+    backend: "claude" | "codex",
+    modelId: string,
+    parameterId: string,
+  ): { value: string; emphasis?: string }[] {
+    const model = getConfiguredBackendModelCatalog(backend).models.find(
+      (candidate) => candidate.id === modelId,
+    );
+    const parameter = model?.parameters.find(
+      (candidate) => candidate.id === parameterId,
+    );
+    if (!parameter) throw new Error(`No ${modelId}.${parameterId} parameter`);
+    return parameter.values.map(({ value, emphasis }) => ({
+      value,
+      ...(emphasis === undefined ? {} : { emphasis }),
+    }));
+  }
+
+  it("marks only the above-scale Claude effort tiers", () => {
+    expect(reasoningValues("claude", "opus", "effort")).toEqual([
+      { value: "low" },
+      { value: "medium" },
+      { value: "high" },
+      { value: "xhigh", emphasis: "exceeds-scale" },
+      { value: "max", emphasis: "exceeds-scale" },
+    ]);
+  });
+
+  it("marks the above-scale Codex reasoning tiers and leaves fast mode plain", () => {
+    const entry = getBackendCatalogEntry("codex");
+    const model = entry.models[0]!;
+    const emphasized = reasoningValues("codex", model.id, "reasoning")
+      .filter((value) => value.emphasis === "exceeds-scale")
+      .map(({ value }) => value);
+
+    expect(emphasized).toEqual(
+      model.effortLevels.filter((level) =>
+        ["xhigh", "max", "ultra"].includes(level),
+      ),
+    );
+    expect(reasoningValues("codex", model.id, "fast")).toEqual([
+      { value: "false" },
+      { value: "true" },
+    ]);
   });
 });

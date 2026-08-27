@@ -50,7 +50,11 @@ const catalog = {
           label: "Reasoning",
           values: [
             { value: "high", label: "High" },
-            { value: "xhigh", label: "Extra high" },
+            {
+              value: "xhigh",
+              label: "Extra high",
+              emphasis: "exceeds-scale",
+            },
           ],
           prominence: "primary",
         },
@@ -236,6 +240,74 @@ describe("PrimaryModelParameterControl", () => {
 
     expect(onSelectionChange).not.toHaveBeenCalled();
     expect(onNeedsOptions).toHaveBeenCalledOnce();
+  });
+
+  it("renders the applied above-scale tier with the rainbow treatment", () => {
+    const parameter = catalog.models[0]!.parameters[0]!;
+    render(
+      <PrimaryModelParameterControl
+        catalog={catalog}
+        selection={{
+          ...selection,
+          parameters: {
+            ...selection.parameters,
+            reasoning: "xhigh",
+            thinking: "true",
+            fast: "false",
+          },
+        }}
+        parameter={parameter}
+        onSelectionChange={vi.fn()}
+        onNeedsOptions={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("combobox", { name: "Reasoning" });
+    expect(trigger).toHaveAttribute("data-emphasis", "exceeds-scale");
+    expect(trigger.className).toContain("--rainbow-gradient");
+    expect(screen.getByText("Extra high").className).toContain(
+      "--rainbow-gradient",
+    );
+  });
+
+  it("leaves a within-scale tier on the canonical trigger", () => {
+    const parameter = catalog.models[0]!.parameters[0]!;
+    render(
+      <PrimaryModelParameterControl
+        catalog={catalog}
+        selection={selection}
+        parameter={parameter}
+        onSelectionChange={vi.fn()}
+        onNeedsOptions={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("combobox", { name: "Reasoning" });
+    expect(trigger).not.toHaveAttribute("data-emphasis");
+    expect(trigger.className).not.toContain("--rainbow-gradient");
+  });
+
+  it("marks above-scale options in the open listbox", () => {
+    const parameter = catalog.models[0]!.parameters[0]!;
+    render(
+      <PrimaryModelParameterControl
+        catalog={catalog}
+        selection={selection}
+        parameter={parameter}
+        onSelectionChange={vi.fn()}
+        onNeedsOptions={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Reasoning" }));
+
+    expect(screen.getByRole("option", { name: "Extra high" })).toHaveAttribute(
+      "data-emphasis",
+      "exceeds-scale",
+    );
+    expect(screen.getByRole("option", { name: "High" })).not.toHaveAttribute(
+      "data-emphasis",
+    );
   });
 });
 

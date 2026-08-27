@@ -514,7 +514,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     ) as HTMLElement;
     expect(implementer.textContent).toContain("DEFAULT");
 
-    // Edit implementer.model from "opus" → "sonnet" via the ModelSelector.
+    // Edit implementer.model from "opus" → "sonnet" via the model select.
     await pickModel(user, implementer, "Sonnet");
 
     expect(implementer.textContent).toContain("MODIFIED");

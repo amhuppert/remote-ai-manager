@@ -89,8 +89,6 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}projects-index${path.sep}ProjectsIndexPage.tsx`,
   `${path.sep}components${path.sep}ConfirmDialog.tsx`,
   `${path.sep}components${path.sep}ModelSelectionMetadata.tsx`,
-  `${path.sep}components${path.sep}ModelSelector.tsx`,
-  `${path.sep}components${path.sep}ReasoningLevelSelector.tsx`,
   // SessionDiffViewer reproduces the session.css/conversation.css diff/commit
   // rules as utilities in its own .tsx (those dense files stay for the sidebar
   // until B-3); fully utility-first.
@@ -148,13 +146,6 @@ const UTILITY_FIRST_PATHS = [
   // ui/StatusChip + design tokens). Component and story are both exempt.
   `${path.sep}components${path.sep}conversation${path.sep}BackgroundActivityIndicator.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}BackgroundActivityIndicator.stories.tsx`,
-  // EffortLabel (the message-metadata effort cell, shown inside MessageRow) is
-  // utility-first by design — `cn()` + design-system tokens + the preserved
-  // `cc-rainbow-text` treatment. Both the component and its story are exempt;
-  // the component also uses the `text-text-secondary` token, which the story
-  // merely reports first (it sorts before the .tsx).
-  `${path.sep}components${path.sep}conversation${path.sep}EffortLabel.tsx`,
-  `${path.sep}components${path.sep}conversation${path.sep}EffortLabel.stories.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}collab${path.sep}`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationList.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationMentionChip.tsx`,

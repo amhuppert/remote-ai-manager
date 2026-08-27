@@ -181,7 +181,10 @@ const MessageRow = memo(function MessageRow({
         {!isUserMsg && msg.modelSelection && (
           <span className="inline text-[0.7rem] font-medium tracking-[0.02em] normal-case">
             <span className="mx-[5px] text-text-tertiary">&middot;</span>
-            <ModelSelectionMetadata selection={msg.modelSelection} />
+            <ModelSelectionMetadata
+              backend={selectedBackend}
+              selection={msg.modelSelection}
+            />
           </span>
         )}
         <MessageTimestamp timestamp={msg.timestamp} />

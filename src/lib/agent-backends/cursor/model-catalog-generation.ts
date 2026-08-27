@@ -1,9 +1,11 @@
 import type { ModelListItem } from "@cursor/sdk";
 import { z } from "zod";
 
+import { reasoningValueEmphasis } from "../model-scale-emphasis";
 import {
   backendModelCatalogSchema,
   type BackendModelCatalog,
+  type BackendModelParameterValueEmphasis,
 } from "../schemas";
 
 import { CURSOR_DEFAULT_MODEL } from "./model-policy";
@@ -55,6 +57,7 @@ const sdkModelListSchema = z.array(
 interface CatalogParameterValue {
   value: string;
   label: string;
+  emphasis?: BackendModelParameterValueEmphasis;
 }
 
 interface CatalogParameterDefinition {
@@ -148,10 +151,14 @@ function buildParameterDefinitions(
       return {
         id: definition.id,
         label: definition.displayName ?? definition.id,
-        values: definition.values.map((value) => ({
-          value: value.value,
-          label: value.displayName ?? value.value,
-        })),
+        values: definition.values.map((value) => {
+          const emphasis = reasoningValueEmphasis(definition.id, value.value);
+          return {
+            value: value.value,
+            label: value.displayName ?? value.value,
+            ...(emphasis === undefined ? {} : { emphasis }),
+          };
+        }),
         prominence: parameterProminence(
           definition.id,
           definition.values.length,

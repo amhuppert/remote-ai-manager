@@ -88,6 +88,31 @@ describe("MobilePromptToolbar model selection", () => {
       parameters: { ...modelSelection.parameters, fast: "true" },
     });
   });
+
+  it("gives the chip the rainbow border only for an above-scale applied tier", () => {
+    const modelCatalog = getStaticBackendModelCatalog("claude");
+    renderToolbar({
+      modelCatalog,
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "max" },
+      },
+    });
+
+    expect(screen.getByTestId("mobile-prompt-model-chip")).toHaveClass(
+      "cc-rainbow-border",
+    );
+
+    cleanup();
+    renderToolbar({
+      modelCatalog,
+      modelSelection: defaultSelectionForModel(modelCatalog, "opus"),
+    });
+
+    expect(screen.getByTestId("mobile-prompt-model-chip")).not.toHaveClass(
+      "cc-rainbow-border",
+    );
+  });
 });
 
 describe("MobilePromptToolbar sheet open-state reporting", () => {

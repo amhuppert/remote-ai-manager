@@ -1069,9 +1069,12 @@ describe("QuickTicketDialog", () => {
     expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
       /^GPT-5\.6 Sol$/,
     );
-    expect(
-      screen.getByRole("combobox", { name: "Reasoning" }),
-    ).toHaveTextContent(/^Ultra$/);
+    // "Ultra" exceeds the provider's normal scale, so the control renders its
+    // rainbow variant; assert the label cell rather than the whole trigger,
+    // whose chevron differs between the two variants.
+    expect(screen.getByTestId("model-parameter-label")).toHaveTextContent(
+      /^Ultra$/,
+    );
 
     await user.click(screen.getByTestId("model-selector-trigger"));
     await user.click(
@@ -1080,9 +1083,9 @@ describe("QuickTicketDialog", () => {
     expect(screen.getByTestId("model-selector-label")).toHaveTextContent(
       /^GPT-5\.6 Terra$/,
     );
-    expect(
-      screen.getByRole("combobox", { name: "Reasoning" }),
-    ).toHaveTextContent(/^High$/);
+    expect(screen.getByTestId("model-parameter-label")).toHaveTextContent(
+      /^High$/,
+    );
 
     await user.click(screen.getByRole("button", { name: "Create ticket" }));
     await waitFor(() =>

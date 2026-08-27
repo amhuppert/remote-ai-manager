@@ -1,10 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import BackendToggle from "./BackendToggle";
-import ModelSelector from "./ModelSelector";
-import ReasoningLevelSelector from "./ReasoningLevelSelector";
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
+import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
+
+const claudeCatalog = getStaticBackendModelCatalog("claude");
 
 const meta = {
   title: "Components/BackendToggle",
@@ -107,11 +109,10 @@ export const InPromptArea = {
             <div className="prompt-toolbar">
               <div className="prompt-toolbar-start">
                 <Story />
-                <ModelSelector value="opus" backend="claude" onChange={fn()} />
-                <ReasoningLevelSelector
-                  value="high"
-                  availableLevels={getEffortLevelsForBackend("claude", "opus")}
-                  onChange={fn()}
+                <DesktopModelSelectionControls
+                  catalog={claudeCatalog}
+                  selection={defaultSelectionForModel(claudeCatalog, "opus")}
+                  onSelectionChange={fn()}
                 />
               </div>
               <div className="prompt-toolbar-end">

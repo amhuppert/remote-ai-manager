@@ -41,7 +41,8 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -250,11 +251,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -790,11 +793,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -1431,11 +1436,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -1717,7 +1724,8 @@
             },
             {
               "value": "extra-high",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -1974,11 +1982,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -2436,11 +2446,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -2733,11 +2745,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -3039,7 +3053,8 @@
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -3307,7 +3322,8 @@
             },
             {
               "value": "extra-high",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -3472,11 +3488,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -4113,7 +4131,8 @@
             },
             {
               "value": "extra-high",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -4370,7 +4389,8 @@
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -4638,7 +4658,8 @@
             },
             {
               "value": "extra-high",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -4792,11 +4813,13 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -5151,7 +5174,8 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -5237,7 +5261,8 @@
             },
             {
               "value": "xhigh",
-              "label": "Extra High"
+              "label": "Extra High",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -5595,7 +5620,8 @@
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"
@@ -5665,7 +5691,8 @@
             },
             {
               "value": "max",
-              "label": "Max"
+              "label": "Max",
+              "emphasis": "exceeds-scale"
             }
           ],
           "prominence": "primary"

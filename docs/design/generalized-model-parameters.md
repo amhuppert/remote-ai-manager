@@ -100,6 +100,7 @@ const backendModelParameterDefinitionSchema = z.object({
     z.object({
       value: z.string(),
       label: z.string().min(1),
+      emphasis: z.enum(["exceeds-scale"]).optional(),
     }),
   ).min(1),
   prominence: z.enum(["primary", "advanced", "hidden"]),
@@ -144,6 +145,7 @@ const backendModelCatalogSchema = z.object({
 - Parameter IDs are unique within a model, and value IDs are unique within a parameter.
 - Every value in a variant is declared by its parameter definition. Parameters that occur only as fixed provider values receive a generated `hidden` definition.
 - A parameter with one possible value is hidden. Cursor effort/reasoning is `primary`; other multi-value Cursor parameters are `advanced`.
+- A reasoning value beyond the provider's normal range carries `emphasis: "exceeds-scale"`. The catalog owns this because the spelling is provider-specific (`xhigh`, `extra-high`, `max`, `ultra`); the design system's rainbow treatment is reserved for it and nothing else.
 - A canonical selection matches exactly one complete variant. Unknown keys, missing keys, unsupported values, and unsupported combinations are errors.
 - Parameter record order is semantically irrelevant. Stable identity sorts entries by key before hashing or comparing.
 
@@ -234,7 +236,7 @@ The command:
 2. Validates the SDK response as untrusted input.
 3. Converts SDK arrays to the canonical catalog without renaming parameter IDs or values.
 4. Synthesizes hidden definitions for fixed parameters present only in variants.
-5. Assigns generic presentation prominence: effort/reasoning primary, other multi-value parameters advanced, fixed parameters hidden.
+5. Assigns generic presentation prominence: effort/reasoning primary, other multi-value parameters advanced, fixed parameters hidden. Effort/reasoning values beyond the normal range take `emphasis: "exceeds-scale"`.
 6. Verifies all catalog invariants. Aliases with one canonical owner are preserved; aliases with multiple owners or a canonical-ID collision are omitted and reported deterministically because accepting them could not canonicalize safely.
 7. Writes `src/lib/agent-backends/cursor/generated-model-catalog.json` atomically with SDK version, generation timestamp, and source provenance.
 8. Emits a concise diff summary by model and parameter; it never prints credentials.
@@ -429,6 +431,8 @@ The adapter validates once more at the worker trust boundary. The parent process
 - Models with no selectable parameters do not show an options affordance.
 
 The UI does not contain checks such as `backend === "cursor"`, `parameter.id === "context"`, or `backendSupportsFastMode`. It follows catalog definitions and prominence.
+
+A value the catalog marks `exceeds-scale` renders with the design system's rainbow treatment wherever it is displayed — the prompt toolbar's primary control, its listbox rows, the Model Options rows, the mobile chip, and the transcript's model metadata. The UI reads the catalog's `emphasis` field; it never tests value spellings.
 
 ### Constraint behavior
 

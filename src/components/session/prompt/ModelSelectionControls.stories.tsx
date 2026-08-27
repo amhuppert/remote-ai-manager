@@ -89,6 +89,20 @@ export const NoParameters: Story = {
   ),
 };
 
+/**
+ * The catalog marks this model's `xhigh` reasoning tier as exceeding the
+ * provider's scale, so the primary control takes the rainbow treatment.
+ */
+export const ExceedsScaleTier: Story = {
+  render: () => (
+    <ControlsHarness
+      catalog={fullModelParameterCatalog}
+      selection={fullModelParameterCatalog.models[0]!.variants[3]!.selection}
+      onSelectionChange={() => {}}
+    />
+  ),
+};
+
 export const StaleSelection: Story = {
   render: () => (
     <ControlsHarness

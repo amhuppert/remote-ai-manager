@@ -26,6 +26,8 @@ import { fullModelParameterCatalog } from "./prompt/model-selection-story-data";
 interface DemoProps {
   initialBackend?: AgentBackendId;
   initialModel?: string;
+  /** Starts on a specific variant instead of the model's default one. */
+  initialParameters?: Record<string, string>;
   backendLocked?: boolean;
   catalogUnavailable?: boolean;
   debugActive?: boolean;
@@ -48,11 +50,13 @@ function catalogForBackend(backend: AgentBackendId): BackendModelCatalog {
 function initialSelection(
   catalog: BackendModelCatalog,
   preferredModel: string | undefined,
+  parameters?: Record<string, string>,
 ): BackendModelSelection {
   const modelId = catalog.models.some(({ id }) => id === preferredModel)
     ? preferredModel!
     : catalog.defaultModelId;
-  return defaultSelectionForModel(catalog, modelId);
+  const selection = defaultSelectionForModel(catalog, modelId);
+  return parameters === undefined ? selection : { modelId, parameters };
 }
 
 function McpRowStub({
@@ -92,6 +96,7 @@ function McpRowStub({
 function DemoToolbar({
   initialBackend = "cursor",
   initialModel,
+  initialParameters,
   backendLocked = false,
   catalogUnavailable = false,
   debugActive: initialDebug = false,
@@ -108,7 +113,7 @@ function DemoToolbar({
   const [backend, setBackend] = useState<AgentBackendId>(initialBackend);
   const catalog = catalogForBackend(backend);
   const [selection, setSelection] = useState<BackendModelSelection>(() =>
-    initialSelection(catalog, initialModel),
+    initialSelection(catalog, initialModel, initialParameters),
   );
   const [debug, setDebug] = useState(initialDebug);
   const [text, setText] = useState("");
@@ -235,6 +240,19 @@ export const ClaudeEffortOnly: Story = {
 
 export const CodexReasoningAndFast: Story = {
   args: { initialBackend: "codex", initialModel: "gpt-5.6-sol" },
+};
+
+/** A tier the catalog marks as exceeding the provider's scale rainbows the chip. */
+export const ExceedsScaleTier: Story = {
+  args: {
+    initialParameters: {
+      reasoning: "xhigh",
+      thinking: "true",
+      context: "272k",
+      fast: "false",
+      cyber: "false",
+    },
+  },
 };
 
 export const CatalogUnavailable: Story = {

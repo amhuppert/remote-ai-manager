@@ -620,13 +620,6 @@ body:has([data-cc-modal-scrim]) .app *::after {
 }
 
 /* ============================================================
-   Shared Selectors — ModelSelector / ReasoningLevelSelector
-   (Cross-feature components in src/components/; consumed from
-   session, config, and workflows inspector. Base styles live in
-   globals so they are guaranteed to load regardless of route.)
-   ============================================================ */
-
-/* ============================================================
    Responsive: Tablet (<=900px)
    ============================================================ */
 

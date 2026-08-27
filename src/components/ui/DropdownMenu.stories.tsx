@@ -107,9 +107,8 @@ const MODELS = [
 ];
 
 /**
- * Single-value selection via `RadioGroup` — the checked row takes the cyan-glow
- * treatment (the affordance the bespoke ModelSelector/ReasoningLevelSelector
- * dropdowns hand-roll today).
+ * Single-value selection via `RadioGroup` — the checked row takes the same
+ * cyan-glow treatment `Select`'s checked option row uses.
  */
 export const Selection: Story = {
   render: () => {

@@ -176,7 +176,12 @@ export default function MobilePromptToolbar({
 
         <button
           type="button"
-          className="mobile-prompt-model-chip inline-flex h-[44px] min-w-0 cursor-pointer items-center gap-xs rounded-sm border border-border-default bg-bg-surface px-[12px] font-mono text-[0.78rem] whitespace-nowrap text-text-primary transition-[border-color,background] duration-150 hover:border-cyan-dim disabled:cursor-not-allowed disabled:opacity-50"
+          className={cn(
+            "mobile-prompt-model-chip inline-flex h-[44px] min-w-0 cursor-pointer items-center gap-xs rounded-sm border border-border-default bg-bg-surface px-[12px] font-mono text-[0.78rem] whitespace-nowrap text-text-primary transition-[border-color,background] duration-150 hover:border-cyan-dim disabled:cursor-not-allowed disabled:opacity-50",
+            // `.cc-rainbow-border` + the `__effort` hook below are the preserved
+            // prompt.css treatment for a tier beyond the provider's scale.
+            primaryValue?.emphasis !== undefined && "cc-rainbow-border",
+          )}
           onClick={() => setSheet("settings")}
           disabled={isReadOnly || isBusy}
           aria-haspopup="dialog"

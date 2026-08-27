@@ -3,7 +3,9 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { useState } from "react";
-import ModelSelector from "@/components/ModelSelector";
+import { CatalogModelSelect } from "@/components/session/prompt/ModelSelectionControls";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { SEND_BUTTON_CLASS } from "@/components/session/prompt/PromptDesktopToolbar";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
@@ -28,6 +30,8 @@ function makeImage(id: string, fileName: string, url: string): ImageAttachment {
   };
 }
 
+const claudeCatalog = getStaticBackendModelCatalog("claude");
+
 const SAMPLE_IMAGES: ImageAttachment[] = [
   makeImage("img-1", "screenshot.png", CYAN_PNG),
   makeImage("img-2", "diagram.png", GREEN_PNG),
@@ -49,7 +53,9 @@ function PromptInputAreaDemo({
   voiceAvailable?: boolean;
 }) {
   const [text, setText] = useState("");
-  const [model, setModel] = useState("sonnet");
+  const [selection, setSelection] = useState(() =>
+    defaultSelectionForModel(claudeCatalog, "sonnet"),
+  );
   const removeImage = fn();
   const toggleRecording = fn();
 
@@ -90,10 +96,10 @@ function PromptInputAreaDemo({
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
-            <ModelSelector
-              value={model}
-              backend="claude"
-              onChange={setModel}
+            <CatalogModelSelect
+              catalog={claudeCatalog}
+              selection={selection}
+              onSelectionChange={setSelection}
               disabled={sending || isFinished}
             />
           </div>

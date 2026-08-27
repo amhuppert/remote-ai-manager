@@ -101,9 +101,9 @@ export default function AddConversationMenu({
   // The menu is only mounted when open, so `open` is unconditionally true.
   useOverlayScope(true, { onEscape: onClose });
 
-  // Click-outside dismissal — mirrors the ModelSelector/SessionActionsMenu
-  // idiom. Capture phase so the listener sees the event even if a child stops
-  // propagation; cleaned up on unmount.
+  // Click-outside dismissal — mirrors the SessionActionsMenu idiom. Capture
+  // phase so the listener sees the event even if a child stops propagation;
+  // cleaned up on unmount.
   useEffect(() => {
     const onMouseDown = (event: MouseEvent): void => {
       if (

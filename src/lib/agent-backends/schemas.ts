@@ -16,10 +16,26 @@ export const backendModelSelectionSchema = z
   .strict();
 export type BackendModelSelection = z.infer<typeof backendModelSelectionSchema>;
 
+/**
+ * Presentation weight a catalog assigns to one parameter value. `exceeds-scale`
+ * marks a tier beyond the provider's normal range — the design system's rainbow
+ * treatment is reserved for exactly these. The catalog decides, because the
+ * spelling is provider-owned (`xhigh`, `extra-high`, `max`) and a presentation
+ * layer could only rediscover that vocabulary by branching on parameter ids.
+ */
+export const backendModelParameterValueEmphasisSchema = z.enum([
+  "exceeds-scale",
+]);
+export type BackendModelParameterValueEmphasis = z.infer<
+  typeof backendModelParameterValueEmphasisSchema
+>;
+
 export const backendModelParameterValueSchema = z
   .object({
     value: z.string(),
     label: z.string().trim().min(1),
+    /** Absent means the value sits within the provider's ordinary scale. */
+    emphasis: backendModelParameterValueEmphasisSchema.optional(),
   })
   .strict();
 export type BackendModelParameterValue = z.infer<

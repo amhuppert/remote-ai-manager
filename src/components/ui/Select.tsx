@@ -15,9 +15,9 @@ import { cn } from "@/lib/ui/cn";
 // `data-placeholder`). Parts omit `className`/`style`; the only escape hatch is the
 // layout-only `layoutClassName` (docs/tailwind-conventions.md §2).
 
-// Trigger appearance matches the legacy ModelSelector/ReasoningLevelSelector
-// trigger: surface rest → border-strong/bg-hover hover → cyan-border + cyan-glow
-// ring when open; canonical cyan `:focus-visible` outline; 44px touch on mobile.
+// Canonical CC picker trigger: surface rest → border-strong/bg-hover hover →
+// cyan-border + cyan-glow ring when open; canonical cyan `:focus-visible`
+// outline; 44px touch on mobile.
 const triggerClass = cn(
   "group inline-flex h-9 cursor-pointer items-center gap-[6px] rounded-md border border-solid px-3 font-mono text-[0.72rem] font-medium whitespace-nowrap transition-all duration-150 ease-[ease] outline-none max-768:h-[44px]",
   "border-border-default bg-bg-surface text-text-secondary data-[placeholder]:text-text-tertiary",

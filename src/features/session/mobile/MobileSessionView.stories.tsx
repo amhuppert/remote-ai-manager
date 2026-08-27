@@ -4,10 +4,14 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { useState } from "react";
 import MobileActionMenu from "@/components/MobileActionMenu";
-import ModelSelector from "@/components/ModelSelector";
+import { CatalogModelSelect } from "@/components/session/prompt/ModelSelectionControls";
+import { getStaticBackendModelCatalog } from "@/lib/agent-backends/catalog";
+import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import ConversationNav from "@/components/ConversationNav";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
+
+const claudeCatalog = getStaticBackendModelCatalog("claude");
 
 /**
  * Full mobile session view mockup demonstrating the optimized mobile layout:
@@ -35,7 +39,9 @@ function MobileSessionViewDemo({
       ? "This is a multiline prompt that demonstrates the constrained textarea height on mobile. It should not grow beyond 120px, keeping the conversation visible above.\n\nThe user can scroll within the textarea to see all their text, but the conversation area remains usable.\n\nThis is the third paragraph to really push the height."
       : "",
   );
-  const [model, setModel] = useState("sonnet");
+  const [selection, setSelection] = useState(() =>
+    defaultSelectionForModel(claudeCatalog, "sonnet"),
+  );
   const [panel, setPanel] = useState(mobilePanel);
 
   const sampleMessages = [
@@ -239,10 +245,10 @@ function MobileSessionViewDemo({
                             <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                           </svg>
                         </button>
-                        <ModelSelector
-                          value={model}
-                          backend="claude"
-                          onChange={setModel}
+                        <CatalogModelSelect
+                          catalog={claudeCatalog}
+                          selection={selection}
+                          onSelectionChange={setSelection}
                           disabled={sending}
                         />
                       </div>

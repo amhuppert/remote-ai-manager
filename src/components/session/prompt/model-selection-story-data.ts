@@ -72,7 +72,11 @@ export const fullModelParameterCatalog = {
           label: "Reasoning",
           values: [
             { value: "high", label: "High" },
-            { value: "xhigh", label: "Extra high" },
+            {
+              value: "xhigh",
+              label: "Extra high",
+              emphasis: "exceeds-scale",
+            },
           ],
           prominence: "primary",
         },

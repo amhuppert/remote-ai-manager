@@ -25,6 +25,7 @@ import {
   type BackendModelSelection,
   type EffortLevel,
 } from "./schemas";
+import { reasoningValueEmphasis } from "./model-scale-emphasis";
 import { defaultSelectionForModel } from "./model-selection";
 import {
   ModelSelectionPolicyError,
@@ -287,30 +288,6 @@ export function isModelCompatibleWithBackend(
   );
 }
 
-export function modelOptionsForCatalogEntry(
-  entry: BackendCatalogEntry,
-  configuredModel?: string,
-): BackendCatalogEntry["models"] {
-  if (
-    entry.id !== "codex" ||
-    !configuredModel?.trim() ||
-    entry.models.some((model) => model.id === configuredModel) ||
-    isModelOwnedByAnotherBackend(entry.id, configuredModel)
-  ) {
-    return entry.models;
-  }
-
-  return [
-    {
-      id: configuredModel,
-      label: configuredModel,
-      description: "Custom Codex model configured globally.",
-      effortLevels: [...effortLevelSchema.options],
-    },
-    ...entry.models,
-  ];
-}
-
 export function queueCapabilityForBackend(
   backend: AgentBackendId,
 ): QueueCapability {
@@ -340,10 +317,6 @@ export function isSelectableModelForBackend(
     configuredModel === model &&
     isModelCompatibleWithBackend(backend, model)
   );
-}
-
-export function getDefaultModelForBackend(backend: AgentBackendId): string {
-  return getBackendCatalogEntry(backend).defaultModelId;
 }
 
 /**
@@ -488,6 +461,44 @@ export function backendToneToken(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).toneToken;
 }
 
+const MODEL_DEFINITIONS_BY_BACKEND = new Map<
+  AgentBackendId,
+  ReadonlyMap<string, BackendModelDefinition>
+>();
+
+/**
+ * Read-only lookup of a catalog model definition by canonical id or alias.
+ *
+ * For DISPLAY surfaces holding a persisted selection (transcript metadata) that
+ * need the catalog's presentation signals but have no catalog in hand. It
+ * neither resolves nor validates a selection — surfaces that submit one go
+ * through the project-effective catalog. Returns null for an id this backend's
+ * catalog does not know (a custom Codex model, or a selection recorded before a
+ * catalog refresh) and for a catalog that cannot be loaded at all.
+ */
+export function findBackendModelDefinition(
+  backend: AgentBackendId,
+  modelId: string,
+): BackendModelDefinition | null {
+  let definitions = MODEL_DEFINITIONS_BY_BACKEND.get(backend);
+  if (definitions === undefined) {
+    const byIdentifier = new Map<string, BackendModelDefinition>();
+    try {
+      for (const model of getConfiguredBackendModelCatalog(backend).models) {
+        for (const identifier of [model.id, ...model.aliases]) {
+          byIdentifier.set(identifier, model);
+        }
+      }
+    } catch {
+      // A catalog that cannot load blocks submission elsewhere; a transcript
+      // row still renders, just without the catalog's presentation signals.
+    }
+    definitions = byIdentifier;
+    MODEL_DEFINITIONS_BY_BACKEND.set(backend, definitions);
+  }
+  return definitions.get(modelId) ?? null;
+}
+
 export function backendSupportsFastMode(backend: AgentBackendId): boolean {
   return backend === "codex";
 }
@@ -510,10 +521,14 @@ function effortParameter(
   return {
     id,
     label: id === "effort" ? "Effort" : "Reasoning",
-    values: levels.map((value) => ({
-      value,
-      label: parameterValueLabel(value),
-    })),
+    values: levels.map((value) => {
+      const emphasis = reasoningValueEmphasis(id, value);
+      return {
+        value,
+        label: parameterValueLabel(value),
+        ...(emphasis === undefined ? {} : { emphasis }),
+      };
+    }),
     prominence: "primary",
   };
 }

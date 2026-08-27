@@ -19,6 +19,12 @@ import {
 import { Switch } from "@/components/ui/Switch";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import {
+  parameterValueEmphasis,
+  RAINBOW_TEXT_CLASS,
+  RAINBOW_TRIGGER_BASE_CLASS,
+  RAINBOW_TRIGGER_CLASS,
+} from "@/components/model-selection-presentation";
+import {
   availableParameterValues,
   defaultSelectionForModel,
   modelSelectionKey,
@@ -59,6 +65,35 @@ function parameterValueLabel(
     parameter.values.find((candidate) => candidate.value === value)?.label ??
     value ??
     "Unavailable"
+  );
+}
+
+/**
+ * One parameter's listbox rows. Values the catalog marks as exceeding the
+ * provider's scale carry the rainbow treatment and a `data-emphasis` hook; the
+ * control itself never inspects parameter ids or value spellings.
+ */
+function ParameterValueItems({
+  parameter,
+}: {
+  parameter: BackendModelParameterDefinition;
+}): React.JSX.Element {
+  return (
+    <>
+      {parameter.values.map((option) => (
+        <SelectItem
+          key={option.value}
+          value={option.value}
+          data-emphasis={option.emphasis}
+        >
+          {option.emphasis === undefined ? (
+            option.label
+          ) : (
+            <span className={RAINBOW_TEXT_CLASS}>{option.label}</span>
+          )}
+        </SelectItem>
+      ))}
+    </>
   );
 }
 
@@ -206,6 +241,12 @@ export function PrimaryModelParameterControl({
     );
   }
 
+  const label = parameterValueLabel(parameter, value);
+  const title = `${parameter.label}: ${label}`;
+  // Reserved for tiers the catalog marks as beyond the provider's normal scale
+  // — the design system's one sanctioned use of the rainbow gradient.
+  const emphasis = parameterValueEmphasis(parameter, value);
+
   return (
     <Select
       value={value}
@@ -213,20 +254,44 @@ export function PrimaryModelParameterControl({
       disabled={disabled}
       onOpenChange={onOpenChange}
     >
-      <SelectTrigger
-        aria-label={parameter.label}
-        title={`${parameter.label}: ${parameterValueLabel(parameter, value)}`}
-      >
-        <span className="tracking-[0.02em]">
-          {parameterValueLabel(parameter, value)}
-        </span>
-      </SelectTrigger>
+      {emphasis === undefined ? (
+        <SelectTrigger aria-label={parameter.label} title={title}>
+          <span
+            data-testid="model-parameter-label"
+            className="tracking-[0.02em]"
+          >
+            {label}
+          </span>
+        </SelectTrigger>
+      ) : (
+        <SelectTrigger asChild>
+          <button
+            type="button"
+            aria-label={parameter.label}
+            title={title}
+            data-emphasis={emphasis}
+            className={cn(RAINBOW_TRIGGER_BASE_CLASS, RAINBOW_TRIGGER_CLASS)}
+          >
+            <span
+              data-testid="model-parameter-label"
+              className={cn("tracking-[0.02em]", RAINBOW_TEXT_CLASS)}
+            >
+              {label}
+            </span>
+            <span
+              className={cn(
+                "inline-flex text-[0.7rem] transition-transform duration-150 ease-[ease] group-data-[state=open]:rotate-180",
+                RAINBOW_TEXT_CLASS,
+              )}
+              aria-hidden="true"
+            >
+              {"▼"}
+            </span>
+          </button>
+        </SelectTrigger>
+      )}
       <SelectContent side="top" align="end" contentLayer={selectContentLayer}>
-        {parameter.values.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
+        <ParameterValueItems parameter={parameter} />
       </SelectContent>
     </Select>
   );
@@ -445,17 +510,26 @@ export function ModelOptionsEditor({
           {parameters.map((parameter) => {
             const value = draft.parameters[parameter.id];
             const invalid = conflictParameterIds.has(parameter.id);
+            const emphasis = parameterValueEmphasis(parameter, value);
             return (
               <div
                 key={parameter.id}
                 className="flex min-h-[44px] items-center justify-between gap-md rounded-md border border-solid border-border-subtle bg-bg-surface p-sm data-[invalid=true]:border-red-dim"
                 data-invalid={invalid}
+                data-emphasis={emphasis}
               >
                 <div className="flex min-w-0 flex-col gap-2xs">
                   <span className="text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-primary">
                     {parameter.label}
                   </span>
-                  <span className="text-[0.7rem] text-text-tertiary">
+                  <span
+                    className={cn(
+                      "text-[0.7rem]",
+                      emphasis === undefined
+                        ? "text-text-tertiary"
+                        : RAINBOW_TEXT_CLASS,
+                    )}
+                  >
                     {parameterValueLabel(parameter, value)}
                   </span>
                 </div>
@@ -482,14 +556,16 @@ export function ModelOptionsEditor({
                       aria-invalid={invalid || undefined}
                       layoutClassName="min-w-[120px]"
                     >
-                      <span>{parameterValueLabel(parameter, value)}</span>
+                      <span
+                        className={cn(
+                          emphasis !== undefined && RAINBOW_TEXT_CLASS,
+                        )}
+                      >
+                        {parameterValueLabel(parameter, value)}
+                      </span>
                     </SelectTrigger>
                     <SelectContent contentLayer={selectContentLayer}>
-                      {parameter.values.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
+                      <ParameterValueItems parameter={parameter} />
                     </SelectContent>
                   </Select>
                 )}

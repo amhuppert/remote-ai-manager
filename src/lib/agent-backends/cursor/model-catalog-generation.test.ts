@@ -119,6 +119,73 @@ describe("buildCursorModelCatalog", () => {
     ]);
   });
 
+  it("marks above-scale reasoning tiers across Cursor's differing spellings", () => {
+    const catalog = buildCursorModelCatalog(
+      [
+        { id: "composer-2.5", displayName: "Composer 2.5" },
+        {
+          id: "gpt-5.5",
+          displayName: "GPT-5.5",
+          parameters: [
+            {
+              id: "reasoning",
+              values: [
+                { value: "high" },
+                { value: "extra-high" },
+                { value: "max" },
+              ],
+            },
+            {
+              id: "context",
+              values: [{ value: "272k" }, { value: "1m" }],
+            },
+          ],
+          variants: [
+            {
+              displayName: "High",
+              isDefault: true,
+              params: [
+                { id: "reasoning", value: "high" },
+                { id: "context", value: "272k" },
+              ],
+            },
+            {
+              displayName: "Extra high",
+              params: [
+                { id: "reasoning", value: "extra-high" },
+                { id: "context", value: "272k" },
+              ],
+            },
+            {
+              displayName: "Max",
+              params: [
+                { id: "reasoning", value: "max" },
+                { id: "context", value: "1m" },
+              ],
+            },
+          ],
+        },
+      ],
+      { generatedAt: GENERATED_AT, sdkVersion: "1.0.28" },
+    );
+
+    const model = catalog.models.find(({ id }) => id === "gpt-5.5");
+    expect(
+      model?.parameters.find(({ id }) => id === "reasoning")?.values,
+    ).toEqual([
+      { value: "high", label: "high" },
+      { value: "extra-high", label: "extra-high", emphasis: "exceeds-scale" },
+      { value: "max", label: "max", emphasis: "exceeds-scale" },
+    ]);
+    // "1m" is the top of the context scale but carries no reasoning meaning.
+    expect(
+      model?.parameters.find(({ id }) => id === "context")?.values,
+    ).toEqual([
+      { value: "272k", label: "272k" },
+      { value: "1m", label: "1m" },
+    ]);
+  });
+
   it("refuses parameterized models whose complete variants are absent", () => {
     expect(() =>
       buildCursorModelCatalog(

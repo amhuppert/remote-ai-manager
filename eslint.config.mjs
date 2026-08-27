@@ -53,8 +53,6 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/ApprovalGatePanel.tsx",
   "src/components/ConfirmDialog.tsx",
   "src/components/ModelSelectionMetadata.tsx",
-  "src/components/ModelSelector.tsx",
-  "src/components/ReasoningLevelSelector.tsx",
   "src/features/session-diff/components/SessionDiffViewer.tsx",
   // Stage B-3 migrated confined feature surfaces (AddConversationMenu is already
   // covered by the session/tabs/** glob above).
@@ -84,8 +82,6 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/conversation/TypingIndicator.tsx",
   "src/components/conversation/BackgroundActivityIndicator.tsx",
   "src/components/conversation/BackgroundActivityIndicator.stories.tsx",
-  "src/components/conversation/EffortLabel.tsx",
-  "src/components/conversation/EffortLabel.stories.tsx",
   "src/features/session/conversation/collab/**/*.{ts,tsx}",
   "src/features/session/conversation/ConversationList.tsx",
   "src/features/session/conversation/ConversationMentionChip.tsx",

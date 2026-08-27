@@ -170,7 +170,10 @@ export default function CollabConfigRow({
             </span>
             {agentOne && (
               <span className="font-mono text-[0.72rem] text-text-secondary">
-                <ModelSelectionMetadata selection={agentOne.modelSelection} />
+                <ModelSelectionMetadata
+                  backend={agentOne.backend}
+                  selection={agentOne.modelSelection}
+                />
               </span>
             )}
           </div>

@@ -122,6 +122,50 @@ describe("MessageRow", () => {
     expect(screen.getByText("thinking=true")).toBeInTheDocument();
   });
 
+  it("renders an above-scale reasoning tier as rainbow metadata", () => {
+    renderWithQuery(
+      <MessageRow
+        msg={makeMessage({
+          role: "assistant",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "max" },
+          },
+        })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        onFork={vi.fn()}
+        lastMessageExtras={null}
+      />,
+    );
+
+    expect(screen.getByText("effort=max")).toHaveClass("cc-rainbow-text");
+  });
+
+  it("leaves a within-scale tier as plain metadata", () => {
+    renderWithQuery(
+      <MessageRow
+        msg={makeMessage({
+          role: "assistant",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+        })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        onFork={vi.fn()}
+        lastMessageExtras={null}
+      />,
+    );
+
+    expect(screen.getByText("effort=high")).not.toHaveClass("cc-rainbow-text");
+  });
+
   // The rendered clock text is zone-dependent, so these assert the structure
   // and machine-readable value; the exact formatting is pinned by
   // format-local-time.test.ts.

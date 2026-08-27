@@ -77,6 +77,15 @@ export const NoBadgeLegacyTurn: Story = {
   },
 };
 
+export const ExceedsScaleReasoningTier: Story = {
+  name: "Above-scale reasoning tier — rainbow metadata",
+  args: {
+    msg: makeMessage({
+      modelSelection: { modelId: "opus", parameters: { effort: "max" } },
+    }),
+  },
+};
+
 export const NoBadgeUserOrigin: Story = {
   name: "No badge — user-origin turn",
   args: {
