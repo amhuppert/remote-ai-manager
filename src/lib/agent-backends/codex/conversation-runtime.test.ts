@@ -795,6 +795,44 @@ describe("CodexConversationRuntime", () => {
       });
     });
 
+    it("renders intermediate Codex messages as thinking detail and keeps the final message visible", async () => {
+      setupThread([
+        threadStarted(),
+        reasoningCompleted("**Inspecting the repository**"),
+        agentMessageCompleted(
+          "I’m checking the manifest and README for conflicting commands.",
+          "commentary-1",
+        ),
+        commandStarted("pwd"),
+        commandCompleted("pwd", "/workspace\n"),
+        agentMessageCompleted("The commands agree.", "final-1"),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.contentBlocks).toEqual([
+        { type: "thinking", text: "**Inspecting the repository**" },
+        {
+          type: "thinking",
+          text: "I’m checking the manifest and README for conflicting commands.",
+        },
+        {
+          type: "tool_use",
+          id: "cmd-1",
+          name: "Bash",
+          input: { command: "pwd" },
+        },
+        {
+          type: "tool_result",
+          tool_use_id: "cmd-1",
+          content: "/workspace\n",
+        },
+        { type: "text", text: "The commands agree." },
+      ]);
+    });
+
     it("serializes async event delivery in provider order", async () => {
       setupThread([
         threadStarted(),
@@ -817,9 +855,12 @@ describe("CodexConversationRuntime", () => {
               observed.push("init");
               return;
             }
-            if (event.type === "content" && event.block.type === "text") {
+            if (
+              event.type === "content" &&
+              (event.block.type === "text" || event.block.type === "thinking")
+            ) {
               await Promise.resolve();
-              observed.push(event.block.text);
+              observed.push(`${event.block.type}:${event.block.text}`);
             }
           },
         }),
@@ -828,8 +869,8 @@ describe("CodexConversationRuntime", () => {
       expect(observed).toEqual([
         "accepted",
         "init",
-        "First progress",
-        "Second progress",
+        "thinking:First progress",
+        "text:Second progress",
       ]);
     });
 

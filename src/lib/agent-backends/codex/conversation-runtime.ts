@@ -5,6 +5,7 @@
  */
 
 import type {
+  AgentMessageItem,
   CodexOptions,
   ThreadOptions,
   Input,
@@ -14,6 +15,7 @@ import type {
   McpToolCallItem,
   FileChangeItem,
 } from "@openai/codex-sdk";
+import { Codex } from "@openai/codex-sdk";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   MessageContentBlock,
@@ -54,7 +56,6 @@ import {
 } from "./runtime-config";
 
 // Default dep implementations (used at runtime, injected in tests)
-import { Codex } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
@@ -289,6 +290,7 @@ export class CodexConversationRuntime
       aborted: false,
     };
     const contentBlocks: MessageContentBlock[] = [];
+    let pendingAgentMessage: AgentMessageItem | null = null;
 
     try {
       const turnModelSelection = projectAdmittedCodexModelSelection(
@@ -376,6 +378,44 @@ export class CodexConversationRuntime
             threadId: this.threadId,
           });
         }
+
+        if (
+          event.type === "item.completed" &&
+          event.item.type === "agent_message"
+        ) {
+          // Codex exec emits commentary and the final response with the same
+          // item type. Holding one message lets subsequent work identify
+          // commentary while turn completion identifies the final response.
+          if (pendingAgentMessage) {
+            const commentary = pendingAgentMessage;
+            pendingAgentMessage = null;
+            await this.emitAgentMessage(
+              commentary,
+              "thinking",
+              input,
+              contentBlocks,
+            );
+          }
+          pendingAgentMessage = event.item;
+          acc.lastAgentMessageText = event.item.text;
+          continue;
+        }
+
+        if (pendingAgentMessage) {
+          const message = pendingAgentMessage;
+          pendingAgentMessage = null;
+          await this.emitAgentMessage(
+            message,
+            event.type === "turn.completed" ||
+              event.type === "turn.failed" ||
+              event.type === "error"
+              ? "text"
+              : "thinking",
+            input,
+            contentBlocks,
+          );
+        }
+
         await this.processEvent(event, input, contentBlocks, {
           setThreadId: (id) => {
             acc.knownThreadId = id;
@@ -393,7 +433,23 @@ export class CodexConversationRuntime
           },
         });
       }
+
+      if (pendingAgentMessage) {
+        const message = pendingAgentMessage;
+        pendingAgentMessage = null;
+        await this.emitAgentMessage(message, "text", input, contentBlocks);
+      }
     } catch (err) {
+      if (pendingAgentMessage) {
+        const message = pendingAgentMessage;
+        pendingAgentMessage = null;
+        try {
+          await this.emitAgentMessage(message, "text", input, contentBlocks);
+        } catch (emitError) {
+          err = emitError;
+        }
+      }
+
       if (isAbortError(err) || input.signal.aborted) {
         acc.aborted = true;
       } else {
@@ -908,6 +964,17 @@ export class CodexConversationRuntime
           eventType: (event as { type?: unknown }).type,
         });
     }
+  }
+
+  private async emitAgentMessage(
+    item: AgentMessageItem,
+    type: "text" | "thinking",
+    input: ConversationBackendTurnInput,
+    contentBlocks: MessageContentBlock[],
+  ): Promise<void> {
+    const block: MessageContentBlock = { type, text: item.text };
+    contentBlocks.push(block);
+    await input.onEvent({ type: "content", block });
   }
 
   private async processItemStarted(
