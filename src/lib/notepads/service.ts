@@ -275,6 +275,19 @@ function agentPermittedModes(
   return modes.filter((mode) => AGENT_ALLOWED_OPERATIONS[mode].has(operation));
 }
 
+/**
+ * How long consecutive user edits keep writing into one revision. The editor
+ * autosaves every few seconds, which is the right cadence for durability and
+ * the wrong one for history: without folding, a minute of typing buries the
+ * revisions worth restoring under a dozen keystroke snapshots. Each save still
+ * advances the revision number, so agents' compare-and-swap writes are
+ * unaffected — only the number of rows the user browses changes.
+ *
+ * Agent writes, restores, and appends are deliberate single acts and never
+ * fold, so a burst can never absorb another party's revision.
+ */
+export const USER_REVISION_COALESCE_WINDOW_MS = 2 * 60 * 1000;
+
 export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
   function publishChange(
     change: NotepadChangedEvent["change"],
@@ -341,6 +354,13 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
         : null,
       restoredFromRevision: input.restoredFromRevision,
       writtenAt: deps.now(),
+      // Only the user's own editing burst folds: an agent write is one
+      // deliberate act, and a restore or append is a moment history must keep
+      // as its own entry.
+      coalesceWindowMs:
+        !isAgent && input.operation === "update"
+          ? USER_REVISION_COALESCE_WINDOW_MS
+          : null,
     });
 
     if (written.status === "missing") return notFound(input.notepadId);

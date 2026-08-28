@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
@@ -435,6 +435,16 @@ async function openNotepadRow(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByTestId("notepad-editor-input");
 }
 
+/** Opening under the read layout, where no editor is mounted to wait for. */
+async function openNotepadRowRead(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Open notepad release 0.4 checklist",
+    }),
+  );
+  await screen.findByTestId("notepad-preview");
+}
+
 describe("NotepadPanel — autosave", () => {
   it("flushes the edit when the notepad closes and shows it on reopen", async () => {
     stubDefaultList();
@@ -637,18 +647,22 @@ describe("NotepadPanel — history and restore", () => {
         api.requestsTo("POST", "/api/notepads/np-a/restore")[0]?.jsonBody,
       ).toEqual({ revision: 2 }),
     );
-    // The open editor now holds the restored content…
-    await waitFor(() =>
-      expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
-        "content r2",
-      ),
-    );
-    // …and history grew a restore revision while earlier rows survive.
+    // History grew a restore revision while earlier rows survive…
     await waitFor(() =>
       expect(screen.getByTestId("notepad-history")).toHaveTextContent("r4"),
     );
     expect(screen.getByTestId("notepad-history")).toHaveTextContent("restore");
     expect(screen.getByTestId("notepad-history")).toHaveTextContent("r1");
+
+    // …and the editor behind it holds the restored content.
+    await user.click(
+      screen.getByRole("button", { name: "Back to release 0.4 checklist" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
+        "content r2",
+      ),
+    );
   });
 
   it("offers no restore on the head revision", async () => {
@@ -667,6 +681,138 @@ describe("NotepadPanel — history and restore", () => {
     expect(
       screen.queryByRole("button", { name: "Restore r3" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("NotepadPanel — editor and preview layout", () => {
+  async function openLayout(user: ReturnType<typeof userEvent.setup>) {
+    stubDefaultList();
+    api.json("GET", "/api/notepads/np-a", notepadBody());
+    renderPanel();
+    await openNotepadRow(user);
+  }
+
+  it("opens with the editor and preview sharing the pane", async () => {
+    const user = userEvent.setup();
+    await openLayout(user);
+
+    expect(screen.getByRole("radio", { name: "split" })).toBeChecked();
+    expect(screen.getByTestId("notepad-editor-input")).toBeInTheDocument();
+    expect(screen.getByTestId("notepad-preview")).toBeInTheDocument();
+  });
+
+  it("drops the preview in write mode and the editor in read mode", async () => {
+    const user = userEvent.setup();
+    await openLayout(user);
+
+    await user.click(screen.getByRole("radio", { name: "write" }));
+    expect(screen.getByTestId("notepad-editor-input")).toBeInTheDocument();
+    expect(screen.queryByTestId("notepad-preview")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: "read" }));
+    expect(
+      screen.queryByTestId("notepad-editor-input"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("notepad-preview")).toBeInTheDocument();
+  });
+
+  it("carries the chosen layout to the next notepad it opens", async () => {
+    const user = userEvent.setup();
+    await openLayout(user);
+
+    await user.click(screen.getByRole("radio", { name: "read" }));
+    expect(useSessionDetailStore.getState().notepadViewMode).toBe("read");
+
+    await user.click(screen.getByRole("button", { name: "Back to notepads" }));
+    await openNotepadRowRead(user);
+
+    expect(screen.getByRole("radio", { name: "read" })).toBeChecked();
+  });
+});
+
+describe("NotepadPanel — history navigation", () => {
+  function stubBasicHistory() {
+    stubDefaultList();
+    api.json("GET", "/api/notepads/np-a", notepadBody());
+    // Oldest first, like the route's own ordering.
+    api.json("GET", "/api/notepads/np-a/revisions", {
+      revisions: [revisionRow(1), revisionRow(2), revisionRow(3)],
+    });
+  }
+
+  function listedRevisions(): string[] {
+    return [
+      ...screen
+        .getByTestId("notepad-history")
+        .querySelectorAll("button[aria-label^='Select revision']"),
+    ].map((button) => button.getAttribute("aria-label") ?? "");
+  }
+
+  it("lists the newest revision first", async () => {
+    stubBasicHistory();
+    const user = userEvent.setup();
+    renderPanel();
+    await openNotepadRow(user);
+
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await screen.findByTestId("notepad-history");
+
+    // What just changed is what the reader came for, so it sits at the top —
+    // the route hands them over oldest first.
+    expect(listedRevisions()).toEqual([
+      "Select revision 3",
+      "Select revision 2",
+      "Select revision 1",
+    ]);
+  });
+
+  it("gives history the whole panel instead of stacking it over the editor", async () => {
+    stubBasicHistory();
+    const user = userEvent.setup();
+    renderPanel();
+    await openNotepadRow(user);
+
+    await user.click(screen.getByRole("button", { name: "History" }));
+
+    await screen.findByTestId("notepad-history");
+    expect(
+      screen.queryByTestId("notepad-editor-input"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("notepad-preview")).not.toBeInTheDocument();
+  });
+
+  it("returns to the editor through the breadcrumb", async () => {
+    stubBasicHistory();
+    const user = userEvent.setup();
+    renderPanel();
+    await openNotepadRow(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await screen.findByTestId("notepad-history");
+
+    await user.click(
+      screen.getByRole("button", { name: "Back to release 0.4 checklist" }),
+    );
+
+    expect(await screen.findByTestId("notepad-editor-input")).toBeVisible();
+    expect(screen.queryByTestId("notepad-history")).not.toBeInTheDocument();
+  });
+
+  it("leaves for the notepads list through the breadcrumb", async () => {
+    stubBasicHistory();
+    const user = userEvent.setup();
+    renderPanel();
+    await openNotepadRow(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await screen.findByTestId("notepad-history");
+
+    await user.click(screen.getByRole("button", { name: "Back to notepads" }));
+
+    expect(useSessionDetailStore.getState().openNotepadId).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: "Open notepad release 0.4 checklist",
+      }),
+    ).toBeVisible();
   });
 });
 
@@ -707,8 +853,6 @@ describe("NotepadPanel — history diff views", () => {
     renderPanel();
     await openHistoryAndSelect(user, 2);
 
-    await user.click(screen.getByRole("radio", { name: "vs previous" }));
-
     const history = screen.getByTestId("notepad-history");
     const removed = history.querySelectorAll("del");
     const added = history.querySelectorAll("ins");
@@ -734,13 +878,23 @@ describe("NotepadPanel — history diff views", () => {
     expect(history.querySelectorAll("ins").length).toBe(0);
   });
 
-  it("resets to the snapshot view when the selection changes", async () => {
+  it("opens a selection on what that revision changed", async () => {
     stubDefaultList();
     stubDiffHistory();
     const user = userEvent.setup();
     renderPanel();
     await openHistoryAndSelect(user, 2);
-    await user.click(screen.getByRole("radio", { name: "vs previous" }));
+
+    expect(screen.getByRole("radio", { name: "vs previous" })).toBeChecked();
+  });
+
+  it("keeps the chosen diff mode when another revision is selected", async () => {
+    stubDefaultList();
+    stubDiffHistory();
+    const user = userEvent.setup();
+    renderPanel();
+    await openHistoryAndSelect(user, 2);
+    await user.click(screen.getByRole("radio", { name: "snapshot" }));
 
     await user.click(screen.getByRole("button", { name: "Select revision 1" }));
 
@@ -748,6 +902,32 @@ describe("NotepadPanel — history diff views", () => {
     const history = screen.getByTestId("notepad-history");
     expect(history.querySelectorAll("del").length).toBe(0);
     expect(history).toHaveTextContent("beta");
+  });
+
+  it("expands the selected revision inside its own row in the list", async () => {
+    stubDefaultList();
+    stubDiffHistory();
+    const user = userEvent.setup();
+    renderPanel();
+    await openHistoryAndSelect(user, 2);
+
+    // The snapshot belongs to the row it was opened from, not to a separate
+    // pane whose height shifts the list under the pointer.
+    const row = screen
+      .getByRole("button", { name: "Select revision 2" })
+      .closest("li");
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getByRole("radio", { name: "vs previous" }),
+    ).toBeChecked();
+    expect(
+      within(row as HTMLElement).getByRole("button", { name: "Restore r2" }),
+    ).toBeVisible();
+    // Selecting another revision moves the expansion with it.
+    await user.click(screen.getByRole("button", { name: "Select revision 1" }));
+    expect(
+      within(row as HTMLElement).queryByRole("radio", { name: "vs previous" }),
+    ).toBeNull();
   });
 
   it("resolves the out-of-window predecessor of the oldest listed revision by id", async () => {
@@ -826,8 +1006,9 @@ describe("NotepadPanel — history diff views", () => {
       }
       return {
         json: {
+          // Oldest first, like the route's own ordering.
           revisions: Array.from({ length: 50 }, (_, i) =>
-            revisionRow(server.revision - i),
+            revisionRow(server.revision - 49 + i),
           ),
         },
       };
@@ -853,12 +1034,17 @@ describe("NotepadPanel — history diff views", () => {
         screen.getByRole("button", { name: "Select revision 55" }),
       ).toBeVisible(),
     );
+    // The selection is id-addressed, never limited to the listed page: r5 is
+    // off the page (r55…r6) yet keeps a row of its own — last, below a listing
+    // that runs newest first — with its real versus-previous diff on offer.
+    const rows = screen.getByTestId("notepad-history").querySelectorAll("li");
+    const oldestRow = rows[rows.length - 1] as HTMLElement;
     expect(
-      screen.queryByRole("button", { name: "Select revision 5" }),
-    ).not.toBeInTheDocument();
-    // The selection is id-addressed, never limited to the listed page: r5
-    // stays selected with its real versus-previous diff on offer.
-    expect(screen.getByRole("button", { name: "Restore r5" })).toBeVisible();
+      within(oldestRow).getByRole("button", { name: "Select revision 5" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(oldestRow).getByRole("button", { name: "Restore r5" }),
+    ).toBeVisible();
     await user.click(screen.getByRole("radio", { name: "vs previous" }));
     const history = screen.getByTestId("notepad-history");
     await waitFor(() =>

@@ -38,6 +38,7 @@ export const createResetSlice: SessionDetailSliceCreator<ResetSlice> = (
       pendingTrayExpanded: state.pendingTrayExpanded,
       openNotepadId: state.openNotepadId,
       notepadSort: state.notepadSort,
+      notepadViewMode: state.notepadViewMode,
       panelSessionKey: state.panelSessionKey,
       panelSessionMemory: state.panelSessionMemory,
     })),

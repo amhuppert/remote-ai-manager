@@ -20,7 +20,11 @@ import {
   NotepadContentError,
   type NotepadContentStore,
 } from "./content-store";
-import { createNotepadService, type NotepadService } from "./service";
+import {
+  createNotepadService,
+  USER_REVISION_COALESCE_WINDOW_MS,
+  type NotepadService,
+} from "./service";
 import type { NotepadAuthor, NotepadChangedEvent } from "./schemas";
 
 const PROJECT_PATH = "/repos/command-center";
@@ -509,10 +513,131 @@ describe("attribution, history, and restore", () => {
   });
 });
 
+describe("user editing bursts", () => {
+  /** Past the coalescing window: the next write starts a fresh revision. */
+  function goQuiet() {
+    clock += USER_REVISION_COALESCE_WINDOW_MS + 1000;
+  }
+
+  async function userWrite(notepadId: string, content: string) {
+    const written = await service.writeContent(notepadId, {
+      operation: "update",
+      content,
+      author: USER,
+    });
+    if (!written.ok) throw new Error(`write failed: ${written.error.code}`);
+    return written.value;
+  }
+
+  it("folds one burst of autosaves into a single revision", async () => {
+    const notepad = await createGlobal("Bursty", { content: "seed" });
+
+    const burstStart = await userWrite(notepad.id, "t");
+    await userWrite(notepad.id, "ty");
+    const last = await userWrite(notepad.id, "typing");
+
+    // Every save still advanced the head — the durable text is the last one
+    // typed, not the last one that opened a revision.
+    expect(last.content).toBe("typing");
+    const head = await service.get(notepad.id);
+    expect(head.ok && head.value.content).toBe("typing");
+    expect(head.ok && head.value.revision).toBe(last.revision);
+
+    const revisions = await service.listRevisions(notepad.id);
+    if (!revisions.ok) throw new Error("expected revisions");
+    expect(revisions.value.map((r) => r.origin)).toEqual(["create", "edit"]);
+    expect(revisions.value[1]?.content).toBe("typing");
+    expect(revisions.value[1]?.revision).toBe(last.revision);
+    // The revision is stamped when the burst began, so absorbing saves cannot
+    // keep pushing its window forward and fold an unbounded session into one
+    // entry.
+    expect(revisions.value[1]?.createdAt).toBe(burstStart.updatedAt);
+  });
+
+  it("opens a new revision once the burst goes quiet", async () => {
+    const notepad = await createGlobal("Paused", { content: "seed" });
+
+    await userWrite(notepad.id, "first burst");
+    goQuiet();
+    await userWrite(notepad.id, "second burst");
+
+    const revisions = await service.listRevisions(notepad.id);
+    if (!revisions.ok) throw new Error("expected revisions");
+    expect(revisions.value.map((r) => r.content)).toEqual([
+      "seed",
+      "first burst",
+      "second burst",
+    ]);
+  });
+
+  it("never folds an edit into a revision it did not write", async () => {
+    const notepad = await createGlobal("Shared pad", { content: "seed" });
+
+    const mine = await userWrite(notepad.id, "mine");
+    const agentWrite = await service.writeContent(notepad.id, {
+      operation: "update",
+      content: "theirs",
+      author: AGENT,
+      baseRevision: mine.revision,
+    });
+    expect(agentWrite.ok).toBe(true);
+    await userWrite(notepad.id, "mine again");
+
+    const revisions = await service.listRevisions(notepad.id);
+    if (!revisions.ok) throw new Error("expected revisions");
+    // The agent's revision keeps its own row, and the user's later burst opens
+    // another rather than absorbing it.
+    expect(revisions.value.map((r) => [r.authorKind, r.content])).toEqual([
+      ["user", "seed"],
+      ["user", "mine"],
+      ["agent", "theirs"],
+      ["user", "mine again"],
+    ]);
+  });
+
+  it("keeps a restore as its own revision and never folds into one", async () => {
+    const notepad = await createGlobal("Restored burst", { content: "seed" });
+    await userWrite(notepad.id, "edited");
+
+    const restored = await service.restore(notepad.id, { revision: 1 });
+    expect(restored.ok).toBe(true);
+    await userWrite(notepad.id, "after restore");
+
+    const revisions = await service.listRevisions(notepad.id);
+    if (!revisions.ok) throw new Error("expected revisions");
+    expect(revisions.value.map((r) => [r.origin, r.content])).toEqual([
+      ["create", "seed"],
+      ["edit", "edited"],
+      ["restore", "seed"],
+      ["edit", "after restore"],
+    ]);
+  });
+
+  it("still refuses an agent's stale write after a folded burst", async () => {
+    const notepad = await createGlobal("CAS pad", { content: "seed" });
+    const stale = await userWrite(notepad.id, "one");
+    await userWrite(notepad.id, "two");
+
+    // The burst folded into one revision row, but every save advanced the
+    // compare-and-swap token: an agent holding the older head is still stale.
+    const refused = await service.writeContent(notepad.id, {
+      operation: "update",
+      content: "agent text",
+      author: AGENT,
+      baseRevision: stale.revision,
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.code).toBe("stale_revision");
+  });
+});
+
 describe("id-addressed revision resolution", () => {
   it("resolves a revision and its immediate predecessor regardless of depth", async () => {
     const notepad = await createGlobal("Deep", { content: "r1" });
     for (let revision = 2; revision <= 60; revision += 1) {
+      // Separate editing sessions, so each one records its own revision.
+      clock += USER_REVISION_COALESCE_WINDOW_MS + 1000;
       await service.writeContent(notepad.id, {
         operation: "update",
         content: `r${revision}`,

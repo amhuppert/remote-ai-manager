@@ -265,6 +265,15 @@
   min-height: 56px;
 }
 
+/* The notepad editor owns a whole pane rather than sitting above a transcript:
+   its editable box fills that pane (and carries the padding) so the space below
+   the last line is still document — clicking there places the caret instead of
+   landing on inert wrapper. Equal specificity to the rule above, so this must
+   stay after it; a Tailwind utility could not win, being layered. */
+.notepad-editor__content .ProseMirror {
+  min-height: 100%;
+}
+
 .prompt-editor__content .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--text-tertiary);

@@ -58,14 +58,14 @@ export function NotepadPreview({
   }, []);
 
   return (
-    <div data-testid="notepad-preview" className="min-w-0 max-w-full">
+    <div data-testid="notepad-preview" className="max-w-full min-w-0">
       {Renderer ? (
         <Renderer notepadId={notepadId} content={debounced} />
       ) : (
         <pre
           data-markdown-fallback
           aria-busy="true"
-          className="m-0 min-w-0 max-w-full whitespace-pre-wrap font-body text-[0.95rem] leading-[1.75] text-text-primary [overflow-wrap:anywhere]"
+          className="m-0 max-w-full min-w-0 font-body text-[0.95rem] leading-[1.75] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary"
         >
           {debounced}
         </pre>

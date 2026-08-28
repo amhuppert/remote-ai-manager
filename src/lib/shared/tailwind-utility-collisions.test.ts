@@ -294,6 +294,11 @@ const UTILITY_FIRST_PATHS = [
   // all three mirrored allowlists (here + eslint.config.mjs
   // MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}topbar${path.sep}`,
+  // Notepad surfaces (editor, chips, preview): a new feature authored
+  // utility-first against the design system, with only the preserved Tiptap
+  // `.ProseMirror` DOM styled from CSS. Registered in all three mirrored
+  // allowlists (here + eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
+  `${path.sep}components${path.sep}notepad${path.sep}`,
 ];
 
 function srcFiles(ext: string): string[] {

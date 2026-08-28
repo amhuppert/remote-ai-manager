@@ -15,6 +15,7 @@ export const createNotepadPanelSlice: SessionDetailSliceCreator<
 > = (set) => ({
   openNotepadId: initialState.openNotepadId,
   notepadSort: initialState.notepadSort,
+  notepadViewMode: initialState.notepadViewMode,
   notepadExternalWrite: initialState.notepadExternalWrite,
 
   openNotepad: (notepadId) =>
@@ -30,6 +31,11 @@ export const createNotepadPanelSlice: SessionDetailSliceCreator<
   setNotepadSort: (sort) =>
     set((state) => {
       state.notepadSort = sort;
+    }),
+
+  setNotepadViewMode: (mode) =>
+    set((state) => {
+      state.notepadViewMode = mode;
     }),
 
   recordNotepadExternalWrite: (write) =>

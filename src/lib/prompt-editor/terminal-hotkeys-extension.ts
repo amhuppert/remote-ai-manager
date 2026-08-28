@@ -11,8 +11,11 @@ export interface TerminalHotkeysOptions {
    * Invoked when the user presses the submit chord (Mod-Enter — Ctrl-Enter on
    * Linux/Windows, Cmd-Enter on macOS). Plain Enter is no longer treated as a
    * submit; it falls through to the default keymap (paragraph split).
+   *
+   * Null in surfaces with nothing to submit (the notepad editor): Mod-Enter is
+   * then left to the default keymap rather than swallowed.
    */
-  onSubmit: () => void;
+  onSubmit: (() => void) | null;
 }
 
 /**
@@ -42,7 +45,7 @@ export const TerminalHotkeys = Extension.create<TerminalHotkeysOptions>({
   priority: 1000,
 
   addOptions() {
-    return { onSubmit: () => {} };
+    return { onSubmit: null };
   },
 
   addKeyboardShortcuts() {
@@ -56,8 +59,10 @@ export const TerminalHotkeys = Extension.create<TerminalHotkeysOptions>({
       "Alt-f": () => moveWordForward(this.editor),
       "Alt-d": () => deleteWordForward(this.editor),
       "Mod-Enter": () => {
+        const onSubmit = this.options.onSubmit;
+        if (onSubmit === null) return false;
         if (this.editor.view.composing) return false;
-        this.options.onSubmit();
+        onSubmit();
         return true;
       },
     };

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/ui/cn";
+import { CopyIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import {
   EmptyState,
@@ -8,12 +10,17 @@ import {
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
 import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+import { WithTooltip } from "@/components/ui/WithTooltip";
 import {
   NotepadEditor,
   type NotepadEditorHandle,
@@ -33,6 +40,8 @@ import type {
 import {
   useCloseNotepad,
   useNotepadExternalWrite,
+  useNotepadViewMode,
+  useSetNotepadViewMode,
 } from "@/stores/session-detail.store";
 import NotepadHistory from "./NotepadHistory";
 import { NameInput } from "./NotepadPanel";
@@ -44,6 +53,13 @@ export interface NotepadOpenViewProps {
   conversationId: string;
   active: boolean;
 }
+
+/** Breadcrumb chrome: one clickable ancestor, one inert separator. */
+const CRUMB_LINK_CLASS =
+  "inline-flex h-[24px] max-w-[40%] shrink-0 cursor-pointer items-center gap-[4px] truncate rounded-sm border border-solid border-transparent bg-transparent px-[4px] font-mono text-[0.72rem] text-text-secondary transition-colors duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]";
+
+const CRUMB_SEPARATOR_CLASS =
+  "shrink-0 font-mono text-[0.72rem] text-text-tertiary";
 
 const WRITE_MODE_LABEL: Record<NotepadWriteMode, string> = {
   "read-only": "read only",
@@ -131,9 +147,11 @@ interface AutosaveState {
 }
 
 /**
- * One open notepad: header (back, inline rename, agent write mode, history,
- * export) over the chip-bearing editor with its live preview. The write-mode
- * control governs agents only — the user's own edits are never mode-checked.
+ * One open notepad: a breadcrumb header (notepads list, this notepad, history
+ * when it is the current view) over either the chip-bearing editor and its live
+ * preview — divided by the write/split/read layout control — or the full-panel
+ * revision history. The write-mode control governs agents only: the user's own
+ * edits are never mode-checked.
  *
  * Edits persist without a save action: serialization is debounced (~1.5s idle
  * with a max-wait) and flushed on close/blur, each flush posting the canonical
@@ -158,7 +176,8 @@ export default function NotepadOpenView({
   const [draft, setDraft] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(true);
+  const viewMode = useNotepadViewMode();
+  const setViewMode = useSetNotepadViewMode();
   const [liveBanner, setLiveBanner] = useState<LiveBanner | null>(null);
   /** The revision a diff affordance routed to history, or null when none. */
   const [historyDiffTarget, setHistoryDiffTarget] = useState<number | null>(
@@ -565,11 +584,34 @@ export default function NotepadOpenView({
           type="button"
           aria-label="Back to notepads"
           onClick={closeNotepad}
-          className="inline-flex h-[24px] shrink-0 cursor-pointer items-center gap-[4px] rounded-sm border border-solid border-transparent bg-transparent px-[4px] font-mono text-[0.72rem] text-text-secondary transition-colors duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]"
+          className={CRUMB_LINK_CLASS}
         >
           ‹ Notepads
         </button>
-        {renaming ? (
+        {historyOpen ? (
+          <>
+            <span aria-hidden className={CRUMB_SEPARATOR_CLASS}>
+              /
+            </span>
+            <button
+              type="button"
+              aria-label={`Back to ${notepad.name}`}
+              onClick={() => setHistoryOpen(false)}
+              className={CRUMB_LINK_CLASS}
+            >
+              {notepad.name}
+            </button>
+            <span aria-hidden className={CRUMB_SEPARATOR_CLASS}>
+              /
+            </span>
+            <span
+              aria-current="page"
+              className="min-w-0 truncate font-mono text-[0.82rem] font-semibold text-text-primary"
+            >
+              History
+            </span>
+          </>
+        ) : renaming ? (
           <NameInput
             initialValue={notepad.name}
             onCommit={(name) => {
@@ -581,17 +623,40 @@ export default function NotepadOpenView({
             onCancel={() => setRenaming(false)}
           />
         ) : (
-          <button
-            type="button"
-            aria-label="Rename notepad"
-            title="Rename"
-            onClick={() => setRenaming(true)}
-            className="min-w-0 flex-1 cursor-text truncate border-0 bg-transparent px-0 text-left font-mono text-[0.82rem] font-semibold text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[2px]"
-          >
-            {notepad.name}
-          </button>
+          <>
+            <span aria-hidden className={CRUMB_SEPARATOR_CLASS}>
+              /
+            </span>
+            <button
+              type="button"
+              aria-label="Rename notepad"
+              title="Rename"
+              onClick={() => setRenaming(true)}
+              className="min-w-0 flex-1 cursor-text truncate border-0 bg-transparent px-0 text-left font-mono text-[0.82rem] font-semibold text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[2px]"
+            >
+              {notepad.name}
+            </button>
+          </>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-[6px]">
+        <div
+          className={cn(
+            "ml-auto flex shrink-0 items-center gap-[6px]",
+            historyOpen && "hidden",
+          )}
+        >
+          <SegmentedControl
+            value={viewMode}
+            onValueChange={(value) => {
+              if (value === "write" || value === "split" || value === "read") {
+                setViewMode(value);
+              }
+            }}
+            aria-label="Notepad layout"
+          >
+            <SegmentedControlItem value="write">write</SegmentedControlItem>
+            <SegmentedControlItem value="split">split</SegmentedControlItem>
+            <SegmentedControlItem value="read">read</SegmentedControlItem>
+          </SegmentedControl>
           <Select
             value={notepad.writeMode}
             onValueChange={(value) => {
@@ -634,18 +699,24 @@ export default function NotepadOpenView({
           <Button
             variant="ghost"
             size="sm"
-            aria-pressed={historyOpen}
             onClick={() => {
               // A manual open starts neutral — no revision pre-selected.
               setHistoryDiffTarget(null);
-              setHistoryOpen((value) => !value);
+              setHistoryOpen(true);
             }}
           >
             History
           </Button>
-          <Button variant="ghost" size="sm" onClick={copyAsMarkdown}>
-            Copy as Markdown
-          </Button>
+          <WithTooltip label="Copy as Markdown">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Copy as Markdown"
+              onClick={copyAsMarkdown}
+            >
+              <CopyIcon size={13} />
+            </Button>
+          </WithTooltip>
         </div>
       </div>
 
@@ -734,35 +805,41 @@ export default function NotepadOpenView({
           restorePending={restoring}
           diffTarget={historyDiffTarget}
         />
-      ) : null}
-
-      <div className="flex min-h-0 flex-1 flex-col">
-        <NotepadEditor
-          ref={editorRef}
-          notepadId={notepadId}
-          initialContent={notepad.content}
-          readOnly={restoring}
-          onContentChange={handleContentChange}
-          projectName={projectName}
-          sessionName={sessionName}
-          conversationId={conversationId}
-        />
-        <div className="flex shrink-0 items-center border-0 border-t border-solid border-border-subtle px-[10px] py-[4px]">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-pressed={previewOpen}
-            onClick={() => setPreviewOpen((value) => !value)}
-          >
-            Preview
-          </Button>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {viewMode !== "read" ? (
+            <NotepadEditor
+              ref={editorRef}
+              notepadId={notepadId}
+              // The live buffer, not the fetched head: the editor unmounts in
+              // read mode, and remounting it from a head that a pending flush
+              // has not reached yet would drop what was typed before the switch.
+              initialContent={currentText}
+              readOnly={restoring}
+              onContentChange={handleContentChange}
+              projectName={projectName}
+              sessionName={sessionName}
+              conversationId={conversationId}
+            />
+          ) : null}
+          {viewMode === "split" ? (
+            <div className="flex shrink-0 items-center gap-sm border-0 border-y border-solid border-border-subtle bg-bg-raised px-[12px] py-[3px] font-mono text-[0.64rem] font-semibold tracking-[0.1em] text-text-tertiary uppercase">
+              Preview
+              <span className="tracking-normal normal-case">live</span>
+            </div>
+          ) : null}
+          {viewMode !== "write" ? (
+            // Basis-zero halves with the padding inside them: split is an even
+            // division of the pane, and padding on the flex item itself would
+            // make this half taller than the editor by exactly that padding.
+            <div className="min-h-0 flex-1 overflow-y-auto border-0 border-t border-solid border-border-subtle bg-bg-base">
+              <div className="px-[14px] py-[10px]">
+                <NotepadPreview notepadId={notepadId} content={currentText} />
+              </div>
+            </div>
+          ) : null}
         </div>
-        {previewOpen ? (
-          <div className="max-h-[45%] min-h-0 shrink-0 overflow-y-auto border-0 border-t border-solid border-border-subtle bg-bg-base px-[14px] py-[10px]">
-            <NotepadPreview notepadId={notepadId} content={currentText} />
-          </div>
-        ) : null}
-      </div>
+      )}
     </>
   );
 }

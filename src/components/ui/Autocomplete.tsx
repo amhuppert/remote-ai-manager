@@ -37,6 +37,30 @@ import { cn } from "@/lib/ui/cn";
 export const autocompletePopupClass =
   "absolute inset-x-0 bottom-full z-header flex flex-col overflow-hidden rounded-t-lg border border-b-0 border-solid border-border-default bg-bg-surface font-mono shadow-[var(--cc-shadow-dropdown-up)] animate-[cmdReveal_0.18s_ease] before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-[linear-gradient(90deg,transparent,var(--cyan)_20%,var(--cyan)_80%,transparent)] before:opacity-60 before:content-['']";
 
+/**
+ * Placement variant for hosts with no room above the anchor — a tall editing
+ * pane that starts at the top of its panel. The popup pins to the top of the
+ * anchor and overlays it downward, so it stays inside the panel instead of
+ * being clipped against its edge. Accent line and shadow flip accordingly.
+ */
+export const autocompletePopupOverlayClass =
+  "absolute inset-x-0 top-0 z-header flex flex-col overflow-hidden rounded-b-lg border border-t-0 border-solid border-border-default bg-bg-surface font-mono shadow-[var(--cc-shadow-dropdown)] animate-[cmdReveal_0.18s_ease] after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-[linear-gradient(90deg,transparent,var(--cyan)_20%,var(--cyan)_80%,transparent)] after:opacity-60 after:content-['']";
+
+/**
+ * Where the popup sits relative to its anchor: `above` for an input at the
+ * bottom of its surface (the prompt), `overlay-top` for one that fills its
+ * panel (the notepad editor).
+ */
+export type AutocompletePlacement = "above" | "overlay-top";
+
+export function autocompletePlacementClass(
+  placement: AutocompletePlacement,
+): string {
+  return placement === "overlay-top"
+    ? autocompletePopupOverlayClass
+    : autocompletePopupClass;
+}
+
 export const autocompleteHeaderClass =
   "sticky top-0 z-raised flex items-center justify-between border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-raised px-sm py-xs text-[0.7rem] text-text-tertiary";
 
@@ -119,6 +143,8 @@ export interface AutocompleteListboxProps {
   footer?: React.ReactNode;
   /** Layout-only max-height utility for the popup (e.g. `max-h-[340px]`). */
   maxHeightClassName?: string;
+  /** Where the popup sits relative to its anchor. Defaults to `above`. */
+  placement?: AutocompletePlacement;
   loading?: boolean;
   /** Message shown in the loading state. */
   loadingLabel?: React.ReactNode;
@@ -144,6 +170,7 @@ export function AutocompleteListbox({
   header,
   footer,
   maxHeightClassName,
+  placement = "above",
   loading = false,
   loadingLabel,
   error = null,
@@ -164,7 +191,9 @@ export function AutocompleteListbox({
   const showStatus = loading || error != null || isEmpty;
 
   return (
-    <div className={cn(autocompletePopupClass, maxHeightClassName)}>
+    <div
+      className={cn(autocompletePlacementClass(placement), maxHeightClassName)}
+    >
       {header}
 
       {/*

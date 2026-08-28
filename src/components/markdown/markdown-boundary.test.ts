@@ -40,9 +40,18 @@ const SOURCE_EXTENSIONS = [".ts", ".tsx"] as const;
  *                             slugifier) stay inside the module.
  */
 const PUBLIC_ENTRIES = new Set(
-  ["Markdown.tsx", "MarkdownViewport.tsx", "markdown-source-map.ts"].map(
-    (file) => path.join(CANONICAL_DIR, file),
-  ),
+  [
+    "Markdown.tsx",
+    "MarkdownViewport.tsx",
+    "markdown-source-map.ts",
+    // The notepad preview's renderer. It is not a `Markdown.tsx` adapter
+    // because the notepad body is a dialect — reference XML and image tokens
+    // whose chips resolve against the notepad that owns them — so its contract
+    // carries the notepad id rather than content alone, and its consumer defers
+    // it on its own path (the entry keeps exactly one deferred route to
+    // MarkdownRenderer, which the import-boundary guard pins).
+    "NotepadMarkdownRenderer.tsx",
+  ].map((file) => path.join(CANONICAL_DIR, file)),
 );
 
 const SOURCE_MAP_PUBLIC_ENTRY = path.join(

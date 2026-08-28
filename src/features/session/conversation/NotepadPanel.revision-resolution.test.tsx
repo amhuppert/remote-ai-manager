@@ -28,6 +28,7 @@ import {
 } from "@/lib/notepads/route-handlers";
 import {
   createNotepadService,
+  USER_REVISION_COALESCE_WINDOW_MS,
   type NotepadService,
 } from "@/lib/notepads/service";
 import { registerNotepadSseReactions } from "@/lib/notepads/sse-reactions";
@@ -88,6 +89,8 @@ const auth: AgentAuth = {
 
 let fixture: PersistenceFixture;
 let service: NotepadService;
+/** Advanced by seeds that need writes to land in separate editing sessions. */
+let clock = 0;
 let handlers: NotepadsRouteHandlers;
 let api: FetchFixture;
 /** Set by setupLive: the service's publications flow to it as SSE frames. */
@@ -111,7 +114,7 @@ beforeEach(() => {
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
   const repo = createNotepadsRepo(fixture.db, createWriteQueue());
-  let clock = 0;
+  clock = 0;
   let idSeq = 0;
   service = createNotepadService({
     repo,
@@ -223,6 +226,9 @@ async function seedNotepad(name: string, revisions: number): Promise<string> {
   });
   if (!created.ok) throw new Error(`seed create failed: ${created.error.code}`);
   for (let revision = 2; revision <= revisions; revision += 1) {
+    // Seeded revisions stand for separate editing sessions: consecutive saves
+    // inside one session fold into a single revision by design.
+    clock += USER_REVISION_COALESCE_WINDOW_MS + 1000;
     const written = await service.writeContent(created.value.id, {
       operation: "update",
       content: contentFor(revision),
@@ -234,7 +240,7 @@ async function seedNotepad(name: string, revisions: number): Promise<string> {
   return created.value.id;
 }
 
-async function openNotepadAndHistory(
+async function openNotepad(
   user: ReturnType<typeof userEvent.setup>,
   name: string,
 ) {
@@ -242,14 +248,47 @@ async function openNotepadAndHistory(
     await screen.findByRole("button", { name: `Open notepad ${name}` }),
   );
   await screen.findByTestId("notepad-editor-input");
+}
+
+async function openHistory(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "History" }));
   await screen.findByTestId("notepad-history");
+}
+
+/** History owns the whole panel, so the editor is behind the breadcrumb. */
+async function backToNotepad(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) {
+  await user.click(screen.getByRole("button", { name: `Back to ${name}` }));
+  await screen.findByTestId("notepad-editor-input");
+}
+
+async function openNotepadAndHistory(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) {
+  await openNotepad(user, name);
+  await openHistory(user);
 }
 
 function diffLines(kind: "del" | "ins"): string[] {
   return [...screen.getByTestId("notepad-history").querySelectorAll(kind)].map(
     (el) => el.textContent ?? "",
   );
+}
+
+/**
+ * The bottom row of the revision list — where an off-page selection lands, the
+ * listing running newest first.
+ */
+function oldestRevisionRow(): HTMLElement {
+  const rows = screen
+    .getByTestId("notepad-history")
+    .querySelectorAll("li > button");
+  const last = rows[rows.length - 1];
+  if (!(last instanceof HTMLElement)) throw new Error("no revision rows");
+  return last;
 }
 
 describe("id-addressed revision resolution against real persistence", () => {
@@ -315,11 +354,13 @@ describe("id-addressed revision resolution against real persistence", () => {
         screen.getByRole("button", { name: "Select revision 56" }),
       ).toBeVisible(),
     );
-    expect(
-      screen.queryByRole("button", { name: "Select revision 6" }),
-    ).not.toBeInTheDocument();
     // The selection is id-addressed: r6 stays selected with its real
-    // versus-previous diff, not a silently rendered snapshot.
+    // versus-previous diff, not a silently rendered snapshot. Off the listed
+    // page (r56…r7), it holds the bottom row in the list.
+    expect(oldestRevisionRow()).toHaveAttribute(
+      "aria-label",
+      "Select revision 6",
+    );
     expect(screen.getByRole("button", { name: "Restore r6" })).toBeVisible();
     await waitFor(() => expect(diffLines("ins")).toEqual(["line-6"]));
     expect(diffLines("del")).toEqual([]);
@@ -349,11 +390,12 @@ describe("id-addressed revision resolution against real persistence", () => {
     await waitFor(() => expect(diffLines("ins")).toEqual(["line-5"]));
     expect(diffLines("del")).toEqual([]);
     expect(screen.getByRole("button", { name: "Restore r5" })).toBeVisible();
-    // r5 is genuinely outside the listed page — resolution, not listing,
-    // produced the preview.
-    expect(
-      screen.queryByRole("button", { name: "Select revision 5" }),
-    ).not.toBeInTheDocument();
+    // r5 is genuinely outside the listed page (r55…r6) — resolution, not
+    // listing, produced both the preview and the row carrying it.
+    expect(oldestRevisionRow()).toHaveAttribute(
+      "aria-label",
+      "Select revision 5",
+    );
   });
 
   it("offers all three views for the aged target, including versus-current", async () => {
@@ -429,12 +471,13 @@ describe("restore echo adjudication against real persistence", () => {
       />,
       queryClient,
     );
-    await openNotepadAndHistory(user, "race pad");
+    await openNotepad(user, "race pad");
 
     // An edit arms the autosave timers, then the user immediately restores an
     // older revision. The restore commits server-side at once (as r4) but its
     // response is held past the autosave idle window.
     pasteIntoEditor("draft-overwrite ");
+    await openHistory(user);
     await user.click(screen.getByRole("button", { name: "Select revision 2" }));
     await user.click(screen.getByRole("button", { name: "Restore r2" }));
 
@@ -452,6 +495,7 @@ describe("restore echo adjudication against real persistence", () => {
 
     // The requested revision remains current: the pre-restore draft was
     // abandoned, never committed over the restore.
+    await backToNotepad(user, "race pad");
     await waitFor(() =>
       expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
         "line-2",
@@ -503,7 +547,14 @@ describe("restore echo adjudication against real persistence", () => {
 
     releaseRestore();
 
-    // The restore lands normally: the editor adopts r2's content as head r4…
+    // The restore lands normally: history records the restore revision…
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Select revision 4" }),
+      ).toBeVisible(),
+    );
+    // …the editor behind it adopts r2's content as head r4…
+    await backToNotepad(user, "restorable");
     await waitFor(() =>
       expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
         "line-2",
@@ -512,12 +563,6 @@ describe("restore echo adjudication against real persistence", () => {
     expect(
       screen.getByTestId("notepad-editor-input").textContent,
     ).not.toContain("line-3");
-    // …history records the restore revision…
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Select revision 4" }),
-      ).toBeVisible(),
-    );
     // …and the view still shows no phantom external-write banner.
     expect(screen.queryByTestId("notepad-live-banner")).not.toBeInTheDocument();
   });
@@ -555,6 +600,7 @@ describe("restore echo adjudication against real persistence", () => {
     // The editor refuses input while the restore is pending: an edit typed
     // now would be clobbered the moment the restored head is adopted, so no
     // edit can be typed — nothing to discard silently.
+    await backToNotepad(user, "frozen pad");
     const editorDom = screen.getByTestId("notepad-editor-input");
     expect(editorDom).toHaveAttribute("contenteditable", "false");
     pasteIntoEditor("mid-restore-edit ");
@@ -604,7 +650,7 @@ describe("restore echo adjudication against real persistence", () => {
       />,
       queryClient,
     );
-    await openNotepadAndHistory(user, "inflight race");
+    await openNotepad(user, "inflight race");
 
     // The idle window elapses: the autosave POSTs and is now in flight, held
     // before it reaches the service — the slow-request shape.
@@ -615,6 +661,7 @@ describe("restore echo adjudication against real persistence", () => {
     expect(api.requestsTo("POST", /\/content$/).length).toBe(1);
 
     // The user restores an older revision while that autosave is in flight.
+    await openHistory(user);
     await user.click(screen.getByRole("button", { name: "Select revision 2" }));
     await user.click(screen.getByRole("button", { name: "Restore r2" }));
 
@@ -627,6 +674,7 @@ describe("restore echo adjudication against real persistence", () => {
     releaseRestore();
 
     // The requested revision remains current…
+    await backToNotepad(user, "inflight race");
     await waitFor(() =>
       expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
         "line-2",

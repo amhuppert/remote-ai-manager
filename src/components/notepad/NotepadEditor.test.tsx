@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { createRef } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Editor } from "@tiptap/react";
 import { REFERENCE_REGISTRY } from "@/lib/prompt-editor";
@@ -21,6 +21,11 @@ beforeEach(() => {
         new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
     ),
   );
+  // ProseMirror hit-tests a mousedown through elementFromPoint, which jsdom
+  // does not implement; without it the handler rejects into an unhandled error.
+  if (typeof document !== "undefined" && !document.elementFromPoint) {
+    document.elementFromPoint = () => null;
+  }
   if (typeof Range !== "undefined") {
     if (!Range.prototype.getClientRects) {
       Range.prototype.getClientRects = () =>
@@ -232,6 +237,73 @@ describe("NotepadEditor content round-trip", () => {
 
     expect(handle.serialize()).toBe(`after ${NOTEPAD_XML}`);
     expect(changes).toEqual([]);
+  });
+});
+
+describe("NotepadEditor terminal hotkeys", () => {
+  function dispatchKey(
+    editor: Editor,
+    init: KeyboardEventInit & { key: string },
+  ): void {
+    const event = new KeyboardEvent("keydown", { bubbles: true, ...init });
+    editor.view.someProp("handleKeyDown", (f) => f(editor.view, event));
+  }
+
+  it("kills the previous word with Ctrl+W like the prompt input", () => {
+    const { editor, handle } = mountEditor({
+      initialContent: "ship the release",
+    });
+
+    editor.commands.focus("end");
+    dispatchKey(editor, { key: "w", ctrlKey: true });
+
+    expect(handle.serialize()).toBe("ship the ");
+  });
+
+  it("jumps to the start of the line with Ctrl+A", () => {
+    const { editor } = mountEditor({ initialContent: "ship the release" });
+
+    editor.commands.focus("end");
+    dispatchKey(editor, { key: "a", ctrlKey: true });
+
+    expect(editor.state.selection.from).toBe(1);
+  });
+
+  it("leaves Mod+Enter to the editor — a notepad has nothing to submit", () => {
+    const { editor, handle } = mountEditor({ initialContent: "line" });
+
+    editor.commands.focus("end");
+    dispatchKey(editor, { key: "Enter", ctrlKey: true });
+
+    // Swallowing the chord (the prompt's submit binding) would leave the text
+    // untouched; here it breaks the line like any other editor.
+    expect(handle.serialize()).toBe("line\n");
+  });
+});
+
+describe("NotepadEditor editing surface", () => {
+  it("puts the caret in the document when the blank space below the text is clicked", () => {
+    const { editor, getByTestId } = mountEditor({
+      initialContent: "first\n\nlast line",
+    });
+
+    fireEvent.mouseDown(getByTestId("notepad-editor-surface"));
+
+    expect(editor.state.selection.empty).toBe(true);
+    expect(editor.state.selection.from).toBe(editor.state.doc.content.size - 1);
+  });
+
+  it("leaves a click on the text itself to the editor's own caret placement", () => {
+    const { editor, getByTestId } = mountEditor({
+      initialContent: "first\n\nlast line",
+    });
+    editor.commands.setTextSelection(2);
+
+    // Bubbled from the ProseMirror surface: the editor already placed the
+    // caret, and jumping it to the end would fight the user's click.
+    fireEvent.mouseDown(getByTestId("notepad-editor-input"));
+
+    expect(editor.state.selection.from).toBe(2);
   });
 });
 

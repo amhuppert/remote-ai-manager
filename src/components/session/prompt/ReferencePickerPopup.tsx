@@ -18,6 +18,7 @@ import {
   autocompleteFooterClass,
   autocompleteHeaderClass,
   autocompleteHeaderCountClass,
+  type AutocompletePlacement,
 } from "@/components/ui/Autocomplete";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { useAllConversationsQuery } from "@/lib/conversations/queries";
@@ -86,6 +87,11 @@ export interface ReferencePickerPopupProps {
   isCaretAtQueryEnd(): boolean;
   onClose?(): void;
   onDataChange?(data: ReferencePickerData): void;
+  /**
+   * Where the popup sits relative to the editor it is anchored to. The prompt
+   * opens it upward; a full-pane editor has no room above and overlays instead.
+   */
+  placement?: AutocompletePlacement;
 }
 
 interface QueryShape<T> {
@@ -131,6 +137,7 @@ export function createReferencePickerPopup(
         isCaretAtQueryEnd,
         onClose,
         onDataChange,
+        placement = "above",
       },
       ref,
     ) {
@@ -403,7 +410,15 @@ export function createReferencePickerPopup(
         <AutocompleteListbox
           label="References"
           popupRole="grid"
-          maxHeightClassName="max-h-[420px]"
+          // Overlaying an editor pane means the pane is also the ceiling: the
+          // panel clips what runs past its edge, so the readability cap and
+          // the available height are taken together.
+          maxHeightClassName={
+            placement === "overlay-top"
+              ? "max-h-[min(420px,100%)]"
+              : "max-h-[420px]"
+          }
+          placement={placement}
           loading={settling && !hasRows}
           loadingLabel="Loading references..."
           error={hasRows ? null : failure}

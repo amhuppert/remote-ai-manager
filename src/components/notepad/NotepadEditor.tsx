@@ -32,6 +32,7 @@ import {
   serializePromptDoc,
   SpecMentionNode,
   TaskMentionNode,
+  TerminalHotkeys,
   TicketMentionNode,
   pickerHasAnyMatch,
   type PickerSelection,
@@ -174,6 +175,9 @@ export const NotepadEditor = forwardRef<
         trailingNode: false,
       }),
       CodeFormatting,
+      // Readline bindings the rest of the platform's editors carry. There is
+      // nothing to submit here, so Mod-Enter stays with the default keymap.
+      TerminalHotkeys.configure({ onSubmit: null }),
       Placeholder.configure({ placeholder }),
       FileMentionNode,
       ConversationMentionNode,
@@ -239,7 +243,10 @@ export const NotepadEditor = forwardRef<
     ),
     editorProps: {
       attributes: {
-        class: "notepad-editor__content-inner",
+        // The editable box owns the padding so it covers the whole pane; its
+        // fill-the-pane min-height is the `.notepad-editor__content` rule in
+        // conversation.css (an unlayered legacy rule a utility cannot outrank).
+        class: "notepad-editor__content-inner px-[16px] py-[14px]",
         "data-testid": "notepad-editor-input",
         "aria-label": ariaLabel,
       },
@@ -303,11 +310,22 @@ export const NotepadEditor = forwardRef<
           isCaretAtQueryEnd={() => pickerState.isCaretAtQueryEnd()}
           onClose={() => setPickerState(null)}
           onDataChange={capturePickerData}
+          // The editor fills its panel, so there is nothing above it to open
+          // into: the picker overlays the top of the writing surface.
+          placement="overlay-top"
         />
       ) : null}
       <EditorContent
         editor={editor}
-        className="prompt-editor__content min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg-base px-[16px] py-[14px] font-mono text-[0.82rem] leading-[1.7] break-words text-text-primary"
+        data-testid="notepad-editor-surface"
+        // Any residual gap the editable box does not cover still belongs to the
+        // document: a click there focuses at the end rather than doing nothing.
+        onMouseDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          editor?.commands.focus("end");
+        }}
+        className="prompt-editor__content notepad-editor__content min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-bg-base font-mono text-[0.82rem] leading-[1.7] break-words text-text-primary"
       />
     </div>
   );

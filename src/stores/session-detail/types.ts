@@ -29,6 +29,12 @@ export type RightPaneTab =
   | "notepad";
 
 /**
+ * How an open notepad divides its pane: the editor alone, both halves, or the
+ * rendered preview alone.
+ */
+export type NotepadViewMode = "write" | "split" | "read";
+
+/**
  * A one-shot "scroll the transcript to this message" request, set by surfaces
  * that live outside the conversation panel (e.g. the context-artifact panel's
  * source-ref chips) and consumed — then cleared — by the conversation nav hook
@@ -240,6 +246,8 @@ export interface NotepadPanelSlice {
   openNotepadId: string | null;
   /** The browse list's sort preference. */
   notepadSort: NotepadSort;
+  /** The open view's editor/preview split preference. */
+  notepadViewMode: NotepadViewMode;
   /**
    * The latest externally written notepad head, recorded by the SSE reaction
    * so an open editor can attribute the update (clean-adopt strip vs dirty
@@ -249,6 +257,7 @@ export interface NotepadPanelSlice {
   openNotepad: (notepadId: string) => void;
   closeNotepad: () => void;
   setNotepadSort: (sort: NotepadSort) => void;
+  setNotepadViewMode: (mode: NotepadViewMode) => void;
   recordNotepadExternalWrite: (write: NotepadExternalWrite) => void;
 }
 
@@ -287,6 +296,7 @@ export interface PanelSessionSnapshot {
   pendingTrayExpanded: boolean;
   openNotepadId: string | null;
   notepadSort: NotepadSort;
+  notepadViewMode: NotepadViewMode;
 }
 
 export interface PanelSessionSlice {
@@ -343,6 +353,7 @@ export type SessionDetailState = Pick<
   | "feedbackTarget"
   | "openNotepadId"
   | "notepadSort"
+  | "notepadViewMode"
   | "notepadExternalWrite"
   | "panelSessionKey"
   | "panelSessionMemory"
@@ -450,6 +461,7 @@ export const initialState: SessionDetailState = {
   feedbackTarget: null,
   openNotepadId: null,
   notepadSort: "recency",
+  notepadViewMode: "split",
   notepadExternalWrite: null,
   messageNavRequest: null,
   panelSessionKey: null,

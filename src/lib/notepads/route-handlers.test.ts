@@ -27,7 +27,10 @@ import {
   type RouteContext,
 } from "./route-handlers";
 import type { Notepad, NotepadListItem, NotepadRevision } from "./schemas";
-import { createNotepadService } from "./service";
+import {
+  createNotepadService,
+  USER_REVISION_COALESCE_WINDOW_MS,
+} from "./service";
 
 const TOKEN = "notepad-route-test-token";
 const PROJECT_NAME = "command-center";
@@ -46,6 +49,8 @@ let contentStore: NotepadContentStore;
 let contentBase: string;
 let handlers: NotepadsRouteHandlers;
 let published: SSEEvent[];
+/** Advanced by tests that need writes to land in separate editing sessions. */
+let clock = 0;
 
 const publish: PublishFn = (event) => {
   published.push(event);
@@ -80,7 +85,7 @@ beforeEach(() => {
     listNotepadIdsForProject: (projectPath) => repo.listNotepadIds(projectPath),
   });
   published = [];
-  let clock = 0;
+  clock = 0;
   let idSeq = 0;
   const service = createNotepadService({
     repo,
@@ -623,6 +628,8 @@ describe("notepad revisions and restore", () => {
   it("lists revisions in order and bounds to the most recent", async () => {
     const created = await createGlobal("history", "v1");
     for (const content of ["v2", "v3"]) {
+      // Each write is its own editing session, so each records a revision.
+      clock += USER_REVISION_COALESCE_WINDOW_MS + 1000;
       await handlers.contentPOST(
         browserRequest(
           `/api/notepads/${created.id}/content`,
@@ -642,6 +649,7 @@ describe("notepad revisions and restore", () => {
   it("resolves one revision and its immediate predecessor by id via ?at", async () => {
     const created = await createGlobal("deep history", "r1");
     for (let revision = 2; revision <= 60; revision += 1) {
+      clock += USER_REVISION_COALESCE_WINDOW_MS + 1000;
       await handlers.contentPOST(
         browserRequest(
           `/api/notepads/${created.id}/content`,

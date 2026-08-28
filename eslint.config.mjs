@@ -189,6 +189,10 @@ const MIGRATED_UTILITY_FIRST = [
   // UTILITY_FIRST_PATHS allowlist.
   "src/components/references/**/*.{ts,tsx}",
   "src/features/spec-studio/**/*.{ts,tsx}",
+  // Notepad surfaces: utility-first component directory. Mirrors the
+  // .prettierrc class-sort override and the tailwind-utility-collisions
+  // UTILITY_FIRST_PATHS allowlist.
+  "src/components/notepad/**/*.{ts,tsx}",
   "src/features/session/document-viewer/AnnotatedMarkdown.tsx",
   "src/features/session/document-viewer/AnnotatedMarkdown.stories.tsx",
   "src/features/session/document-viewer/AnnotatedMarkdown.test.tsx",

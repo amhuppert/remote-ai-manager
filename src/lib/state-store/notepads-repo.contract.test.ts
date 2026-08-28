@@ -66,8 +66,14 @@ async function createGlobal(
   return result.notepad;
 }
 
-async function userEdit(notepadId: string, content: string, at: string) {
+async function userEdit(
+  notepadId: string,
+  content: string,
+  at: string,
+  coalesceWindowMs: number | null = null,
+) {
   return repo.writeContent({
+    coalesceWindowMs,
     notepadId,
     revisionId: nextId("rev"),
     operation: "update",
@@ -99,6 +105,8 @@ async function agentEdit(
     authorConversationId: "conv-writer",
     baseRevision,
     enforceBaseRevision: true,
+    // An agent write is one deliberate act; it never folds into another row.
+    coalesceWindowMs: null,
     // The service is the policy owner; these are the modes it would permit for
     // this operation, restated here because the helper bypasses the service.
     permittedWriteModes:
@@ -555,6 +563,7 @@ describe("content writes, compare-and-swap, and history", () => {
       permittedWriteModes: null,
       restoredFromRevision: 1,
       writtenAt: "2026-08-27T10:01:00.000Z",
+      coalesceWindowMs: null,
     });
     expect(restored.status).toBe("written");
     if (restored.status !== "written") return;
@@ -676,6 +685,7 @@ describe("durability contracts", () => {
           permittedWriteModes: null,
           restoredFromRevision: null,
           writtenAt: "2026-03-16T09:10:10.000Z",
+          coalesceWindowMs: null,
         });
         if (written.status !== "written") {
           throw new Error(`write failed: ${written.status}`);
@@ -731,6 +741,7 @@ describe("durability contracts", () => {
           permittedWriteModes: ["full-edit"],
           restoredFromRevision: fixture.restoredFromRevision,
           writtenAt: fixture.createdAt,
+          coalesceWindowMs: null,
         });
         if (written.status !== "written") {
           throw new Error(`restore failed: ${written.status}`);

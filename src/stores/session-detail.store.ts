@@ -111,6 +111,8 @@ export const useFeedbackTarget = () =>
 export const useOpenNotepadId = () =>
   useSessionDetailStore((s) => s.openNotepadId);
 export const useNotepadSort = () => useSessionDetailStore((s) => s.notepadSort);
+export const useNotepadViewMode = () =>
+  useSessionDetailStore((s) => s.notepadViewMode);
 export const useNotepadExternalWrite = () =>
   useSessionDetailStore((s) => s.notepadExternalWrite);
 
@@ -133,6 +135,8 @@ export const useCloseNotepad = () =>
   useSessionDetailStore((s) => s.closeNotepad);
 export const useSetNotepadSort = () =>
   useSessionDetailStore((s) => s.setNotepadSort);
+export const useSetNotepadViewMode = () =>
+  useSessionDetailStore((s) => s.setNotepadViewMode);
 export const useRecordNotepadExternalWrite = () =>
   useSessionDetailStore((s) => s.recordNotepadExternalWrite);
 export const useRequestMessageNav = () =>

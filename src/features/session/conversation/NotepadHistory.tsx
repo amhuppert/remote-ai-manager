@@ -123,9 +123,11 @@ export default function NotepadHistory({
   const [selectedRevision, setSelectedRevision] = useState<number | null>(
     diffTarget,
   );
-  const [previewMode, setPreviewMode] = useState<PreviewMode>(
-    diffTarget === null ? "snapshot" : "previous",
-  );
+  // What a revision changed is the question history is opened to answer, so
+  // versus-previous is where every selection starts. The mode then stays as
+  // the user set it — moving down the list is a change of subject, not of
+  // question.
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("previous");
 
   // Every diff affordance lands here: the target revision selected, its
   // versus-previous diff shown. Render-time adjustment (not an effect) per
@@ -188,10 +190,104 @@ export default function NotepadHistory({
         ? ""
         : (predecessor?.content ?? null);
 
+  // Selecting the head hides versus-current (nothing to compare it against),
+  // so a sticky "current" mode falls back rather than rendering an empty diff.
+  const effectiveMode: PreviewMode =
+    selectedIsHead && previewMode === "current" ? "previous" : previewMode;
+
+  // Newest first: the reader opens history to see what just changed, and the
+  // route hands the page over oldest first. A selection is also id-addressed,
+  // so it can outlive its page — once the head advances past the window the
+  // selected revision is no longer listed, and it still gets a row (below the
+  // page it fell out of, being older than all of it) because the expansion
+  // lives in the list and a selection with no row would vanish.
+  const newestFirst = [...revisions].reverse();
+  const revisionRows =
+    selected !== null && listedRow(selected.revision) === null
+      ? [...newestFirst, selected]
+      : newestFirst;
+
+  /**
+   * The selected revision's body, rendered inside its own row. Keeping it in
+   * the list is what makes the expansion legible: the snapshot is attached to
+   * the row it came from instead of resizing a separate pane below the list.
+   */
+  const revisionDetail =
+    selected === null ? null : (
+      <>
+        <SegmentedControl
+          aria-label="Revision preview mode"
+          value={effectiveMode}
+          onValueChange={(value) => {
+            if (
+              value === "snapshot" ||
+              value === "previous" ||
+              value === "current"
+            ) {
+              setPreviewMode(value);
+            }
+          }}
+        >
+          <SegmentedControlItem value="snapshot">snapshot</SegmentedControlItem>
+          <SegmentedControlItem value="previous">
+            vs previous
+          </SegmentedControlItem>
+          {/* The head has nothing a restore would change against itself. */}
+          {!selectedIsHead ? (
+            <SegmentedControlItem value="current">
+              vs current
+            </SegmentedControlItem>
+          ) : null}
+        </SegmentedControl>
+
+        <pre className="m-0 max-h-[280px] min-h-0 overflow-y-auto font-mono text-[0.72rem] leading-[1.6] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary">
+          {effectiveMode === "snapshot" ? (
+            selected.content
+          ) : effectiveMode === "previous" ? (
+            previousFrom !== null ? (
+              renderDiff(previousFrom, selected.content)
+            ) : selectedResolution.isError ? (
+              diffLoadFailure(() => void selectedResolution.refetch())
+            ) : (
+              <span className="block text-text-tertiary">Loading diff…</span>
+            )
+          ) : headSnapshot !== null ? (
+            renderDiff(headSnapshot.content, selected.content)
+          ) : headResolution.isError ? (
+            diffLoadFailure(() => void headResolution.refetch())
+          ) : (
+            <span className="block text-text-tertiary">Loading diff…</span>
+          )}
+        </pre>
+        <div className="flex flex-wrap items-center gap-sm">
+          <Button
+            variant="default"
+            size="sm"
+            disabled={selectedIsHead || restorePending}
+            onClick={() => {
+              if (selectedIsHead) return;
+              onRestore(selected.revision);
+            }}
+          >
+            {selectedIsHead
+              ? "current"
+              : restorePending
+                ? "Restoring…"
+                : `Restore r${selected.revision}`}
+          </Button>
+          <span className="min-w-0 flex-1 font-mono text-[0.68rem] text-text-tertiary">
+            {selectedIsHead
+              ? "this revision is the head"
+              : "copies this snapshot forward as the new head — nothing behind it changes"}
+          </span>
+        </div>
+      </>
+    );
+
   return (
     <div
       data-testid="notepad-history"
-      className="flex max-h-[45%] shrink-0 flex-col border-0 border-b border-solid border-border-subtle bg-bg-base"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-bg-base"
     >
       {revisionsQuery.isLoading ? (
         <EmptyState layoutClassName="my-md">
@@ -202,8 +298,8 @@ export default function NotepadHistory({
           <EmptyStateTitle>No revisions yet</EmptyStateTitle>
         </EmptyState>
       ) : (
-        <ul className="m-0 min-h-0 list-none overflow-y-auto p-0">
-          {revisions.map((revision) => {
+        <ul className="m-0 min-h-0 list-none p-0">
+          {revisionRows.map((revision) => {
             const isHead = revision.revision === headRevision;
             const isSelected = revision.revision === selectedRevision;
             return (
@@ -212,12 +308,10 @@ export default function NotepadHistory({
                   type="button"
                   aria-label={`Select revision ${revision.revision}`}
                   aria-pressed={isSelected}
-                  onClick={() => {
-                    setSelectedRevision(isSelected ? null : revision.revision);
-                    // A different revision's diff is a different question —
-                    // start it from the snapshot again.
-                    setPreviewMode("snapshot");
-                  }}
+                  aria-expanded={isSelected}
+                  onClick={() =>
+                    setSelectedRevision(isSelected ? null : revision.revision)
+                  }
                   className={cn(
                     "flex w-full cursor-pointer items-baseline gap-sm border-0 border-b border-solid border-border-subtle bg-transparent px-[12px] py-[6px] text-left transition-colors duration-150 ease-[ease] hover:bg-bg-hover focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]",
                     isSelected && "bg-bg-hover",
@@ -252,84 +346,16 @@ export default function NotepadHistory({
                     {formatRelativeTime(revision.createdAt)}
                   </span>
                 </button>
+                {isSelected && selected ? (
+                  <div className="flex flex-col gap-[6px] border-0 border-b border-solid border-border-subtle bg-bg-surface px-[12px] py-[8px]">
+                    {revisionDetail}
+                  </div>
+                ) : null}
               </li>
             );
           })}
         </ul>
       )}
-
-      {selected ? (
-        <div className="flex min-h-0 shrink-0 flex-col gap-[6px] border-0 border-t border-solid border-border-subtle px-[12px] py-[8px]">
-          <SegmentedControl
-            aria-label="Revision preview mode"
-            value={previewMode}
-            onValueChange={(value) => {
-              if (
-                value === "snapshot" ||
-                value === "previous" ||
-                value === "current"
-              ) {
-                setPreviewMode(value);
-              }
-            }}
-          >
-            <SegmentedControlItem value="snapshot">
-              snapshot
-            </SegmentedControlItem>
-            <SegmentedControlItem value="previous">
-              vs previous
-            </SegmentedControlItem>
-            {/* The head has nothing a restore would change against itself. */}
-            {!selectedIsHead ? (
-              <SegmentedControlItem value="current">
-                vs current
-              </SegmentedControlItem>
-            ) : null}
-          </SegmentedControl>
-
-          <pre className="m-0 max-h-[160px] min-h-0 overflow-y-auto font-mono text-[0.72rem] leading-[1.6] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary">
-            {previewMode === "snapshot" ? (
-              selected.content
-            ) : previewMode === "previous" ? (
-              previousFrom !== null ? (
-                renderDiff(previousFrom, selected.content)
-              ) : selectedResolution.isError ? (
-                diffLoadFailure(() => void selectedResolution.refetch())
-              ) : (
-                <span className="block text-text-tertiary">Loading diff…</span>
-              )
-            ) : headSnapshot !== null ? (
-              renderDiff(headSnapshot.content, selected.content)
-            ) : headResolution.isError ? (
-              diffLoadFailure(() => void headResolution.refetch())
-            ) : (
-              <span className="block text-text-tertiary">Loading diff…</span>
-            )}
-          </pre>
-          <div className="flex items-center gap-sm">
-            <Button
-              variant="default"
-              size="sm"
-              disabled={selectedIsHead || restorePending}
-              onClick={() => {
-                if (selectedIsHead) return;
-                onRestore(selected.revision);
-              }}
-            >
-              {selectedIsHead
-                ? "current"
-                : restorePending
-                  ? "Restoring…"
-                  : `Restore r${selected.revision}`}
-            </Button>
-            <span className="font-mono text-[0.68rem] text-text-tertiary">
-              {selectedIsHead
-                ? "this revision is the head"
-                : "copies this snapshot forward as the new head — nothing behind it changes"}
-            </span>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

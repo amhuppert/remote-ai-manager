@@ -93,6 +93,16 @@ export const writeNotepadContentInputSchema = z.object({
   permittedWriteModes: z.array(notepadWriteModeSchema).nullable(),
   restoredFromRevision: z.number().int().positive().nullable(),
   writtenAt: z.string().min(1),
+  /**
+   * How long one editing burst keeps writing into the same revision row, or
+   * null for a write that always opens its own revision (an agent's, a
+   * restore, an append). Inside the window the head revision is rewritten in
+   * place — same row, new content, new revision number — so a stream of
+   * autosaves persists every keystroke without shredding history into one
+   * entry per idle timer. The revision number still advances on every write,
+   * so an agent's compare-and-swap token is never weakened by folding.
+   */
+  coalesceWindowMs: z.number().int().nonnegative().nullable(),
 });
 export type WriteNotepadContentInput = z.infer<
   typeof writeNotepadContentInputSchema
@@ -400,6 +410,11 @@ export function createNotepadsRepo(
         @author_conversation_id, @origin, @base_revision,
         @restored_from_revision, @created_at)`,
   );
+  const foldRevisionStmt = db.prepare(
+    `UPDATE notepad_revisions
+        SET content = @content, revision = @revision
+      WHERE id = @id`,
+  );
   const advanceHeadStmt = db.prepare(
     `UPDATE notepads
         SET content = @content, revision = @revision, updated_at = @updated_at
@@ -548,6 +563,33 @@ export function createNotepadsRepo(
     },
   );
 
+  /**
+   * The revision row this write folds into, or null when it must open its own.
+   * A burst folds only into the head revision it wrote itself: same author kind
+   * with no conversation attribution (the browser), an ordinary edit rather
+   * than the create/restore/append rows that mark deliberate moments, and still
+   * inside the caller's window measured from when the burst started.
+   */
+  function revisionToFoldInto(
+    headRevision: number,
+    input: WriteNotepadContentInput,
+  ): NotepadRevision | null {
+    if (input.coalesceWindowMs === null) return null;
+    if (ORIGIN_BY_OPERATION[input.operation] !== "edit") return null;
+    const rawHead: unknown = findRevisionStmt.get(
+      input.notepadId,
+      headRevision,
+    );
+    if (rawHead === undefined) return null;
+    const head = rowToRevision(rawHead);
+    if (head.origin !== "edit") return null;
+    if (head.authorKind !== input.authorKind) return null;
+    if (head.authorConversationId !== input.authorConversationId) return null;
+    const age = Date.parse(input.writtenAt) - Date.parse(head.createdAt);
+    if (Number.isNaN(age) || age < 0) return null;
+    return age <= input.coalesceWindowMs ? head : null;
+  }
+
   const writeContentTx = db.transaction(
     (input: WriteNotepadContentInput): WriteNotepadContentResult => {
       const current = readNotepad(input.notepadId);
@@ -574,18 +616,26 @@ export function createNotepadsRepo(
       const revision = current.revision + 1;
       checkContentSize(input.notepadId, content);
 
-      insertRevisionStmt.run({
-        id: input.revisionId,
-        notepad_id: input.notepadId,
-        revision,
-        content,
-        author_kind: input.authorKind,
-        author_conversation_id: input.authorConversationId,
-        origin: ORIGIN_BY_OPERATION[input.operation],
-        base_revision: input.baseRevision,
-        restored_from_revision: input.restoredFromRevision,
-        created_at: input.writtenAt,
-      });
+      const foldInto = revisionToFoldInto(current.revision, input);
+      if (foldInto !== null) {
+        // The burst's own row absorbs the save: content and revision number
+        // advance, while created_at stays at the burst's start so the window
+        // it is measured against cannot be pushed forward indefinitely.
+        foldRevisionStmt.run({ id: foldInto.id, content, revision });
+      } else {
+        insertRevisionStmt.run({
+          id: input.revisionId,
+          notepad_id: input.notepadId,
+          revision,
+          content,
+          author_kind: input.authorKind,
+          author_conversation_id: input.authorConversationId,
+          origin: ORIGIN_BY_OPERATION[input.operation],
+          base_revision: input.baseRevision,
+          restored_from_revision: input.restoredFromRevision,
+          created_at: input.writtenAt,
+        });
+      }
       advanceHeadStmt.run({
         id: input.notepadId,
         content,
