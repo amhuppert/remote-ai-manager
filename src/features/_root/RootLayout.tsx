@@ -46,6 +46,7 @@ export default function RootLayout({
       className={`${anybody.variable} ${manrope.variable} ${geistMono.variable}`}
     >
       <head>
+        <meta name="theme-color" content="#06090f" />
         <link
           rel="apple-touch-icon"
           sizes="180x180"
