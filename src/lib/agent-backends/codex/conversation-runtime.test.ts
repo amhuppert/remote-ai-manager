@@ -833,6 +833,29 @@ describe("CodexConversationRuntime", () => {
       ]);
     });
 
+    it("keeps the final message visible when Codex completes its todo list after responding", async () => {
+      setupThread([
+        threadStarted(),
+        agentMessageCompleted("The review is complete.", "final-1"),
+        todoListCompleted([
+          { text: "Review recent workflow executions", completed: true },
+        ]),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.contentBlocks).toContainEqual({
+        type: "text",
+        text: "The review is complete.",
+      });
+      expect(result.contentBlocks).not.toContainEqual({
+        type: "thinking",
+        text: "The review is complete.",
+      });
+    });
+
     it("serializes async event delivery in provider order", async () => {
       setupThread([
         threadStarted(),

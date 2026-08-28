@@ -14,6 +14,7 @@ import type {
   Usage,
   McpToolCallItem,
   FileChangeItem,
+  TodoListItem,
 } from "@openai/codex-sdk";
 import { Codex } from "@openai/codex-sdk";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -401,7 +402,16 @@ export class CodexConversationRuntime
           continue;
         }
 
-        if (pendingAgentMessage) {
+        const preservesPendingAgentMessage = isTodoListCompletion(event);
+        if (pendingAgentMessage && preservesPendingAgentMessage) {
+          logger.debug("codex-runtime.pending_agent_message_retained", {
+            conversationId: this.conversationId,
+            followingItemId: event.item.id,
+            followingItemType: event.item.type,
+          });
+        }
+
+        if (pendingAgentMessage && !preservesPendingAgentMessage) {
           const message = pendingAgentMessage;
           pendingAgentMessage = null;
           await this.emitAgentMessage(
@@ -1160,6 +1170,12 @@ export class CodexConversationRuntime
 
 type ItemStartedEvent = Extract<ThreadEvent, { type: "item.started" }>;
 type ItemCompletedEvent = Extract<ThreadEvent, { type: "item.completed" }>;
+
+function isTodoListCompletion(
+  event: ThreadEvent,
+): event is ItemCompletedEvent & { item: TodoListItem } {
+  return event.type === "item.completed" && event.item.type === "todo_list";
+}
 
 function fileChangeToolName(
   kind: FileChangeItem["changes"][number]["kind"],
