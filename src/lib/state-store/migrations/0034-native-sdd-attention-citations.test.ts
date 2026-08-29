@@ -413,7 +413,12 @@ describe("0034-native-sdd-attention-citations", () => {
     // again must order after them.
     expect(
       migrations.slice(index + 1).map((migration) => migration.name),
-    ).toEqual(["0035-add-notepads", "0035-generalized-model-selection"]);
+    ).toEqual([
+      "0035-add-notepads",
+      "0035-generalized-model-selection",
+      "0036-add-notepad-comments",
+      "0037-add-notepad-delivery-watermarks",
+    ]);
   });
 
   it.each([

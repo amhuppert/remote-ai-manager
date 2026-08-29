@@ -1,6 +1,9 @@
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 export interface BuildUserTranscriptBlocksArgs {
   rewrittenPromptText: string;
   imageRefs: readonly ConversationImageRef[];
@@ -11,6 +14,13 @@ export interface BuildUserTranscriptBlocksArgs {
    * (the agent-facing prose lives in the turn's prompt text, not the transcript).
    */
   documentFeedback?: DocumentFeedbackPayload;
+  /**
+   * One `notepad_feedback` block per dispatched notepad, appended on the same
+   * card-only terms as `documentFeedback`. A list because a drained queue batch
+   * can coalesce dispatches from more than one notepad, and each keeps its own
+   * notepad and comment identity.
+   */
+  notepadFeedback?: readonly NotepadFeedbackPayload[];
 }
 
 /**
@@ -25,7 +35,8 @@ export interface BuildUserTranscriptBlocksArgs {
 export function buildUserTranscriptBlocks(
   args: BuildUserTranscriptBlocksArgs,
 ): MessageContentBlock[] {
-  const { rewrittenPromptText, imageRefs, documentFeedback } = args;
+  const { rewrittenPromptText, imageRefs, documentFeedback, notepadFeedback } =
+    args;
 
   const refByIndex = new Map<number, ConversationImageRef>();
   for (const r of imageRefs) {
@@ -91,6 +102,16 @@ export function buildUserTranscriptBlocks(
     blocks.push({
       type: "document_feedback",
       items: documentFeedback.items,
+    });
+  }
+
+  for (const dispatch of notepadFeedback ?? []) {
+    blocks.push({
+      type: "notepad_feedback",
+      notepadId: dispatch.notepadId,
+      notepadName: dispatch.notepadName,
+      notepadRefXml: dispatch.notepadRefXml,
+      items: dispatch.items,
     });
   }
 

@@ -114,7 +114,11 @@ export function deriveSelectionAnchor(
  */
 export function tryReanchorExact(
   blockText: string | null,
-  anchor: CommentAnchor,
+  // Only the passage and its stored offsets participate in matching, so the
+  // parameter asks for exactly those. Notepad comment anchors carry the same
+  // block-scoped shape under their own revision field and re-anchor through
+  // here rather than through a second matcher.
+  anchor: Pick<CommentAnchor, "quote" | "charStart" | "charEnd">,
 ): ReanchorResult {
   if (blockText === null) return { status: "stale" };
   if (anchor.quote.length === 0) return { status: "stale" };

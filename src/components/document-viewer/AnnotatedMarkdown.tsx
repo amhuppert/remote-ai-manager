@@ -10,8 +10,12 @@ export {
   _resetAnnotatorBoundaryForTesting,
   _setAnnotatorBoundaryForTesting,
 } from "@/features/session/document-viewer/AnnotatedMarkdown";
-export type { AnnotatedMarkdownProps } from "@/features/session/document-viewer/AnnotatedMarkdown";
+export type {
+  AnnotatedDocumentRenderer,
+  AnnotatedMarkdownProps,
+} from "@/features/session/document-viewer/AnnotatedMarkdown";
 export type { ResolvedComment } from "@/features/session/document-viewer/types";
+export { NOT_ANNOTATABLE_CLASS } from "./annotation-contract";
 export type {
   CommentComposerCapability,
   MarkdownAnchorState,

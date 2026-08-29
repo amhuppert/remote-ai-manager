@@ -39,7 +39,10 @@ import type {
   QueueEnqueueRequest,
   QueueEnqueueResponse,
 } from "@/lib/prompt/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { QueueDeliveryTiming } from "@/lib/agent-backends/descriptor";
@@ -68,6 +71,7 @@ export interface QueueOperationDeps {
     text?: string;
     images?: ImagePayload[];
     documentFeedback?: DocumentFeedbackPayload;
+    notepadFeedback?: NotepadFeedbackPayload;
     modelSelection?: BackendModelSelection;
     backend: AgentBackendId;
   }): Promise<{
@@ -247,6 +251,9 @@ export async function enqueueQueuedMessage(
         ...(body.images !== undefined ? { images: body.images } : {}),
         ...(body.documentFeedback
           ? { documentFeedback: body.documentFeedback }
+          : {}),
+        ...(body.notepadFeedback
+          ? { notepadFeedback: body.notepadFeedback }
           : {}),
         ...(admittedModelSelection
           ? { modelSelection: admittedModelSelection }

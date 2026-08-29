@@ -5,6 +5,14 @@ import { publishEvent } from "@/lib/events/publication";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { getStateDb } from "@/lib/state-store";
 import {
+  createNotepadCommentsRepo,
+  type NotepadCommentsRepo,
+} from "@/lib/state-store/notepad-comments-repo";
+import {
+  createNotepadDeliveryWatermarksRepo,
+  type NotepadDeliveryWatermarksRepo,
+} from "@/lib/state-store/notepad-delivery-watermarks-repo";
+import {
   createNotepadsRepo,
   type NotepadsRepo,
 } from "@/lib/state-store/notepads-repo";
@@ -14,6 +22,11 @@ import {
   withWriteQueue,
   withWriteQueueSync,
 } from "@/lib/state-store/write-queue";
+import {
+  createNotepadDeliveryStateReader,
+  createNotepadDeliveryTracker,
+  type NotepadDeliveryTracker,
+} from "./change-notices";
 import {
   createNotepadContentStore,
   NOTEPAD_CONTENT_ROOT_DIRNAME,
@@ -46,6 +59,55 @@ export function getNotepadsRepo(): NotepadsRepo {
 }
 
 /**
+ * The review-comment store, sharing the same connection and write queue as the
+ * notepads repo so a comment write serializes against the content write it
+ * comments on.
+ */
+export function getNotepadCommentsRepo(): NotepadCommentsRepo {
+  return getGlobalSingleton("__cc_notepad_comments_repo", () =>
+    createNotepadCommentsRepo(getStateDb(), {
+      withWriteQueue,
+      withWriteQueueSync,
+      tryWithWriteQueue,
+      _resetForTesting,
+    }),
+  );
+}
+
+/**
+ * Per-conversation delivery watermarks for change notices, on the same
+ * connection and write queue as the notepads repo so a watermark write
+ * serializes against the content write it is recording.
+ */
+export function getNotepadDeliveryWatermarksRepo(): NotepadDeliveryWatermarksRepo {
+  return getGlobalSingleton("__cc_notepad_delivery_watermarks_repo", () =>
+    createNotepadDeliveryWatermarksRepo(getStateDb(), {
+      withWriteQueue,
+      withWriteQueueSync,
+      tryWithWriteQueue,
+      _resetForTesting,
+    }),
+  );
+}
+
+/**
+ * Owner of what each conversation has been shown of each notepad (D17). Written
+ * at the reference-expansion seams, read by prompt assembly.
+ */
+export function getNotepadDeliveryTracker(): NotepadDeliveryTracker {
+  return getGlobalSingleton("__cc_notepad_delivery_tracker", () =>
+    createNotepadDeliveryTracker({
+      watermarks: getNotepadDeliveryWatermarksRepo(),
+      readDeliveryState: createNotepadDeliveryStateReader({
+        repo: getNotepadsRepo(),
+        comments: getNotepadCommentsRepo(),
+      }),
+      now: () => new Date().toISOString(),
+    }),
+  );
+}
+
+/**
  * Durable storage for notepad image bytes. Rooted beside the ticket content
  * store under the config dir, and keyed by notepad id so a notepad's images are
  * removable without knowing which tokens its text still carries.
@@ -71,6 +133,7 @@ export function getNotepadService(): NotepadService {
   return getGlobalSingleton("__cc_notepad_service", () =>
     createNotepadService({
       repo: getNotepadsRepo(),
+      comments: getNotepadCommentsRepo(),
       publish: publishEvent,
       deleteNotepadContent: (notepadId) =>
         getNotepadContentStore().deleteNotepad(notepadId),

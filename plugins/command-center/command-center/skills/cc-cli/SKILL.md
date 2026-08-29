@@ -476,7 +476,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl ticket attachment remove <number | project#number> <attachmentId>`
 
 - `cctl notepad` — list, read, create, update, and append to notepads
-  - `cctl notepad <list|get|create|update|append>`
+  - `cctl notepad <list|get|create|update|append|comment>`
 - `cctl notepad list` — list notepads in scope with their ids and revisions
   - `cctl notepad list [--global] [--archived] [--limit <n>]`
 - `cctl notepad get` — read a notepad's canonical content by id
@@ -487,6 +487,12 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl notepad update <notepadId> --if-revision <n> --content "<markdown>"`
 - `cctl notepad append` — append to a notepad, stating the revision you read
   - `cctl notepad append <notepadId> --if-revision <n> --content "<markdown>"`
+- `cctl notepad comment` — read the user's review comments on a notepad and answer them
+  - `cctl notepad comment <list|reply> <notepadId>`
+- `cctl notepad comment list` — list a notepad's comments with their quoted passages
+  - `cctl notepad comment list <notepadId> [--status <open|resolved>] [--limit <n>]`
+- `cctl notepad comment reply` — reply to one comment on a notepad
+  - `cctl notepad comment reply <notepadId> <commentId> --body "<markdown>"`
 
 - `cctl spec` — author, review, execute, and verify durable specs
   - `cctl spec list`

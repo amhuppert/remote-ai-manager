@@ -450,6 +450,13 @@ function makeFakeBackendActorDeps(
     getActiveAlignmentVersion: async () => null,
     getLiveTicketBlock: async () => null,
     readNotepadForInjection: async () => null,
+    recordNotepadDeliveries: async () => {},
+    prepareNotepadChangeNotice: async (conversationId: string) => ({
+      conversationId,
+      block: null,
+      advances: [],
+    }),
+    settleNotepadChangeNotice: async () => {},
     claimWorkflowResults: (input) =>
       fixture.store.claimGraphWorkflowResultDeliveries(
         input.projectPath,

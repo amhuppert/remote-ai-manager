@@ -8,6 +8,7 @@ import {
   notepadListItemSchema,
   notepadRevisionSchema,
   notepadSchema,
+  resolvedNotepadCommentThreadSchema,
   type Notepad,
   type NotepadRevision,
   type NotepadScope,
@@ -21,6 +22,9 @@ const notepadListResponseSchema = z.object({
 });
 const notepadRevisionsResponseSchema = z.object({
   revisions: z.array(notepadRevisionSchema),
+});
+const notepadCommentsResponseSchema = z.object({
+  comments: z.array(resolvedNotepadCommentThreadSchema),
 });
 
 /**
@@ -189,6 +193,25 @@ export const notepadQueries = {
       refetchOnReconnect: false,
     }),
 
+  /**
+   * Every review comment on one notepad — open and resolved alike — each with
+   * its passage resolved against the current content. Unfiltered because the
+   * panel shows both sets: a resolved comment must stay reachable to reopen.
+   */
+  comments: (notepadId: string) =>
+    queryOptions({
+      queryKey: notepadKeys.comments(notepadId),
+      queryFn: async ({ signal }) => {
+        const response = await apiFetch(
+          `/api/notepads/${encodeURIComponent(notepadId)}/comments`,
+          notepadCommentsResponseSchema,
+          { signal },
+        );
+        return response.comments;
+      },
+      refetchOnReconnect: false,
+    }),
+
   /** Bounded revision history, newest first, for the history drawer. */
   revisions: (notepadId: string, limit?: number) =>
     queryOptions({
@@ -255,6 +278,16 @@ export function useNotepadRevisionResolutionQuery(
   return useQuery({
     ...notepadQueries.revisionResolution(notepadId, revision ?? 0),
     enabled: notepadId.length > 0 && revision !== null,
+  });
+}
+
+export function useNotepadCommentsQuery(
+  notepadId: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    ...notepadQueries.comments(notepadId),
+    enabled: notepadId.length > 0 && (options?.enabled ?? true),
   });
 }
 

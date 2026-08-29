@@ -1,25 +1,38 @@
 import { z } from "zod";
 import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
+import type { NotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import {
   notepadToListItem,
   type NotepadsRepo,
   type WriteNotepadContentInput,
 } from "@/lib/state-store/notepads-repo";
+import {
+  describeNotepadCommentLocation,
+  resolveNotepadCommentAnchor,
+} from "./comment-anchors";
 import { publishNotepadChange } from "./events";
 import {
+  createNotepadCommentInputSchema,
   createNotepadInputSchema,
+  notepadCommentListQuerySchema,
   notepadContentWriteSchema,
   notepadListQuerySchema,
+  replyToNotepadCommentInputSchema,
   restoreNotepadRevisionInputSchema,
+  setNotepadCommentStatusInputSchema,
   updateNotepadInputSchema,
   type Notepad,
   type NotepadAuthor,
   type NotepadChangedEvent,
+  type NotepadComment,
+  type NotepadCommentPassage,
+  type NotepadCommentReply,
   type NotepadListItem,
   type NotepadRevision,
   type NotepadWriteMode,
   type NotepadWriteOperation,
+  type ResolvedNotepadCommentThread,
 } from "./schemas";
 
 const logger = createLogger("notepads.service");
@@ -75,7 +88,25 @@ export type NotepadError =
       instruction: string;
       currentRevision: number;
       baseRevision: number;
+    }
+  | {
+      code: "comment_not_found";
+      message: string;
+      rationale: string;
+      instruction: string;
+      notepadId: string;
+      commentId: string;
+    }
+  | {
+      code: "comment_user_act_refused";
+      message: string;
+      rationale: string;
+      instruction: string;
+      act: NotepadCommentUserAct;
     };
+
+/** The comment acts reserved to the user, named in the refusal they produce. */
+export type NotepadCommentUserAct = "resolve" | "reopen" | "delete";
 
 export type NotepadResult<T> =
   | { ok: true; value: T }
@@ -164,6 +195,41 @@ function staleRevision<T>(
   });
 }
 
+function commentNotFound<T>(
+  notepadId: string,
+  commentId: string,
+): NotepadResult<T> {
+  return failure({
+    code: "comment_not_found",
+    message: `Notepad ${notepadId} has no comment ${commentId}.`,
+    rationale:
+      "The comment was deleted, or it belongs to a different notepad — a comment is only ever reachable through the notepad it was written on.",
+    instruction:
+      "List the notepad's comments to see which ones are still there.",
+    notepadId,
+    commentId,
+  });
+}
+
+/**
+ * Resolution is the human's judgement that a response actually addressed the
+ * comment, so the refusal says so rather than reporting a permission error the
+ * agent could hope to be granted.
+ */
+function commentUserActRefused<T>(
+  act: NotepadCommentUserAct,
+): NotepadResult<T> {
+  return failure({
+    code: "comment_user_act_refused",
+    message: `Only the user can ${act} a comment.`,
+    rationale:
+      "Deciding a comment is settled is the user's judgement about whether the response addressed it; an agent closing its own review would remove that judgement.",
+    instruction:
+      "Reply to the comment describing how you addressed it, and leave the decision to the user.",
+    act,
+  });
+}
+
 // ============================================================
 // Service contract
 // ============================================================
@@ -181,6 +247,18 @@ export type RestoreNotepadServiceInput = z.input<
   typeof restoreNotepadRevisionInputSchema
 >;
 export type NotepadListServiceQuery = z.input<typeof notepadListQuerySchema>;
+export type CreateNotepadCommentServiceInput = z.input<
+  typeof createNotepadCommentInputSchema
+>;
+export type ReplyToNotepadCommentServiceInput = z.input<
+  typeof replyToNotepadCommentInputSchema
+>;
+export type SetNotepadCommentStatusServiceInput = z.input<
+  typeof setNotepadCommentStatusInputSchema
+>;
+export type NotepadCommentListServiceQuery = z.input<
+  typeof notepadCommentListQuerySchema
+>;
 
 export interface NotepadService {
   create(input: CreateNotepadServiceInput): Promise<NotepadResult<Notepad>>;
@@ -221,10 +299,46 @@ export interface NotepadService {
     notepadId: string,
     revision: number,
   ): Promise<NotepadResult<NotepadRevision[]>>;
+  /**
+   * Review comments. No operation here consults the notepad's write mode: the
+   * mode governs what an agent may write into the notepad's CONTENT, and a
+   * comment or a reply is review discussion about content, not a change to it.
+   */
+  createComment(
+    notepadId: string,
+    input: CreateNotepadCommentServiceInput,
+  ): Promise<NotepadResult<NotepadComment>>;
+  /**
+   * Each thread carries its passage resolved against the notepad's CURRENT
+   * canonical text, so a reader is never left to re-derive whether the quote
+   * still holds.
+   */
+  listComments(
+    notepadId: string,
+    query: NotepadCommentListServiceQuery,
+  ): Promise<NotepadResult<ResolvedNotepadCommentThread[]>>;
+  replyToComment(
+    notepadId: string,
+    commentId: string,
+    input: ReplyToNotepadCommentServiceInput,
+  ): Promise<NotepadResult<NotepadCommentReply>>;
+  /** Resolve and reopen — user acts; an agent-attributed caller is refused. */
+  setCommentStatus(
+    notepadId: string,
+    commentId: string,
+    input: SetNotepadCommentStatusServiceInput,
+  ): Promise<NotepadResult<NotepadComment>>;
+  /** Permanent, and a user act like resolution. */
+  deleteComment(
+    notepadId: string,
+    commentId: string,
+    author: NotepadAuthor,
+  ): Promise<NotepadResult<NotepadComment>>;
 }
 
 export interface NotepadServiceDeps {
   repo: NotepadsRepo;
+  comments: NotepadCommentsRepo;
   publish: PublishFn;
   /**
    * Removes the notepad's image bytes from the content store. The row cascade
@@ -273,6 +387,22 @@ function agentPermittedModes(
 ): NotepadWriteMode[] {
   const modes = Object.keys(AGENT_ALLOWED_OPERATIONS) as NotepadWriteMode[];
   return modes.filter((mode) => AGENT_ALLOWED_OPERATIONS[mode].has(operation));
+}
+
+/**
+ * The commented passage stated against the notepad's current canonical text.
+ * Both readers of a comment get it from here, so the agent listing and the
+ * review surface never disagree about whether a quote still holds.
+ */
+function resolveCommentPassage(
+  comment: NotepadComment,
+  content: string,
+): NotepadCommentPassage {
+  return {
+    quote: comment.anchor.quote,
+    location: describeNotepadCommentLocation(comment.anchor),
+    state: resolveNotepadCommentAnchor(comment.anchor, content).state,
+  };
 }
 
 /**
@@ -392,6 +522,35 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
       authorKind: input.author.kind,
     });
     return { ok: true, value: written.notepad };
+  }
+
+  /**
+   * A comment is only ever addressable through the notepad it was written on,
+   * so a comment id borrowed from another notepad resolves to nothing rather
+   * than to someone else's review.
+   */
+  async function findCommentOfNotepad(
+    notepadId: string,
+    commentId: string,
+  ): Promise<NotepadComment | null> {
+    const comment = await deps.comments.find(commentId);
+    return comment !== null && comment.notepadId === notepadId ? comment : null;
+  }
+
+  /**
+   * One content-free frame for every review act. The open panel refetches the
+   * notepad's comments on any of them, so the change kind does not name which
+   * act occurred — and the frame never carries comment text.
+   */
+  async function publishCommentActivity(
+    notepadId: string,
+    authorKind: NotepadAuthor["kind"],
+  ): Promise<void> {
+    const notepad = await deps.repo.find(notepadId);
+    // A notepad deleted between the comment write and this publication has
+    // already announced its own deletion; there is nothing left to patch.
+    if (notepad === null) return;
+    publishChange("comment-activity", notepad, { authorKind });
   }
 
   return {
@@ -578,6 +737,142 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
       if (notepad === null) return notFound(notepadId);
       const revisions = await deps.repo.listRevisions(notepadId, limit);
       return { ok: true, value: revisions };
+    },
+
+    async createComment(notepadId, input) {
+      const parsed = createNotepadCommentInputSchema.safeParse(input);
+      if (!parsed.success) return validationFailed(parsed.error);
+      const { anchor, body, author } = parsed.data;
+
+      const created = await deps.comments.create({
+        id: deps.generateId(),
+        notepadId,
+        anchor,
+        body,
+        authorKind: author.kind,
+        authorConversationId:
+          author.kind === "agent" ? author.conversationId : null,
+        createdAt: deps.now(),
+      });
+      if (created.status === "missing_notepad") return notFound(notepadId);
+
+      logger.info("notepads.service.comment_created", {
+        notepadId,
+        commentId: created.comment.id,
+        authorKind: author.kind,
+      });
+      await publishCommentActivity(notepadId, author.kind);
+      return { ok: true, value: created.comment };
+    },
+
+    async listComments(notepadId, query) {
+      const parsed = notepadCommentListQuerySchema.safeParse(query);
+      if (!parsed.success) return validationFailed(parsed.error);
+
+      const notepad = await deps.repo.find(notepadId);
+      if (notepad === null) return notFound(notepadId);
+
+      const threads = await deps.comments.list({
+        notepadId,
+        ...(parsed.data.status !== undefined
+          ? { status: parsed.data.status }
+          : {}),
+      });
+      return {
+        ok: true,
+        value: threads.map((thread) => ({
+          ...thread,
+          passage: resolveCommentPassage(thread.comment, notepad.content),
+        })),
+      };
+    },
+
+    async replyToComment(notepadId, commentId, input) {
+      const parsed = replyToNotepadCommentInputSchema.safeParse(input);
+      if (!parsed.success) return validationFailed(parsed.error);
+      const { body, author } = parsed.data;
+
+      const target = await findCommentOfNotepad(notepadId, commentId);
+      if (target === null) return commentNotFound(notepadId, commentId);
+
+      const added = await deps.comments.addReply({
+        id: deps.generateId(),
+        commentId,
+        body,
+        authorKind: author.kind,
+        authorConversationId:
+          author.kind === "agent" ? author.conversationId : null,
+        createdAt: deps.now(),
+      });
+      // The comment was there a moment ago; a delete that landed in between is
+      // the same actionable fact as never having found it.
+      if (added.status === "missing_comment") {
+        return commentNotFound(notepadId, commentId);
+      }
+
+      logger.info("notepads.service.comment_replied", {
+        notepadId,
+        commentId,
+        authorKind: author.kind,
+      });
+      await publishCommentActivity(notepadId, author.kind);
+      return { ok: true, value: added.reply };
+    },
+
+    async setCommentStatus(notepadId, commentId, input) {
+      const parsed = setNotepadCommentStatusInputSchema.safeParse(input);
+      if (!parsed.success) return validationFailed(parsed.error);
+      const { status, author } = parsed.data;
+
+      if (author.kind === "agent") {
+        logger.info("notepads.service.comment_user_act_refused", {
+          notepadId,
+          commentId,
+          act: status === "resolved" ? "resolve" : "reopen",
+        });
+        return commentUserActRefused(
+          status === "resolved" ? "resolve" : "reopen",
+        );
+      }
+
+      const target = await findCommentOfNotepad(notepadId, commentId);
+      if (target === null) return commentNotFound(notepadId, commentId);
+
+      const updated = await deps.comments.updateStatus({
+        commentId,
+        status,
+        updatedAt: deps.now(),
+      });
+      if (updated === null) return commentNotFound(notepadId, commentId);
+
+      logger.info("notepads.service.comment_status_changed", {
+        notepadId,
+        commentId,
+        status,
+      });
+      await publishCommentActivity(notepadId, author.kind);
+      return { ok: true, value: updated };
+    },
+
+    async deleteComment(notepadId, commentId, author) {
+      if (author.kind === "agent") {
+        logger.info("notepads.service.comment_user_act_refused", {
+          notepadId,
+          commentId,
+          act: "delete",
+        });
+        return commentUserActRefused("delete");
+      }
+
+      const target = await findCommentOfNotepad(notepadId, commentId);
+      if (target === null) return commentNotFound(notepadId, commentId);
+
+      const deleted = await deps.comments.delete(commentId);
+      if (deleted === null) return commentNotFound(notepadId, commentId);
+
+      logger.info("notepads.service.comment_deleted", { notepadId, commentId });
+      await publishCommentActivity(notepadId, author.kind);
+      return { ok: true, value: deleted };
     },
 
     async resolveRevision(notepadId, revision) {

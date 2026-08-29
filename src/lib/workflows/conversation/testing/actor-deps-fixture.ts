@@ -151,6 +151,13 @@ export function createActorImplementationDepsFixture(
     getActiveAlignmentVersion: vi.fn(async () => null),
     getLiveTicketBlock: vi.fn(async () => null),
     readNotepadForInjection: vi.fn(async () => null),
+    recordNotepadDeliveries: vi.fn(async () => {}),
+    prepareNotepadChangeNotice: vi.fn(async (conversationId: string) => ({
+      conversationId,
+      block: null,
+      advances: [],
+    })),
+    settleNotepadChangeNotice: vi.fn(async () => {}),
     claimWorkflowResults: vi.fn(async () => []),
     settleWorkflowResults: vi.fn(async () => 0),
     releaseWorkflowResults: vi.fn(async () => 0),

@@ -10,6 +10,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import {
   createNotepadsRepo,
   type NotepadsRepo,
@@ -81,7 +82,8 @@ function buildHandlers(
 
 beforeEach(() => {
   fixture = createPersistenceFixture();
-  repo = createNotepadsRepo(fixture.db, createWriteQueue());
+  const writeQueue = createWriteQueue();
+  repo = createNotepadsRepo(fixture.db, writeQueue);
   contentBase = mkdtempSync(path.join(tmpdir(), "cc-notepad-images-"));
   contentStore = createNotepadContentStore({
     contentRoot: path.join(contentBase, "notepad-content"),
@@ -91,6 +93,7 @@ beforeEach(() => {
   let notepadSeq = 0;
   service = createNotepadService({
     repo,
+    comments: createNotepadCommentsRepo(fixture.db, writeQueue),
     publish,
     deleteNotepadContent: (notepadId) => contentStore.deleteNotepad(notepadId),
     now: () => new Date(Date.UTC(2026, 7, 27, 9, 0, 0)).toISOString(),

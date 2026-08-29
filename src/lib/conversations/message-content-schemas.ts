@@ -51,6 +51,36 @@ export type DocumentFeedbackPayload = z.infer<
   typeof documentFeedbackPayloadSchema
 >;
 
+/**
+ * One dispatched notepad review comment. Identity is the comment's own id — a
+ * notepad has no path, and `location` is prose ("§ Heading · L12") derived from
+ * the anchor for the reader, not an address anything resolves by.
+ */
+export const notepadFeedbackItemSchema = z.object({
+  commentId: z.string(),
+  location: z.string(),
+  quote: z.string(),
+  body: z.string(),
+});
+export type NotepadFeedbackItem = z.infer<typeof notepadFeedbackItemSchema>;
+
+/**
+ * The structured notepad-dispatch payload threaded through the prompt/queue
+ * pipeline. `notepadRefXml` is the canonical `<notepad-ref />` tag delivered
+ * with the comments: the drained queue path re-derives the agent-facing prose
+ * from this payload alone and cannot read the notepad to rebuild the tag, so
+ * the reference travels with the dispatch rather than being looked up again.
+ */
+export const notepadFeedbackPayloadSchema = z.object({
+  notepadId: z.string(),
+  notepadName: z.string(),
+  notepadRefXml: z.string(),
+  items: z.array(notepadFeedbackItemSchema),
+});
+export type NotepadFeedbackPayload = z.infer<
+  typeof notepadFeedbackPayloadSchema
+>;
+
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   // The agent's internal reasoning, surfaced separately from its answer text.
@@ -112,6 +142,17 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("document_feedback"),
     items: z.array(documentFeedbackItemSchema),
+  }),
+  // Notepad review comments dispatched to the conversation. Identity is
+  // notepad-native — the notepad's id and the dispatched comment ids — never a
+  // synthetic docPath, so this stays a separate block from `document_feedback`
+  // rather than a generalized feedback-source union.
+  z.object({
+    type: z.literal("notepad_feedback"),
+    notepadId: z.string(),
+    notepadName: z.string(),
+    notepadRefXml: z.string(),
+    items: z.array(notepadFeedbackItemSchema),
   }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;

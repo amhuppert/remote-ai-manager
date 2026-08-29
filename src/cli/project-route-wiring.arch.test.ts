@@ -142,6 +142,16 @@ const NOTEPAD_BODY = {
   updatedAt: "2026-08-01T00:00:00.000Z",
 };
 
+/** A reply the comment group's response parsing accepts. */
+const COMMENT_REPLY_BODY = {
+  id: "reply-1",
+  commentId: "comment-1",
+  body: "answered",
+  authorKind: "agent",
+  authorConversationId: "conv-1",
+  createdAt: "2026-08-01T00:00:00.000Z",
+};
+
 /**
  * Project-supported commands that issue a request with inline arguments. Each
  * entry is a real `cctl` invocation driven through the production dispatch; the
@@ -218,6 +228,24 @@ const PROJECT_SCOPE_INVOCATIONS: {
       "more",
     ],
     body: { notepad: NOTEPAD_BODY },
+  },
+  {
+    name: "notepad comment list",
+    argv: ["notepad", "comment", "list", "notepad-1"],
+    body: { comments: [] },
+  },
+  {
+    name: "notepad comment reply",
+    argv: [
+      "notepad",
+      "comment",
+      "reply",
+      "notepad-1",
+      "comment-1",
+      "--body",
+      "answered",
+    ],
+    body: { reply: COMMENT_REPLY_BODY },
   },
   {
     name: "agent list",

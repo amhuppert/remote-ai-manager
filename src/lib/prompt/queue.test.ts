@@ -56,6 +56,15 @@ const getNextImageIndexMock = vi.fn();
 const getProjectDisplayNameMock = vi.fn();
 const queueCapabilityForBackendMock = vi.fn();
 const readNotepadForInjectionMock = vi.fn(async () => null);
+const recordNotepadDeliveriesMock = vi.fn(async () => {});
+const prepareNotepadChangeNoticeMock = vi.fn(
+  async (conversationId: string) => ({
+    conversationId,
+    block: null as string | null,
+    advances: [],
+  }),
+);
+const settleNotepadChangeNoticeMock = vi.fn(async () => {});
 
 const deps: QueueMessageDeps = {
   enqueue: enqueueMock,
@@ -69,6 +78,9 @@ const deps: QueueMessageDeps = {
   getProjectDisplayName: getProjectDisplayNameMock,
   queueCapabilityForBackend: queueCapabilityForBackendMock,
   readNotepadForInjection: readNotepadForInjectionMock,
+  recordNotepadDeliveries: recordNotepadDeliveriesMock,
+  prepareNotepadChangeNotice: prepareNotepadChangeNoticeMock,
+  settleNotepadChangeNotice: settleNotepadChangeNoticeMock,
 };
 
 const baseParams = {
@@ -481,6 +493,60 @@ describe("queueMessage in_turn", () => {
     ]);
   });
 
+  it("delivers a notepad dispatch as backend-safe prose and records the typed block in the transcript", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const notepadFeedback = {
+      notepadId: "np-1",
+      notepadName: "Release plan",
+      notepadRefXml:
+        '<notepad-ref notepad-id="np-1" name="Release plan" scope="global" read-command="cctl notepad get np-1" />',
+      items: [
+        {
+          commentId: "c-1",
+          location: "§ Rollout · L12",
+          quote: "ship on Friday",
+          body: "deploys are frozen on Friday",
+        },
+      ],
+    };
+    const expectedBlock = { type: "notepad_feedback", ...notepadFeedback };
+
+    await queueMessage({
+      ...baseParams,
+      text: "Notepad review comments:\n\nderivable prose",
+      notepadFeedback,
+      backend: "claude",
+      deps,
+    });
+
+    // The durable entry carries the typed block, not the derivable prose.
+    expect(enqueueMock).toHaveBeenCalledWith({
+      ...baseParams,
+      content: [expectedBlock],
+    });
+
+    // The backend receives prose text only — a notepad_feedback block is not a
+    // valid SDK content block and must never reach queueUserInput.
+    const deliveredContent = (
+      queueUserInputMock.mock.calls[0]![0] as {
+        content: Array<{ type: string; text?: string }>;
+      }
+    ).content;
+    expect(deliveredContent).toHaveLength(1);
+    expect(deliveredContent[0]!.type).toBe("text");
+    expect(deliveredContent[0]!.text).toContain("§ Rollout · L12");
+    expect(deliveredContent[0]!.text).toContain("ship on Friday");
+    expect(deliveredContent[0]!.text).toContain("deploys are frozen on Friday");
+    expect(deliveredContent[0]!.text).toContain(notepadFeedback.notepadRefXml);
+
+    const entry = appendTranscriptEntryMock.mock.calls[0]![1] as {
+      content: unknown;
+    };
+    expect(entry.content).toEqual([expectedBlock]);
+  });
+
   it("persists images and writes image_ref blocks (no base64 in transcript)", async () => {
     const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
@@ -795,5 +861,248 @@ describe("queueMessage notepad injection", () => {
 
     expect(readNotepadForInjection).not.toHaveBeenCalled();
     expect(deliveredText(queueUserInputMock)).toBe("plain message");
+  });
+
+  it("records the notepad as delivered to the conversation whose reference it expanded", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      ...baseParams,
+      text: `Read ${NOTEPAD_REF} first.`,
+      backend: "claude",
+      deps: {
+        ...deps,
+        readNotepadForInjection: vi.fn(async (notepadId: string) =>
+          notepadId === "np-1"
+            ? {
+                id: "np-1",
+                name: "Design Notes",
+                revision: 4,
+                writeMode: "read-only" as const,
+                content: "Canonical body.",
+              }
+            : null,
+        ),
+      },
+    });
+
+    expect(recordNotepadDeliveriesMock).toHaveBeenCalledWith({
+      conversationId: baseParams.conversationId,
+      notepads: [{ notepadId: "np-1", revision: 4 }],
+    });
+  });
+
+  it("records nothing when the message carried no notepad reference", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      ...baseParams,
+      text: "plain message",
+      backend: "claude",
+      deps,
+    });
+
+    expect(recordNotepadDeliveriesMock).not.toHaveBeenCalled();
+  });
+
+  it("records nothing for a dangling reference — a deleted notepad was never delivered", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      ...baseParams,
+      text: `Read ${NOTEPAD_REF}`,
+      backend: "claude",
+      deps: { ...deps, readNotepadForInjection: vi.fn(async () => null) },
+    });
+
+    expect(recordNotepadDeliveriesMock).not.toHaveBeenCalled();
+  });
+
+  describe("change notices", () => {
+    const NOTICE_BLOCK = [
+      "<notepad-changes>",
+      "<notepad-change>",
+      "id: np-1",
+      "revision: 5",
+      "</notepad-change>",
+      "</notepad-changes>",
+    ].join("\n");
+
+    function preparedNotice() {
+      return {
+        conversationId: baseParams.conversationId,
+        block: NOTICE_BLOCK,
+        advances: [
+          {
+            conversationId: baseParams.conversationId,
+            notepadId: "np-1",
+            revision: 5,
+            openComments: { count: 0, latestCreatedAt: null },
+            updatedAt: "2026-08-28T12:00:00.000Z",
+          },
+        ],
+      };
+    }
+
+    it("carries the notice a live turn would, while the durable row and transcript keep the user's text", async () => {
+      const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+      getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+      await queueMessage({
+        ...baseParams,
+        text: "carry on",
+        backend: "claude",
+        deps: {
+          ...deps,
+          prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+        },
+      });
+
+      const delivered = deliveredText(queueUserInputMock);
+      expect(delivered).toContain(NOTICE_BLOCK);
+      expect(delivered.indexOf(NOTICE_BLOCK)).toBeLessThan(
+        delivered.indexOf("carry on"),
+      );
+
+      const enqueued = enqueueMock.mock.calls.at(-1)![0] as {
+        content: Array<{ type: string; text?: string }>;
+      };
+      expect(blockText(enqueued.content)).toBe("carry on");
+      const appended = appendTranscriptEntryMock.mock.calls.at(-1)![1] as {
+        content: Array<{ type: string; text?: string }>;
+      };
+      expect(blockText(appended.content)).toBe("carry on");
+    });
+
+    it("prepends nothing when no tracked notepad changed", async () => {
+      const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+      getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+      await queueMessage({
+        ...baseParams,
+        text: "carry on",
+        backend: "claude",
+        deps,
+      });
+
+      expect(deliveredText(queueUserInputMock)).toBe("carry on");
+    });
+
+    it("advances the watermarks only after the backend accepts the input", async () => {
+      const settleNotepadChangeNotice = vi.fn(async () => {});
+      const queueUserInputMock = vi.fn().mockImplementation(async () => {
+        expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
+      });
+      getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+      await queueMessage({
+        ...baseParams,
+        text: "carry on",
+        backend: "claude",
+        deps: {
+          ...deps,
+          prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+          settleNotepadChangeNotice,
+        },
+      });
+
+      expect(settleNotepadChangeNotice).toHaveBeenCalledWith(preparedNotice());
+    });
+
+    it("leaves the watermarks untouched when live delivery fails", async () => {
+      const settleNotepadChangeNotice = vi.fn(async () => {});
+      getRuntimeMock.mockReturnValue({
+        queueUserInput: vi.fn().mockRejectedValue(new Error("backend down")),
+      });
+
+      await queueMessage({
+        ...baseParams,
+        text: "carry on",
+        backend: "claude",
+        deps: {
+          ...deps,
+          prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+          settleNotepadChangeNotice,
+        },
+      });
+
+      expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
+      expect(markPendingMock).toHaveBeenCalled();
+    });
+
+    it("settles the notice even when transcript persistence fails after acceptance", async () => {
+      // queueUserInput resolving IS backend acceptance: the agent has the
+      // notice. Failing to write the transcript afterwards must not strand the
+      // watermark and re-deliver the same notice on the next message.
+      const settleNotepadChangeNotice = vi.fn(async () => {});
+      getRuntimeMock.mockReturnValue({
+        queueUserInput: vi.fn().mockResolvedValue(undefined),
+      });
+      appendTranscriptEntryMock.mockRejectedValueOnce(
+        new Error("transcript write failed"),
+      );
+
+      await queueMessage({
+        ...baseParams,
+        text: "carry on",
+        backend: "claude",
+        deps: {
+          ...deps,
+          prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+          settleNotepadChangeNotice,
+        },
+      }).catch(() => {});
+
+      expect(settleNotepadChangeNotice).toHaveBeenCalledWith(preparedNotice());
+    });
+
+    it("delivers the message without a notice when preparing one fails", async () => {
+      const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+      getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+      await queueMessage({
+        ...baseParams,
+        text: "carry on",
+        backend: "claude",
+        deps: {
+          ...deps,
+          prepareNotepadChangeNotice: vi.fn(async () => {
+            throw new Error("state store unavailable");
+          }),
+        },
+      });
+
+      expect(deliveredText(queueUserInputMock)).toBe("carry on");
+      expect(markDeliveredMock).toHaveBeenCalled();
+    });
+  });
+
+  it("still delivers the message when recording the watermark fails", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      ...baseParams,
+      text: `Read ${NOTEPAD_REF}`,
+      backend: "claude",
+      deps: {
+        ...deps,
+        readNotepadForInjection: vi.fn(async () => ({
+          id: "np-1",
+          name: "Design Notes",
+          revision: 4,
+          writeMode: "read-only" as const,
+          content: "Canonical body.",
+        })),
+        recordNotepadDeliveries: vi.fn(async () => {
+          throw new Error("state store unavailable");
+        }),
+      },
+    });
+
+    expect(deliveredText(queueUserInputMock)).toContain("Canonical body.");
   });
 });

@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { queueDeliveryTimingSchema } from "@/lib/agent-backends/descriptor";
-import { documentFeedbackPayloadSchema } from "@/lib/conversations/message-content-schemas";
+import {
+  documentFeedbackPayloadSchema,
+  notepadFeedbackPayloadSchema,
+} from "@/lib/conversations/message-content-schemas";
 import { queuedMessageViewSchema } from "@/lib/conversations/message-queue-schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
@@ -27,6 +30,7 @@ export const runPromptRequestSchema = z
     images: z.array(imagePayloadSchema).max(5).optional(),
     backend: agentBackendSchema.optional(),
     documentFeedback: documentFeedbackPayloadSchema.optional(),
+    notepadFeedback: notepadFeedbackPayloadSchema.optional(),
     collab: z
       .object({
         negotiationRounds: z.number().int().min(1).max(20).optional(),
@@ -42,10 +46,11 @@ export const runPromptRequestSchema = z
     (data) =>
       data.prompt.length > 0 ||
       (data.images && data.images.length > 0) ||
-      (data.documentFeedback?.items.length ?? 0) > 0,
+      (data.documentFeedback?.items.length ?? 0) > 0 ||
+      (data.notepadFeedback?.items.length ?? 0) > 0,
     {
       message:
-        "Either prompt text, at least one image, or document feedback is required",
+        "Either prompt text, at least one image, or review feedback is required",
     },
   );
 export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
@@ -63,6 +68,7 @@ export const queueEnqueueRequestSchema = z
     submittedPendingPromptText: z.string().optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
     documentFeedback: documentFeedbackPayloadSchema.optional(),
+    notepadFeedback: notepadFeedbackPayloadSchema.optional(),
     modelSelection: backendModelSelectionSchema.optional(),
   })
   .strict()
@@ -70,10 +76,11 @@ export const queueEnqueueRequestSchema = z
     (data) =>
       (data.text?.trim().length ?? 0) > 0 ||
       (data.images?.length ?? 0) > 0 ||
-      (data.documentFeedback?.items.length ?? 0) > 0,
+      (data.documentFeedback?.items.length ?? 0) > 0 ||
+      (data.notepadFeedback?.items.length ?? 0) > 0,
     {
       message:
-        "Either message text, at least one image, or document feedback is required",
+        "Either message text, at least one image, or review feedback is required",
     },
   );
 export type QueueEnqueueRequest = z.infer<typeof queueEnqueueRequestSchema>;

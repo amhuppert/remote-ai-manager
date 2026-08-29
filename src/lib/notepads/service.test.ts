@@ -10,6 +10,10 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import {
+  createNotepadCommentsRepo,
+  type NotepadCommentsRepo,
+} from "@/lib/state-store/notepad-comments-repo";
+import {
   createNotepadsRepo,
   type NotepadsRepo,
 } from "@/lib/state-store/notepads-repo";
@@ -34,6 +38,7 @@ const USER: NotepadAuthor = { kind: "user" };
 
 let fixture: PersistenceFixture;
 let repo: NotepadsRepo;
+let commentsRepo: NotepadCommentsRepo;
 let service: NotepadService;
 let contentStore: NotepadContentStore;
 let contentBase: string;
@@ -50,7 +55,9 @@ beforeEach(() => {
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
   fixture.seedProject(OTHER_PROJECT);
-  repo = createNotepadsRepo(fixture.db, createWriteQueue());
+  const writeQueue = createWriteQueue();
+  repo = createNotepadsRepo(fixture.db, writeQueue);
+  commentsRepo = createNotepadCommentsRepo(fixture.db, writeQueue);
   contentBase = mkdtempSync(path.join(tmpdir(), "cc-notepad-service-"));
   // The real content store against a temp root: a JS fake could not prove that
   // deleting a notepad actually removes its image bytes from disk.
@@ -63,6 +70,7 @@ beforeEach(() => {
   idSeq = 0;
   service = createNotepadService({
     repo,
+    comments: commentsRepo,
     publish,
     deleteNotepadContent: (notepadId) => contentStore.deleteNotepad(notepadId),
     now: () => {
@@ -292,6 +300,7 @@ describe("write modes on agent writes", () => {
     };
     const racingService = createNotepadService({
       repo: racingRepo,
+      comments: commentsRepo,
       publish,
       deleteNotepadContent: (notepadId) =>
         contentStore.deleteNotepad(notepadId),
@@ -770,6 +779,7 @@ describe("notepad-changed publication", () => {
   it("still commits the mutation when publication fails", async () => {
     const failing = createNotepadService({
       repo,
+      comments: commentsRepo,
       publish: () => {
         throw new Error("transport is down");
       },
@@ -855,6 +865,7 @@ describe("image lifecycle", () => {
   it("still deletes the notepad when its content cleanup fails", async () => {
     const stranded = createNotepadService({
       repo,
+      comments: commentsRepo,
       publish,
       deleteNotepadContent: () =>
         Promise.reject(new Error("content root is read-only")),
@@ -869,5 +880,263 @@ describe("image lifecycle", () => {
     expect(deleted.ok).toBe(true);
     expect(await repo.find(notepad.id)).toBeNull();
     expect(await repo.listImages(notepad.id)).toEqual([]);
+  });
+});
+
+describe("review comments", () => {
+  const ANCHOR = {
+    sectionId: "release-notes",
+    headingLabel: "Release notes",
+    line: 3,
+    charStart: 4,
+    charEnd: 13,
+    quote: "migration",
+    prefix: "The ",
+    suffix: " lands",
+    notepadRevision: 1,
+  };
+
+  async function commentOn(notepadId: string, body = "Name the owner.") {
+    const result = await service.createComment(notepadId, {
+      anchor: ANCHOR,
+      body,
+      author: USER,
+    });
+    if (!result.ok) {
+      throw new Error(`expected comment create, got ${result.error.code}`);
+    }
+    return result.value;
+  }
+
+  it("persists a comment with its anchor and author, open and unresolved", async () => {
+    const notepad = await createGlobal("Reviewed");
+
+    const comment = await commentOn(notepad.id);
+
+    expect(comment.status).toBe("open");
+    expect(comment.anchor).toEqual(ANCHOR);
+    expect(comment.authorKind).toBe("user");
+    expect(await commentsRepo.find(comment.id)).toEqual(comment);
+  });
+
+  it("reports a missing notepad rather than orphaning a comment", async () => {
+    const result = await service.createComment("notepad-that-never-existed", {
+      anchor: ANCHOR,
+      body: "orphan",
+      author: USER,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("not_found");
+  });
+
+  it("lists a notepad's comments with replies and narrows by status", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const open = await commentOn(notepad.id, "still open");
+    const settled = await commentOn(notepad.id, "will be resolved");
+    await service.replyToComment(notepad.id, open.id, {
+      body: "on it",
+      author: AGENT,
+    });
+    await service.setCommentStatus(notepad.id, settled.id, {
+      status: "resolved",
+      author: USER,
+    });
+
+    const all = await service.listComments(notepad.id, {});
+    expect(all.ok).toBe(true);
+    if (!all.ok) return;
+    expect(all.value.map((thread) => thread.comment.id)).toEqual([
+      open.id,
+      settled.id,
+    ]);
+    expect(all.value[0]?.replies.map((reply) => reply.body)).toEqual(["on it"]);
+
+    const openOnly = await service.listComments(notepad.id, { status: "open" });
+    expect(openOnly.ok && openOnly.value.map((t) => t.comment.id)).toEqual([
+      open.id,
+    ]);
+  });
+
+  it("states each comment's passage against the notepad's current canonical text", async () => {
+    // The fixture anchor quotes "migration" on line 3 of this text.
+    const notepad = await createGlobal("Reviewed", {
+      content: "# Release notes\n\nThe migration lands on Tuesday.\n",
+    });
+    const comment = await commentOn(notepad.id);
+
+    const listed = await service.listComments(notepad.id, {});
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value[0]?.passage).toEqual({
+      quote: "migration",
+      location: "Release notes, line 3",
+      state: "anchored",
+    });
+
+    await service.writeContent(notepad.id, {
+      operation: "update",
+      content: "# Release notes\n\nThe rollout lands on Tuesday.\n",
+      author: USER,
+    });
+
+    // The comment stays listed with its captured quote; only its state changes,
+    // because an anchor is never moved onto text it did not quote.
+    const afterEdit = await service.listComments(notepad.id, {});
+    expect(afterEdit.ok).toBe(true);
+    if (!afterEdit.ok) return;
+    expect(afterEdit.value[0]?.comment.id).toBe(comment.id);
+    expect(afterEdit.value[0]?.passage).toEqual({
+      quote: "migration",
+      location: "Release notes, line 3",
+      state: "stale",
+    });
+  });
+
+  it("accepts an agent reply on a read-only notepad, attributed to the conversation", async () => {
+    // A reply is review discussion, not content mutation, so the write mode —
+    // the user's control over what agents may WRITE — does not govern it.
+    const notepad = await createGlobal("Locked", { writeMode: "read-only" });
+    const comment = await commentOn(notepad.id);
+
+    const replied = await service.replyToComment(notepad.id, comment.id, {
+      body: "Addressed in the draft.",
+      author: AGENT,
+    });
+
+    expect(replied.ok).toBe(true);
+    if (!replied.ok) return;
+    expect(replied.value.authorKind).toBe("agent");
+    expect(replied.value.authorConversationId).toBe("conv-writer");
+    const thread = await commentsRepo.findThread(comment.id);
+    expect(thread?.replies.map((reply) => reply.body)).toEqual([
+      "Addressed in the draft.",
+    ]);
+  });
+
+  it("refuses an agent-attributed resolve, reopen, and delete, naming it a user act", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const comment = await commentOn(notepad.id);
+
+    for (const attempt of [
+      () =>
+        service.setCommentStatus(notepad.id, comment.id, {
+          status: "resolved",
+          author: AGENT,
+        }),
+      () =>
+        service.setCommentStatus(notepad.id, comment.id, {
+          status: "open",
+          author: AGENT,
+        }),
+      () => service.deleteComment(notepad.id, comment.id, AGENT),
+    ]) {
+      const result = await attempt();
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.code).toBe("comment_user_act_refused");
+      expect(result.error.message).toMatch(/user/i);
+    }
+
+    // The comment is untouched by every refused attempt.
+    expect(await commentsRepo.find(comment.id)).toEqual(comment);
+  });
+
+  it("resolves, reopens, and deletes for the user, each persisted", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const comment = await commentOn(notepad.id);
+
+    const resolved = await service.setCommentStatus(notepad.id, comment.id, {
+      status: "resolved",
+      author: USER,
+    });
+    expect(resolved.ok && resolved.value.status).toBe("resolved");
+    expect((await commentsRepo.find(comment.id))?.status).toBe("resolved");
+    const openAfterResolve = await service.listComments(notepad.id, {
+      status: "open",
+    });
+    expect(openAfterResolve.ok && openAfterResolve.value).toEqual([]);
+
+    const reopened = await service.setCommentStatus(notepad.id, comment.id, {
+      status: "open",
+      author: USER,
+    });
+    expect(reopened.ok && reopened.value.status).toBe("open");
+
+    const deleted = await service.deleteComment(notepad.id, comment.id, USER);
+    expect(deleted.ok).toBe(true);
+    expect(await commentsRepo.find(comment.id)).toBeNull();
+    const gone = await service.deleteComment(notepad.id, comment.id, USER);
+    expect(gone.ok).toBe(false);
+    if (gone.ok) return;
+    expect(gone.error.code).toBe("comment_not_found");
+  });
+
+  it("refuses to reach a comment through another notepad's id", async () => {
+    const mine = await createGlobal("Mine");
+    const theirs = await createGlobal("Theirs");
+    const comment = await commentOn(mine.id);
+
+    const result = await service.setCommentStatus(theirs.id, comment.id, {
+      status: "resolved",
+      author: USER,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("comment_not_found");
+    expect((await commentsRepo.find(comment.id))?.status).toBe("open");
+  });
+
+  it("publishes one content-free comment-activity change per comment act", async () => {
+    const notepad = await createGlobal("Reviewed");
+    published = [];
+
+    const comment = await commentOn(notepad.id);
+    await service.replyToComment(notepad.id, comment.id, {
+      body: "on it",
+      author: AGENT,
+    });
+    await service.setCommentStatus(notepad.id, comment.id, {
+      status: "resolved",
+      author: USER,
+    });
+    await service.deleteComment(notepad.id, comment.id, USER);
+
+    const events = notepadEvents();
+    expect(events.map((event) => event.change)).toEqual([
+      "comment-activity",
+      "comment-activity",
+      "comment-activity",
+      "comment-activity",
+    ]);
+    for (const event of events) {
+      expect(event.notepadId).toBe(notepad.id);
+      // Comment activity leaves the notepad's content untouched, so the frame
+      // carries no head revision — and never any comment text.
+      expect(event.revision).toBeNull();
+      expect(JSON.stringify(event)).not.toContain("on it");
+    }
+    expect(events.map((event) => event.authorKind)).toEqual([
+      "user",
+      "agent",
+      "user",
+      "user",
+    ]);
+  });
+
+  it("refuses a comment whose body is empty", async () => {
+    const notepad = await createGlobal("Reviewed");
+
+    const result = await service.createComment(notepad.id, {
+      anchor: ANCHOR,
+      body: "",
+      author: USER,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("validation_failed");
   });
 });

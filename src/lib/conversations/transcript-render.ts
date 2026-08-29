@@ -304,6 +304,19 @@ function renderBlockLines(
           `📝 ${item.docPath}:${item.line} ${item.headingLabel} — ${truncate(item.note, FEEDBACK_NOTE_MAX_CHARS)}`,
       );
     }
+    case "notepad_feedback": {
+      if (options.outline) return [];
+      // The notepad is named once and the comments listed under it: a dispatch
+      // is one act on one notepad, unlike document feedback where each item
+      // carries its own path.
+      return [
+        `📝 notepad ${block.notepadName} (${block.notepadId}) — ${block.items.length} comment${block.items.length === 1 ? "" : "s"}`,
+        ...block.items.map(
+          (item) =>
+            `   ${item.location} — ${truncate(item.body, FEEDBACK_NOTE_MAX_CHARS)}`,
+        ),
+      ];
+    }
   }
 }
 

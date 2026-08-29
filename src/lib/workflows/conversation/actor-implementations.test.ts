@@ -3534,6 +3534,325 @@ describe("executePromptForMachine", () => {
       expect(result.error).toBeNull();
       expect(deliveredPromptText()).toBe(`Resilient ${NOTEPAD_REF}`);
     });
+
+    it("records the notepad as delivered to this conversation at the expansion seam", async () => {
+      const recordNotepadDeliveries = vi.fn(async () => {});
+      const notepadDeps = createMockDeps({
+        readNotepadForInjection: vi.fn(async () => ({
+          id: "np-1",
+          name: "Design Notes",
+          revision: 4,
+          writeMode: "full-edit" as const,
+          content: "Body line.",
+        })),
+        recordNotepadDeliveries,
+      });
+      setActorDeps(notepadDeps);
+      const input = makeExecutePromptInput({
+        promptText: `Please review ${NOTEPAD_REF} today.`,
+      });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordNotepadDeliveries).toHaveBeenCalledWith({
+        conversationId: input.conversationId,
+        notepads: [{ notepadId: "np-1", revision: 4 }],
+      });
+    });
+
+    it("records nothing for a turn carrying no notepad reference", async () => {
+      const recordNotepadDeliveries = vi.fn(async () => {});
+      setActorDeps(createMockDeps({ recordNotepadDeliveries }));
+      const input = makeExecutePromptInput({ promptText: "plain turn" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordNotepadDeliveries).not.toHaveBeenCalled();
+    });
+
+    it("records nothing for a dangling reference — a deleted notepad was never delivered", async () => {
+      const recordNotepadDeliveries = vi.fn(async () => {});
+      setActorDeps(
+        createMockDeps({
+          readNotepadForInjection: vi.fn(async () => null),
+          recordNotepadDeliveries,
+        }),
+      );
+      const input = makeExecutePromptInput({
+        promptText: `Look: ${NOTEPAD_REF}`,
+      });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordNotepadDeliveries).not.toHaveBeenCalled();
+    });
+
+    it("still delivers the turn when recording the watermark fails", async () => {
+      setActorDeps(
+        createMockDeps({
+          readNotepadForInjection: vi.fn(async () => ({
+            id: "np-1",
+            name: "Design Notes",
+            revision: 4,
+            writeMode: "full-edit" as const,
+            content: "Body line.",
+          })),
+          recordNotepadDeliveries: vi.fn(async () => {
+            throw new Error("state store unavailable");
+          }),
+        }),
+      );
+      const input = makeExecutePromptInput({
+        promptText: `Please review ${NOTEPAD_REF}`,
+      });
+      registerRuntime(input);
+
+      const result = await executePromptForMachine(input);
+
+      expect(result.error).toBeNull();
+      expect(deliveredPromptText()).toContain("Body line.");
+    });
+
+    describe("notepad change notices", () => {
+      const NOTICE_BLOCK = [
+        "<notepad-changes>",
+        "<notepad-change>",
+        "id: np-1",
+        "revision: 5",
+        "</notepad-change>",
+        "</notepad-changes>",
+      ].join("\n");
+
+      function preparedNotice() {
+        return {
+          conversationId: "conv-1",
+          block: NOTICE_BLOCK,
+          advances: [
+            {
+              conversationId: "conv-1",
+              notepadId: "np-1",
+              revision: 5,
+              openComments: { count: 0, latestCreatedAt: null },
+              updatedAt: "2026-08-28T12:00:00.000Z",
+            },
+          ],
+        };
+      }
+
+      it("prepends the notice to the agent's prompt while the transcript keeps the user's text", async () => {
+        const append = vi.fn<
+          ActorImplementationDeps["safeAppendTranscriptEntry"]
+        >(async () => {});
+        setActorDeps(
+          createMockDeps({
+            safeAppendTranscriptEntry: append,
+            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        const delivered = deliveredPromptText();
+        expect(delivered).toContain(NOTICE_BLOCK);
+        expect(delivered.indexOf(NOTICE_BLOCK)).toBeLessThan(
+          delivered.indexOf("carry on"),
+        );
+        const storedUser = append.mock.calls
+          .map(([, entry]) => entry)
+          .find((entry) => entry.role === "user");
+        expect(storedUser?.content).toEqual([
+          { type: "text", text: "carry on" },
+        ]);
+      });
+
+      it("prepends nothing when no tracked notepad changed", async () => {
+        setActorDeps(
+          createMockDeps({
+            prepareNotepadChangeNotice: vi.fn(
+              async (conversationId: string) => ({
+                conversationId,
+                block: null,
+                advances: [],
+              }),
+            ),
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        expect(deliveredPromptText()).toBe("carry on");
+      });
+
+      it("advances the watermarks only once the backend accepts the message", async () => {
+        const settleNotepadChangeNotice = vi.fn(async () => {});
+        setActorDeps(
+          createMockDeps({
+            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+            settleNotepadChangeNotice,
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        mockSendTurn.mockImplementation(
+          async (turnInput: ConversationBackendTurnInput) => {
+            expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
+            await turnInput.onEvent({ type: "input_accepted" });
+            return defaultTurnResult;
+          },
+        );
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        expect(settleNotepadChangeNotice).toHaveBeenCalledWith(
+          preparedNotice(),
+        );
+      });
+
+      it("leaves the watermarks untouched when the turn fails before acceptance", async () => {
+        const settleNotepadChangeNotice = vi.fn(async () => {});
+        setActorDeps(
+          createMockDeps({
+            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+            settleNotepadChangeNotice,
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
+      });
+
+      it("keeps the watermarks advanced when the turn fails after acceptance", async () => {
+        const settleNotepadChangeNotice = vi.fn(async () => {});
+        setActorDeps(
+          createMockDeps({
+            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+            settleNotepadChangeNotice,
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        mockSendTurn.mockImplementation(
+          async (turnInput: ConversationBackendTurnInput) => {
+            await turnInput.onEvent({ type: "input_accepted" });
+            throw new Error("post-ack crash");
+          },
+        );
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        expect(settleNotepadChangeNotice).toHaveBeenCalledTimes(1);
+      });
+
+      it("settles the notice even when an unrelated post-acceptance write fails", async () => {
+        // The backend has already taken the message, so the notice was
+        // delivered. A neighbouring settle failing must not strand the
+        // watermark and make the agent read the same notice twice.
+        const settleNotepadChangeNotice = vi.fn(async () => {});
+        setActorDeps(
+          createMockDeps({
+            prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
+            settleNotepadChangeNotice,
+            claimWorkflowResults: vi.fn(async () => [
+              {
+                executionId: "exec-alpha",
+                boundarySeq: 11,
+                projectPath: "/projects/repo",
+                sessionName: "test-session",
+                originConversationId: "conv-1",
+                payload: { status: "halted", output: "first" },
+                recordedAt: "2026-08-14T12:00:01.000Z",
+                state: "delivering",
+                attemptId: "stream-1",
+                attemptCount: 1,
+                deliveredAt: null,
+                effectsDeliveredAt: null,
+              },
+            ]),
+            settleWorkflowResults: vi.fn(async () => {
+              throw new Error("workflow settle unavailable");
+            }),
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        mockSendTurn.mockImplementation(
+          async (turnInput: ConversationBackendTurnInput) => {
+            await turnInput.onEvent({ type: "input_accepted" });
+            return defaultTurnResult;
+          },
+        );
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        expect(settleNotepadChangeNotice).toHaveBeenCalledWith(
+          preparedNotice(),
+        );
+      });
+
+      it("delivers the turn without a notice when preparing one fails", async () => {
+        const settleNotepadChangeNotice = vi.fn(async () => {});
+        setActorDeps(
+          createMockDeps({
+            prepareNotepadChangeNotice: vi.fn(async () => {
+              throw new Error("state store unavailable");
+            }),
+            settleNotepadChangeNotice,
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        const input = makeExecutePromptInput({ promptText: "carry on" });
+        registerRuntime(input);
+
+        const result = await executePromptForMachine(input);
+
+        expect(result.error).toBeNull();
+        expect(deliveredPromptText()).toBe("carry on");
+        expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
+      });
+
+      it("prepares the notice after recording this message's own notepads", async () => {
+        const order: string[] = [];
+        setActorDeps(
+          createMockDeps({
+            readNotepadForInjection: vi.fn(async () => ({
+              id: "np-1",
+              name: "Design Notes",
+              revision: 4,
+              writeMode: "full-edit" as const,
+              content: "Body line.",
+            })),
+            recordNotepadDeliveries: vi.fn(async () => {
+              order.push("record");
+            }),
+            prepareNotepadChangeNotice: vi.fn(
+              async (conversationId: string) => {
+                order.push("prepare");
+                return { conversationId, block: null, advances: [] };
+              },
+            ),
+          } as unknown as Partial<ActorImplementationDeps>),
+        );
+        const input = makeExecutePromptInput({
+          promptText: `Please review ${NOTEPAD_REF}`,
+        });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        // Content delivered in full this turn needs no notice to re-read it.
+        expect(order).toEqual(["record", "prepare"]);
+      });
+    });
   });
 
   describe("workflow result injection", () => {

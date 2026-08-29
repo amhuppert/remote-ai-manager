@@ -169,6 +169,52 @@ describe("queuedBatchToSubmitPrompt", () => {
     expect(result.promptText).toBe("");
   });
 
+  it("extracts notepadFeedback from a notepad_feedback block so the drained submit re-emits it", () => {
+    const block = {
+      type: "notepad_feedback" as const,
+      notepadId: "np-1",
+      notepadName: "Release plan",
+      notepadRefXml: '<notepad-ref notepad-id="np-1" name="Release plan" />',
+      items: [
+        {
+          commentId: "c-1",
+          location: "§ Rollout · L12",
+          quote: "ship on Friday",
+          body: "deploys are frozen on Friday",
+        },
+      ],
+    };
+    const result = queuedBatchToSubmitPrompt([block]);
+    expect(result.notepadFeedback).toEqual([
+      {
+        notepadId: block.notepadId,
+        notepadName: block.notepadName,
+        notepadRefXml: block.notepadRefXml,
+        items: block.items,
+      },
+    ]);
+    // No prose text block was persisted; the actor re-derives the agent text.
+    expect(result.promptText).toBe("");
+  });
+
+  it("keeps each coalesced notepad dispatch rather than merging two notepads", () => {
+    const dispatch = (notepadId: string, commentId: string) => ({
+      type: "notepad_feedback" as const,
+      notepadId,
+      notepadName: notepadId,
+      notepadRefXml: `<notepad-ref notepad-id="${notepadId}" />`,
+      items: [{ commentId, location: "L1", quote: "q", body: "b" }],
+    });
+    const result = queuedBatchToSubmitPrompt([
+      dispatch("np-1", "c-1"),
+      dispatch("np-2", "c-2"),
+    ]);
+    expect(result.notepadFeedback?.map((f) => f.notepadId)).toEqual([
+      "np-1",
+      "np-2",
+    ]);
+  });
+
   it("merges items from multiple coalesced document_feedback blocks", () => {
     const a = {
       docPath: "a.md",

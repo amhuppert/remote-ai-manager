@@ -295,3 +295,49 @@ describe("registerNotepadSseReactions — open-editor signal", () => {
     expect(queryClient.getQueryState(p1Key)?.isInvalidated).toBe(false);
   });
 });
+
+describe("registerNotepadSseReactions — comment activity", () => {
+  it("refetches the commented notepad's comments so another writer's review activity lands in an open panel", () => {
+    const { fake, queryClient } = setup();
+    const commentsKey = notepadKeys.comments("np-a");
+    const otherCommentsKey = notepadKeys.comments("np-b");
+    queryClient.setQueryData(commentsKey, []);
+    queryClient.setQueryData(otherCommentsKey, []);
+
+    fake.emit(
+      "notepad-changed",
+      changedEvent({ change: "comment-activity", revision: null }),
+    );
+
+    expect(queryClient.getQueryState(commentsKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherCommentsKey)?.isInvalidated).toBe(
+      false,
+    );
+  });
+
+  it("leaves the notepad's own caches alone: a review act changes no notepad state", () => {
+    const { fake, queryClient, recordNotepadExternalWrite } = setup();
+    const listKey = notepadKeys.panelList("p1", "recency", false);
+    queryClient.setQueryData(listKey, []);
+    queryClient.setQueryData(notepadKeys.summary("np-a"), FOUND_SUMMARY);
+    queryClient.setQueryData(notepadKeys.detail("np-a"), detailData());
+
+    fake.emit(
+      "notepad-changed",
+      changedEvent({ change: "comment-activity", revision: null }),
+    );
+
+    // Comments are the only cache a review act touches; nothing here describes
+    // the notepad, so refetching its list, chip, or content would be pure
+    // waste. The comments key nests UNDER the detail key, so invalidating it
+    // never reaches the content it quotes.
+    expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(false);
+    expect(
+      queryClient.getQueryState(notepadKeys.detail("np-a"))?.isInvalidated,
+    ).toBe(false);
+    expect(queryClient.getQueryData(notepadKeys.detail("np-a"))).toEqual(
+      detailData(),
+    );
+    expect(recordNotepadExternalWrite).not.toHaveBeenCalled();
+  });
+});

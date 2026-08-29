@@ -70,3 +70,37 @@ describe("messageContentBlockSchema document_feedback variant", () => {
     expect(messageContentBlockSchema.safeParse(block).success).toBe(false);
   });
 });
+
+describe("messageContentBlockSchema notepad_feedback variant", () => {
+  const block = {
+    type: "notepad_feedback",
+    notepadId: "np-1",
+    notepadName: "Release plan",
+    notepadRefXml: '<notepad-ref notepad-id="np-1" name="Release plan" />',
+    items: [
+      {
+        commentId: "c-1",
+        location: "§ Rollout · L12",
+        quote: "ship on Friday",
+        body: "deploys are frozen on Friday",
+      },
+    ],
+  };
+
+  it("parses a notepad_feedback block carrying notepad and comment identity", () => {
+    expect(messageContentBlockSchema.parse(block)).toEqual(block);
+  });
+
+  it("rejects a notepad_feedback block missing the notepad id", () => {
+    const { notepadId: _dropped, ...withoutId } = block;
+    expect(messageContentBlockSchema.safeParse(withoutId).success).toBe(false);
+  });
+
+  it("rejects a notepad_feedback item missing its comment id", () => {
+    const malformed = {
+      ...block,
+      items: [{ location: "L1", quote: "q", body: "b" }],
+    };
+    expect(messageContentBlockSchema.safeParse(malformed).success).toBe(false);
+  });
+});

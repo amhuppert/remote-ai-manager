@@ -101,6 +101,66 @@ function insertImage(
   ).run(row);
 }
 
+function insertComment(
+  db: Db,
+  overrides: Partial<Record<string, unknown>> = {},
+): void {
+  const row = {
+    id: "c-1",
+    notepad_id: "n-1",
+    section_id: "scratch",
+    heading_label: "Scratch",
+    line: 1,
+    char_start: 0,
+    char_end: 7,
+    quote: "Scratch",
+    prefix: "",
+    suffix: "",
+    notepad_revision: 1,
+    body: "Name the owner.",
+    status: "open",
+    author_kind: "user",
+    author_conversation_id: null,
+    created_at: "2026-08-28T00:00:00.000Z",
+    updated_at: "2026-08-28T00:00:00.000Z",
+    resolved_at: null,
+    ...overrides,
+  };
+  db.prepare(
+    `INSERT INTO notepad_comments
+       (id, notepad_id, section_id, heading_label, line, char_start, char_end,
+        quote, prefix, suffix, notepad_revision, body, status, author_kind,
+        author_conversation_id, created_at, updated_at, resolved_at)
+     VALUES
+       (@id, @notepad_id, @section_id, @heading_label, @line, @char_start,
+        @char_end, @quote, @prefix, @suffix, @notepad_revision, @body, @status,
+        @author_kind, @author_conversation_id, @created_at, @updated_at,
+        @resolved_at)`,
+  ).run(row);
+}
+
+function insertReply(
+  db: Db,
+  overrides: Partial<Record<string, unknown>> = {},
+): void {
+  const row = {
+    id: "cr-1",
+    comment_id: "c-1",
+    body: "Addressed.",
+    author_kind: "agent",
+    author_conversation_id: "conv-1",
+    created_at: "2026-08-28T00:05:00.000Z",
+    ...overrides,
+  };
+  db.prepare(
+    `INSERT INTO notepad_comment_replies
+       (id, comment_id, body, author_kind, author_conversation_id, created_at)
+     VALUES
+       (@id, @comment_id, @body, @author_kind, @author_conversation_id,
+        @created_at)`,
+  ).run(row);
+}
+
 describe("notepad tables DDL", () => {
   let db: Db | undefined;
 
@@ -329,5 +389,136 @@ describe("notepad tables DDL", () => {
     expect(tables).toContain("notepads");
     expect(tables).toContain("notepad_revisions");
     expect(tables).toContain("notepad_images");
+  });
+});
+
+describe("notepad comment tables DDL", () => {
+  let db: Db | undefined;
+
+  afterEach(() => {
+    db?.close();
+    db = undefined;
+  });
+
+  it("creates both comment tables with the documented columns and indexes", () => {
+    db = _createTestDb({ inMemory: true });
+    const tables = tableNames(db);
+    expect(tables).toContain("notepad_comments");
+    expect(tables).toContain("notepad_comment_replies");
+
+    expect(columnNames(db, "notepad_comments")).toEqual([
+      "id",
+      "notepad_id",
+      "section_id",
+      "heading_label",
+      "line",
+      "char_start",
+      "char_end",
+      "quote",
+      "prefix",
+      "suffix",
+      "notepad_revision",
+      "body",
+      "status",
+      "author_kind",
+      "author_conversation_id",
+      "created_at",
+      "updated_at",
+      "resolved_at",
+    ]);
+    expect(columnNames(db, "notepad_comment_replies")).toEqual([
+      "id",
+      "comment_id",
+      "body",
+      "author_kind",
+      "author_conversation_id",
+      "created_at",
+    ]);
+
+    expect(indexNames(db, "notepad_comments")).toContain(
+      "idx_notepad_comments_notepad_status",
+    );
+    expect(indexNames(db, "notepad_comment_replies")).toContain(
+      "idx_notepad_comment_replies_comment",
+    );
+  });
+
+  it("rejects an unknown comment status and an unknown author kind", () => {
+    db = _createTestDb({ inMemory: true });
+    insertNotepad(db);
+    expect(() => insertComment(db!, { status: "dismissed" })).toThrow(/CHECK/);
+    expect(() => insertComment(db!, { author_kind: "system" })).toThrow(
+      /CHECK/,
+    );
+    insertComment(db);
+    expect(() => insertReply(db!, { author_kind: "system" })).toThrow(/CHECK/);
+  });
+
+  it("cascades a notepad delete to its comments and their replies", () => {
+    db = _createTestDb({ inMemory: true });
+    insertNotepad(db);
+    insertComment(db);
+    insertReply(db);
+
+    db.prepare(`DELETE FROM notepads WHERE id = 'n-1'`).run();
+
+    for (const table of ["notepad_comments", "notepad_comment_replies"]) {
+      const count = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
+        n: number;
+      };
+      expect(count.n).toBe(0);
+    }
+  });
+
+  it("cascades a project delete through its notepads to their comments", () => {
+    db = _createTestDb({ inMemory: true });
+    insertProject(db, "/repo");
+    insertNotepad(db, { scope: "project", project_path: "/repo" });
+    insertComment(db);
+    insertReply(db);
+
+    db.prepare(`DELETE FROM projects WHERE root_path = '/repo'`).run();
+
+    for (const table of ["notepad_comments", "notepad_comment_replies"]) {
+      const count = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
+        n: number;
+      };
+      expect(count.n).toBe(0);
+    }
+  });
+
+  it("keeps comment attribution free of any foreign key so deleting a conversation cannot erase a review", () => {
+    db = _createTestDb({ inMemory: true });
+    insertNotepad(db);
+    insertComment(db, {
+      author_kind: "agent",
+      author_conversation_id: "conversation-that-never-existed",
+    });
+    insertReply(db, {
+      author_conversation_id: "conversation-that-never-existed",
+    });
+
+    const comment = db
+      .prepare(
+        `SELECT author_conversation_id FROM notepad_comments WHERE id = 'c-1'`,
+      )
+      .get() as { author_conversation_id: string };
+    const reply = db
+      .prepare(
+        `SELECT author_conversation_id FROM notepad_comment_replies WHERE id = 'cr-1'`,
+      )
+      .get() as { author_conversation_id: string };
+
+    expect(comment.author_conversation_id).toBe(
+      "conversation-that-never-existed",
+    );
+    expect(reply.author_conversation_id).toBe(
+      "conversation-that-never-existed",
+    );
+  });
+
+  it("refuses a comment on a notepad that does not exist", () => {
+    db = _createTestDb({ inMemory: true });
+    expect(() => insertComment(db!)).toThrow(/FOREIGN KEY/);
   });
 });

@@ -18,6 +18,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import { createNotepadsRepo } from "@/lib/state-store/notepads-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
@@ -113,11 +114,13 @@ const publish: PublishFn = (event) => {
 beforeEach(() => {
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
-  const repo = createNotepadsRepo(fixture.db, createWriteQueue());
+  const writeQueue = createWriteQueue();
+  const repo = createNotepadsRepo(fixture.db, writeQueue);
   clock = 0;
   let idSeq = 0;
   service = createNotepadService({
     repo,
+    comments: createNotepadCommentsRepo(fixture.db, writeQueue),
     publish,
     // Image bytes never enter these tests; the cleanup hook has nothing to do.
     deleteNotepadContent: async () => {},

@@ -6,8 +6,11 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentType,
+  type RefAttributes,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
 import MarkdownViewport from "@/components/markdown/MarkdownViewport";
 import {
@@ -32,6 +35,16 @@ import {
   type SelectionDraft,
 } from "./use-text-selection-comment";
 
+/**
+ * Renders the host's content as annotatable DOM. Whatever it renders MUST carry
+ * the canonical source-position stamps (`data-cc-line`/`data-cc-section`) the
+ * anchor resolution locates blocks by, and mark non-selectable content with
+ * `NOT_ANNOTATABLE_CLASS`; the forwarded ref must reach that DOM's root.
+ */
+export type AnnotatedDocumentRenderer = ComponentType<
+  { content: string } & RefAttributes<HTMLDivElement>
+>;
+
 export interface AnnotatedMarkdownProps {
   docRef: DocumentRef;
   content: string | null;
@@ -40,6 +53,13 @@ export interface AnnotatedMarkdownProps {
   annotationNoun?: { singular: string; plural: string };
   onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
   composer?: CommentComposerCapability;
+  /**
+   * The document rendering itself. Defaults to the canonical source-mapped
+   * document adapter — a host whose content is a DIALECT of Markdown (the
+   * notepad body, whose reference XML and image tokens render as chips) supplies
+   * its own renderer so the annotated DOM is the one the reader actually reads.
+   */
+  renderDocument?: AnnotatedDocumentRenderer;
 }
 
 interface GutterPin {
@@ -277,24 +297,32 @@ function SelectionCommentLayer({
         setOpen(nextOpen);
       }}
     >
-      <span
-        ref={triggerRef}
-        className="fixed z-popover"
-        style={
-          placedTrigger
-            ? { top: placedTrigger.top, left: placedTrigger.left }
-            : { visibility: "hidden" }
-        }
-      >
-        <PopoverTrigger asChild>
-          <Button type="button" variant="default" size="touch">
-            <span aria-hidden="true" className="text-[0.85rem] leading-none">
-              +
-            </span>
-            Comment
-          </Button>
-        </PopoverTrigger>
-      </span>
+      {/* Portal to <body>: the trigger is `position: fixed` against the viewport
+          (snapped under the selection's viewport rect), but hosts mount this seam
+          inside `.conversation-docked-stage`, whose transform would otherwise
+          become its containing block and offset the affordance away from the text
+          it belongs to — the same reason the comment card portals. */}
+      {createPortal(
+        <span
+          ref={triggerRef}
+          className="fixed z-popover"
+          style={
+            placedTrigger
+              ? { top: placedTrigger.top, left: placedTrigger.left }
+              : { visibility: "hidden" }
+          }
+        >
+          <PopoverTrigger asChild>
+            <Button type="button" variant="default" size="touch">
+              <span aria-hidden="true" className="text-[0.85rem] leading-none">
+                +
+              </span>
+              Comment
+            </Button>
+          </PopoverTrigger>
+        </span>,
+        document.body,
+      )}
       <PopoverContent
         ref={contentRef}
         aria-label="Add comment"
@@ -387,6 +415,7 @@ export default function AnnotatedMarkdown({
   annotationNoun = DEFAULT_ANNOTATION_NOUN,
   onActivateAnnotation,
   composer,
+  renderDocument: DocumentRenderer = SourceMappedDocumentMarkdown,
 }: AnnotatedMarkdownProps): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null);
   const [renderTick, setRenderTick] = useState(0);
@@ -434,10 +463,7 @@ export default function AnnotatedMarkdown({
               onActivateAnnotation={onActivateAnnotation}
               syncSignal={`${content}#${renderTick}`}
             >
-              <SourceMappedDocumentMarkdown
-                ref={attachContentRef}
-                content={content}
-              />
+              <DocumentRenderer ref={attachContentRef} content={content} />
             </AnnotatorBoundary>
           </div>
         )}

@@ -15,7 +15,10 @@ import type {
   ConversationEvent,
 } from "@/lib/workflows/conversation/types";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
@@ -126,7 +129,10 @@ export function getConversationQueueDeps(): ConversationQueueDeps {
  * strip images, not inline markers. A `document_feedback` block is surfaced as
  * `documentFeedback` (items merged across coalesced blocks) so the drained
  * `SUBMIT_PROMPT` re-emits it rather than dropping it; the actor re-derives the
- * agent-facing prose from those items. Other block types are dropped.
+ * agent-facing prose from those items. Each `notepad_feedback` block is
+ * surfaced the same way but kept SEPARATE — a dispatch belongs to one notepad,
+ * so coalescing two of them into one payload would attribute one notepad's
+ * comments to the other. Other block types are dropped.
  * Pure: the input is not mutated.
  */
 export function queuedBatchToSubmitPrompt(
@@ -135,6 +141,7 @@ export function queuedBatchToSubmitPrompt(
   promptText: string;
   images: ImagePayload[];
   documentFeedback?: DocumentFeedbackPayload;
+  notepadFeedback?: NotepadFeedbackPayload[];
 } {
   const promptText = content
     .filter(
@@ -159,12 +166,26 @@ export function queuedBatchToSubmitPrompt(
     block.type === "document_feedback" ? block.items : [],
   );
 
+  const notepadFeedback = content.flatMap((block) =>
+    block.type === "notepad_feedback"
+      ? [
+          {
+            notepadId: block.notepadId,
+            notepadName: block.notepadName,
+            notepadRefXml: block.notepadRefXml,
+            items: block.items,
+          },
+        ]
+      : [],
+  );
+
   return {
     promptText,
     images,
     ...(feedbackItems.length > 0
       ? { documentFeedback: { items: feedbackItems } }
       : {}),
+    ...(notepadFeedback.length > 0 ? { notepadFeedback } : {}),
   };
 }
 
@@ -358,15 +379,15 @@ export async function drainConversationQueue(
       return;
     }
 
-    const { promptText, images, documentFeedback } = queuedBatchToSubmitPrompt(
-      batch.content,
-    );
+    const { promptText, images, documentFeedback, notepadFeedback } =
+      queuedBatchToSubmitPrompt(batch.content);
 
     const event: ConversationEvent = {
       type: "SUBMIT_PROMPT",
       promptText,
       ...(images.length ? { images } : {}),
       ...(documentFeedback ? { documentFeedback } : {}),
+      ...(notepadFeedback ? { notepadFeedback } : {}),
       ...(batch.modelSelection ? { modelSelection: batch.modelSelection } : {}),
       streamId: `drain-${batch.deliveryAttemptId}`,
       queuedDelivery: {

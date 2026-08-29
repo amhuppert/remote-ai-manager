@@ -29,10 +29,12 @@ export type RightPaneTab =
   | "notepad";
 
 /**
- * How an open notepad divides its pane: the editor alone, both halves, or the
- * rendered preview alone.
+ * How an open notepad divides its pane: the editor alone, both halves, the
+ * rendered preview alone, or the review surface — the saved text with its
+ * comment highlights and threads, which is a reading mode over the PERSISTED
+ * revision rather than over the editor's draft.
  */
-export type NotepadViewMode = "write" | "split" | "read";
+export type NotepadViewMode = "write" | "split" | "read" | "review";
 
 /**
  * A one-shot "scroll the transcript to this message" request, set by surfaces

@@ -178,6 +178,21 @@ function buildMaximalProjectConversation(): ConversationState {
               },
             ],
           },
+          {
+            type: "notepad_feedback",
+            notepadId: "np-maximal",
+            notepadName: "Release plan that must round-trip",
+            notepadRefXml:
+              '<notepad-ref notepad-id="np-maximal" name="Release plan that must round-trip" scope="global" read-command="cctl notepad get np-maximal" />',
+            items: [
+              {
+                commentId: "npc-maximal",
+                location: "§ Rollout · L12",
+                quote: "the exact notepad passage that must round-trip",
+                body: "dispatched comment body that must round-trip",
+              },
+            ],
+          },
         ],
         status: "delivering",
         enqueuedAt: "2026-03-01T00:00:00Z",

@@ -10,6 +10,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import {
   createNotepadsRepo,
   type NotepadsRepo,
@@ -78,7 +79,8 @@ beforeEach(() => {
   fixture = createPersistenceFixture();
   fixture.seedProject(PROJECT_PATH);
   fixture.seedProject(OTHER_PROJECT_PATH);
-  repo = createNotepadsRepo(fixture.db, createWriteQueue());
+  const writeQueue = createWriteQueue();
+  repo = createNotepadsRepo(fixture.db, writeQueue);
   contentBase = mkdtempSync(path.join(tmpdir(), "cc-notepad-routes-"));
   contentStore = createNotepadContentStore({
     contentRoot: path.join(contentBase, "notepad-content"),
@@ -89,6 +91,7 @@ beforeEach(() => {
   let idSeq = 0;
   const service = createNotepadService({
     repo,
+    comments: createNotepadCommentsRepo(fixture.db, writeQueue),
     publish,
     deleteNotepadContent: (notepadId) => contentStore.deleteNotepad(notepadId),
     now: () => {
@@ -871,5 +874,262 @@ describe("notepad route token gate", () => {
       401, 401, 401, 401, 401, 401, 401, 401,
     ]);
     expect(await repo.find(created.id)).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review comments
+// ---------------------------------------------------------------------------
+
+describe("comment endpoints", () => {
+  const ANCHOR = {
+    sectionId: "release-notes",
+    headingLabel: "Release notes",
+    line: 3,
+    charStart: 4,
+    charEnd: 13,
+    quote: "migration",
+    prefix: "The ",
+    suffix: " lands",
+    notepadRevision: 1,
+  };
+
+  async function createComment(
+    notepadId: string,
+    body = "Name the rollback owner.",
+    request?: Request,
+  ): Promise<Record<string, unknown>> {
+    const response = await handlers.commentsPOST(
+      request ??
+        browserRequest(
+          `/api/notepads/${notepadId}/comments`,
+          jsonInit("POST", { anchor: ANCHOR, body }),
+        ),
+      ctx({ notepadId }),
+    );
+    expect(response.status).toBe(201);
+    return (await bodyOf(response))["comment"] as Record<string, unknown>;
+  }
+
+  it("creates, lists, and narrows comments through the production handlers", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const comment = await createComment(notepad.id);
+
+    const listed = await bodyOf(
+      await handlers.commentsGET(
+        browserRequest(`/api/notepads/${notepad.id}/comments`),
+        ctx({ notepadId: notepad.id }),
+      ),
+    );
+    expect(
+      (listed["comments"] as Array<{ comment: { id: string } }>).map(
+        (thread) => thread.comment.id,
+      ),
+    ).toEqual([comment["id"]]);
+
+    const resolvedOnly = await bodyOf(
+      await handlers.commentsGET(
+        browserRequest(`/api/notepads/${notepad.id}/comments?status=resolved`),
+        ctx({ notepadId: notepad.id }),
+      ),
+    );
+    expect(resolvedOnly["comments"]).toEqual([]);
+  });
+
+  it("serves each listed comment's passage resolved against the current text", async () => {
+    const notepad = await createGlobal(
+      "Reviewed",
+      "# Release notes\n\nThe migration lands on Tuesday.\n",
+    );
+    await createComment(notepad.id);
+
+    const listed = await bodyOf(
+      await handlers.commentsGET(
+        browserRequest(`/api/notepads/${notepad.id}/comments`),
+        ctx({ notepadId: notepad.id }),
+      ),
+    );
+
+    // The agent surface reads this listing over HTTP, so the quote and location
+    // an agent is told to look for have to survive the route, not just the
+    // service.
+    expect(
+      (listed["comments"] as Array<{ passage: unknown }>).map(
+        (thread) => thread.passage,
+      ),
+    ).toEqual([
+      {
+        quote: "migration",
+        location: "Release notes, line 3",
+        state: "anchored",
+      },
+    ]);
+  });
+
+  it("404s a comment listing for a notepad that does not exist", async () => {
+    const response = await handlers.commentsGET(
+      browserRequest("/api/notepads/missing/comments"),
+      ctx({ notepadId: "missing" }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("records an agent reply on a read-only notepad, attributed to the calling conversation", async () => {
+    // The write mode governs what an agent may write INTO a notepad; a reply is
+    // review discussion, so the strictest mode still accepts one.
+    const notepad = await createNotepad({
+      scope: "global",
+      name: "Locked",
+      content: "",
+      writeMode: "read-only",
+    });
+    const comment = await createComment(notepad.id);
+
+    const response = await handlers.commentRepliesPOST(
+      agentRequest(
+        `/api/notepads/${notepad.id}/comments/${String(comment["id"])}/replies`,
+        jsonInit("POST", { body: "Addressed in revision 2." }),
+        "conv-replier",
+      ),
+      ctx({ notepadId: notepad.id, commentId: String(comment["id"]) }),
+    );
+
+    expect(response.status).toBe(201);
+    const reply = (await bodyOf(response))["reply"] as Record<string, unknown>;
+    expect(reply["authorKind"]).toBe("agent");
+    expect(reply["authorConversationId"]).toBe("conv-replier");
+  });
+
+  it("refuses an agent-attributed resolve and delete with a 403 naming it a user act", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const comment = await createComment(notepad.id);
+    const commentId = String(comment["id"]);
+    const params = ctx({ notepadId: notepad.id, commentId });
+
+    const resolve = await handlers.commentPATCH(
+      agentRequest(
+        `/api/notepads/${notepad.id}/comments/${commentId}`,
+        jsonInit("PATCH", { status: "resolved" }),
+      ),
+      params,
+    );
+    expect(resolve.status).toBe(403);
+    const refusal = await bodyOf(resolve);
+    expect(refusal["code"]).toBe("comment_user_act_refused");
+
+    const removed = await handlers.commentDELETE(
+      agentRequest(`/api/notepads/${notepad.id}/comments/${commentId}`, {
+        method: "DELETE",
+      }),
+      params,
+    );
+    expect(removed.status).toBe(403);
+
+    // Both refusals left the comment exactly as it was.
+    const stillThere = await bodyOf(
+      await handlers.commentsGET(
+        browserRequest(`/api/notepads/${notepad.id}/comments?status=open`),
+        ctx({ notepadId: notepad.id }),
+      ),
+    );
+    expect(
+      (stillThere["comments"] as Array<{ comment: { id: string } }>).map(
+        (thread) => thread.comment.id,
+      ),
+    ).toEqual([commentId]);
+  });
+
+  it("resolves, reopens, and deletes for a browser request", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const comment = await createComment(notepad.id);
+    const commentId = String(comment["id"]);
+    const params = ctx({ notepadId: notepad.id, commentId });
+
+    const resolved = await handlers.commentPATCH(
+      browserRequest(
+        `/api/notepads/${notepad.id}/comments/${commentId}`,
+        jsonInit("PATCH", { status: "resolved" }),
+      ),
+      params,
+    );
+    expect(resolved.status).toBe(200);
+    expect(
+      ((await bodyOf(resolved))["comment"] as { status: string }).status,
+    ).toBe("resolved");
+
+    // The resolve has to clear the open listing on BOTH surfaces: an agent that
+    // kept seeing a settled comment would re-answer work already closed.
+    for (const request of [browserRequest, agentRequest]) {
+      const openNow = await bodyOf(
+        await handlers.commentsGET(
+          request(`/api/notepads/${notepad.id}/comments?status=open`),
+          ctx({ notepadId: notepad.id }),
+        ),
+      );
+      expect(openNow["comments"]).toEqual([]);
+    }
+
+    const reopened = await handlers.commentPATCH(
+      browserRequest(
+        `/api/notepads/${notepad.id}/comments/${commentId}`,
+        jsonInit("PATCH", { status: "open" }),
+      ),
+      ctx({ notepadId: notepad.id, commentId }),
+    );
+    expect(
+      ((await bodyOf(reopened))["comment"] as { status: string }).status,
+    ).toBe("open");
+
+    const deleted = await handlers.commentDELETE(
+      browserRequest(`/api/notepads/${notepad.id}/comments/${commentId}`, {
+        method: "DELETE",
+      }),
+      ctx({ notepadId: notepad.id, commentId }),
+    );
+    expect(deleted.status).toBe(200);
+
+    const afterDelete = await handlers.commentDELETE(
+      browserRequest(`/api/notepads/${notepad.id}/comments/${commentId}`, {
+        method: "DELETE",
+      }),
+      ctx({ notepadId: notepad.id, commentId }),
+    );
+    expect(afterDelete.status).toBe(404);
+    expect((await bodyOf(afterDelete))["code"]).toBe("comment_not_found");
+  });
+
+  it("refuses a malformed comment body", async () => {
+    const notepad = await createGlobal("Reviewed");
+
+    const response = await handlers.commentsPOST(
+      browserRequest(
+        `/api/notepads/${notepad.id}/comments`,
+        jsonInit("POST", { body: "no anchor" }),
+      ),
+      ctx({ notepadId: notepad.id }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects a comment request carrying an invalid token", async () => {
+    const notepad = await createGlobal("Reviewed");
+    const request = new Request(
+      `http://localhost/api/notepads/${notepad.id}/comments`,
+      {
+        ...jsonInit("POST", { anchor: ANCHOR, body: "nope" }),
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer wrong",
+        },
+      },
+    );
+
+    const response = await handlers.commentsPOST(
+      request,
+      ctx({ notepadId: notepad.id }),
+    );
+
+    expect(response.status).toBe(401);
   });
 });

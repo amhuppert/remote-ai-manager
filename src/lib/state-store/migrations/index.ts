@@ -45,6 +45,8 @@ import { conversationOwnership } from "./0033-conversation-ownership";
 import { nativeSddAttentionCitations } from "./0034-native-sdd-attention-citations";
 import { addNotepads } from "./0035-add-notepads";
 import { generalizedModelSelection } from "./0035-generalized-model-selection";
+import { addNotepadComments } from "./0036-add-notepad-comments";
+import { addNotepadDeliveryWatermarks } from "./0037-add-notepad-delivery-watermarks";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -105,6 +107,10 @@ export const migrations: readonly StateMigration[] = [
   // cutover that does.
   addNotepads,
   generalizedModelSelection,
+  // Additive too, and ordered after the cutover only so the ledger key stays
+  // lexicographically in step with the array.
+  addNotepadComments,
+  addNotepadDeliveryWatermarks,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

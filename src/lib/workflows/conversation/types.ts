@@ -23,7 +23,10 @@ import type {
   MessageContentBlock,
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 import type {
   DebugModeState,
   RuntimeDebugModeState,
@@ -84,6 +87,10 @@ export interface ConversationTurnActive {
    *  agent-facing prompt text is derived from it when no explicit text was
    *  supplied. Unset for every non-feedback turn. */
   documentFeedback?: DocumentFeedbackPayload;
+  /** Notepad comment dispatches carried with this turn, one per notepad. Each
+   *  records its own `notepad_feedback` transcript block and contributes its
+   *  derived prose when no explicit text was supplied. Unset otherwise. */
+  notepadFeedback?: readonly NotepadFeedbackPayload[];
   /** Effective ask-user-questions availability for this turn (resolved toggle
    *  AND lane-can-ask). Set only by graph-workflow runners; selects the enabled
    *  asking-questions session-instruction variant. Unset for every other turn. */
@@ -220,6 +227,7 @@ export type ConversationEvent =
       waitForBackgroundTasks?: boolean;
       queuedDelivery?: QueuedDeliveryMetadata;
       documentFeedback?: DocumentFeedbackPayload;
+      notepadFeedback?: readonly NotepadFeedbackPayload[];
       askUserQuestionsEnabled?: boolean;
       /** See {@link ConversationTurnActive.fsWritePolicy}. */
       fsWritePolicy?: FsWritePolicy;
@@ -441,6 +449,10 @@ export interface ExecutePromptInput {
    *  transcript records a `document_feedback` block and the agent-facing prompt
    *  text is derived from it when `promptText` is empty. Unset otherwise. */
   documentFeedback?: DocumentFeedbackPayload;
+  /** Notepad comment dispatches for this turn, one per notepad. Each records a
+   *  `notepad_feedback` block and contributes derived prose when `promptText`
+   *  is empty. Unset otherwise. */
+  notepadFeedback?: readonly NotepadFeedbackPayload[];
   /** Effective ask-user-questions availability for this turn (resolved toggle
    *  AND lane-can-ask). Selects the enabled asking-questions session-instruction
    *  variant. Set only by graph-workflow runners; unset for every other turn. */

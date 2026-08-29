@@ -16,6 +16,13 @@ export const notepadKeys = {
   /** Bounded revision history for one notepad. */
   revisions: (notepadId: string) =>
     [...notepadKeys.detail(notepadId), "revisions"] as const,
+  /**
+   * A notepad's review comments with their passages. Nested under the detail
+   * key on purpose: every passage is resolved against the current content, so
+   * a head advance invalidates the comments along with the content they quote.
+   */
+  comments: (notepadId: string) =>
+    [...notepadKeys.detail(notepadId), "comments"] as const,
   lists: () => [...notepadKeys.all, "list"] as const,
   /** The picker's reachable set: global notepads merged with one project's. */
   pickerList: (projectName: string) =>

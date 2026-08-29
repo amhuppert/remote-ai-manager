@@ -536,6 +536,22 @@ describe("AnnotatedMarkdown composition", () => {
     );
   });
 
+  it("anchors the selection affordance to the body, clear of a transformed ancestor", async () => {
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    const trigger = screen.getByRole("button", {
+      name: "Comment",
+    }).parentElement!;
+    expect(container.contains(trigger)).toBe(false);
+    expect(trigger.parentElement).toBe(document.body);
+  });
+
   it("keeps the unopened selection affordance inside the zoomed visual viewport", async () => {
     vi.spyOn(window, "innerWidth", "get").mockReturnValue(195);
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(422);

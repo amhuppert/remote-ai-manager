@@ -1,16 +1,20 @@
 import type { CommandHelpEntry } from "../help-types";
 
 /**
- * Help-registry entries for `cctl notepad` — the group hub plus the five agent
- * verbs (notepad design D6). Flags match what `notepad.ts` actually reads.
+ * Help-registry entries for `cctl notepad` — the group hub, the five content
+ * verbs (notepad design D6), and the two review-comment verbs under the
+ * `comment` subgroup (D16). Flags match what `notepad.ts` actually reads.
  *
  * Every leaf that addresses a notepad takes its immutable id, never its name: a
  * name is a display value the user can change at any time, while the id printed
  * in a list row, carried by a chip's reference XML, and stamped on an injected
- * notepad block resolves to the same notepad forever.
+ * notepad block resolves to the same notepad forever. A comment is addressed
+ * through its notepad for the same reason it is stored that way — it quotes one
+ * notepad's text and is reachable nowhere else.
  */
 
 const ID_PLACEHOLDER = "<notepadId>";
+const COMMENT_ID_PLACEHOLDER = "<commentId>";
 
 const contentFlag = {
   name: "content",
@@ -40,8 +44,8 @@ export const notepadHelpEntries: CommandHelpEntry[] = [
     path: ["notepad"],
     summary: "list, read, create, update, and append to notepads",
     description:
-      "Read and write Command Center notepads — durable Markdown documents the user and agents share, scoped either globally or to one project.",
-    usage: ["cctl notepad <list|get|create|update|append>"],
+      "Read and write Command Center notepads — durable Markdown documents the user and agents share, scoped either globally or to one project. The comment subgroup reads the review comments the user left on a notepad's passages.",
+    usage: ["cctl notepad <list|get|create|update|append|comment>"],
     flags: [],
     examples: [],
     domainContext:
@@ -52,6 +56,10 @@ export const notepadHelpEntries: CommandHelpEntry[] = [
         oneLiner: "find the id of a notepad to read or write",
       },
       { command: "notepad get", oneLiner: "read a notepad's full content" },
+      {
+        command: "notepad comment",
+        oneLiner: "read and answer the user's review comments",
+      },
     ],
   },
   {
@@ -114,6 +122,10 @@ export const notepadHelpEntries: CommandHelpEntry[] = [
       {
         command: "notepad append",
         oneLiner: "add to the content you just read",
+      },
+      {
+        command: "notepad comment list",
+        oneLiner: "see what the user asked about this content",
       },
     ],
   },
@@ -180,6 +192,10 @@ export const notepadHelpEntries: CommandHelpEntry[] = [
         oneLiner: "read the current revision before writing",
       },
       { command: "notepad append", oneLiner: "add without replacing" },
+      {
+        command: "notepad comment reply",
+        oneLiner: "say how the change answers the comment that asked for it",
+      },
     ],
   },
   {
@@ -205,6 +221,104 @@ export const notepadHelpEntries: CommandHelpEntry[] = [
         oneLiner: "read the current revision before writing",
       },
       { command: "notepad update", oneLiner: "replace the content instead" },
+    ],
+  },
+  {
+    path: ["notepad", "comment"],
+    summary: "read the user's review comments on a notepad and answer them",
+    description:
+      "Two verbs, and deliberately only two: read the comments the user anchored to passages of a notepad, and reply to one. Deciding a comment is settled — resolving, reopening, or deleting it — is the user's judgement about whether the response addressed it, so it has no agent verb here and is refused if attempted through the API.",
+    usage: [`cctl notepad comment <list|reply> ${ID_PLACEHOLDER}`],
+    flags: [],
+    examples: [],
+    domainContext:
+      "A comment quotes one passage of the notepad's canonical text and names where it sits, so the quote can be found verbatim in what 'cctl notepad get' returns.\nA stale comment is one whose quoted passage no longer matches the current content; it is never moved onto different text, so re-read the notepad to see what changed under it.\nAnswering a comment is a reply and is accepted whatever the notepad's write mode says — a reply is review discussion, not a content change. Changing the content the comment asks about is an ordinary update or append under that mode.",
+    related: [
+      {
+        command: "notepad get",
+        oneLiner: "read the content the comments quote",
+      },
+      {
+        command: "notepad comment list",
+        oneLiner: "see which comments are open",
+      },
+    ],
+  },
+  {
+    path: ["notepad", "comment", "list"],
+    summary: "list a notepad's comments with their quoted passages",
+    description:
+      "One block per comment: its id, status, whether its quoted passage still resolves in the current content, where it sits, the quote, the body, and any replies. Quote and location are stated over the canonical text 'notepad get' returns. Capped at 20 comments — the leading count line names the exact command that reveals the rest — and output past the stdout budget is written under .cc/temp/ with the manifest on stdout instead of truncating.",
+    usage: [
+      `cctl notepad comment list ${ID_PLACEHOLDER} [--status <open|resolved>] [--limit <n>]`,
+    ],
+    flags: [
+      {
+        name: "status",
+        kind: "value",
+        valuePlaceholder: "<open|resolved>",
+        description: "narrow to one status (default: every comment)",
+      },
+      {
+        name: "limit",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description: "comments to print (default: 20)",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl notepad comment list 6f1c2b7e-2f5a-4a1e-9a0b-3d2c8f4e5a6b --status open",
+        explanation: "the comments still awaiting an answer, oldest first",
+      },
+    ],
+    related: [
+      {
+        command: "notepad comment reply",
+        oneLiner: "answer one of the comments listed",
+      },
+      {
+        command: "notepad get",
+        oneLiner: "read the passage a comment quotes in context",
+      },
+    ],
+  },
+  {
+    path: ["notepad", "comment", "reply"],
+    summary: "reply to one comment on a notepad",
+    description:
+      "Add a reply to a comment, attributed to the calling conversation. Accepted whatever the notepad's write mode is, because a reply is review discussion rather than a content change. Replying does not settle the comment: the user decides that, and there is no agent verb for it.",
+    usage: [
+      `cctl notepad comment reply ${ID_PLACEHOLDER} ${COMMENT_ID_PLACEHOLDER} --body "<markdown>"`,
+    ],
+    flags: [
+      {
+        name: "body",
+        kind: "value",
+        valuePlaceholder: '"<markdown>"',
+        fileSource: true,
+        description:
+          "required — the reply text, Markdown, addressed to what the comment asked",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          'cctl notepad comment reply 6f1c2b7e-2f5a-4a1e-9a0b-3d2c8f4e5a6b cmt-3f9a --body "Rewrote that paragraph in revision 5."',
+        explanation:
+          "both ids come from a 'notepad comment list' block on that notepad",
+      },
+    ],
+    related: [
+      {
+        command: "notepad comment list",
+        oneLiner: "find the comment id to answer",
+      },
+      {
+        command: "notepad update",
+        oneLiner: "change the content the comment asks about",
+      },
     ],
   },
 ];

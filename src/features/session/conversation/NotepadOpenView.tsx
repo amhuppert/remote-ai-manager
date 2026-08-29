@@ -44,6 +44,7 @@ import {
   useSetNotepadViewMode,
 } from "@/stores/session-detail.store";
 import NotepadHistory from "./NotepadHistory";
+import NotepadReviewSurface from "./NotepadReviewSurface";
 import { NameInput } from "./NotepadPanel";
 
 export interface NotepadOpenViewProps {
@@ -647,15 +648,26 @@ export default function NotepadOpenView({
           <SegmentedControl
             value={viewMode}
             onValueChange={(value) => {
-              if (value === "write" || value === "split" || value === "read") {
-                setViewMode(value);
+              if (
+                value !== "write" &&
+                value !== "split" &&
+                value !== "read" &&
+                value !== "review"
+              ) {
+                return;
               }
+              // Review anchors comments to the SAVED text, so an unsaved draft
+              // must land before the surface reads it — otherwise a comment
+              // would quote a revision the reader is no longer looking at.
+              if (value === "review") flush();
+              setViewMode(value);
             }}
             aria-label="Notepad layout"
           >
             <SegmentedControlItem value="write">write</SegmentedControlItem>
             <SegmentedControlItem value="split">split</SegmentedControlItem>
             <SegmentedControlItem value="read">read</SegmentedControlItem>
+            <SegmentedControlItem value="review">review</SegmentedControlItem>
           </SegmentedControl>
           <Select
             value={notepad.writeMode}
@@ -804,6 +816,19 @@ export default function NotepadOpenView({
           onRestore={handleRestore}
           restorePending={restoring}
           diffTarget={historyDiffTarget}
+        />
+      ) : viewMode === "review" ? (
+        <NotepadReviewSurface
+          notepadId={notepadId}
+          notepadName={notepad.name}
+          notepadScope={notepad.scope}
+          projectName={projectName}
+          sessionName={sessionName}
+          // The persisted head, never the draft: an anchor states the revision
+          // it quotes, and a draft has no revision to state.
+          content={notepad.content}
+          revision={notepad.revision}
+          active={active}
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">

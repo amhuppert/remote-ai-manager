@@ -17,6 +17,7 @@ import ThinkingBlock, {
 } from "./ThinkingBlock";
 import DebugStructuredCard from "./DebugStructuredCard";
 import DocumentFeedbackCard from "./conversation/DocumentFeedbackCard";
+import NotepadFeedbackCard from "./conversation/NotepadFeedbackCard";
 import MarkdownFileCard from "./conversation/MarkdownFileCard";
 import QuestionAnswersCard from "./conversation/QuestionAnswersCard";
 import CommandIndicator from "./CommandIndicator";
@@ -334,6 +335,15 @@ export default memo(function MessageContent({
         }
         if (block.type === "document_feedback") {
           return <DocumentFeedbackCard key={i} items={block.items} />;
+        }
+        if (block.type === "notepad_feedback") {
+          return (
+            <NotepadFeedbackCard
+              key={i}
+              notepadName={block.notepadName}
+              items={block.items}
+            />
+          );
         }
         if (block.type === "tool_use") {
           const formatted = formatToolUse(block.name, block.input, {

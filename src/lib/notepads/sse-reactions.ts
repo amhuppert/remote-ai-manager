@@ -145,6 +145,18 @@ export function registerNotepadSseReactions(
   const { queryClient } = deps;
 
   addSseListener(es, "notepad-changed", notepadChangedEventSchema, (event) => {
+    // Review activity changes nothing about the notepad itself — not its
+    // listing row, not its chip, not its content — so none of the caches below
+    // has anything to reconcile. The comment listing is the whole point of the
+    // change kind: refetching it is what puts another party's comment, reply,
+    // or resolution into an open review panel without a manual refresh.
+    if (event.change === "comment-activity") {
+      void queryClient.invalidateQueries({
+        queryKey: notepadKeys.comments(event.notepadId),
+      });
+      return;
+    }
+
     invalidateListCaches(queryClient, event);
     reconcileSummaryCache(queryClient, event);
     reconcileDetailCache(queryClient, event);

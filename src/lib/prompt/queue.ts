@@ -26,13 +26,22 @@ import {
   expandNotepadRefsForAgent,
   type NotepadInjectionSource,
 } from "@/lib/notepads/injection";
-import { getNotepadInjectionReader } from "@/lib/notepads/service-factory";
+import type {
+  NotepadDeliveryRecord,
+  PreparedNotepadChangeNotice,
+} from "@/lib/notepads/change-notices";
+import {
+  getNotepadDeliveryTracker,
+  getNotepadInjectionReader,
+} from "@/lib/notepads/service-factory";
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
+import { formatNotepadFeedbackPrompt } from "@/lib/notepads/format-feedback";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type {
   DocumentFeedbackPayload,
   MessageContentBlock,
+  NotepadFeedbackPayload,
 } from "@/lib/conversations/message-content-schemas";
 import type {
   PendingQueuedMessage,
@@ -48,20 +57,22 @@ import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-t
 const logger = createLogger("message-queue");
 
 /**
- * Build the content blocks from raw `{ text, images, documentFeedback }`. Text
- * (when non-empty) becomes a single `text` block first, then each image becomes
- * an inline base64 `image` block, then a `document_feedback` block (when
- * present) is appended. This is the format the next-turn drain coalesces, so the
+ * Build the content blocks from raw `{ text, images, feedback }`. Text (when
+ * non-empty) becomes a single `text` block first, then each image becomes an
+ * inline base64 `image` block, then the review-feedback blocks (when present)
+ * are appended. This is the format the next-turn drain coalesces, so the
  * live-delivery path keeps it consistent.
  *
- * NOTE: a `document_feedback` block is NOT a valid backend (SDK) content block —
- * callers that deliver content to the backend (`queueUserInput`) must omit it
- * and carry the derived prose as a `text` block instead.
+ * NOTE: neither a `document_feedback` nor a `notepad_feedback` block is a valid
+ * backend (SDK) content block — callers that deliver content to the backend
+ * (`queueUserInput`) must omit them and carry the derived prose as a `text`
+ * block instead.
  */
 export function buildQueueContent(args: {
   text?: string;
   images?: readonly ImagePayload[];
   documentFeedback?: DocumentFeedbackPayload;
+  notepadFeedback?: NotepadFeedbackPayload;
 }): MessageContentBlock[] {
   const content: MessageContentBlock[] = [];
   if (args.text && args.text.length > 0) {
@@ -80,7 +91,30 @@ export function buildQueueContent(args: {
       items: args.documentFeedback.items,
     });
   }
+  if (args.notepadFeedback) {
+    content.push({
+      type: "notepad_feedback",
+      notepadId: args.notepadFeedback.notepadId,
+      notepadName: args.notepadFeedback.notepadName,
+      notepadRefXml: args.notepadFeedback.notepadRefXml,
+      items: args.notepadFeedback.items,
+    });
+  }
   return content;
+}
+
+/**
+ * Prepend the transient change notice to the blocks the backend receives. The
+ * durable row and the transcript entry are built from the un-noticed content,
+ * so the divergence the notepad expansion already models extends to the notice
+ * (R21): agent-facing only, never part of what the user is recorded as saying.
+ */
+function withNotepadChangeNotice(
+  content: MessageContentBlock[],
+  notice: PreparedNotepadChangeNotice | null,
+): MessageContentBlock[] {
+  if (notice?.block == null) return content;
+  return [{ type: "text", text: notice.block }, ...content];
 }
 
 interface ConversationKey {
@@ -131,6 +165,24 @@ export interface QueueMessageDeps {
   readNotepadForInjection(
     notepadId: string,
   ): Promise<NotepadInjectionSource | null>;
+  /**
+   * Records what this conversation has now been shown of each notepad whose
+   * reference was expanded above (R21/D17) — the queued path's half of the
+   * same seam the live turn writes at.
+   */
+  recordNotepadDeliveries(input: {
+    conversationId: string;
+    notepads: readonly NotepadDeliveryRecord[];
+  }): Promise<void>;
+  /**
+   * Builds this delivery's transient change notice (R21) — the same expansion
+   * the live turn runs, so a queued message carries the notice a live turn
+   * would have. A read: the watermarks advance only through `settle`.
+   */
+  prepareNotepadChangeNotice(
+    conversationId: string,
+  ): Promise<PreparedNotepadChangeNotice>;
+  settleNotepadChangeNotice(notice: PreparedNotepadChangeNotice): Promise<void>;
 }
 
 const defaultDeps: QueueMessageDeps = {
@@ -146,6 +198,12 @@ const defaultDeps: QueueMessageDeps = {
   queueCapabilityForBackend: defaultQueueCapabilityForBackend,
   readNotepadForInjection: (notepadId) =>
     getNotepadInjectionReader().readForInjection(notepadId),
+  recordNotepadDeliveries: (input) =>
+    getNotepadDeliveryTracker().recordDelivered(input),
+  prepareNotepadChangeNotice: (conversationId) =>
+    getNotepadDeliveryTracker().prepare(conversationId),
+  settleNotepadChangeNotice: (notice) =>
+    getNotepadDeliveryTracker().settle(notice),
 };
 
 export interface QueueMessageParams {
@@ -155,6 +213,9 @@ export interface QueueMessageParams {
   text?: string;
   images?: ImagePayload[];
   documentFeedback?: DocumentFeedbackPayload;
+  /** One notepad's dispatched review comments. The durable row keeps the typed
+   *  block; the agent receives the derived prose. */
+  notepadFeedback?: NotepadFeedbackPayload;
   backend: AgentBackendId;
   modelSelection?: BackendModelSelection;
   /** Provenance tag persisted on the queue row (e.g. question answers) so the
@@ -193,16 +254,19 @@ async function buildDeliveredTranscriptBlocks(
   text: string,
   images: readonly ImagePayload[],
   documentFeedback?: DocumentFeedbackPayload,
+  notepadFeedback?: NotepadFeedbackPayload,
 ): Promise<MessageContentBlock[]> {
   // A feedback turn records the structured card only — its agent-facing prose
   // was delivered separately, so no duplicate prose text block is written.
-  const transcriptText = documentFeedback ? "" : text;
+  const transcriptText = documentFeedback || notepadFeedback ? "" : text;
+  const notepadFeedbackList = notepadFeedback ? [notepadFeedback] : [];
 
   if (images.length === 0) {
     return buildUserTranscriptBlocks({
       rewrittenPromptText: transcriptText,
       imageRefs: [],
       documentFeedback,
+      notepadFeedback: notepadFeedbackList,
     });
   }
 
@@ -229,6 +293,7 @@ async function buildDeliveredTranscriptBlocks(
     rewrittenPromptText: transcriptText,
     imageRefs,
     documentFeedback,
+    notepadFeedback: notepadFeedbackList,
   });
 }
 
@@ -248,6 +313,7 @@ export async function queueMessage(
     text,
     images,
     documentFeedback,
+    notepadFeedback,
     backend,
     modelSelection,
     metadata,
@@ -262,12 +328,17 @@ export async function queueMessage(
   // `sessionName` is the sentinel for a project conversation.
   const scopeRef = scopeRefFromStoreSessionName(sessionName);
 
-  // Durable content carries the structured `document_feedback` block (the drain
-  // re-derives its prose) and omits the redundant feedback prose text — so the
-  // pending display and the drained submit do not double-render the feedback.
-  const content = documentFeedback
-    ? buildQueueContent({ images, documentFeedback })
-    : buildQueueContent({ text, images });
+  // Durable content carries the structured feedback block (the drain re-derives
+  // its prose) and omits the redundant feedback prose text — so the pending
+  // display and the drained submit do not double-render the feedback.
+  const content =
+    documentFeedback || notepadFeedback
+      ? buildQueueContent({
+          images,
+          ...(documentFeedback ? { documentFeedback } : {}),
+          ...(notepadFeedback ? { notepadFeedback } : {}),
+        })
+      : buildQueueContent({ text, images });
 
   // Backend-delivery content (in-turn live delivery): the agent receives prose,
   // never a `document_feedback` block (not a valid SDK block). Derive the prose
@@ -278,14 +349,17 @@ export async function queueMessage(
   // delivery.
   let specExpandedText = text;
   let agentFacingText = text;
-  if (text && !documentFeedback) {
+  let deliveredNotepads: readonly NotepadInjectionSource[] = [];
+  if (text && !documentFeedback && !notepadFeedback) {
     specExpandedText = expandNativeSpecCommandForAgent(text);
     agentFacingText = specExpandedText;
     try {
-      agentFacingText = await expandNotepadRefsForAgent(specExpandedText, {
+      const expansion = await expandNotepadRefsForAgent(specExpandedText, {
         readForInjection: (notepadId) =>
           deps.readNotepadForInjection(notepadId),
       });
+      agentFacingText = expansion.text;
+      deliveredNotepads = expansion.delivered;
     } catch (err) {
       logger.warn("queue.notepad_expansion_failed", {
         projectName: deps.getProjectDisplayName(projectPath),
@@ -295,12 +369,44 @@ export async function queueMessage(
       });
     }
   }
-  const deliveryContent = documentFeedback
-    ? buildQueueContent({
-        text: formatDocumentFeedbackPrompt(documentFeedback.items),
-        images,
-      })
-    : buildQueueContent({ text: agentFacingText, images });
+
+  // A notepad becomes watermark-tracked for this conversation exactly here —
+  // where its content was put in front of the agent (R21). Recorded before the
+  // row is enqueued, so a message that waits in the queue is still recorded as
+  // delivered content the moment it was expanded, matching the live turn.
+  if (deliveredNotepads.length > 0) {
+    try {
+      await deps.recordNotepadDeliveries({
+        conversationId,
+        notepads: deliveredNotepads.map(({ id, revision }) => ({
+          notepadId: id,
+          revision,
+        })),
+      });
+    } catch (err) {
+      logger.warn("queue.notepad_delivery_record_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        count: deliveredNotepads.length,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+  const deliveryContent =
+    documentFeedback || notepadFeedback
+      ? buildQueueContent({
+          text: [
+            ...(documentFeedback
+              ? [formatDocumentFeedbackPrompt(documentFeedback.items)]
+              : []),
+            ...(notepadFeedback
+              ? [formatNotepadFeedbackPrompt(notepadFeedback)]
+              : []),
+          ].join("\n\n"),
+          images,
+        })
+      : buildQueueContent({ text: agentFacingText, images });
 
   const entry = await deps.enqueue({
     projectPath,
@@ -427,6 +533,33 @@ export async function queueMessage(
     return { entry, deliveryTiming: "in_turn" };
   }
 
+  // Prepared AFTER the recording above: a notepad whose full content this very
+  // message carries needs no notice telling the agent to re-read it.
+  let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
+  try {
+    notepadChangeNotice = await deps.prepareNotepadChangeNotice(conversationId);
+    if (notepadChangeNotice.block !== null) {
+      logger.info("queue.notepad_change_notice_prepended", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        messageIds: [entry.id],
+        deliveryAttemptId,
+        count: notepadChangeNotice.advances.length,
+      });
+    }
+  } catch (err) {
+    notepadChangeNotice = null;
+    logger.warn("queue.notepad_change_notice_failed", {
+      projectName: deps.getProjectDisplayName(projectPath),
+      ...scopeRef,
+      conversationId,
+      messageIds: [entry.id],
+      deliveryAttemptId,
+      error: getErrorMessage(err),
+    });
+  }
+
   try {
     if (text && specExpandedText !== text) {
       logger.info("queue.native_spec_command_expanded", {
@@ -449,7 +582,9 @@ export async function queueMessage(
         expandedLength: agentFacingText?.length ?? 0,
       });
     }
-    await runtime.queueUserInput({ content: deliveryContent });
+    await runtime.queueUserInput({
+      content: withNotepadChangeNotice(deliveryContent, notepadChangeNotice),
+    });
   } catch (err) {
     const error = getErrorMessage(err);
     logger.warn("queue.failed", {
@@ -474,14 +609,46 @@ export async function queueMessage(
     return { entry, deliveryTiming: "in_turn" };
   }
 
-  // Backend accepted the input. Append exactly one delivered user transcript
-  // entry (the sole JSONL writer), then mark the row delivered.
+  // `queueUserInput` resolving IS backend acceptance, and that is the settle
+  // gate (D17): a delivery that threw above left the row pending AND the
+  // watermarks untouched, so the notice re-fires on the next message rather
+  // than being lost.
+  //
+  // Settled here rather than after the transcript write below: the agent has
+  // already been handed the notice, so a later failure in the transcript or
+  // image work must not strand the watermark and re-deliver the same notice.
+  if (notepadChangeNotice !== null && notepadChangeNotice.block !== null) {
+    try {
+      await deps.settleNotepadChangeNotice(notepadChangeNotice);
+      logger.info("queue.notepad_change_notice_settled", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        messageIds: [entry.id],
+        deliveryAttemptId,
+        count: notepadChangeNotice.advances.length,
+      });
+    } catch (err) {
+      logger.warn("queue.notepad_change_notice_settle_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        messageIds: [entry.id],
+        deliveryAttemptId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  // Append exactly one delivered user transcript entry (the sole JSONL
+  // writer), then mark the row delivered.
   const transcriptBlocks = await buildDeliveredTranscriptBlocks(
     deps,
     conversationId,
     text ?? "",
     images ?? [],
     documentFeedback,
+    notepadFeedback,
   );
 
   await deps.appendTranscriptEntry(

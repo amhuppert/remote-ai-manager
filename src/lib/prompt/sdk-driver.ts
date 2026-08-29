@@ -16,7 +16,10 @@ import type {
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
@@ -535,6 +538,12 @@ export interface PromptStreamOptions {
    */
   documentFeedback?: DocumentFeedbackPayload;
   /**
+   * Notepad comment dispatches to record on the user turn. Each records a
+   * `notepad_feedback` block and contributes its derived prose when
+   * `promptText` is empty. Unset for every non-dispatch send.
+   */
+  notepadFeedback?: readonly NotepadFeedbackPayload[];
+  /**
    * Effective ask-user-questions availability for this turn: the resolved
    * per-context toggle AND the lane holding a real conversation. Set only by
    * the graph-workflow runners; when true the session instructions select the
@@ -989,6 +998,9 @@ export async function executePromptStream(
         : {}),
       ...(options?.documentFeedback
         ? { documentFeedback: options.documentFeedback }
+        : {}),
+      ...(options?.notepadFeedback?.length
+        ? { notepadFeedback: options.notepadFeedback }
         : {}),
       ...(options?.askUserQuestionsEnabled
         ? { askUserQuestionsEnabled: true }

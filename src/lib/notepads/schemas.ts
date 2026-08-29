@@ -132,6 +132,163 @@ export const notepadImageSchema = registerTrustedSchema(
 export type NotepadImage = z.infer<typeof notepadImageSchema>;
 
 // ============================================================
+// Review comments
+// ============================================================
+
+export const notepadCommentStatusSchema = z.enum(["open", "resolved"]);
+export type NotepadCommentStatus = z.infer<typeof notepadCommentStatusSchema>;
+
+/**
+ * The block-scoped anchor document comments already use
+ * (`commentAnchorSchema`), with one substitution: the notepad's integer
+ * revision stands in for that domain's content hash, because the revision
+ * counter is the version every other notepad surface states. Scope is a SINGLE
+ * block — one `sectionId` + `line`, with offsets into that block's text — and
+ * `prefix`/`suffix` are stored context that exact-match re-anchoring does not
+ * consult.
+ *
+ * The field set is mirrored rather than imported: `document-comments/schemas`
+ * reaches the conversation schema graph, which a module the state store loads
+ * at open has no business dragging in. `schemas.test.ts` pins the parity so the
+ * two shapes cannot drift apart silently.
+ */
+export const notepadCommentAnchorSchema = registerTrustedSchema(
+  z.object({
+    sectionId: z.string(),
+    headingLabel: z.string(),
+    line: z.number().int().positive(),
+    charStart: z.number().int().nonnegative(),
+    charEnd: z.number().int().nonnegative(),
+    quote: z.string(),
+    prefix: z.string(),
+    suffix: z.string(),
+    /** The notepad revision the passage was quoted from. */
+    notepadRevision: z.number().int().positive(),
+  }),
+  "notepadCommentAnchorSchema",
+);
+export type NotepadCommentAnchor = z.infer<typeof notepadCommentAnchorSchema>;
+
+/**
+ * A review comment on one notepad passage. Attribution matches
+ * `notepad_revisions`: an agent names the conversation that wrote it, a user
+ * names nothing. `resolvedAt` is an explicit `string | null` so a never-resolved
+ * comment is distinguishable from a field dropped on round-trip.
+ */
+export const notepadCommentSchema = registerTrustedSchema(
+  z.object({
+    id: z.string().min(1),
+    notepadId: z.string().min(1),
+    anchor: notepadCommentAnchorSchema,
+    body: z.string().min(1),
+    status: notepadCommentStatusSchema,
+    authorKind: notepadAuthorKindSchema,
+    authorConversationId: z.string().min(1).nullable(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    resolvedAt: z.string().min(1).nullable(),
+  }),
+  "notepadCommentSchema",
+);
+export type NotepadComment = z.infer<typeof notepadCommentSchema>;
+
+/** How a comment was answered. Replies are discussion, so they never resolve. */
+export const notepadCommentReplySchema = registerTrustedSchema(
+  z.object({
+    id: z.string().min(1),
+    commentId: z.string().min(1),
+    body: z.string().min(1),
+    authorKind: notepadAuthorKindSchema,
+    authorConversationId: z.string().min(1).nullable(),
+    createdAt: z.string().min(1),
+  }),
+  "notepadCommentReplySchema",
+);
+export type NotepadCommentReply = z.infer<typeof notepadCommentReplySchema>;
+
+/** A comment with its replies — the unit every listing surface reads. */
+export const notepadCommentThreadSchema = z.object({
+  comment: notepadCommentSchema,
+  replies: z.array(notepadCommentReplySchema),
+});
+export type NotepadCommentThread = z.infer<typeof notepadCommentThreadSchema>;
+
+/** Whether the quoted passage still resolves in the notepad's current text. */
+export const notepadCommentAnchorStateSchema = z.enum(["anchored", "stale"]);
+export type NotepadCommentAnchorState = z.infer<
+  typeof notepadCommentAnchorStateSchema
+>;
+
+/**
+ * The commented passage as a reader of the notepad sees it TODAY: the captured
+ * quote, where it sits, and whether it still resolves there. Quote and location
+ * are stated over the canonical text form — the same string `cctl notepad get`
+ * returns — so an agent reading the listing can find the passage in what it
+ * reads.
+ */
+export const notepadCommentPassageSchema = z.object({
+  quote: z.string(),
+  /** Heading label plus line, or the line alone above the first heading. */
+  location: z.string(),
+  state: notepadCommentAnchorStateSchema,
+});
+export type NotepadCommentPassage = z.infer<typeof notepadCommentPassageSchema>;
+
+/** A thread plus its passage — what the agent listing and review surface read. */
+export const resolvedNotepadCommentThreadSchema =
+  notepadCommentThreadSchema.extend({ passage: notepadCommentPassageSchema });
+export type ResolvedNotepadCommentThread = z.infer<
+  typeof resolvedNotepadCommentThreadSchema
+>;
+
+// ============================================================
+// Change-notice delivery watermarks
+// ============================================================
+
+/**
+ * What a conversation was last shown of one notepad's open review comments
+ * (R21). A count plus the newest open comment's timestamp rather than a set of
+ * ids: the notice only has to answer "are there open comments this conversation
+ * has not seen", and the pair answers it without storing review content or
+ * growing with the thread.
+ */
+export const notepadOpenCommentMarkerSchema = registerTrustedSchema(
+  z.object({
+    count: z.number().int().nonnegative(),
+    /** Null when the notepad has no open comment at all. */
+    latestCreatedAt: z.string().min(1).nullable(),
+  }),
+  "notepadOpenCommentMarkerSchema",
+);
+export type NotepadOpenCommentMarker = z.infer<
+  typeof notepadOpenCommentMarkerSchema
+>;
+
+/**
+ * Per conversation and notepad, the state last presented to the agent (D17).
+ * Written when a reference is expanded into an agent-facing message, and
+ * advanced again only after the backend accepts a message carrying a change
+ * notice — so a delivery that fails before acceptance re-fires the notice.
+ *
+ * Content-free by construction: a watermark records versions, never the
+ * notepad's text or a comment body.
+ */
+export const notepadDeliveryWatermarkSchema = registerTrustedSchema(
+  z.object({
+    conversationId: z.string().min(1),
+    notepadId: z.string().min(1),
+    /** The notepad revision whose content was last presented. */
+    revision: z.number().int().positive(),
+    openComments: notepadOpenCommentMarkerSchema,
+    updatedAt: z.string().min(1),
+  }),
+  "notepadDeliveryWatermarkSchema",
+);
+export type NotepadDeliveryWatermark = z.infer<
+  typeof notepadDeliveryWatermarkSchema
+>;
+
+// ============================================================
 // List projection
 // ============================================================
 
@@ -234,6 +391,55 @@ export type RestoreNotepadRevisionInput = z.infer<
 >;
 
 /**
+ * Creating a comment is the review surface's act. No write-mode gate applies
+ * anywhere on the comment surface: a comment is review discussion, not content
+ * mutation, and the write mode governs what agents may write INTO a notepad.
+ */
+export const createNotepadCommentInputSchema = z
+  .object({
+    anchor: notepadCommentAnchorSchema,
+    body: z.string().min(1),
+    author: notepadAuthorSchema.default({ kind: "user" }),
+  })
+  .strict();
+export type CreateNotepadCommentInput = z.infer<
+  typeof createNotepadCommentInputSchema
+>;
+
+export const replyToNotepadCommentInputSchema = z
+  .object({
+    body: z.string().min(1),
+    author: notepadAuthorSchema,
+  })
+  .strict();
+export type ReplyToNotepadCommentInput = z.infer<
+  typeof replyToNotepadCommentInputSchema
+>;
+
+/**
+ * Resolve and reopen are the same write in opposite directions, so they are one
+ * input. The author is required because both are user acts: an agent-attributed
+ * caller is refused rather than served.
+ */
+export const setNotepadCommentStatusInputSchema = z
+  .object({
+    status: notepadCommentStatusSchema,
+    author: notepadAuthorSchema,
+  })
+  .strict();
+export type SetNotepadCommentStatusInput = z.infer<
+  typeof setNotepadCommentStatusInputSchema
+>;
+
+/** An absent status lists every comment; present narrows to one state. */
+export const notepadCommentListQuerySchema = z
+  .object({ status: notepadCommentStatusSchema.optional() })
+  .strict();
+export type NotepadCommentListQuery = z.infer<
+  typeof notepadCommentListQuerySchema
+>;
+
+/**
  * `projectPath` merges a project's notepads into the global listing; `scope`
  * narrows to one of the two. Archived notepads are hidden by default and
  * reachable only when explicitly requested.
@@ -284,7 +490,20 @@ export type NotepadRefAttrs = z.infer<typeof notepadRefAttrsSchema>;
 export const notepadChangedEventSchema = z
   .object({
     type: z.literal("notepad-changed"),
-    change: z.enum(["created", "updated", "organized", "restored", "deleted"]),
+    /**
+     * `comment-activity` covers every review act — created, replied, resolved,
+     * reopened, deleted — because the one reaction it drives refetches the
+     * notepad's comments regardless of which act occurred. One event with a
+     * change discriminator, never a sibling event.
+     */
+    change: z.enum([
+      "created",
+      "updated",
+      "organized",
+      "restored",
+      "deleted",
+      "comment-activity",
+    ]),
     notepadId: z.string().min(1),
     scope: notepadScopeSchema,
     projectPath: z.string().min(1).nullable(),

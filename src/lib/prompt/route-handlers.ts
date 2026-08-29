@@ -250,6 +250,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
               ...(body.documentFeedback
                 ? { documentFeedback: body.documentFeedback }
                 : {}),
+              ...(body.notepadFeedback
+                ? { notepadFeedback: [body.notepadFeedback] }
+                : {}),
               ...(isSessionCollab && body.collab
                 ? {
                     collab: {
@@ -564,6 +567,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
               },
               ...(body.documentFeedback
                 ? { documentFeedback: body.documentFeedback }
+                : {}),
+              ...(body.notepadFeedback
+                ? { notepadFeedback: [body.notepadFeedback] }
                 : {}),
             },
           );

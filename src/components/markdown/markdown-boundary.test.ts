@@ -75,6 +75,14 @@ const SOURCE_MAP_PUBLIC_EXPORTS = new Set([
   "resolveBlockMeta",
   "resolveSelectionBlock",
   "resolveSelectionMeta",
+  // The source half of the same contract: where a dialect's replaced tokens sit
+  // in the Markdown source, so an anchor stated over source text and a
+  // selection measured over rendered text can be mapped onto each other. Only a
+  // parse can answer it (a token inside a code literal is never replaced), and
+  // the parse belongs to this module — the caller passes in its own dialect
+  // rule and gets offsets back, so no renderer internal escapes.
+  "MarkdownSourceSpan",
+  "markdownTokenSourceSpans",
 ]);
 
 /**

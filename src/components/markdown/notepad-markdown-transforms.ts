@@ -1,9 +1,9 @@
+import { type RefSegment } from "@/lib/conversations/ref-segments";
 import {
-  segmentTextByRefs,
-  type RefSegment,
-} from "@/lib/conversations/ref-segments";
+  notepadValueParts,
+  type NotepadValuePart,
+} from "@/lib/notepads/content-parts";
 import { notepadImageUrl } from "@/lib/notepads/image-client";
-import { findNotepadImageTokens } from "@/lib/prompt-editor/notepad-image-token";
 
 /**
  * Remark plugin that renders canonical notepad text: registered reference XML
@@ -98,15 +98,17 @@ function transformChildren(parent: ParentNode, notepadId: string): void {
     const value = child["value"];
 
     if (type === "html" && typeof value === "string") {
-      const segments = segmentTextByRefs(value);
-      if (segments.some((segment) => segment.type !== "text")) {
-        const inline = segments.flatMap((segment) =>
-          segment.type === "text"
-            ? textToNodes(segment.text, notepadId)
-            : [chipNode(segment)],
-        );
+      const parts = notepadValueParts("html", value);
+      if (parts.some((part) => part.type !== "text")) {
+        const inline = partsToNodes(parts, notepadId);
         if (wrapReplacements) {
-          next.push({ type: "paragraph", children: inline });
+          // The wrapper inherits the replaced node's source position so the
+          // block still stamps the canonical line a comment anchors to.
+          next.push({
+            type: "paragraph",
+            children: inline,
+            position: child["position"],
+          });
         } else {
           next.push(...inline);
         }
@@ -116,13 +118,12 @@ function transformChildren(parent: ParentNode, notepadId: string): void {
       continue;
     }
 
-    if (
-      type === "text" &&
-      typeof value === "string" &&
-      findNotepadImageTokens(value).length > 0
-    ) {
-      next.push(...textToNodes(value, notepadId));
-      continue;
+    if (type === "text" && typeof value === "string") {
+      const parts = notepadValueParts("text", value);
+      if (parts.some((part) => part.type !== "text")) {
+        next.push(...partsToNodes(parts, notepadId));
+        continue;
+      }
     }
 
     if (isParentNode(child)) {
@@ -148,22 +149,19 @@ function chipNode(segment: Exclude<RefSegment, { type: "text" }>): CreatedNode {
   };
 }
 
-function textToNodes(value: string, notepadId: string): CreatedNode[] {
-  const tokens = findNotepadImageTokens(value);
-  if (tokens.length === 0) {
-    return [{ type: "text", value }];
-  }
+function partsToNodes(
+  parts: NotepadValuePart[],
+  notepadId: string,
+): CreatedNode[] {
   const nodes: CreatedNode[] = [];
-  let cursor = 0;
-  for (const token of tokens) {
-    if (token.start > cursor) {
-      nodes.push({ type: "text", value: value.slice(cursor, token.start) });
+  for (const part of parts) {
+    if (part.type === "ref") {
+      nodes.push(chipNode(part.segment));
+    } else if (part.type === "image") {
+      nodes.push(imageNode(part.imageId, notepadId));
+    } else if (part.text !== "") {
+      nodes.push({ type: "text", value: part.text });
     }
-    nodes.push(imageNode(token.imageId, notepadId));
-    cursor = token.end;
-  }
-  if (cursor < value.length) {
-    nodes.push({ type: "text", value: value.slice(cursor) });
   }
   return nodes;
 }

@@ -1,7 +1,13 @@
 /**
- * Pre-turn step: document-feedback prompt and transcript composition.
+ * Pre-turn step: review-feedback prompt and transcript composition.
  *
- * Hides the decision of how the two send paths carry document feedback:
+ * Owns ONE decision for both review loops — document comments and notepad
+ * comment dispatches — because both answer it identically and a turn can carry
+ * either or both. The two payloads stay separately named end to end rather than
+ * collapsing into a discriminated feedback-source union (D18): each keeps its
+ * own identity, and only the durable-vs-delivered rule is shared.
+ *
+ * Hides the decision of how the two send paths carry feedback:
  *  - Immediate path: the send hook puts the formatted feedback prose in
  *    `promptText` (and `documentFeedback` for the card). The prose is used
  *    as-is, or derived here when no explicit text was supplied.
@@ -16,6 +22,7 @@
  */
 
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
+import { formatNotepadFeedbackPrompt } from "@/lib/notepads/format-feedback";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ExecutePromptInput } from "../types";
 import { buildUserTranscriptBlocks } from "../build-user-transcript-blocks";
@@ -32,15 +39,35 @@ export interface ResolvedTurnPromptText {
   isDrainedFeedbackBatch: boolean;
 }
 
+/**
+ * Derive the agent-facing prose for whichever review payloads the turn carries.
+ * Null when it carries none. Several notepad dispatches can coalesce into one
+ * drained batch, so each keeps its own fragment rather than being merged.
+ */
+function deriveFeedbackText(input: {
+  documentFeedback: ExecutePromptInput["documentFeedback"];
+  notepadFeedback: ExecutePromptInput["notepadFeedback"];
+}): string | null {
+  const fragments = [
+    ...(input.documentFeedback
+      ? [formatDocumentFeedbackPrompt(input.documentFeedback.items)]
+      : []),
+    ...(input.notepadFeedback ?? []).map(formatNotepadFeedbackPrompt),
+  ];
+  return fragments.length > 0 ? fragments.join("\n\n") : null;
+}
+
 /** Compose the agent-facing prompt text for a turn that may carry feedback. */
 export function resolveTurnPromptText(input: {
   promptText: string;
-  documentFeedback: ExecutePromptInput["documentFeedback"];
+  documentFeedback?: ExecutePromptInput["documentFeedback"];
+  notepadFeedback?: ExecutePromptInput["notepadFeedback"];
   isQueuedDelivery: boolean;
 }): ResolvedTurnPromptText {
-  const derivedFeedbackText = input.documentFeedback
-    ? formatDocumentFeedbackPrompt(input.documentFeedback.items)
-    : null;
+  const derivedFeedbackText = deriveFeedbackText({
+    documentFeedback: input.documentFeedback,
+    notepadFeedback: input.notepadFeedback,
+  });
   const isDrainedFeedbackBatch =
     input.isQueuedDelivery && derivedFeedbackText !== null;
   const hasExplicitPromptText = input.promptText.trim().length > 0;
@@ -82,17 +109,24 @@ export function composeUserTranscriptBlocks(input: {
   effectivePromptText: string;
   rewrittenPromptText: string;
   isDrainedFeedbackBatch: boolean;
-  documentFeedback: ExecutePromptInput["documentFeedback"];
+  documentFeedback?: ExecutePromptInput["documentFeedback"];
+  notepadFeedback?: ExecutePromptInput["notepadFeedback"];
   imageRefs: ConversationImageRef[];
 }): MessageContentBlock[] {
   const transcriptUserText = input.isDrainedFeedbackBatch
     ? input.promptText
     : "";
-  if (input.documentFeedback) {
+  const hasNotepadFeedback = (input.notepadFeedback?.length ?? 0) > 0;
+  if (input.documentFeedback || hasNotepadFeedback) {
     return buildUserTranscriptBlocks({
       rewrittenPromptText: transcriptUserText,
       imageRefs: input.imageRefs,
-      documentFeedback: input.documentFeedback,
+      ...(input.documentFeedback
+        ? { documentFeedback: input.documentFeedback }
+        : {}),
+      ...(hasNotepadFeedback
+        ? { notepadFeedback: input.notepadFeedback ?? [] }
+        : {}),
     });
   }
   if (input.imageRefs.length > 0) {

@@ -48,7 +48,10 @@ import {
 } from "@/lib/conversations/message-queue-drain";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { ImagePayload } from "@/lib/images/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
@@ -75,6 +78,7 @@ export interface ConversationTurnRequest {
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   waitForBackgroundTasks?: boolean;
   documentFeedback?: DocumentFeedbackPayload;
+  notepadFeedback?: readonly NotepadFeedbackPayload[];
   askUserQuestionsEnabled?: boolean;
   /**
    * Server-derived filesystem-write envelope for this turn, composed by the
@@ -783,6 +787,9 @@ export async function executeConversationTurn(
         : {}),
       ...(input.turn.documentFeedback
         ? { documentFeedback: input.turn.documentFeedback }
+        : {}),
+      ...(input.turn.notepadFeedback?.length
+        ? { notepadFeedback: input.turn.notepadFeedback }
         : {}),
       ...(input.turn.askUserQuestionsEnabled
         ? { askUserQuestionsEnabled: true }

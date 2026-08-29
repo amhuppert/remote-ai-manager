@@ -1,11 +1,16 @@
 import { z } from "zod";
 import {
+  notepadCommentReplySchema,
+  notepadCommentStatusSchema,
   notepadListItemSchema,
   notepadSchema,
+  resolvedNotepadCommentThreadSchema,
   type Notepad,
+  type NotepadCommentReply,
   type NotepadListItem,
   type NotepadScope,
   type NotepadWriteOperation,
+  type ResolvedNotepadCommentThread,
 } from "@/lib/notepads/schemas";
 import { dispatchGroup } from "../dispatch";
 import {
@@ -41,6 +46,13 @@ import {
  * the notepad panel, and an agent that could widen its own write mode would
  * defeat the control the mode exists to provide.
  *
+ * The `comment` subgroup (D16) carries exactly two more: reading the review
+ * comments the user anchored to a notepad's passages, and replying to one.
+ * Resolving, reopening, and deleting a comment are the user's judgement that the
+ * response actually addressed it, so they have no verb here — the absence IS the
+ * boundary, and the service refuses an agent-attributed attempt at the route in
+ * case something reaches past this surface.
+ *
  * Notepads are addressed by immutable id, never by name — the id is what a list
  * row, a chip's reference XML, and an injected notepad block all carry, so an
  * agent always holds one and a rename never strands it. Routes are flat and
@@ -62,11 +74,20 @@ const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
 /** Rows the bounded default prints before it names the reveal command. */
 const NOTEPAD_LIST_LIMIT = 20;
 
+/** Comment blocks the bounded default prints; a block spans several lines. */
+const NOTEPAD_COMMENT_LIST_LIMIT = 20;
+
 const LIST_HINT = "read one in full with 'cctl notepad get <notepadId>'";
 
 const notepadResponseSchema = z.object({ notepad: notepadSchema });
 const notepadListResponseSchema = z.object({
   notepads: z.array(notepadListItemSchema),
+});
+const notepadCommentListResponseSchema = z.object({
+  comments: z.array(resolvedNotepadCommentThreadSchema),
+});
+const notepadCommentReplyResponseSchema = z.object({
+  reply: notepadCommentReplySchema,
 });
 
 // ---------------------------------------------------------------------------
@@ -135,21 +156,80 @@ function baseRevisionFlag(
 
 function listLimitValue(
   values: Record<string, string>,
+  command: string,
+  fallback: number,
   json: boolean,
 ): { ok: true; value: number } | { ok: false; result: CliResult } {
   const raw = values["limit"];
-  if (raw === undefined) return { ok: true, value: NOTEPAD_LIST_LIMIT };
+  if (raw === undefined) return { ok: true, value: fallback };
   const parsed = Number(raw);
   if (!/^[0-9]+$/u.test(raw) || !Number.isSafeInteger(parsed) || parsed < 1) {
     return {
       ok: false,
       result: usageFailure(
-        `notepad list --limit takes a positive integer, received ${JSON.stringify(raw)}`,
+        `${command} --limit takes a positive integer, received ${JSON.stringify(raw)}`,
         json,
       ),
     };
   }
   return { ok: true, value: parsed };
+}
+
+/**
+ * The two ids a reply addresses. A comment is only ever reachable through the
+ * notepad it quotes — that is how the service resolves it, so an id pair borrowed
+ * across notepads is a not-found rather than a cross-notepad write.
+ */
+function commentTargetArguments(
+  rest: string[],
+  json: boolean,
+):
+  | { ok: true; notepadId: string; commentId: string }
+  | { ok: false; result: CliResult } {
+  const [notepadId, commentId] = rest;
+  if (
+    notepadId === undefined ||
+    notepadId.trim() === "" ||
+    commentId === undefined ||
+    commentId.trim() === ""
+  ) {
+    return {
+      ok: false,
+      result: usageFailure(
+        "notepad comment reply requires <notepadId> <commentId> — both are printed on every 'cctl notepad comment list' block",
+        json,
+      ),
+    };
+  }
+  if (rest.length > 2) {
+    return {
+      ok: false,
+      result: usageFailure(
+        "notepad comment reply takes exactly <notepadId> <commentId>; the reply text goes in --body",
+        json,
+      ),
+    };
+  }
+  return { ok: true, notepadId, commentId };
+}
+
+function commentStatusFlag(
+  values: Record<string, string>,
+  json: boolean,
+): { ok: true; value: string | undefined } | { ok: false; result: CliResult } {
+  const raw = values["status"];
+  if (raw === undefined) return { ok: true, value: undefined };
+  const parsed = notepadCommentStatusSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `notepad comment list --status takes ${notepadCommentStatusSchema.options.join(" or ")}, received ${JSON.stringify(raw)}`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, value: parsed.data };
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +240,14 @@ function notepadPath(notepadId?: string): string {
   return notepadId === undefined
     ? "/api/notepads"
     : `/api/notepads/${encodePathSegment(notepadId)}`;
+}
+
+function commentsPath(notepadId: string): string {
+  return `${notepadPath(notepadId)}/comments`;
+}
+
+function commentRepliesPath(notepadId: string, commentId: string): string {
+  return `${commentsPath(notepadId)}/${encodePathSegment(commentId)}/replies`;
 }
 
 /**
@@ -220,6 +308,70 @@ function detailLines(notepad: Notepad): string[] {
 function notepadMetadata(notepad: Notepad): Omit<Notepad, "content"> {
   const { content: _content, ...metadata } = notepad;
   return metadata;
+}
+
+/** `agent <conversationId>` or `user` — who wrote a comment or a reply. */
+function authorLabel(
+  authorKind: "user" | "agent",
+  authorConversationId: string | null,
+): string {
+  return authorKind === "agent" && authorConversationId !== null
+    ? `agent ${authorConversationId}`
+    : authorKind;
+}
+
+/**
+ * A labelled value whose text may span lines. The first line stays on the label
+ * so the common single-line case reads as one row; continuations are indented
+ * rather than dropped, because a comment body is the user's prose and truncating
+ * it would hide the ask.
+ */
+function labelledLines(label: string, text: string): string[] {
+  const [first = "", ...rest] = text.split("\n");
+  return [`  ${label}: ${first}`, ...rest.map((line) => `    ${line}`)];
+}
+
+/**
+ * One comment as a multi-line block: what to answer, where it points, and
+ * whether that passage still exists. `state` is the honest part — a `stale`
+ * comment quotes text the notepad no longer has at that spot, and the anchor is
+ * never relocated onto different text, so the agent re-reads instead of guessing.
+ */
+function commentBlock(thread: ResolvedNotepadCommentThread): string {
+  const { comment, passage, replies } = thread;
+  return [
+    [
+      comment.id,
+      comment.status,
+      passage.state,
+      passage.location,
+      authorLabel(comment.authorKind, comment.authorConversationId),
+    ].join("  "),
+    ...labelledLines("quote", passage.quote),
+    ...labelledLines("body", comment.body),
+    ...replies.flatMap((reply) =>
+      labelledLines(
+        `reply ${reply.id}  ${authorLabel(reply.authorKind, reply.authorConversationId)}`,
+        reply.body,
+      ),
+    ),
+  ].join("\n");
+}
+
+/**
+ * The read that returns every comment this one bounded away. The status filter
+ * is spelled back out for the same reason the list reveal pins its project: a
+ * reveal that widened the filter would disclose a different set than it omitted.
+ */
+function commentListRevealCommand(
+  notepadId: string,
+  status: string | undefined,
+  total: number,
+): string {
+  const parts = ["cctl notepad comment list", revealArgument(notepadId)];
+  if (status !== undefined) parts.push(`--status ${status}`);
+  parts.push(`--limit ${total}`);
+  return parts.join(" ");
 }
 
 /**
@@ -305,6 +457,30 @@ export async function runNotepad(
       create: (r) => runNotepadCreate(r, flags, values, env, host),
       update: (r) => runNotepadWrite("update", r, flags, values, env, host),
       append: (r) => runNotepadWrite("append", r, flags, values, env, host),
+      comment: (r) => runNotepadComment(r, flags, values, env, host),
+    },
+  });
+}
+
+/**
+ * The review-comment surface (D16). Two verbs, and the ones that are ABSENT are
+ * the design: resolve, reopen, and delete never appear here, so the registry —
+ * which this dispatcher derives its verb list from — cannot advertise one.
+ */
+async function runNotepadComment(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return dispatchGroup({
+    group: ["notepad", "comment"],
+    rest,
+    json: flags.json,
+    handlers: {
+      list: (r) => runNotepadCommentList(r, flags, values, env, host),
+      reply: (r) => runNotepadCommentReply(r, flags, values, env, host),
     },
   });
 }
@@ -323,7 +499,12 @@ async function runNotepadList(
   if (rest.length > 0) {
     return usageFailure("notepad list takes no arguments", json);
   }
-  const limit = listLimitValue(values, json);
+  const limit = listLimitValue(
+    values,
+    "notepad list",
+    NOTEPAD_LIST_LIMIT,
+    json,
+  );
   if (!limit.ok) return limit.result;
 
   const resolved = await resolveProjectConversationContext(flags, env, host);
@@ -425,19 +606,7 @@ async function runNotepadGet(
     namePrefix: `notepad-${notepad.id.replace(/[^a-zA-Z0-9_-]+/gu, "-")}`,
   });
   if (outcome.kind === "unwritable") {
-    return outcome.reason === "host_cannot_write"
-      ? failure({
-          exitCode: EXIT_OPERATION_FAILED,
-          message: "notepad get: this CLI host cannot write artifact files",
-          code: "write_unavailable",
-          json,
-        })
-      : failure({
-          exitCode: EXIT_OPERATION_FAILED,
-          message: `notepad get: could not write ${JSON.stringify(outcome.path)}`,
-          code: "write_failed",
-          json,
-        });
+    return artifactWriteFailure("notepad get", outcome, json);
   }
 
   if (outcome.kind === "artifact") {
@@ -447,7 +616,7 @@ async function runNotepadGet(
         json,
         `${[
           ...detailLines(notepad),
-          ...artifactReceiptLines(outcome.manifest),
+          ...artifactReceiptLines("notepad get", outcome.manifest),
         ].join("\n")}\n`,
         {
           ok: true,
@@ -475,13 +644,229 @@ async function runNotepadGet(
 }
 
 /** The receipt that stands in for content stdout does not carry. */
-function artifactReceiptLines(manifest: ArtifactManifest): string[] {
+function artifactReceiptLines(
+  command: string,
+  manifest: ArtifactManifest,
+): string[] {
   return [
-    `notepad get\tstdout budget exceeded`,
+    `${command}\tstdout budget exceeded`,
     `artifact: ${manifest.path}`,
     `format: ${manifest.format}`,
     `bytes: ${manifest.bytes}`,
     `sha256: ${manifest.sha256}`,
+  ];
+}
+
+/**
+ * A spill the caller's own filesystem refused. Exit 1 rather than 2: the read
+ * itself succeeded and the server is not at fault, so the recovery is local.
+ */
+function artifactWriteFailure(
+  command: string,
+  outcome: { reason: "host_cannot_write" | "write_failed"; path: string },
+  json: boolean,
+): CliResult {
+  return outcome.reason === "host_cannot_write"
+    ? failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: `${command}: this CLI host cannot write artifact files`,
+        code: "write_unavailable",
+        json,
+      })
+    : failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: `${command}: could not write ${JSON.stringify(outcome.path)}`,
+        code: "write_failed",
+        json,
+      });
+}
+
+async function runNotepadCommentList(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+
+  const denied = checkFlags(values, "notepad comment list", json);
+  if (denied) return denied;
+  const notepadId = notepadIdArgument(rest, "comment list", json);
+  if (!notepadId.ok) return notepadId.result;
+  const status = commentStatusFlag(values, json);
+  if (!status.ok) return status.result;
+  const limit = listLimitValue(
+    values,
+    "notepad comment list",
+    NOTEPAD_COMMENT_LIST_LIMIT,
+    json,
+  );
+  if (!limit.ok) return limit.result;
+
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const query = new URLSearchParams();
+  if (status.value !== undefined) query.set("status", status.value);
+  const search = query.toString();
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "GET",
+    path: `${commentsPath(notepadId.value)}${search === "" ? "" : `?${search}`}`,
+  });
+  if (result.kind !== "ok") return failureFromRequest(result, json);
+
+  const parsed = notepadCommentListResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: "the notepad comment list",
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const threads = parsed.data.comments;
+
+  // One cap over the threads bounds both serializations, so the blocks printed
+  // and the threads the envelope carries cannot come apart.
+  const bounded = boundedItems(
+    threads,
+    limit.value,
+    commentListRevealCommand(notepadId.value, status.value, threads.length),
+  );
+  const summary = `comments: ${omissionSummary(bounded.omission)}`;
+  const hint = `answer one with 'cctl notepad comment reply ${notepadId.value} <commentId> --body "<markdown>"'`;
+
+  // Comment bodies are the user's prose and grow without bound, so the output
+  // goes through the disclosure primitive rather than risking a truncated pipe.
+  //
+  // The budget is measured against the serialization this invocation will
+  // ACTUALLY write, because the two are not the same size: the envelope carries
+  // whole threads — the anchor's stored prefix and suffix, section id, and
+  // timestamps — that the text form never renders, so a listing whose blocks fit
+  // can still overflow a `--json` pipe. Measuring the text for both would spill
+  // exactly the caller whose output feeds code last.
+  const blocks = bounded.items.map(commentBlock).join("\n");
+  //
+  // Each arm spills the bytes it was going to write, so the artifact holds the
+  // serialization its caller asked for rather than the other one's.
+  const outcome = await emitLarge(
+    host,
+    json ? JSON.stringify(bounded.items) : blocks,
+    {
+      format: json ? "json" : "text",
+      namePrefix: `notepad-comments-${notepadId.value.replace(/[^a-zA-Z0-9_-]+/gu, "-")}`,
+    },
+  );
+  if (outcome.kind === "unwritable") {
+    return artifactWriteFailure("notepad comment list", outcome, json);
+  }
+  if (outcome.kind === "artifact") {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(
+        json,
+        `${[
+          summary,
+          ...artifactReceiptLines("notepad comment list", outcome.manifest),
+        ].join("\n")}\n`,
+        {
+          ok: true,
+          ...bounded.omission,
+          storage: "artifact",
+          artifact: outcome.manifest,
+          hint,
+        },
+      ),
+      stderr: "",
+    };
+  }
+
+  const humanBody = `${[summary, ...(blocks === "" ? [] : [blocks])].join("\n")}\n`;
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanBody, {
+      ok: true,
+      comments: bounded.items,
+      ...bounded.omission,
+      hint,
+    }),
+    stderr: "",
+  };
+}
+
+/**
+ * A reply is review discussion, not a content change, so no write mode gates it
+ * and no `--if-revision` applies: nothing about the notepad's text moves. The
+ * caller-conversation header is what makes the reply name the conversation that
+ * wrote it, exactly as it does for `update` and `append`.
+ */
+async function runNotepadCommentReply(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+
+  const denied = checkFlags(values, "notepad comment reply", json);
+  if (denied) return denied;
+  const target = commentTargetArguments(rest, json);
+  if (!target.ok) return target.result;
+  const body = await resolveProseArg(values, host, "body", json);
+  if (!body.ok) return body.result;
+  if (body.value === undefined) {
+    return usageFailure(
+      'notepad comment reply requires --body "<markdown>" or --body-file <path>',
+      json,
+    );
+  }
+
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: commentRepliesPath(target.notepadId, target.commentId),
+    headers: mutationHeaders(context),
+    body: { body: body.value },
+  });
+  if (result.kind !== "ok") return failureFromRequest(result, json);
+
+  const parsed = notepadCommentReplyResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: "notepad comment reply",
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const reply = parsed.data.reply;
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, `${replyReceiptLines(reply).join("\n")}\n`, {
+      ok: true,
+      reply,
+      hint: `the user decides whether that settles it — see what is still open with 'cctl notepad comment list ${target.notepadId} --status open'`,
+    }),
+    stderr: "",
+  };
+}
+
+function replyReceiptLines(reply: NotepadCommentReply): string[] {
+  return [
+    `replied to ${reply.commentId}`,
+    `reply: ${reply.id}  ${authorLabel(reply.authorKind, reply.authorConversationId)}  ${reply.createdAt}`,
   ];
 }
 

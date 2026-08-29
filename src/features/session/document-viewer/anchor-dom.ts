@@ -6,7 +6,10 @@ import {
   resolveBlockMeta,
   resolveSelectionBlock,
 } from "@/components/markdown/markdown-source-map";
-import type { ResolvedMarkdownAnnotation } from "@/components/document-viewer/annotation-contract";
+import {
+  NOT_ANNOTATABLE_CLASS,
+  type ResolvedMarkdownAnnotation,
+} from "@/components/document-viewer/annotation-contract";
 
 /**
  * Pure DOM helpers that bridge a stored single-block comment anchor to the live
@@ -21,7 +24,7 @@ import type { ResolvedMarkdownAnnotation } from "@/components/document-viewer/an
  * selection-derivation use.
  */
 
-const NOT_ANNOTATABLE_SELECTOR = ".not-annotatable";
+const NOT_ANNOTATABLE_SELECTOR = `.${NOT_ANNOTATABLE_CLASS}`;
 
 export function findCommentBlockCandidates(
   container: ParentNode,

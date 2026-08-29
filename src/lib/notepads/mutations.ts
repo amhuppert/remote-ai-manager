@@ -12,6 +12,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 
 import { mutationFetch } from "@/lib/api/fetcher";
 import {
@@ -19,8 +20,11 @@ import {
   type NotepadSummaryResolution,
 } from "./queries";
 import { notepadKeys } from "./query-keys";
+import { notepadCommentSchema } from "./schemas";
 import type {
   Notepad,
+  NotepadCommentAnchor,
+  NotepadCommentStatus,
   NotepadListItem,
   NotepadScope,
   UpdateNotepadInput,
@@ -268,6 +272,123 @@ export function useWriteNotepadContentMutation() {
       void queryClient.invalidateQueries({
         queryKey: notepadKeys.revisions(notepad.id),
       });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Review comments
+// ---------------------------------------------------------------------------
+
+/**
+ * Every comment act is a server-shaped outcome, never optimistic: creation
+ * mints an id and resolves the passage server-side, and resolve/reopen/delete
+ * change a listing the same response re-derives. Each settles by invalidating
+ * the notepad's comment list, which is also what a comment-activity event from
+ * another writer invalidates — one reconciliation path, whoever wrote.
+ */
+const commentResponseSchema = z.object({ comment: notepadCommentSchema });
+
+function commentsUrl(notepadId: string): string {
+  return `${notepadUrl(notepadId)}/comments`;
+}
+
+function commentUrl(notepadId: string, commentId: string): string {
+  return `${commentsUrl(notepadId)}/${encodeURIComponent(commentId)}`;
+}
+
+function invalidateComments(queryClient: QueryClient, notepadId: string): void {
+  void queryClient.invalidateQueries({
+    queryKey: notepadKeys.comments(notepadId),
+  });
+}
+
+export interface CreateNotepadCommentVariables {
+  notepadId: string;
+  anchor: NotepadCommentAnchor;
+  body: string;
+}
+
+export function useCreateNotepadCommentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      notepadId,
+      anchor,
+      body,
+    }: CreateNotepadCommentVariables) => {
+      const response = await mutationFetch(
+        commentsUrl(notepadId),
+        "notepads.comment_create",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ anchor, body }),
+        },
+        commentResponseSchema,
+      );
+      return response.comment;
+    },
+    onSettled: (_comment, _error, { notepadId }) => {
+      invalidateComments(queryClient, notepadId);
+    },
+  });
+}
+
+export interface SetNotepadCommentStatusVariables {
+  notepadId: string;
+  commentId: string;
+  status: NotepadCommentStatus;
+}
+
+/** Resolve and reopen — user acts; the agent surface has no such verb. */
+export function useSetNotepadCommentStatusMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      notepadId,
+      commentId,
+      status,
+    }: SetNotepadCommentStatusVariables) => {
+      const response = await mutationFetch(
+        commentUrl(notepadId, commentId),
+        "notepads.comment_set_status",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        },
+        commentResponseSchema,
+      );
+      return response.comment;
+    },
+    onSettled: (_comment, _error, { notepadId }) => {
+      invalidateComments(queryClient, notepadId);
+    },
+  });
+}
+
+export interface DeleteNotepadCommentVariables {
+  notepadId: string;
+  commentId: string;
+}
+
+export function useDeleteNotepadCommentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      notepadId,
+      commentId,
+    }: DeleteNotepadCommentVariables) => {
+      await mutationFetch(
+        commentUrl(notepadId, commentId),
+        "notepads.comment_delete",
+        { method: "DELETE" },
+      );
+      return commentId;
+    },
+    onSettled: (_commentId, _error, { notepadId }) => {
+      invalidateComments(queryClient, notepadId);
     },
   });
 }

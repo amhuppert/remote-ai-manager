@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { commentAnchorSchema } from "@/lib/document-comments/schemas";
 import {
   createNotepadInputSchema,
   notepadChangedEventSchema,
+  notepadCommentAnchorSchema,
+  notepadCommentSchema,
   notepadContentWriteSchema,
   notepadListQuerySchema,
   notepadSchema,
@@ -174,5 +177,97 @@ describe("notepadChangedEventSchema", () => {
       listItem: buildListItem({ content: "the whole notepad body" }),
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("notepadCommentAnchorSchema", () => {
+  it("mirrors the document-comments block anchor, substituting the notepad revision", () => {
+    // The two shapes are mirrored rather than imported (a schema the state
+    // store loads at open must not reach the conversation schema graph), so
+    // this parity check is what keeps them from drifting apart.
+    const documentFields = Object.keys(commentAnchorSchema.shape).filter(
+      (field) => field !== "docRevision",
+    );
+
+    expect(Object.keys(notepadCommentAnchorSchema.shape).sort()).toEqual(
+      [...documentFields, "notepadRevision"].sort(),
+    );
+  });
+
+  it("records the authored-against revision as the notepad's integer counter", () => {
+    const parsed = notepadCommentAnchorSchema.parse({
+      sectionId: "release-notes",
+      headingLabel: "Release notes",
+      line: 3,
+      charStart: 4,
+      charEnd: 13,
+      quote: "migration",
+      prefix: "The ",
+      suffix: " lands",
+      notepadRevision: 7,
+    });
+    expect(parsed.notepadRevision).toBe(7);
+
+    expect(
+      notepadCommentAnchorSchema.safeParse({
+        sectionId: "release-notes",
+        headingLabel: "Release notes",
+        line: 3,
+        charStart: 4,
+        charEnd: 13,
+        quote: "migration",
+        prefix: "The ",
+        suffix: " lands",
+        notepadRevision: "sha256:abc",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("notepadCommentSchema", () => {
+  function buildComment(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "comment-1",
+      notepadId: "notepad-1",
+      anchor: {
+        sectionId: "release-notes",
+        headingLabel: "Release notes",
+        line: 3,
+        charStart: 4,
+        charEnd: 13,
+        quote: "migration",
+        prefix: "The ",
+        suffix: " lands",
+        notepadRevision: 1,
+      },
+      body: "Name the rollback owner.",
+      status: "open",
+      authorKind: "user",
+      authorConversationId: null,
+      createdAt: "2026-08-28T10:00:00.000Z",
+      updatedAt: "2026-08-28T10:00:00.000Z",
+      resolvedAt: null,
+      ...overrides,
+    };
+  }
+
+  it("keeps resolvedAt an explicit null so an unresolved comment is not a dropped field", () => {
+    expect(notepadCommentSchema.parse(buildComment()).resolvedAt).toBeNull();
+    expect(
+      notepadCommentSchema.safeParse(
+        Object.fromEntries(
+          Object.entries(buildComment()).filter(
+            ([field]) => field !== "resolvedAt",
+          ),
+        ),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("names the conversation behind an agent-authored comment", () => {
+    const parsed = notepadCommentSchema.parse(
+      buildComment({ authorKind: "agent", authorConversationId: "conv-1" }),
+    );
+    expect(parsed.authorConversationId).toBe("conv-1");
   });
 });

@@ -1724,6 +1724,98 @@ export const NOTEPADS_SCHEMA_DDL = `
     ON notepad_images (notepad_id, created_at);
 `;
 
+/**
+ * Review comments on a notepad passage and their replies (spec design D15).
+ * Separate from `NOTEPADS_SCHEMA_DDL` so migration `0036-add-notepad-comments`
+ * applies exactly these two tables to a database that already recorded the
+ * notepad tables — the same exported-DDL recipe, one constant per ledger entry.
+ *
+ * The anchor is stored as flat columns rather than a JSON blob: every field is
+ * a scalar the durability contract can see, and none of them is read as a set.
+ */
+export const NOTEPAD_COMMENTS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS notepad_comments (
+    id                     TEXT PRIMARY KEY,
+    notepad_id             TEXT NOT NULL,
+    section_id             TEXT NOT NULL,
+    heading_label          TEXT NOT NULL,
+    line                   INTEGER NOT NULL,
+    char_start             INTEGER NOT NULL,
+    char_end               INTEGER NOT NULL,
+    quote                  TEXT NOT NULL,
+    prefix                 TEXT NOT NULL,
+    suffix                 TEXT NOT NULL,
+    -- The notepad revision the passage was quoted from, so a stale anchor can
+    -- name the version it was authored against.
+    notepad_revision       INTEGER NOT NULL,
+    body                   TEXT NOT NULL,
+    status                 TEXT NOT NULL CHECK (status IN (
+      'open', 'resolved'
+    )),
+    author_kind            TEXT NOT NULL CHECK (author_kind IN (
+      'user', 'agent'
+    )),
+    -- Deliberately FK-less, like notepad_revisions: deleting a conversation
+    -- must not delete the review it authored.
+    author_conversation_id TEXT,
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL,
+    resolved_at            TEXT,
+    FOREIGN KEY (notepad_id) REFERENCES notepads(id) ON DELETE CASCADE
+  );
+
+  -- The listing read shape: one notepad's comments, open set first-class,
+  -- oldest first so a review reads in the order it was written.
+  CREATE INDEX IF NOT EXISTS idx_notepad_comments_notepad_status
+    ON notepad_comments (notepad_id, status, created_at);
+
+  CREATE TABLE IF NOT EXISTS notepad_comment_replies (
+    id                     TEXT PRIMARY KEY,
+    comment_id             TEXT NOT NULL,
+    body                   TEXT NOT NULL,
+    author_kind            TEXT NOT NULL CHECK (author_kind IN (
+      'user', 'agent'
+    )),
+    author_conversation_id TEXT,
+    created_at             TEXT NOT NULL,
+    FOREIGN KEY (comment_id) REFERENCES notepad_comments(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notepad_comment_replies_comment
+    ON notepad_comment_replies (comment_id, created_at);
+`;
+
+/**
+ * Per conversation and notepad, the state last presented to the agent — the
+ * delivery watermark change notices compare against (spec design D17).
+ *
+ * `conversation_id` is deliberately FK-less, like `notepad_revisions`: a
+ * conversation lives in a different table family and may be compacted or
+ * removed without taking the notepad's delivery history with it. The notepad
+ * side DOES cascade, because a watermark for a deleted notepad can never
+ * produce a notice again.
+ *
+ * The composite primary key is `(conversation_id, notepad_id)`, so the one read
+ * shape — every notepad a conversation has seen — rides its leftmost prefix and
+ * needs no second index. Recording is an upsert on that key: a conversation
+ * holds exactly one watermark per notepad, never a delivery log.
+ *
+ * Content-free by construction: versions and counts only, never notepad text or
+ * a comment body.
+ */
+export const NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS notepad_delivery_watermarks (
+    conversation_id        TEXT NOT NULL,
+    notepad_id             TEXT NOT NULL,
+    revision               INTEGER NOT NULL,
+    open_comment_count     INTEGER NOT NULL,
+    latest_open_comment_at TEXT,
+    updated_at             TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, notepad_id),
+    FOREIGN KEY (notepad_id) REFERENCES notepads(id) ON DELETE CASCADE
+  );
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -2276,6 +2368,10 @@ const SCHEMA_DDL = `
   ${GRAPH_PLAN_REVIEWS_SCHEMA_DDL}
 
   ${NOTEPADS_SCHEMA_DDL}
+
+  ${NOTEPAD_COMMENTS_SCHEMA_DDL}
+
+  ${NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {

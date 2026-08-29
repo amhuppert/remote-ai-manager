@@ -1,4 +1,7 @@
 import type { Element, Nodes, Root } from "hast";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { visit } from "unist-util-visit";
 
 const STAMPED_BLOCK_TAGS = new Set([
@@ -83,6 +86,66 @@ export function rehypeStampSourcePosition() {
       element.properties[CC_HEADING_ATTR] = currentHeading;
     });
   };
+}
+
+export interface MarkdownSourceSpan {
+  start: number;
+  /** Exclusive. */
+  end: number;
+}
+
+/**
+ * The parser the renderers parse through. `remark-breaks` is deliberately
+ * absent: it is a transformer (which `parse` does not run) and its node
+ * rewriting discards the source positions this contract is built from, while
+ * the newline it replaces still costs its one character in the rendered text —
+ * `mdast-util-to-hast` emits a literal newline beside every `<br>` — so leaving
+ * it out cannot shift an offset.
+ */
+const sourceParser = unified().use(remarkParse).use(remarkGfm);
+
+/**
+ * Where a dialect's replaced tokens sit in the Markdown SOURCE.
+ *
+ * A renderer that swaps tokens for elements (reference chips, embedded images)
+ * makes the source and the rendered text two different coordinate spaces, and
+ * anything mapping between them — comment anchors, most of all — has to know
+ * exactly which source characters the rendering hid. Only a parse can answer
+ * that: a dialect transform walks mdast, where `code` and `inlineCode` are
+ * childless literals it never enters, so a token typed inside a code span or
+ * fence stays literal, visible text. A regex over the raw string cannot see
+ * that distinction and would hide characters the reader can still select.
+ *
+ * The parse and the node positions are this module's; which characters inside
+ * a literal are replaced belongs to the dialect, so `hiddenSpansOfValue`
+ * supplies it — offsets relative to the value it is handed.
+ *
+ * Spans come back in document order, non-overlapping.
+ */
+export function markdownTokenSourceSpans(
+  text: string,
+  hiddenSpansOfValue: (
+    nodeType: "html" | "text",
+    value: string,
+  ) => readonly MarkdownSourceSpan[],
+): MarkdownSourceSpan[] {
+  const spans: MarkdownSourceSpan[] = [];
+
+  visit(sourceParser.parse(text), (node) => {
+    if (node.type !== "html" && node.type !== "text") return;
+    const offset = node.position?.start.offset;
+    if (offset === undefined) return;
+    // Escapes and character references make a text node's value differ from
+    // its source, which would put every offset below off by their difference.
+    // Leaving such a node unspanned costs a refusal, never a wrong anchor.
+    if (text.slice(offset, offset + node.value.length) !== node.value) return;
+
+    for (const span of hiddenSpansOfValue(node.type, node.value)) {
+      spans.push({ start: offset + span.start, end: offset + span.end });
+    }
+  });
+
+  return spans.sort((left, right) => left.start - right.start);
 }
 
 function nearestStampedBlock(

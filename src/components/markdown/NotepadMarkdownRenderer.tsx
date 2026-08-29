@@ -5,8 +5,10 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { PluggableList } from "unified";
+import { NOT_ANNOTATABLE_CLASS } from "@/components/document-viewer/annotation-contract";
 import { getReferenceByXmlTag } from "@/lib/prompt-editor/reference-registry";
 import { cn } from "@/lib/ui/cn";
+import { rehypeStampSourcePosition } from "./markdown-source-map";
 import { createMarkdownComponents, stringProperty } from "./MarkdownRenderer";
 import {
   NOTEPAD_IMAGE_ID_PROPERTY,
@@ -33,7 +35,11 @@ function NotepadPreviewRefChip({
   if (!entry || attrs === null) return null;
   const TranscriptChip = entry.TranscriptChip;
   return (
-    <span data-testid="notepad-preview-chip" data-ref-kind={refTag}>
+    <span
+      data-testid="notepad-preview-chip"
+      data-ref-kind={refTag}
+      className={NOT_ANNOTATABLE_CLASS}
+    >
       <TranscriptChip attrs={attrs} />
     </span>
   );
@@ -72,7 +78,10 @@ function NotepadPreviewImage({
       <span
         data-testid="notepad-image-placeholder"
         data-notepad-image-id={imageId}
-        className="my-sm flex flex-col items-center gap-xs rounded-md border border-dashed border-border-default bg-bg-base px-md py-lg text-text-tertiary"
+        className={cn(
+          NOT_ANNOTATABLE_CLASS,
+          "my-sm flex flex-col items-center gap-xs rounded-md border border-dashed border-border-default bg-bg-base px-md py-lg text-text-tertiary",
+        )}
       >
         <MissingImageGlyph />
         <span className="text-[0.68rem]">image unavailable</span>
@@ -88,7 +97,7 @@ function NotepadPreviewImage({
       loading="lazy"
       data-testid="notepad-preview-image"
       data-notepad-image-id={imageId}
-      className="h-auto max-w-full rounded-md"
+      className={cn(NOT_ANNOTATABLE_CLASS, "h-auto max-w-full rounded-md")}
       onError={() => setFailed(true)}
     />
   );
@@ -164,6 +173,13 @@ const NOTEPAD_COMPONENTS: Components = {
   },
 };
 
+/**
+ * The review surface anchors comments to blocks by their position in the
+ * canonical notepad text, so the stamps ride every notepad rendering rather
+ * than a review-only variant — one rendering, one set of block identities.
+ */
+const REHYPE_PLUGINS: PluggableList = [rehypeStampSourcePosition];
+
 function NotepadMarkdownRenderer({
   notepadId,
   content,
@@ -182,6 +198,7 @@ function NotepadMarkdownRenderer({
     >
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
+        rehypePlugins={REHYPE_PLUGINS}
         components={NOTEPAD_COMPONENTS}
       >
         {content}

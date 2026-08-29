@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  NotepadFeedbackPayload,
+} from "@/lib/conversations/message-content-schemas";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import {
   resolveTurnPromptText,
   composeUserTranscriptBlocks,
-} from "./document-feedback";
+} from "./review-feedback";
 
 const feedback: DocumentFeedbackPayload = {
   items: [
@@ -15,6 +18,20 @@ const feedback: DocumentFeedbackPayload = {
       line: 12,
       quote: "the quoted passage",
       note: "please fix this",
+    },
+  ],
+};
+
+const notepadFeedback: NotepadFeedbackPayload = {
+  notepadId: "np-1",
+  notepadName: "Release plan",
+  notepadRefXml: '<notepad-ref notepad-id="np-1" name="Release plan" />',
+  items: [
+    {
+      commentId: "c-1",
+      location: "§ Rollout · L12",
+      quote: "ship on Friday",
+      body: "deploys are frozen on Friday",
     },
   ],
 };
@@ -72,6 +89,29 @@ describe("resolveTurnPromptText", () => {
     expect(result.isDrainedFeedbackBatch).toBe(true);
     expect(result.effectivePromptText).toMatch(/^Document feedback:/);
   });
+
+  it("derives the notepad dispatch prose for a drained notepad batch", () => {
+    const result = resolveTurnPromptText({
+      promptText: "",
+      notepadFeedback: [notepadFeedback],
+      isQueuedDelivery: true,
+    });
+    expect(result.isDrainedFeedbackBatch).toBe(true);
+    expect(result.effectivePromptText).toContain(notepadFeedback.notepadRefXml);
+    expect(result.effectivePromptText).toContain(
+      "deploys are frozen on Friday",
+    );
+  });
+
+  it("keeps the caller-supplied prose for an immediate notepad dispatch", () => {
+    const result = resolveTurnPromptText({
+      promptText: "already formatted dispatch prose",
+      notepadFeedback: [notepadFeedback],
+      isQueuedDelivery: false,
+    });
+    expect(result.effectivePromptText).toBe("already formatted dispatch prose");
+    expect(result.isDrainedFeedbackBatch).toBe(false);
+  });
 });
 
 describe("composeUserTranscriptBlocks", () => {
@@ -103,6 +143,26 @@ describe("composeUserTranscriptBlocks", () => {
     expect(blocks).toEqual([
       { type: "text", text: "my own message" },
       { type: "document_feedback", items: feedback.items },
+    ]);
+  });
+
+  it("records the notepad dispatch card alone (no prose) for an immediate dispatch", () => {
+    const blocks = composeUserTranscriptBlocks({
+      promptText: "",
+      effectivePromptText: "Notepad review comments on ...",
+      rewrittenPromptText: "Notepad review comments on ...",
+      isDrainedFeedbackBatch: false,
+      notepadFeedback: [notepadFeedback],
+      imageRefs: noImages,
+    });
+    expect(blocks).toEqual([
+      {
+        type: "notepad_feedback",
+        notepadId: notepadFeedback.notepadId,
+        notepadName: notepadFeedback.notepadName,
+        notepadRefXml: notepadFeedback.notepadRefXml,
+        items: notepadFeedback.items,
+      },
     ]);
   });
 

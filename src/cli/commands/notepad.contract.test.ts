@@ -12,19 +12,32 @@ import {
   createNotepadsRouteHandlers,
   type NotepadsRouteHandlers,
 } from "@/lib/notepads/route-handlers";
-import { createNotepadService } from "@/lib/notepads/service";
+import {
+  createNotepadService,
+  type NotepadService,
+} from "@/lib/notepads/service";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import { shellWords } from "@/lib/shared/testing/shell-words";
 import {
+  createNotepadCommentsRepo,
+  type NotepadCommentsRepo,
+} from "@/lib/state-store/notepad-comments-repo";
+import {
   createNotepadsRepo,
   type NotepadsRepo,
 } from "@/lib/state-store/notepads-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { runCli } from "../core";
-import type { CliEnv, CliHost, CliResult } from "../shared";
+import {
+  cliRequest,
+  failureFromRequest,
+  type CliEnv,
+  type CliHost,
+  type CliResult,
+} from "../shared";
 
 /**
  * Contract layer per doc 01 §8: the real CLI core driving the real notepad route
@@ -70,8 +83,10 @@ let dir: string;
 let contentBase: string;
 let fixture: PersistenceFixture;
 let repo: NotepadsRepo;
+let commentsRepo: NotepadCommentsRepo;
 let contentStore: NotepadContentStore;
 let handlers: NotepadsRouteHandlers;
+let service: NotepadService;
 
 const publish: PublishFn = () => ({ delivered: true });
 
@@ -84,7 +99,8 @@ beforeEach(async () => {
   fixture.seedProject(PROJECT_PATH);
   fixture.seedProject(HOSTILE_PROJECT_PATH);
   fixture.seedProject(FLAG_SHAPED_PROJECT_PATH);
-  repo = createNotepadsRepo(fixture.db, createWriteQueue());
+  const writeQueue = createWriteQueue();
+  repo = createNotepadsRepo(fixture.db, writeQueue);
   contentStore = createNotepadContentStore({
     contentRoot: path.join(contentBase, "notepad-content"),
     listNotepadIdsForProject: (projectPath) => repo.listNotepadIds(projectPath),
@@ -92,8 +108,10 @@ beforeEach(async () => {
 
   let clock = 0;
   let idSeq = 0;
-  const service = createNotepadService({
+  commentsRepo = createNotepadCommentsRepo(fixture.db, writeQueue);
+  service = createNotepadService({
     repo,
+    comments: commentsRepo,
     publish,
     deleteNotepadContent: (notepadId) => contentStore.deleteNotepad(notepadId),
     now: () => {
@@ -131,11 +149,17 @@ afterEach(async () => {
  * dynamic `[notepadId]` segment is decoded exactly as the app router decodes it,
  * so an id that needs escaping is proven to survive the round-trip.
  */
-function makeHost(): CliHost & { written: Record<string, string> } {
+function makeHost(): CliHost & {
+  written: Record<string, string>;
+  requests: string[];
+} {
   const written: Record<string, string> = {};
+  const requests: string[] = [];
   return {
     written,
+    requests,
     async fetch(url, init) {
+      requests.push(`${init.method ?? "GET"} ${new URL(url).pathname}`);
       const segments = new URL(url).pathname.split("/").filter(Boolean);
       const request = new Request(url, {
         method: init.method,
@@ -158,6 +182,29 @@ function makeHost(): CliHost & { written: Record<string, string> } {
       if (segments[3] === "content") {
         return handlers.contentPOST(request, context);
       }
+
+      // /api/notepads/<notepadId>/comments[/<commentId>[/replies]]
+      if (segments[3] === "comments") {
+        const commentId = segments[4];
+        if (commentId === undefined) {
+          return init.method === "POST"
+            ? handlers.commentsPOST(request, context)
+            : handlers.commentsGET(request, context);
+        }
+        const commentContext = {
+          params: Promise.resolve({
+            notepadId: decodeURIComponent(notepadId),
+            commentId: decodeURIComponent(commentId),
+          }),
+        };
+        if (segments[5] === "replies") {
+          return handlers.commentRepliesPOST(request, commentContext);
+        }
+        return init.method === "DELETE"
+          ? handlers.commentDELETE(request, commentContext)
+          : handlers.commentPATCH(request, commentContext);
+      }
+
       if (init.method === "PATCH")
         return handlers.detailPATCH(request, context);
       if (init.method === "DELETE") {
@@ -230,6 +277,44 @@ async function createNotepad(
     revision: number;
   };
   return { id: notepad.id, revision: notepad.revision };
+}
+
+/**
+ * The user's review act, made where the panel makes it: a comment anchored to a
+ * passage of the canonical text, quoted at the offsets that text actually holds.
+ * The agent surface only ever READS these, so seeding through the service is the
+ * fixture, not the behaviour under test.
+ */
+async function seedComment(
+  notepadId: string,
+  quote: string,
+  body: string,
+  line = 3,
+): Promise<string> {
+  const blockText = SEED_CONTENT.split("\n")[line - 1] ?? "";
+  const charStart = blockText.indexOf(quote);
+  if (charStart < 0) {
+    throw new Error(
+      `seedComment: ${JSON.stringify(quote)} is not on line ${line}`,
+    );
+  }
+  const result = await service.createComment(notepadId, {
+    anchor: {
+      sectionId: "migration-notes",
+      headingLabel: "Migration notes",
+      line,
+      charStart,
+      charEnd: charStart + quote.length,
+      quote,
+      prefix: blockText.slice(0, charStart),
+      suffix: blockText.slice(charStart + quote.length),
+      notepadRevision: 1,
+    },
+    body,
+    author: { kind: "user" },
+  });
+  if (!result.ok) throw new Error(`seedComment failed: ${result.error.code}`);
+  return result.value.id;
 }
 
 describe("cctl notepad against the real notepad routes", () => {
@@ -731,6 +816,380 @@ describe("cctl notepad against the real notepad routes", () => {
       host,
     );
     expect(otherScope.exitCode, otherScope.stderr).toBe(0);
+  });
+
+  it("lists a notepad's comments and persists a reply attributed to the caller", async () => {
+    const host = makeHost();
+    const created = await createNotepad(host, "Reviewed");
+    const commentId = await seedComment(
+      created.id,
+      "before starting",
+      "Is this reference still the right one?",
+    );
+
+    const listed = await runCli(
+      ["notepad", "comment", "list", created.id, "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(listed.exitCode, listed.stderr).toBe(0);
+    const threads = envelopeOf(listed).comments as {
+      comment: { id: string; body: string; status: string };
+      passage: { quote: string; location: string; state: string };
+      replies: unknown[];
+    }[];
+    expect(threads).toHaveLength(1);
+    expect(threads[0]?.comment).toMatchObject({
+      id: commentId,
+      body: "Is this reference still the right one?",
+      status: "open",
+    });
+    // The passage is stated over the canonical text a `notepad get` returns, so
+    // the agent can find it in what it reads.
+    expect(threads[0]?.passage).toEqual({
+      quote: "before starting",
+      location: "Migration notes, line 3",
+      state: "anchored",
+    });
+
+    const text = await runCli(
+      ["notepad", "comment", "list", created.id],
+      makeEnv(),
+      host,
+    );
+    expect(text.exitCode, text.stderr).toBe(0);
+    for (const fact of [
+      commentId,
+      "open",
+      "Migration notes, line 3",
+      "before starting",
+      "Is this reference still the right one?",
+    ]) {
+      expect(text.stdout).toContain(fact);
+    }
+
+    const replied = await runCli(
+      [
+        "notepad",
+        "comment",
+        "reply",
+        created.id,
+        commentId,
+        "--body",
+        "Refreshed the reference in revision 2.",
+        "--json",
+      ],
+      makeEnv(),
+      host,
+    );
+    expect(replied.exitCode, replied.stderr).toBe(0);
+
+    // Read back through the repository: a service that answered correctly while
+    // persisting nothing would satisfy the response assertions above.
+    const stored = await commentsRepo.list({ notepadId: created.id });
+    expect(stored[0]?.replies).toHaveLength(1);
+    expect(stored[0]?.replies[0]).toMatchObject({
+      body: "Refreshed the reference in revision 2.",
+      authorKind: "agent",
+      authorConversationId: CONVERSATION_ID,
+    });
+
+    // And the listing shows the reply to the next reader.
+    const relisted = await runCli(
+      ["notepad", "comment", "list", created.id, "--json"],
+      makeEnv(),
+      host,
+    );
+    const withReply = envelopeOf(relisted).comments as {
+      replies: { body: string }[];
+    }[];
+    expect(withReply[0]?.replies.map((reply) => reply.body)).toEqual([
+      "Refreshed the reference in revision 2.",
+    ]);
+  });
+
+  it("bounds the comment listing and reveals the remainder with the command it printed", async () => {
+    const host = makeHost();
+    const created = await createNotepad(host, "Heavily reviewed");
+    for (const nth of [1, 2, 3]) {
+      await seedComment(created.id, "before starting", `Comment ${nth}.`);
+    }
+    // A resolved one, so the reveal has a filter it must carry back.
+    const resolvedId = await seedComment(
+      created.id,
+      "before starting",
+      "Already handled.",
+    );
+    const settled = await handlers.commentPATCH(
+      new Request(
+        `http://127.0.0.1:4998/api/notepads/${created.id}/comments/${resolvedId}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: "resolved" }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          notepadId: created.id,
+          commentId: resolvedId,
+        }),
+      },
+    );
+    expect(settled.status).toBe(200);
+
+    const bounded = await runCli(
+      [
+        "notepad",
+        "comment",
+        "list",
+        created.id,
+        "--status",
+        "open",
+        "--limit",
+        "2",
+        "--json",
+      ],
+      makeEnv(),
+      host,
+    );
+    const envelope = envelopeOf(bounded);
+    expect(envelope).toMatchObject({ total: 3, returned: 2, truncated: true });
+
+    // The reveal is a real invocation that returns everything the cap dropped —
+    // and keeps the status filter, or it would disclose a different set than the
+    // one it omitted.
+    const words = shellWords(String(envelope.reveal));
+    expect(words[0]).toBe("cctl");
+    const revealed = await runCli(
+      [...words.slice(1), "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(revealed.exitCode, revealed.stderr).toBe(0);
+    const all = envelopeOf(revealed).comments as {
+      comment: { body: string };
+    }[];
+    expect(all.map((thread) => thread.comment.body).sort()).toEqual([
+      "Comment 1.",
+      "Comment 2.",
+      "Comment 3.",
+    ]);
+  });
+
+  it("delivers an oversized comment listing as an artifact receipt instead of truncating it", async () => {
+    const host = makeHost();
+    const created = await createNotepad(host, "Verbose review");
+    const longBody = `The passage needs rewriting.\n${"detail line\n".repeat(6_000)}`;
+    await seedComment(created.id, "before starting", longBody);
+
+    const listed = await runCli(
+      ["notepad", "comment", "list", created.id],
+      makeEnv(),
+      host,
+    );
+    expect(listed.exitCode, listed.stderr).toBe(0);
+    expect(listed.stdout).toContain("comments: 1 total, 1 shown");
+    expect(listed.stdout).not.toContain("detail line");
+    expect(listed.stdout).toContain("artifact: .cc/temp/notepad-comments-");
+    expect(listed.stdout).toMatch(/sha256: sha256:[a-f0-9]{64}/);
+
+    // The spilled file holds the whole block the pipe would have truncated.
+    const [artifactPath, artifactBody] = Object.entries(host.written)[0] ?? [];
+    expect(listed.stdout).toContain(`artifact: ${artifactPath}`);
+    expect(artifactBody).toContain("The passage needs rewriting.");
+    expect(artifactBody).toContain("detail line");
+
+    // --json spills the same way: it changes serialization, never volume.
+    const asJson = await runCli(
+      ["notepad", "comment", "list", created.id, "--json"],
+      makeEnv(),
+      host,
+    );
+    const envelope = envelopeOf(asJson);
+    expect(envelope.storage).toBe("artifact");
+    expect(envelope).toMatchObject({ total: 1, returned: 1, truncated: false });
+    expect(envelope).not.toHaveProperty("comments");
+  });
+
+  /**
+   * The envelope carries whole threads — the anchor's stored context, section
+   * id, and timestamps — that the text form never renders, so for the same
+   * comments the JSON is always the larger serialization. There is therefore a
+   * band where the blocks fit stdout and the envelope does not, and measuring
+   * the text for both arms would spill exactly the caller whose output feeds
+   * code. Sizes here stay inside the production anchor bounds (32 characters of
+   * prefix and suffix); the bulk is ordinary comment prose.
+   */
+  it("decides the spill on the bytes each arm actually writes, not on the text's", async () => {
+    const host = makeHost();
+    const created = await createNotepad(host, "Long review");
+    for (let nth = 0; nth < 20; nth++) {
+      await seedComment(
+        created.id,
+        "before starting",
+        `Comment ${nth}: ${"the passage needs rewriting. ".repeat(92)}`,
+      );
+    }
+
+    // The blocks fit, so the text arm prints them.
+    const text = await runCli(
+      ["notepad", "comment", "list", created.id],
+      makeEnv(),
+      host,
+    );
+    expect(text.exitCode, text.stderr).toBe(0);
+    expect(Buffer.byteLength(text.stdout, "utf8")).toBeLessThan(60_000);
+    expect(text.stdout).not.toContain("artifact:");
+    expect(text.stdout).toContain("Comment 19:");
+
+    // The same comments serialized as JSON do not, so that arm spills instead of
+    // writing an envelope past the budget.
+    const asJson = await runCli(
+      ["notepad", "comment", "list", created.id, "--json"],
+      makeEnv(),
+      host,
+    );
+    expect(asJson.exitCode, asJson.stderr).toBe(0);
+    const envelope = envelopeOf(asJson);
+    expect(envelope.storage).toBe("artifact");
+    expect(envelope.artifact).toMatchObject({ format: "json" });
+    expect(envelope).not.toHaveProperty("comments");
+    expect(envelope).toMatchObject({ total: 20, returned: 20 });
+
+    // The spilled file is the envelope's payload, parseable by the caller that
+    // asked for JSON — not the other arm's rendering.
+    const artifactPath = (envelope.artifact as { path: string }).path;
+    const spilled = JSON.parse(host.written[artifactPath] ?? "") as {
+      comment: { body: string };
+    }[];
+    expect(spilled).toHaveLength(20);
+    expect(spilled[19]?.comment.body).toContain("Comment 19:");
+  });
+
+  it("accepts a reply on a read-only notepad, where every content write is refused", async () => {
+    const host = makeHost();
+    const created = await createNotepad(host, "Frozen");
+    const commentId = await seedComment(
+      created.id,
+      "Migration notes",
+      "This heading is wrong.",
+      1,
+    );
+    expect(
+      (await userPatch(created.id, { writeMode: "read-only" })).status,
+    ).toBe(200);
+
+    // The same notepad, the same agent: the content write is refused…
+    const refused = await runCli(
+      [
+        "notepad",
+        "update",
+        created.id,
+        "--if-revision",
+        "1",
+        "--content",
+        "rewritten",
+      ],
+      makeEnv(),
+      host,
+    );
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("read-only");
+
+    // …and the reply is not, because a reply is review discussion rather than a
+    // change to the content the write mode governs.
+    const replied = await runCli(
+      [
+        "notepad",
+        "comment",
+        "reply",
+        created.id,
+        commentId,
+        "--body",
+        "Agreed — I cannot change it while the notepad is read-only.",
+      ],
+      makeEnv(),
+      host,
+    );
+    expect(replied.exitCode, replied.stderr).toBe(0);
+
+    const stored = await commentsRepo.list({ notepadId: created.id });
+    expect(stored[0]?.replies.map((reply) => reply.authorKind)).toEqual([
+      "agent",
+    ]);
+    // The refused update left the content where it was.
+    expect((await repo.find(created.id))?.revision).toBe(1);
+  });
+
+  it("has no verb for resolving, reopening, or deleting a comment", async () => {
+    const host = makeHost();
+
+    for (const verb of ["resolve", "reopen", "delete"]) {
+      const attempted = await runCli(
+        ["notepad", "comment", verb, "notepad-1", "comment-1"],
+        makeEnv(),
+        host,
+      );
+      expect(attempted.exitCode, `notepad comment ${verb}`).toBe(2);
+      expect(attempted.stderr).toContain(
+        `unknown notepad comment subcommand "${verb}"`,
+      );
+      // The refusal names the whole surface, so the absence is legible rather
+      // than looking like a typo in a verb that exists.
+      expect(attempted.stderr).toContain("list or reply");
+      // Nothing was sent: the boundary holds before any request.
+      expect(host.requests).toEqual([]);
+    }
+  });
+
+  it("renders the server's refusal when an agent-attributed caller tries to resolve a comment", async () => {
+    const host = makeHost();
+    const created = await createNotepad(host, "Judged");
+    const commentId = await seedComment(
+      created.id,
+      "before starting",
+      "Please rewrite this sentence.",
+    );
+
+    // No CLI verb builds this request — that IS the primary guard — so the
+    // refusal is proven at the boundary an agent could still reach directly,
+    // carrying the same claimed attribution `cctl notepad update` sends.
+    for (const attempt of [
+      { method: "PATCH", body: { status: "resolved" }, act: "resolve" },
+      { method: "PATCH", body: { status: "open" }, act: "reopen" },
+      { method: "DELETE", body: undefined, act: "delete" },
+    ]) {
+      const result = await cliRequest(host, {
+        server: "http://127.0.0.1:4998",
+        token: TOKEN,
+        tokenSource: "env",
+        method: attempt.method,
+        path: `/api/notepads/${created.id}/comments/${commentId}`,
+        headers: { "x-cc-conversation-id": CONVERSATION_ID },
+        ...(attempt.body === undefined ? {} : { body: attempt.body }),
+      });
+      if (result.kind === "ok") {
+        throw new Error(`${attempt.act} was accepted from an agent caller`);
+      }
+
+      const rendered = failureFromRequest(result, false);
+      expect(rendered.exitCode, attempt.act).toBe(1);
+      expect(rendered.stderr).toContain(`Only the user can ${attempt.act}`);
+      // The server authors the reason and the next step; the CLI renders them
+      // in the tiers the steering contract reserves for them.
+      expect(rendered.stderr).toContain("why:");
+      expect(rendered.stderr).toContain("instruction:");
+
+      const asJson = failureFromRequest(result, true);
+      const envelope = JSON.parse(asJson.stdout) as Record<string, unknown>;
+      expect(envelope.code).toBe("comment_user_act_refused");
+      expect(envelope.details).toMatchObject({ act: attempt.act });
+    }
+
+    // The comment survived all three attempts, open and undeleted.
+    const stored = await commentsRepo.list({ notepadId: created.id });
+    expect(stored.map((thread) => thread.comment.status)).toEqual(["open"]);
   });
 
   it("rejects a bad token at exit 3 before the request can change anything", async () => {

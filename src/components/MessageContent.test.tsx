@@ -236,6 +236,39 @@ describe("MessageContent — document_feedback block", () => {
   });
 });
 
+describe("MessageContent — notepad_feedback block", () => {
+  const block: MessageContentBlock = {
+    type: "notepad_feedback",
+    notepadId: "np-1",
+    notepadName: "Release plan",
+    notepadRefXml: '<notepad-ref notepad-id="np-1" name="Release plan" />',
+    items: [
+      {
+        commentId: "c-1",
+        location: "§ Rollout · L12",
+        quote: "ship on Friday",
+        body: "deploys are frozen on Friday",
+      },
+    ],
+  };
+
+  it("renders the dispatch record naming the notepad and its comments", () => {
+    render(<MessageContent content={[block]} />);
+    expect(screen.getByTestId("notepad-feedback-card")).toBeInTheDocument();
+    expect(screen.getByText("Release plan")).toBeInTheDocument();
+    expect(screen.getByText("§ Rollout · L12")).toBeInTheDocument();
+    expect(screen.getByText(/ship on Friday/)).toBeInTheDocument();
+    expect(
+      screen.getByText("deploys are frozen on Friday"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not leak the raw reference XML into the transcript", () => {
+    const { container } = render(<MessageContent content={[block]} />);
+    expect(container.textContent).not.toContain("notepad-ref");
+  });
+});
+
 describe("MessageContent — tool use disclosures", () => {
   it("collapses a standalone Bash tool use by default", () => {
     const command = [

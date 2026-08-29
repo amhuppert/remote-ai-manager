@@ -27,6 +27,8 @@ import {
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import {
+  notepadCommentAnchorSchema,
+  notepadCommentStatusSchema,
   notepadScopeSchema,
   notepadSortSchema,
   notepadWriteModeSchema,
@@ -34,6 +36,8 @@ import {
   updateNotepadInputSchema,
   type Notepad,
   type NotepadAuthor,
+  type NotepadComment,
+  type NotepadCommentReply,
 } from "./schemas";
 import type {
   NotepadError,
@@ -84,6 +88,14 @@ export interface NotepadsRouteHandlers {
   contentPOST(request: Request, context: RouteContext): Promise<Response>;
   revisionsGET(request: Request, context: RouteContext): Promise<Response>;
   restorePOST(request: Request, context: RouteContext): Promise<Response>;
+  commentsGET(request: Request, context: RouteContext): Promise<Response>;
+  commentsPOST(request: Request, context: RouteContext): Promise<Response>;
+  commentPATCH(request: Request, context: RouteContext): Promise<Response>;
+  commentDELETE(request: Request, context: RouteContext): Promise<Response>;
+  commentRepliesPOST(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response>;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +172,25 @@ export function notepadErrorResponse(error: NotepadError): Response {
         error.instruction,
         error.rationale,
       );
+    case "comment_not_found":
+      return notFound(
+        error.message,
+        error.code,
+        { notepadId: error.notepadId, commentId: error.commentId },
+        error.instruction,
+        error.rationale,
+      );
+    case "comment_user_act_refused":
+      // 403 like the write-mode refusal: the request was understood and is
+      // permanently refused for this caller, not malformed or retryable.
+      return jsonError(
+        error.message,
+        403,
+        error.code,
+        { act: error.act },
+        error.instruction,
+        error.rationale,
+      );
   }
 }
 
@@ -172,6 +203,22 @@ function notepadResponse(
     { notepad: result.value },
     { status: successStatus },
   );
+}
+
+function commentResponse(
+  result: NotepadResult<NotepadComment>,
+  successStatus = 200,
+): Response {
+  if (!result.ok) return notepadErrorResponse(result.error);
+  return NextResponse.json(
+    { comment: result.value },
+    { status: successStatus },
+  );
+}
+
+function replyResponse(result: NotepadResult<NotepadCommentReply>): Response {
+  if (!result.ok) return notepadErrorResponse(result.error);
+  return NextResponse.json({ reply: result.value }, { status: 201 });
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +285,21 @@ const revisionsQuerySchema = z
   .strict();
 
 const notepadIdParamSchema = z.string().min(1);
+
+/** The author is derived from credentials here too — never from the body. */
+const createCommentBodySchema = z
+  .object({ anchor: notepadCommentAnchorSchema, body: z.string().min(1) })
+  .strict();
+
+const commentStatusBodySchema = z
+  .object({ status: notepadCommentStatusSchema })
+  .strict();
+
+const replyBodySchema = z.object({ body: z.string().min(1) }).strict();
+
+const commentsQuerySchema = z
+  .object({ status: notepadCommentStatusSchema.optional() })
+  .strict();
 
 // ---------------------------------------------------------------------------
 // Boundary parsing
@@ -372,6 +434,23 @@ async function resolveNotepadId(
       ok: false,
       response: validationFailedResponse([
         { path: "notepadId", message: "a notepad id is required" },
+      ]),
+    };
+  }
+  return { ok: true, value: parsed.data };
+}
+
+/** As with `resolveNotepadId`: the segment stays validated at the boundary. */
+async function resolveCommentId(
+  context: RouteContext,
+): Promise<RouteResolution<string>> {
+  const params = await context.params;
+  const parsed = notepadIdParamSchema.safeParse(params["commentId"]);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: validationFailedResponse([
+        { path: "commentId", message: "a comment id is required" },
       ]),
     };
   }
@@ -563,6 +642,103 @@ export function createNotepadsRouteHandlers(
       return NextResponse.json({ revisions: result.value });
     },
 
+    async commentsGET(request, context) {
+      const author = await resolveAuthor(request);
+      if (!author.ok) return author.response;
+
+      const notepadId = await resolveNotepadId(context);
+      if (!notepadId.ok) return notepadId.response;
+
+      const query = parseQuery(request, ["status"], commentsQuerySchema);
+      if (!query.ok) return query.response;
+
+      const result = await deps
+        .getService()
+        .listComments(notepadId.value, query.value);
+      if (!result.ok) return notepadErrorResponse(result.error);
+      return NextResponse.json({ comments: result.value });
+    },
+
+    async commentsPOST(request, context) {
+      const author = await resolveAuthor(request);
+      if (!author.ok) return author.response;
+
+      const notepadId = await resolveNotepadId(context);
+      if (!notepadId.ok) return notepadId.response;
+
+      const body = await parseBody(request, createCommentBodySchema);
+      if (!body.ok) return body.response;
+
+      return commentResponse(
+        await deps.getService().createComment(notepadId.value, {
+          anchor: body.value.anchor,
+          body: body.value.body,
+          author: author.value,
+        }),
+        201,
+      );
+    },
+
+    async commentPATCH(request, context) {
+      const author = await resolveAuthor(request);
+      if (!author.ok) return author.response;
+
+      const notepadId = await resolveNotepadId(context);
+      if (!notepadId.ok) return notepadId.response;
+      const commentId = await resolveCommentId(context);
+      if (!commentId.ok) return commentId.response;
+
+      const body = await parseBody(request, commentStatusBodySchema);
+      if (!body.ok) return body.response;
+
+      return commentResponse(
+        await deps
+          .getService()
+          .setCommentStatus(notepadId.value, commentId.value, {
+            status: body.value.status,
+            author: author.value,
+          }),
+      );
+    },
+
+    async commentDELETE(request, context) {
+      const author = await resolveAuthor(request);
+      if (!author.ok) return author.response;
+
+      const notepadId = await resolveNotepadId(context);
+      if (!notepadId.ok) return notepadId.response;
+      const commentId = await resolveCommentId(context);
+      if (!commentId.ok) return commentId.response;
+
+      return commentResponse(
+        await deps
+          .getService()
+          .deleteComment(notepadId.value, commentId.value, author.value),
+      );
+    },
+
+    async commentRepliesPOST(request, context) {
+      const author = await resolveAuthor(request);
+      if (!author.ok) return author.response;
+
+      const notepadId = await resolveNotepadId(context);
+      if (!notepadId.ok) return notepadId.response;
+      const commentId = await resolveCommentId(context);
+      if (!commentId.ok) return commentId.response;
+
+      const body = await parseBody(request, replyBodySchema);
+      if (!body.ok) return body.response;
+
+      return replyResponse(
+        await deps
+          .getService()
+          .replyToComment(notepadId.value, commentId.value, {
+            body: body.value.body,
+            author: author.value,
+          }),
+      );
+    },
+
     async restorePOST(request, context) {
       const author = await resolveAuthor(request);
       if (!author.ok) return author.response;
@@ -604,3 +780,8 @@ export const deleteNotepadDetail = withTracing(_handlers.detailDELETE);
 export const writeNotepadContent = withTracing(_handlers.contentPOST);
 export const listNotepadRevisions = withTracing(_handlers.revisionsGET);
 export const restoreNotepadRevision = withTracing(_handlers.restorePOST);
+export const listNotepadComments = withTracing(_handlers.commentsGET);
+export const createNotepadComment = withTracing(_handlers.commentsPOST);
+export const updateNotepadComment = withTracing(_handlers.commentPATCH);
+export const deleteNotepadComment = withTracing(_handlers.commentDELETE);
+export const replyToNotepadComment = withTracing(_handlers.commentRepliesPOST);

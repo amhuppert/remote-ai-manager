@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import { forwardRef, useEffect, useState, type ComponentType } from "react";
 
 export interface NotepadPreviewProps {
   notepadId: string;
@@ -38,38 +38,45 @@ function useDebouncedValue(value: string, delayMs: number): string {
   return debounced;
 }
 
-export function NotepadPreview({
-  notepadId,
-  content,
-}: NotepadPreviewProps): React.JSX.Element {
-  const debounced = useDebouncedValue(content, PREVIEW_DEBOUNCE_MS);
-  const [Renderer, setRenderer] = useState<ComponentType<RendererProps> | null>(
-    null,
-  );
+/**
+ * The forwarded ref reaches the element wrapping the rendered notepad, which is
+ * what the annotation host anchors comments within — the review surface passes
+ * this component as its document renderer.
+ */
+export const NotepadPreview = forwardRef<HTMLDivElement, NotepadPreviewProps>(
+  function NotepadPreview({ notepadId, content }, ref) {
+    const debounced = useDebouncedValue(content, PREVIEW_DEBOUNCE_MS);
+    const [Renderer, setRenderer] =
+      useState<ComponentType<RendererProps> | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    void loadRendererModule().then(({ default: renderer }) => {
-      if (active) setRenderer(() => renderer);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
+    useEffect(() => {
+      let active = true;
+      void loadRendererModule().then(({ default: renderer }) => {
+        if (active) setRenderer(() => renderer);
+      });
+      return () => {
+        active = false;
+      };
+    }, []);
 
-  return (
-    <div data-testid="notepad-preview" className="max-w-full min-w-0">
-      {Renderer ? (
-        <Renderer notepadId={notepadId} content={debounced} />
-      ) : (
-        <pre
-          data-markdown-fallback
-          aria-busy="true"
-          className="m-0 max-w-full min-w-0 font-body text-[0.95rem] leading-[1.75] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary"
-        >
-          {debounced}
-        </pre>
-      )}
-    </div>
-  );
-}
+    return (
+      <div
+        ref={ref}
+        data-testid="notepad-preview"
+        className="max-w-full min-w-0"
+      >
+        {Renderer ? (
+          <Renderer notepadId={notepadId} content={debounced} />
+        ) : (
+          <pre
+            data-markdown-fallback
+            aria-busy="true"
+            className="m-0 max-w-full min-w-0 font-body text-[0.95rem] leading-[1.75] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary"
+          >
+            {debounced}
+          </pre>
+        )}
+      </div>
+    );
+  },
+);

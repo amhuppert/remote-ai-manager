@@ -103,6 +103,18 @@ function renderMissingNotepadBlock(notepadId: string): string {
 }
 
 /**
+ * The outcome of one expansion pass: the agent-facing text, plus the notepads
+ * whose content it actually carried. `delivered` is what makes a notepad
+ * tracked for the conversation (R21) — it names the exact revisions the agent
+ * was shown, which a re-read at recording time could no longer prove.
+ */
+export interface NotepadExpansionResult {
+  text: string;
+  /** Resolved notepads in first-reference order; a dangling ref is absent. */
+  delivered: readonly NotepadInjectionSource[];
+}
+
+/**
  * Replace every notepad reference in `text` with the notepad's full canonical
  * content. Single-pass by construction: only the original text is scanned and
  * injected output is never re-scanned, so nested notepad references arrive as
@@ -115,9 +127,9 @@ function renderMissingNotepadBlock(notepadId: string): string {
 export async function expandNotepadRefsForAgent(
   text: string,
   reader: NotepadInjectionReader,
-): Promise<string> {
+): Promise<NotepadExpansionResult> {
   const refs = findRefTags(text, NOTEPAD_REF_XML_TAG);
-  if (refs.length === 0) return text;
+  if (refs.length === 0) return { text, delivered: [] };
 
   // One read per distinct id: repeating a reference delivers the same revision
   // twice rather than racing two reads against a concurrent write.
@@ -144,5 +156,12 @@ export async function expandNotepadRefsForAgent(
     cursor = ref.end;
   }
   out.push(text.slice(cursor));
-  return out.join("");
+  return {
+    text: out.join(""),
+    // Insertion-ordered, so the report follows first-reference order and a
+    // repeated reference is named once — the same one-read-per-id rule above.
+    delivered: [...resolved.values()].filter(
+      (notepad): notepad is NotepadInjectionSource => notepad !== null,
+    ),
+  };
 }

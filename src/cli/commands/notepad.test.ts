@@ -529,6 +529,153 @@ describe("cctl notepad update and append", () => {
   }
 });
 
+describe("cctl notepad comment", () => {
+  const COMMENT_ID = "cmt-3f9a";
+
+  it("lists the notepad's comments through the comments route", async () => {
+    const host = makeHost(() => jsonResponse({ comments: [] }));
+    const result = await runCli(
+      ["notepad", "comment", "list", NOTEPAD_ID],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const request = firstRequest(host);
+    expect(new URL(request.url).pathname).toBe(
+      `/api/notepads/${NOTEPAD_ID}/comments`,
+    );
+    expect(request.init.method).toBe("GET");
+    // A read is not attributed: the header exists to name the writer.
+    expect(request.init.headers["x-cc-conversation-id"]).toBeUndefined();
+    expect(result.stdout).toContain("comments: 0 total, 0 shown");
+  });
+
+  it("passes --status through as the server's own filter", async () => {
+    const host = makeHost(() => jsonResponse({ comments: [] }));
+    const result = await runCli(
+      ["notepad", "comment", "list", NOTEPAD_ID, "--status", "open"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(new URL(firstRequest(host).url).search).toBe("?status=open");
+  });
+
+  it("refuses an unknown --status at exit 2 before any request", async () => {
+    const host = makeHost(() => jsonResponse({ comments: [] }));
+    const result = await runCli(
+      ["notepad", "comment", "list", NOTEPAD_ID, "--status", "settled"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("open or resolved");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("replies to a comment with the caller-conversation attribution", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          reply: {
+            id: "reply-1",
+            commentId: COMMENT_ID,
+            body: "Rewrote it.",
+            authorKind: "agent",
+            authorConversationId: "conv-1",
+            createdAt: "2026-08-02T00:00:00.000Z",
+          },
+        },
+        201,
+      ),
+    );
+    const result = await runCli(
+      [
+        "notepad",
+        "comment",
+        "reply",
+        NOTEPAD_ID,
+        COMMENT_ID,
+        "--body",
+        "Rewrote it.",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const request = firstRequest(host);
+    expect(new URL(request.url).pathname).toBe(
+      `/api/notepads/${NOTEPAD_ID}/comments/${COMMENT_ID}/replies`,
+    );
+    expect(request.init.method).toBe("POST");
+    expect(bodyOf(request)).toEqual({ body: "Rewrote it." });
+    expect(request.init.headers["x-cc-conversation-id"]).toBe("conv-1");
+    // No revision token rides along: a reply changes no content, so there is
+    // nothing for a compare-and-swap to guard.
+    expect(bodyOf(request)).not.toHaveProperty("baseRevision");
+    expect(result.stdout).toContain(`replied to ${COMMENT_ID}`);
+  });
+
+  it("reads the reply body from a file, like every other prose argument", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          reply: {
+            id: "reply-1",
+            commentId: COMMENT_ID,
+            body: "From a file.",
+            authorKind: "agent",
+            authorConversationId: "conv-1",
+            createdAt: "2026-08-02T00:00:00.000Z",
+          },
+        }),
+      { "/tmp/reply.md": "From a file." },
+    );
+    const result = await runCli(
+      [
+        "notepad",
+        "comment",
+        "reply",
+        NOTEPAD_ID,
+        COMMENT_ID,
+        "--body-file",
+        "/tmp/reply.md",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(bodyOf(firstRequest(host))).toEqual({ body: "From a file." });
+  });
+
+  it("refuses a reply with no body, and one missing an id, before any request", async () => {
+    const host = makeHost(() => jsonResponse({}));
+
+    const noBody = await runCli(
+      ["notepad", "comment", "reply", NOTEPAD_ID, COMMENT_ID],
+      baseEnv,
+      host,
+    );
+    expect(noBody.exitCode).toBe(2);
+    expect(noBody.stderr).toContain("--body");
+
+    const noCommentId = await runCli(
+      ["notepad", "comment", "reply", NOTEPAD_ID, "--body", "text"],
+      baseEnv,
+      host,
+    );
+    expect(noCommentId.exitCode).toBe(2);
+    expect(noCommentId.stderr).toContain("<commentId>");
+
+    expect(host.requests).toHaveLength(0);
+  });
+});
+
 describe("cctl notepad response handling", () => {
   it("fails loudly when a success body does not match the notepad contract", async () => {
     const host = makeHost(() => jsonResponse({ notepad: { id: 7 } }));

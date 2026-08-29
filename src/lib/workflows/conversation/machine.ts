@@ -124,6 +124,9 @@ function conversationTurnFromEvent(
     ...(event.documentFeedback
       ? { documentFeedback: event.documentFeedback }
       : {}),
+    ...(event.notepadFeedback?.length
+      ? { notepadFeedback: event.notepadFeedback }
+      : {}),
     ...(event.askUserQuestionsEnabled ? { askUserQuestionsEnabled: true } : {}),
     ...(event.fsWritePolicy !== undefined
       ? { fsWritePolicy: event.fsWritePolicy }
@@ -831,6 +834,9 @@ export const conversationMachine = setup({
                   : {}),
                 ...(activeTurn.documentFeedback
                   ? { documentFeedback: activeTurn.documentFeedback }
+                  : {}),
+                ...(activeTurn.notepadFeedback?.length
+                  ? { notepadFeedback: activeTurn.notepadFeedback }
                   : {}),
                 ...(activeTurn.askUserQuestionsEnabled
                   ? { askUserQuestionsEnabled: true }

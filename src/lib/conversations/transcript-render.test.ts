@@ -393,6 +393,31 @@ describe("renderCompactTranscript block rendering", () => {
       "[s0] 📝 docs/b.md:9 Usage — add example",
     ]);
   });
+
+  it("renders notepad_feedback as the named notepad and its dispatched comments", () => {
+    const result = render([
+      entry(0, "user", [
+        {
+          type: "notepad_feedback",
+          notepadId: "np-1",
+          notepadName: "Release plan",
+          notepadRefXml: '<notepad-ref notepad-id="np-1" />',
+          items: [
+            {
+              commentId: "c-1",
+              location: "§ Rollout · L12",
+              quote: "ship on Friday",
+              body: "deploys are frozen on Friday",
+            },
+          ],
+        },
+      ]),
+    ]);
+    expect(result.units[0]!.lines).toEqual([
+      "[s0] 📝 notepad Release plan (np-1) — 1 comment",
+      "[s0]    § Rollout · L12 — deploys are frozen on Friday",
+    ]);
+  });
 });
 
 // ==========================================================================

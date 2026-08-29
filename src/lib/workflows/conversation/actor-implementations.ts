@@ -120,7 +120,7 @@ import {
 import {
   resolveTurnPromptText,
   composeUserTranscriptBlocks,
-} from "./pre-turn/document-feedback";
+} from "./pre-turn/review-feedback";
 import { persistTurnImages } from "./pre-turn/image-persistence";
 import { assembleWorkflowResultsBlock } from "./assemble-user-blocks";
 import { expandNativeSpecCommandForAgent } from "@/lib/conversation-commands/native-spec";
@@ -128,6 +128,10 @@ import {
   expandNotepadRefsForAgent,
   type NotepadInjectionSource,
 } from "@/lib/notepads/injection";
+import type {
+  NotepadDeliveryRecord,
+  PreparedNotepadChangeNotice,
+} from "@/lib/notepads/change-notices";
 import type {
   CapabilitySeed,
   ProjectCapabilitySeed,
@@ -267,6 +271,20 @@ export interface TurnExecutionDeps {
   readNotepadForInjection(
     notepadId: string,
   ): Promise<NotepadInjectionSource | null>;
+  // Records what this conversation has now been shown of each notepad whose
+  // reference was expanded above (R21/D17). Written at the expansion seam
+  // because that is where a notepad becomes something the agent has seen.
+  recordNotepadDeliveries(input: {
+    conversationId: string;
+    notepads: readonly NotepadDeliveryRecord[];
+  }): Promise<void>;
+  // Builds the transient change notice for this turn (R21). A read: the
+  // watermarks it names advance only through `settleNotepadChangeNotice`,
+  // after the backend accepts the message that carried it.
+  prepareNotepadChangeNotice(
+    conversationId: string,
+  ): Promise<PreparedNotepadChangeNotice>;
+  settleNotepadChangeNotice(notice: PreparedNotepadChangeNotice): Promise<void>;
   claimWorkflowResults(input: {
     projectPath: string;
     sessionName: string;
@@ -501,7 +519,8 @@ export type ActorImplementationDeps = TurnExecutionDeps &
  * state-store writes. The persistence facet gates exactly these for an
  * ephemeral runtime (see {@link ConversationPersistenceAdapter.gateActorDurableWrites}):
  * the direct writes (`mutateConversation`, `createReferenceDocument`, the
- * queue and workflow-result delivery-state writes) and the apply services that
+ * queue and workflow-result delivery-state writes, the notepad delivery
+ * watermarks) and the apply services that
  * persist indirectly — `applyMcpAtTurnStart` through
  * `stateManager.mutateConversation`, `applyCapabilityAtTurnStart` /
  * `applyCapabilityWhenIdle` through `writeRuntimeState`. Every other dep
@@ -516,6 +535,8 @@ export type ActorDurableWriteSeams = Pick<
   | "markQueuedDelivered"
   | "markQueuedPending"
   | "markQueuedFailed"
+  | "recordNotepadDeliveries"
+  | "settleNotepadChangeNotice"
   | "claimWorkflowResults"
   | "settleWorkflowResults"
   | "releaseWorkflowResults"
@@ -681,6 +702,16 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       notepadServiceFactoryMod
         .getNotepadInjectionReader()
         .readForInjection(notepadId),
+    recordNotepadDeliveries: (input) =>
+      notepadServiceFactoryMod
+        .getNotepadDeliveryTracker()
+        .recordDelivered(input),
+    prepareNotepadChangeNotice: (conversationId) =>
+      notepadServiceFactoryMod
+        .getNotepadDeliveryTracker()
+        .prepare(conversationId),
+    settleNotepadChangeNotice: (notice) =>
+      notepadServiceFactoryMod.getNotepadDeliveryTracker().settle(notice),
     claimWorkflowResults: ({
       projectPath,
       sessionName,
@@ -828,6 +859,10 @@ function fsWritePolicyChanged(
  *
  * `workflowResultsBlock` is another transient pre-turn source. It stays out of
  * the message queue and transcript while appearing before the user's content.
+ *
+ * `notepadChangeNoticeBlock` is the third: a content-free notice that a notepad
+ * this conversation was given has changed (R21). Like the others it is
+ * agent-facing only — the durable transcript keeps the user's original text.
  */
 export function buildEffectivePrompt(
   promptText: string,
@@ -838,6 +873,7 @@ export function buildEffectivePrompt(
   debugManifestPath: string,
   activeTicketBlock: string | null,
   workflowResultsBlock: string | null = null,
+  notepadChangeNoticeBlock: string | null = null,
 ): string | MessageContentBlock[] {
   let effectivePrompt: string | MessageContentBlock[] = hasImages
     ? userContentBlocks
@@ -894,6 +930,17 @@ export function buildEffectivePrompt(
     } else {
       effectivePrompt = [
         { type: "text" as const, text: workflowResultsBlock },
+        ...effectivePrompt,
+      ];
+    }
+  }
+
+  if (notepadChangeNoticeBlock) {
+    if (typeof effectivePrompt === "string") {
+      effectivePrompt = notepadChangeNoticeBlock + "\n\n" + effectivePrompt;
+    } else {
+      effectivePrompt = [
+        { type: "text" as const, text: notepadChangeNoticeBlock },
         ...effectivePrompt,
       ];
     }
@@ -1376,6 +1423,7 @@ export async function executePromptForMachine(
     {
       promptText: input.promptText,
       documentFeedback: input.documentFeedback,
+      notepadFeedback: input.notepadFeedback,
       isQueuedDelivery: input.queuedDelivery !== undefined,
     },
   );
@@ -1392,6 +1440,7 @@ export async function executePromptForMachine(
     rewrittenPromptText: assembled.rewrittenPromptText,
     isDrainedFeedbackBatch,
     documentFeedback: input.documentFeedback,
+    notepadFeedback: input.notepadFeedback,
     imageRefs,
   });
 
@@ -1405,6 +1454,10 @@ export async function executePromptForMachine(
     randomUUID();
   let claimedWorkflowResultCount = 0;
   let workflowResultsSettled = false;
+  // Assigned once the prompt is assembled below; read from `onEvent`, which is
+  // defined earlier but only ever invoked after dispatch.
+  let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
+  let notepadChangeNoticeSettled = false;
 
   // Build the user prompt transcript entry once. For normal turns it is
   // appended immediately. For queued (auto-drained) turns the durable queue —
@@ -1904,6 +1957,32 @@ export async function executePromptForMachine(
     abortWiring.notifyActivity();
     switch (event.type) {
       case "input_accepted": {
+        // The notice's watermarks advance ONLY here, on backend acceptance: a
+        // turn that fails before this point leaves them where they were, so the
+        // notice re-fires on the next message (D17). Duplicates across a racing
+        // queued delivery are tolerated by design.
+        //
+        // Settled FIRST among the post-acceptance writes, and in its own
+        // try/catch: once the backend has taken the message the agent has read
+        // the notice, so no neighbouring write may fail in a way that strands
+        // the watermark and shows the same notice twice.
+        if (notepadChangeNotice !== null && !notepadChangeNoticeSettled) {
+          notepadChangeNoticeSettled = true;
+          try {
+            await deps.settleNotepadChangeNotice(notepadChangeNotice);
+            deps.log.info("prompt.notepad_change_notice_settled", {
+              ...scopeRef,
+              conversationId: input.conversationId,
+              count: notepadChangeNotice.advances.length,
+            });
+          } catch (err) {
+            deps.log.warn("prompt.notepad_change_notice_settle_failed", {
+              ...scopeRef,
+              conversationId: input.conversationId,
+              error: getErrorMessage(err),
+            });
+          }
+        }
         if (claimedWorkflowResultCount > 0 && !workflowResultsSettled) {
           const settled = await deps.settleWorkflowResults({
             projectPath: input.projectPath,
@@ -2054,14 +2133,13 @@ export async function executePromptForMachine(
   // still renders in history. A read failure degrades to the un-expanded text
   // rather than losing the turn.
   let agentFacingPromptText = specExpandedPromptText;
+  let deliveredNotepads: readonly NotepadInjectionSource[] = [];
   try {
-    agentFacingPromptText = await expandNotepadRefsForAgent(
-      specExpandedPromptText,
-      {
-        readForInjection: (notepadId) =>
-          deps.readNotepadForInjection(notepadId),
-      },
-    );
+    const expansion = await expandNotepadRefsForAgent(specExpandedPromptText, {
+      readForInjection: (notepadId) => deps.readNotepadForInjection(notepadId),
+    });
+    agentFacingPromptText = expansion.text;
+    deliveredNotepads = expansion.delivered;
     if (agentFacingPromptText !== specExpandedPromptText) {
       deps.log.info("prompt.notepad_refs_expanded", {
         ...scopeRef,
@@ -2078,6 +2156,51 @@ export async function executePromptForMachine(
     });
   }
 
+  // A notepad becomes watermark-tracked for this conversation exactly here —
+  // where its content was actually put in front of the agent (R21). Recorded
+  // in its own try so a watermark failure degrades to a missed notice rather
+  // than reading as an expansion failure or costing the turn.
+  if (deliveredNotepads.length > 0) {
+    try {
+      await deps.recordNotepadDeliveries({
+        conversationId: input.conversationId,
+        notepads: deliveredNotepads.map(({ id, revision }) => ({
+          notepadId: id,
+          revision,
+        })),
+      });
+    } catch (err) {
+      deps.log.warn("prompt.notepad_delivery_record_failed", {
+        ...scopeRef,
+        conversationId: input.conversationId,
+        count: deliveredNotepads.length,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  // Prepared AFTER the expansion above recorded this message's own notepads:
+  // content just delivered in full needs no notice to re-read it.
+  try {
+    notepadChangeNotice = await deps.prepareNotepadChangeNotice(
+      input.conversationId,
+    );
+    if (notepadChangeNotice.block !== null) {
+      deps.log.info("prompt.notepad_change_notice_prepended", {
+        ...scopeRef,
+        conversationId: input.conversationId,
+        count: notepadChangeNotice.advances.length,
+      });
+    }
+  } catch (err) {
+    notepadChangeNotice = null;
+    deps.log.warn("prompt.notepad_change_notice_failed", {
+      ...scopeRef,
+      conversationId: input.conversationId,
+      error: getErrorMessage(err),
+    });
+  }
+
   const effectivePrompt = buildEffectivePrompt(
     agentFacingPromptText,
     false,
@@ -2087,6 +2210,7 @@ export async function executePromptForMachine(
     getDebugManifestPath(input.worktreePath, input.conversationId),
     activeTicketBlock,
     workflowResultsBlock,
+    notepadChangeNotice?.block ?? null,
   );
 
   const promptText =

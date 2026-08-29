@@ -257,6 +257,10 @@ const UTILITY_FIRST_PATHS = [
   // Async-ask answer card: the transcript renderer for <cc-question-answers>
   // blocks, authored utility-first alongside DocumentFeedbackCard.
   `${path.sep}components${path.sep}conversation${path.sep}QuestionAnswersCard.tsx`,
+  // Notepad feedback card: the transcript renderer for `notepad_feedback`
+  // blocks, the notepad-native twin of DocumentFeedbackCard and authored
+  // utility-first alongside it.
+  `${path.sep}components${path.sep}conversation${path.sep}NotepadFeedbackCard.tsx`,
   // Conversation-compaction UI (context-artifact envelope viewer + inline
   // message viewer): authored utility-first against the design system.
   // Registered in all three mirrored allowlists (here + eslint.config.mjs

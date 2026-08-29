@@ -8,6 +8,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
+import { createNotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
 import { createNotepadsRepo } from "@/lib/state-store/notepads-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
@@ -100,7 +101,7 @@ describe("expandNotepadRefsForAgent", () => {
       }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       `Before ${notepadRefXml({ id: "np-1", name: "Design Notes" })} after.`,
       reader,
     );
@@ -122,7 +123,7 @@ describe("expandNotepadRefsForAgent", () => {
     const { reader, reads } = fakeReader([]);
     const text = 'Plain prose with a <ticket-ref ticket-id="t-1" /> only.';
 
-    expect(await expandNotepadRefsForAgent(text, reader)).toBe(text);
+    expect((await expandNotepadRefsForAgent(text, reader)).text).toBe(text);
     expect(reads).toEqual([]);
   });
 
@@ -136,7 +137,7 @@ describe("expandNotepadRefsForAgent", () => {
       }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id: "np-1", name: "Notepad np-1" }),
       reader,
     );
@@ -153,7 +154,7 @@ describe("expandNotepadRefsForAgent", () => {
       }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id: "np-1", name: "Notepad np-1" }),
       reader,
     );
@@ -169,7 +170,7 @@ describe("expandNotepadRefsForAgent", () => {
       source({ id: "np-2", content: "SECRET NESTED BODY" }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id: "np-1", name: "Notepad np-1" }),
       reader,
     );
@@ -189,7 +190,7 @@ describe("expandNotepadRefsForAgent", () => {
       }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id: "np-1", name: "Self" }),
       reader,
     );
@@ -201,7 +202,7 @@ describe("expandNotepadRefsForAgent", () => {
   it("injects a short not-found block naming the id for a deleted notepad", async () => {
     const { reader } = fakeReader([]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       `Check ${notepadRefXml({ id: "np-gone", name: "Stale Name" })} please.`,
       reader,
     );
@@ -220,7 +221,7 @@ describe("expandNotepadRefsForAgent", () => {
       source({ id: "np-1", content: "BODY" }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(text, reader);
+    const { text: expanded } = await expandNotepadRefsForAgent(text, reader);
 
     expect(expanded).toBe(text);
     expect(reads).toEqual([]);
@@ -232,7 +233,7 @@ describe("expandNotepadRefsForAgent", () => {
       source({ id: "np-2", content: "TWO BODY" }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       [
         notepadRefXml({ id: "np-1", name: "One" }),
         notepadRefXml({ id: "np-2", name: "Two" }),
@@ -252,7 +253,7 @@ describe("expandNotepadRefsForAgent", () => {
     ]);
     const text = `<${NOTEPAD_REF_XML_TAG} name="No Id" scope="global" />`;
 
-    expect(await expandNotepadRefsForAgent(text, reader)).toBe(text);
+    expect((await expandNotepadRefsForAgent(text, reader)).text).toBe(text);
     expect(reads).toEqual([]);
   });
 
@@ -261,12 +262,57 @@ describe("expandNotepadRefsForAgent", () => {
       source({ id: "np-1", name: "Broken\nName", content: "BODY" }),
     ]);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id: "np-1", name: "Broken Name" }),
       reader,
     );
 
     expect(expanded).toContain("name: Broken Name");
+  });
+
+  it("reports each delivered notepad with the revision the text carried", async () => {
+    const { reader } = fakeReader([
+      source({ id: "np-1", revision: 3, content: "ONE BODY" }),
+      source({ id: "np-2", revision: 9, content: "TWO BODY" }),
+    ]);
+
+    const { delivered } = await expandNotepadRefsForAgent(
+      [
+        notepadRefXml({ id: "np-1", name: "One" }),
+        notepadRefXml({ id: "np-2", name: "Two" }),
+        notepadRefXml({ id: "np-1", name: "One" }),
+      ].join("\n\n"),
+      reader,
+    );
+
+    expect(delivered.map(({ id, revision }) => ({ id, revision }))).toEqual([
+      { id: "np-1", revision: 3 },
+      { id: "np-2", revision: 9 },
+    ]);
+  });
+
+  it("reports nothing delivered when the text carries no reference", async () => {
+    const { reader } = fakeReader([source({ id: "np-1", content: "BODY" })]);
+
+    expect(
+      (await expandNotepadRefsForAgent("Plain prose.", reader)).delivered,
+    ).toEqual([]);
+  });
+
+  it("omits a dangling reference from the delivered report", async () => {
+    const { reader } = fakeReader([
+      source({ id: "np-1", revision: 2, content: "BODY" }),
+    ]);
+
+    const { delivered } = await expandNotepadRefsForAgent(
+      [
+        notepadRefXml({ id: "np-1", name: "One" }),
+        notepadRefXml({ id: "np-gone", name: "Stale" }),
+      ].join("\n\n"),
+      reader,
+    );
+
+    expect(delivered.map((notepad) => notepad.id)).toEqual(["np-1"]);
   });
 });
 
@@ -278,7 +324,8 @@ describe("createNotepadInjectionReader (against the real service)", () => {
   beforeEach(() => {
     fixture = createPersistenceFixture();
     contentBase = mkdtempSync(path.join(tmpdir(), "cc-notepad-injection-"));
-    const repo = createNotepadsRepo(fixture.db, createWriteQueue());
+    const writeQueue = createWriteQueue();
+    const repo = createNotepadsRepo(fixture.db, writeQueue);
     const contentStore = createNotepadContentStore({
       contentRoot: path.join(contentBase, "notepad-content"),
       listNotepadIdsForProject: (projectPath) =>
@@ -288,6 +335,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
     let idSeq = 0;
     service = createNotepadService({
       repo,
+      comments: createNotepadCommentsRepo(fixture.db, writeQueue),
       publish: () => ({ delivered: true }),
       deleteNotepadContent: (notepadId) =>
         contentStore.deleteNotepad(notepadId),
@@ -323,7 +371,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
     const id = await createNotepad("# Stored\n\n[Image: img-a]");
     const reader = createNotepadInjectionReader(service);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id, name: "Stale Display Name" }),
       reader,
     );
@@ -351,7 +399,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
     });
     if (!written.ok) throw new Error(`write failed: ${written.error.code}`);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id, name: "Stale Display Name" }),
       createNotepadInjectionReader(service),
     );
@@ -367,7 +415,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
     const deleted = await service.delete(id);
     if (!deleted.ok) throw new Error(`delete failed: ${deleted.error.code}`);
 
-    const expanded = await expandNotepadRefsForAgent(
+    const { text: expanded } = await expandNotepadRefsForAgent(
       `Check ${notepadRefXml({ id, name: "Gone" })}.`,
       createNotepadInjectionReader(service),
     );
