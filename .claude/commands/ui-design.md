@@ -106,7 +106,7 @@ After implementing, present the user with:
 2. The component file path and story file path
 3. Key CSS tokens and patterns used
 4. **A list of surrounding changes made** (if any) — explain why each was necessary for integration
-5. Instruction to run `bun run storybook` (port 6006) and navigate to the story to review
+5. Instruction to run `cctl dev ensure` and open the story at the session-scoped Storybook URL it returns (never assume port 6006)
 
 Then ask the user: **Does this look good, or would you like any changes?**
 

@@ -83,7 +83,7 @@ Present one or more design proposals to the user and **wait for explicit approva
 - Rationale and tradeoffs (and, if multiple, what distinguishes them)
 - The integration plan and the list of surrounding changes it implies
 
-If the proposal is genuinely ambiguous or there's a meaningful fork (e.g., two viable layouts with different tradeoffs), use the AskUserQuestion tool to let the user choose. Do not proceed to Step 5 until the user approves a direction.
+If the proposal is genuinely ambiguous or there's a meaningful fork (e.g., two viable layouts with different tradeoffs), run `cctl ask` to let the user choose. Asking is async: after the call succeeds, write a short handoff note and end your turn — the answers arrive in your next message. Do not proceed to Step 5 until the user approves a direction.
 
 ## Step 5: Implement the Component
 Once approved, create the React component in the appropriate location (`src/features/<feature>/` for page UI; `src/components/` if cross-feature):
@@ -112,7 +112,7 @@ After implementing, present the user with:
 2. The component file path and story file path
 3. Key tokens, primitives, and utility patterns used
 4. **A list of surrounding changes made** (if any) — explain why each was necessary for integration
-5. Instruction to run `bun run storybook` (port 6006) and navigate to the story to review
+5. Instruction to run `cctl dev ensure` and open the story at the session-scoped Storybook URL it returns (never assume port 6006)
 
 Then ask the user: **Does this look good, or would you like any changes?**
 

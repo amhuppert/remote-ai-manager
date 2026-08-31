@@ -26,7 +26,7 @@ This is design-first, like `ui-design`. A wrong pattern or API choice is expensi
 
 1. **Pick the APG pattern from the actual UI need, not the word the user used.** "Dropdown" is ambiguous: it can mean a Menu Button, a Select/Listbox, or a Combobox — three different APG patterns with different Radix primitives. If the requested pattern doesn't match the need, **say so and propose the right one** (when this skill was first written, "dropdown adhering to the menubar pattern" was really the Menu Button pattern — menubar had no consumer in the app). See the pattern map below.
 2. **Choose the API shape.** Default to **composable styled parts** (re-export structural Radix parts as-is, wrap appearance parts) — it matches `Tabs`/`Button`, is idiomatic Radix, and expresses submenus/checkboxes/groups cleanly. A single config-object component is a poorer fit; only use it if the user asks.
-3. **Use `AskUserQuestion`** to lock the pattern + API when there's any ambiguity. Present a brief proposal (parts list, visual contract in tokens, stories you'll write). Only build after the user confirms.
+3. **Use `cctl ask`** to lock the pattern + API when there's any ambiguity. Present a brief proposal (parts list, visual contract in tokens, stories you'll write). Asking is async — end your turn after the call succeeds; answers arrive in your next message. Only build after the user confirms.
 
 ### APG pattern → Radix primitive map
 

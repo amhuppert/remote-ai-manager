@@ -4,7 +4,7 @@ Command Center is a Next.js control plane for running Claude and Codex agent ses
 
 Address the user as Alex. Be direct about uncertainty or technical disagreement, and ask before making a consequential choice that the request does not settle.
 
-Command Center vision: ./VISION.md - read when designing new features to ensure alignment.
+Command Center vision: ./docs/VISION.md - read when designing new features to ensure alignment.
 
 ## Commands
 

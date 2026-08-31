@@ -78,14 +78,14 @@ This project uses Next.js 16 with two MCP servers configured in `.mcp.json`:
 - **next-devtools**: Application-layer diagnostics (errors, routes, server actions, logs) via the `/_next/mcp` endpoint
 - **chrome-devtools**: Browser-layer control (screenshots, console, network, automation) via Chrome DevTools Protocol
 
-Use MCP tools when: diagnosing build/runtime errors, verifying UI after changes, inspecting network requests, debugging client-side issues, or profiling performance. The dev server (`bun run dev`) must be running. See the `nextjs-mcp` skill for detailed tool reference and workflows.
+Use MCP tools when: diagnosing build/runtime errors, verifying UI after changes, inspecting network requests, debugging client-side issues, or profiling performance. Run `cctl dev ensure` first and use the session-scoped URL it returns; never assume a port. See the `nextjs-mcp` skill for detailed tool reference and workflows.
 
 ## UI Design Rules
 
 - **Design proposals before implementation**: When `/ui-design` is invoked, do NOT immediately implement. First present one or more design proposals (with rationale, tradeoffs, and ASCII/text mockups where helpful) for the user to review. Only begin implementation after the user approves a proposal.
 - Use Storybook for UI prototyping. Implement the component and create a `*.stories.tsx` story so the user can review it interactively before approving.
 - UI design must follow the design system in `.claude/skills/cc-design-system/SKILL.md` (and its `references/` files).
-- Run Storybook with `bun run storybook` (port 6006). Stories use `@storybook/nextjs-vite`.
+- Start Storybook with `cctl dev ensure` and use the session-scoped URL it returns; never assume port 6006. Stories use `@storybook/nextjs-vite`.
 
 <!-- Begin standard instructions -->
 
