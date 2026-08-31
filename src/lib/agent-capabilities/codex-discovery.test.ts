@@ -45,9 +45,11 @@ async function writePluginManifest(
   const pluginDir = path.join(
     homeDir,
     ".codex",
-    "marketplaces",
+    "plugins",
+    "cache",
     marketplaceName,
     pluginRelPath,
+    typeof manifest["version"] === "string" ? manifest["version"] : "1.0.0",
   );
   await mkdir(path.join(pluginDir, ".codex-plugin"), { recursive: true });
   const manifestPath = path.join(pluginDir, ".codex-plugin", "plugin.json");
@@ -64,9 +66,11 @@ async function writeRawPluginManifest(
   const pluginDir = path.join(
     homeDir,
     ".codex",
-    "marketplaces",
+    "plugins",
+    "cache",
     marketplaceName,
     pluginRelPath,
+    "1.0.0",
   );
   await mkdir(path.join(pluginDir, ".codex-plugin"), { recursive: true });
   const manifestPath = path.join(pluginDir, ".codex-plugin", "plugin.json");
@@ -249,7 +253,7 @@ enabled = false
     expect(item?.enabled).toBe(false);
   });
 
-  it("discovers a marketplace-sourced plugin with no config.toml entry, defaulting enabled=true", async () => {
+  it("discovers a cached plugin with no config.toml entry, defaulting enabled=true", async () => {
     const { manifestPath, pluginDir } = await writePluginManifest(
       home,
       "oh-my-codex-local",
@@ -278,7 +282,7 @@ enabled = false
     expect(item?.marketplaceName).toBe("oh-my-codex-local");
   });
 
-  it("discovers an @scope/name plugin from a marketplace manifest, producing id @scope/name@marketplace", async () => {
+  it("discovers an @scope/name plugin from its cached manifest, producing id @scope/name@marketplace", async () => {
     // Scoped plugin names (e.g. `@anthropic/oh-my-codex`) are a real Codex
     // ecosystem convention. The id-join logic must concatenate the manifest
     // `name` (already containing `@scope/`) with `@<marketplace>` — there is
@@ -307,7 +311,7 @@ enabled = false
     expect(item?.marketplaceName).toBe("oh-my-codex-local");
   });
 
-  it("honors config.toml enabled=false for an @scope/name plugin id from a marketplace manifest", async () => {
+  it("honors config.toml enabled=false for an @scope/name plugin id from a cached manifest", async () => {
     // Verifies the merge path uses the same composed id (manifest name +
     // marketplace) when looking up the config override — so a scoped
     // marketplace plugin disabled via `[plugins."@scope/name@marketplace"]
@@ -335,7 +339,7 @@ enabled = false
     expect(item?.enabled).toBe(false);
   });
 
-  it("merges config.toml + marketplace manifest: manifest metadata preserved, config enabled honored", async () => {
+  it("merges config.toml with cached manifest metadata and enablement", async () => {
     await writeConfigToml(
       home,
       `[plugins."oh-my-codex@oh-my-codex-local"]
@@ -396,7 +400,7 @@ enabled = false
     expect(diag?.severity).toBe("warning");
   });
 
-  it("emits codex-config-toml-invalid when config.toml is malformed, but still discovers marketplace plugins", async () => {
+  it("emits codex-config-toml-invalid when config.toml is malformed, but still discovers cached plugins", async () => {
     const brokenConfigPath = await writeConfigToml(
       home,
       `[plugins."oh-my-codex"
@@ -453,7 +457,7 @@ describe("Codex plugin-bundled skill attribution", () => {
     expect(fooSkills).toHaveLength(1);
     expect(fooSkills[0]?.owningPluginId).toBe("oh-my-codex@oh-my-codex-local");
     // Plugin-bundled skills appear with user-layer source (they live under
-    // ~/.codex/marketplaces/...) but are attributed to their owning plugin so
+    // ~/.codex/plugins/cache/...) but are attributed to their owning plugin so
     // the resolver inherits plugin-layer disable state.
     expect(fooSkills[0]?.source).toBe("user");
   });

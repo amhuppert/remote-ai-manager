@@ -6,61 +6,13 @@ import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { skillTriggerPrefixForBackend } from "@/lib/agent-backends/catalog";
+import { discoverCodexPlugins } from "@/lib/agent-capabilities/codex-discovery";
 import type { SkillTriggerPrefix } from "@/lib/agent-backends/descriptor";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { parseFrontmatter } from "./frontmatter";
+export { parseFrontmatter, type FrontmatterResult } from "./frontmatter";
 const logger = createLogger("commands");
-
-// ============================================================
-// Frontmatter Parser
-// ============================================================
-
-export interface FrontmatterResult {
-  fields: Record<string, string>;
-  body: string;
-}
-
-/**
- * Parse YAML frontmatter from markdown content.
- * Extracts key: value pairs between --- delimiters at the start.
- */
-export function parseFrontmatter(content: string): FrontmatterResult {
-  if (!content.startsWith("---")) {
-    return { fields: {}, body: content };
-  }
-
-  // Find the closing --- delimiter (must be on its own line)
-  const closingIdx = content.indexOf("\n---", 3);
-  if (closingIdx === -1) {
-    return { fields: {}, body: content };
-  }
-
-  const frontmatterBlock = content.slice(4, closingIdx); // skip "---\n"
-  const body = content.slice(closingIdx + 4).trimStart(); // skip "\n---"
-
-  const fields: Record<string, string> = {};
-  for (const line of frontmatterBlock.split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-
-    const key = line.slice(0, colonIdx).trim();
-    let value = line.slice(colonIdx + 1).trim();
-
-    // Strip surrounding quotes
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (key) {
-      fields[key] = value;
-    }
-  }
-
-  return { fields, body };
-}
 
 // ============================================================
 // Command Discovery
@@ -134,6 +86,7 @@ async function scanCommandDir(
 interface ScanSkillsOptions {
   itemPrefix: SkillTriggerPrefix;
   pluginName?: string;
+  namespace?: string;
   ignoreDirNames?: Set<string>;
 }
 
@@ -233,7 +186,7 @@ async function scanSkillsDir(
     }
   };
 
-  await walk(dirPath);
+  await walk(dirPath, options.namespace);
   return items;
 }
 
@@ -409,7 +362,34 @@ async function discoverCodexItems(
     )),
   );
 
+  const pluginResult = await discoverCodexPlugins({
+    worktreePath,
+    home: homeDir,
+  });
+  for (const plugin of pluginResult.items) {
+    if (!plugin.enabled || !plugin.pluginPath) continue;
+    const pluginName = codexPluginName(plugin.itemId);
+    allItems.push(
+      ...(await scanSkillsDir(
+        path.join(plugin.pluginPath, "skills"),
+        pluginName,
+        {
+          itemPrefix,
+          pluginName,
+          namespace: pluginName,
+        },
+      )),
+    );
+  }
+
   return allItems;
+}
+
+function codexPluginName(pluginId: string): string {
+  const marketplaceSeparator = pluginId.lastIndexOf("@");
+  return marketplaceSeparator > 0
+    ? pluginId.slice(0, marketplaceSeparator)
+    : pluginId;
 }
 
 /**

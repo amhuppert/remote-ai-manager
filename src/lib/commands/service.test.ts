@@ -193,6 +193,66 @@ Claude skill body.`,
     );
   });
 
+  it("discovers skills contributed by an enabled Codex plugin", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+    const worktreePath = await mkdtemp(
+      path.join(tmpdir(), "commands-worktree-"),
+    );
+    cleanupPaths.push(homeDir, worktreePath);
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    const codexConfigDir = path.join(homeDir, ".codex");
+    await mkdir(codexConfigDir, { recursive: true });
+    await writeFile(
+      path.join(codexConfigDir, "config.toml"),
+      `[plugins."agentic-engineering-principles@my-ai-resources"]
+enabled = true
+`,
+    );
+
+    const pluginDir = path.join(
+      codexConfigDir,
+      "plugins",
+      "cache",
+      "my-ai-resources",
+      "agentic-engineering-principles",
+      "1.3.0",
+    );
+    await mkdir(path.join(pluginDir, ".codex-plugin"), { recursive: true });
+    await writeFile(
+      path.join(pluginDir, ".codex-plugin", "plugin.json"),
+      JSON.stringify({
+        name: "agentic-engineering-principles",
+        version: "1.3.0",
+        skills: "./skills/",
+      }),
+    );
+    const skillDir = path.join(pluginDir, "skills", "agent-offloading");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      path.join(skillDir, "SKILL.md"),
+      `---
+name: agent-offloading
+description: Offload deterministic workflow mechanics to code
+---
+Agent offloading guidance.
+`,
+    );
+
+    const items = await discoverCommands(worktreePath, "codex");
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "$agentic-engineering-principles:agent-offloading",
+          description: "Offload deterministic workflow mechanics to code",
+          source: "agentic-engineering-principles",
+          type: "skill",
+        }),
+      ]),
+    );
+  });
+
   it("preserves the managed bundle namespace for nested Codex skills", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
     const worktreePath = await mkdtemp(

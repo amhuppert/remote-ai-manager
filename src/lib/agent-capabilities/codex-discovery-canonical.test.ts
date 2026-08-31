@@ -131,15 +131,17 @@ describe("discoverCodexPluginsCanonical", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
-  it("maps a marketplace-sourced plugin into canonical AgentCapabilityDiscoveredItem shape", async () => {
-    const marketplaceRoot = path.join(
+  it("maps a cached plugin into canonical AgentCapabilityDiscoveredItem shape", async () => {
+    const pluginRoot = path.join(
       home,
       ".codex",
-      "marketplaces",
+      "plugins",
+      "cache",
       "oh-my-codex-local",
       "oh-my-codex",
+      "1.0.0",
     );
-    const manifestDir = path.join(marketplaceRoot, ".codex-plugin");
+    const manifestDir = path.join(pluginRoot, ".codex-plugin");
     await mkdir(manifestDir, { recursive: true });
     const manifestPath = path.join(manifestDir, "plugin.json");
     await writeFile(

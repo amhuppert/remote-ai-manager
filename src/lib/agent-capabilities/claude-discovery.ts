@@ -32,7 +32,7 @@ import path from "node:path";
 
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { parseFrontmatter } from "@/lib/commands/service";
+import { parseFrontmatter } from "@/lib/commands/frontmatter";
 
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import { parseNativePluginEntries } from "@/lib/agent-backends/claude/runtime-config/plugin-native-records";

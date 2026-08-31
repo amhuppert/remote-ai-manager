@@ -4,8 +4,8 @@
  * Implements the design's authoritative skill discovery sources for Codex and
  * the Codex plugin discovery sources documented by `openai/codex`:
  *   - `~/.codex/config.toml` `[plugins."NAME"]` tables
- *   - `~/.codex/marketplaces/<marketplace>/<plugin-path>/.codex-plugin/plugin.json`
- *     manifests
+ *   - `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/.codex-plugin/plugin.json`
+ *     manifests for installed plugins
  *
  * Each entry-point accepts injected `readDir`/`readFile` seams so tests can
  * exercise diagnostics paths without root-only filesystem corruption.
@@ -25,7 +25,7 @@ import { parse as parseToml } from "smol-toml";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 
-import { parseFrontmatter } from "@/lib/commands/service";
+import { parseFrontmatter } from "@/lib/commands/frontmatter";
 
 import { redactAgentCapabilityText } from "./redaction";
 
@@ -63,8 +63,8 @@ interface CodexDiscoveredSkill {
   description: string;
   argumentHint?: string;
   /** Set when this skill was discovered under a marketplace plugin directory
-   * (`~/.codex/marketplaces/<marketplace>/<plugin-path>/skills/...`). The id
-   * matches the owning plugin's `itemId` from `discoverCodexPlugins`. */
+   * (`~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/skills/...`).
+   * The id matches the owning plugin's `itemId` from `discoverCodexPlugins`. */
   owningPluginId?: string;
 }
 
@@ -341,10 +341,10 @@ export async function discoverCodexPlugins(
     signatureParts.push(`config:${configPath}:missing`);
   }
 
-  const marketplacesDir = path.join(input.home, ".codex", "marketplaces");
-  if (existsSync(marketplacesDir)) {
+  const pluginCacheDir = path.join(input.home, ".codex", "plugins", "cache");
+  if (existsSync(pluginCacheDir)) {
     await loadCodexMarketplacePlugins(
-      marketplacesDir,
+      pluginCacheDir,
       items,
       configEnabledById,
       diagnostics,
@@ -352,7 +352,7 @@ export async function discoverCodexPlugins(
       deps,
     );
   } else {
-    signatureParts.push(`marketplaces:${marketplacesDir}:missing`);
+    signatureParts.push(`plugin-cache:${pluginCacheDir}:missing`);
   }
 
   const result: CodexDiscoveredPlugin[] = Array.from(items.values()).sort(
