@@ -145,6 +145,7 @@ export default function PaneConversationBody({
         queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
         provisional={row.msg.provisional}
         messageIndex={row.messageIndex}
+        part={row.part}
         isLast={isLast}
         selectedBackend={selectedBackend}
         worktreePath={sessionQuery.data?.worktreePath}

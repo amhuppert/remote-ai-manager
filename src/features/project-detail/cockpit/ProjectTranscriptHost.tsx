@@ -81,6 +81,12 @@ export default function ProjectTranscriptHost({
   const extensions = useMemo<TranscriptExtensions>(
     () => ({
       rows: extensionRows,
+      // The spawn card already renders the proposal, so the raw JSON block must
+      // not show. Declared as a transform (not applied at render time) so the
+      // stripped content is what gets split into rows.
+      transformContent(content) {
+        return stripProposalFencesFromContent(content);
+      },
       render(row: SpawnExtensionRow) {
         return renderSpawnCardRow(row.card);
       },
@@ -91,15 +97,17 @@ export default function ProjectTranscriptHost({
   const renderMessageRow = useCallback<
     ConversationVirtuosoListProps["renderMessage"]
   >(
+    // Proposal fences are stripped by the `transformContent` extension below,
+    // so the row's content is already final — stripping again here would let
+    // the row count and the rendered content disagree.
     ({ row, isLast }) => {
-      const content = stripProposalFencesFromContent(row.msg.content);
-      if (content.length === 0) return null;
       return (
         <MessageRow
-          msg={content === row.msg.content ? row.msg : { ...row.msg, content }}
+          msg={row.msg}
           queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
           provisional={row.msg.provisional}
           messageIndex={row.messageIndex}
+          part={row.part}
           isLast={isLast}
           selectedBackend={selectedBackend}
           worktreePath={worktreePath}

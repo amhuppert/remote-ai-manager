@@ -17,6 +17,7 @@ import type {
 import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-schemas";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
+import type { MessagePartRange } from "@/lib/conversations/group-content-blocks";
 
 // `message`, the role modifier, `message-content`, and `message-iteration-badge`
 // are retained as structural / test hooks — external slices and tooling still
@@ -78,6 +79,13 @@ export interface MessageRowProps {
    */
   provisional?: boolean;
   messageIndex: number;
+  /**
+   * Slice of the message this row renders. The transcript gives a message one
+   * row per renderable unit, so the role header rides the first part and the
+   * per-message affordances ride the last. Omit on hosts that render a message
+   * whole (previews, stories).
+   */
+  part?: MessagePartRange;
   isLast: boolean;
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
@@ -121,6 +129,7 @@ const MessageRow = memo(function MessageRow({
   queuedMetadata,
   provisional,
   messageIndex,
+  part,
   isLast,
   selectedBackend,
   worktreePath,
@@ -131,22 +140,34 @@ const MessageRow = memo(function MessageRow({
   conversationName,
   lastMessageExtras,
 }: MessageRowProps): React.JSX.Element {
+  // Chrome placement across a split message: the header opens it, the
+  // affordances close it. An unsplit message is both at once.
+  const isFirstPart = part === undefined || part.index === 0;
+  const isLastPart = part === undefined || part.index === part.count - 1;
+  const partAttrs = {
+    "data-part-last": String(isLastPart),
+    ...(part === undefined ? {} : { "data-part-index": part.index }),
+  };
   if (msg.role === "notice") {
     return (
       <div
         className="message notice relative border-y-0 border-r-0 border-l-2 border-solid border-border-subtle pl-md"
         data-testid="message-row"
         data-msg-index={messageIndex}
+        {...partAttrs}
       >
-        <div className={cn(messageRoleClass, "text-[var(--text-muted)]")}>
-          System
-          <MessageTimestamp timestamp={msg.timestamp} />
-        </div>
+        {isFirstPart && (
+          <div className={cn(messageRoleClass, "text-[var(--text-muted)]")}>
+            System
+            <MessageTimestamp timestamp={msg.timestamp} />
+          </div>
+        )}
         <div className="message-content">
           <MessageContent
             content={msg.content}
             worktreePath={worktreePath}
             thinkingExpansionCommand={thinkingExpansionCommand}
+            {...(part ? { part } : {})}
           />
         </div>
       </div>
@@ -202,37 +223,41 @@ const MessageRow = memo(function MessageRow({
       className={cn("message", msg.role, "relative")}
       data-testid="message-row"
       data-msg-index={messageIndex}
+      {...partAttrs}
     >
-      <div className={cn(messageRoleClass, roleColor)}>
-        {isUserMsg ? "You" : backendLabel(selectedBackend)}
-        {iterationIndex !== undefined && (
-          <span
-            className="message-iteration-badge ml-sm inline-flex items-center justify-center rounded-full bg-bg-raised px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-medium tracking-[0.02em] whitespace-nowrap text-text-secondary normal-case"
-            data-iteration={iterationIndex}
-          >
-            iter {iterationIndex}
-          </span>
-        )}
-        {!isUserMsg && msg.modelSelection && (
-          <span className="inline text-[0.7rem] font-medium tracking-[0.02em] normal-case">
-            <span className="mx-[5px] text-text-tertiary">&middot;</span>
-            <ModelSelectionMetadata
-              backend={selectedBackend}
-              selection={msg.modelSelection}
-            />
-          </span>
-        )}
-        <MessageTimestamp timestamp={msg.timestamp} />
-      </div>
+      {isFirstPart && (
+        <div className={cn(messageRoleClass, roleColor)}>
+          {isUserMsg ? "You" : backendLabel(selectedBackend)}
+          {iterationIndex !== undefined && (
+            <span
+              className="message-iteration-badge ml-sm inline-flex items-center justify-center rounded-full bg-bg-raised px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-medium tracking-[0.02em] whitespace-nowrap text-text-secondary normal-case"
+              data-iteration={iterationIndex}
+            >
+              iter {iterationIndex}
+            </span>
+          )}
+          {!isUserMsg && msg.modelSelection && (
+            <span className="inline text-[0.7rem] font-medium tracking-[0.02em] normal-case">
+              <span className="mx-[5px] text-text-tertiary">&middot;</span>
+              <ModelSelectionMetadata
+                backend={selectedBackend}
+                selection={msg.modelSelection}
+              />
+            </span>
+          )}
+          <MessageTimestamp timestamp={msg.timestamp} />
+        </div>
+      )}
       <div className="message-content" {...clipSourceAttrs}>
         <MessageContent
           content={msg.content}
           worktreePath={worktreePath}
           queuedMetadata={queuedMetadata}
           thinkingExpansionCommand={thinkingExpansionCommand}
+          {...(part ? { part } : {})}
         />
       </div>
-      {isLast && !isUserMsg && lastMessageExtras && (
+      {isLastPart && isLast && !isUserMsg && lastMessageExtras && (
         <DebugActionCard
           projectName={lastMessageExtras.projectName}
           sessionName={lastMessageExtras.sessionName}
@@ -241,15 +266,17 @@ const MessageRow = memo(function MessageRow({
           isBusy={lastMessageExtras.isBusy}
         />
       )}
-      <MessageActions
-        messageIndex={messageIndex}
-        content={msg.content}
-        role={msg.role}
-        onFork={onFork}
-        forkProjectName={forkProjectName}
-        compactionTarget={compactionTarget}
-        messageRef={messageRef}
-      />
+      {isLastPart && (
+        <MessageActions
+          messageIndex={messageIndex}
+          content={msg.content}
+          role={msg.role}
+          onFork={onFork}
+          forkProjectName={forkProjectName}
+          compactionTarget={compactionTarget}
+          messageRef={messageRef}
+        />
+      )}
     </div>
   );
 });

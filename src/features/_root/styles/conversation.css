@@ -56,7 +56,9 @@
   margin-top: 24px;
 }
 
-.conversation-virtuoso-item .message,
+/* Inter-message spacing closes a message, so a message split across rows pays
+   it once — on its final part — instead of once per part. */
+.conversation-virtuoso-item .message[data-part-last="true"],
 .conversation-virtuoso-item [data-collab-row="true"] {
   padding-bottom: 24px;
 }
@@ -350,7 +352,18 @@
   -webkit-text-fill-color: transparent;
   background-clip: text;
   animation: rainbow-shift 3s linear infinite;
+  /* `background-position` is not compositable, so this repaints every frame for
+     as long as the label is on screen. Promotion keeps the repaint inside the
+     label instead of its enclosing layer — see model-selection-presentation.ts. */
+  will-change: background-position;
   font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-rainbow-text {
+    animation: none;
+    will-change: auto;
+  }
 }
 
 /* AskUserQuestion panel — replaces prompt input when Claude needs user input */

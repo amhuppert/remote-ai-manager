@@ -18,6 +18,7 @@
     100% 100%,
     200% auto;
   animation: rainbow-border-shift 3s linear infinite;
+  will-change: background-position;
   box-shadow:
     0 0 8px var(--rainbow-glow),
     0 0 20px var(--rainbow-glow-blue);
@@ -30,5 +31,6 @@
   -webkit-text-fill-color: transparent;
   background-clip: text;
   animation: rainbow-shift 3s linear infinite;
+  will-change: background-position;
   font-weight: 700;
 }

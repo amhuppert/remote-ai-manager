@@ -14,7 +14,12 @@ function messageRow(messageIndex: number): ConversationRow {
     content: [{ type: "text", text: `m${messageIndex}` }],
     timestamp: null,
   };
-  return { kind: "message", messageIndex, msg };
+  return {
+    kind: "message",
+    messageIndex,
+    msg,
+    part: { index: 0, count: 1, start: 0, end: 1 },
+  };
 }
 
 function setup(args: { rows: ConversationRow[]; totalMessages: number }) {

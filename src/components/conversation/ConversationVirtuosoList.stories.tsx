@@ -8,6 +8,7 @@ import {
   buildConversationRows,
   type ConversationRow,
 } from "@/components/conversation/conversation-rows";
+import { groupContentBlocks } from "@/lib/conversations/group-content-blocks";
 
 const meta = {
   title: "Projects/ConversationVirtuosoList",
@@ -62,16 +63,26 @@ function renderMessage({
   isLast: boolean;
 }) {
   const isUser = row.msg.role === "user";
+  // A message contributes one row per renderable unit, so this stand-in draws
+  // only its own slice — and only the opening part draws the role label.
+  const item = groupContentBlocks(row.msg.content)[row.part.start];
   const text =
-    row.msg.content.find(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )?.text ?? "";
+    item?.kind === "block" && item.block.type === "text"
+      ? item.block.text
+      : item?.kind === "tool_group"
+        ? `⚙ ${item.blocks.length} tool call(s)`
+        : item?.kind === "thinking_group"
+          ? "✻ thinking"
+          : "";
   return (
     <div
       className={`message ${row.msg.role}`}
       data-msg-index={row.messageIndex}
+      data-part-last={String(row.part.index === row.part.count - 1)}
     >
-      <div className="message-role">{isUser ? "You" : "Claude"}</div>
+      {row.part.index === 0 && (
+        <div className="message-role">{isUser ? "You" : "Claude"}</div>
+      )}
       <div className="message-content">{text}</div>
     </div>
   );
@@ -219,5 +230,43 @@ export const VeryLongTranscript: Story = {
         undefined,
       )}
     />
+  ),
+};
+
+/**
+ * The command-center#97 shape: one agent turn carrying hundreds of tool and
+ * thinking blocks. Before the transcript split messages into per-unit rows this
+ * was a single Virtuoso item, so virtualization bought nothing and the whole
+ * turn stayed mounted. Scroll it and the mounted row count stays flat.
+ */
+const hugeTurn: TranscriptMessage[] = [
+  textMessage(
+    "user",
+    "Work through the whole migration.",
+    "2024-06-15T10:00:00Z",
+  ),
+  {
+    role: "assistant",
+    timestamp: "2024-06-15T10:01:00Z",
+    content: Array.from({ length: 600 }, (_unused, i) =>
+      i % 2 === 0
+        ? {
+            type: "thinking" as const,
+            text: `Considering step ${i}`,
+            redacted: false,
+          }
+        : {
+            type: "tool_use" as const,
+            id: `tool-${i}`,
+            name: "Bash",
+            input: { command: `step ${i}` },
+          },
+    ),
+  },
+];
+
+export const SingleTurnWithHundredsOfBlocks: Story = {
+  render: () => (
+    <StoryFrame rows={buildConversationRows(hugeTurn, undefined)} />
   ),
 };

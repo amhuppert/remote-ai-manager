@@ -10,6 +10,10 @@ import {
   formatToolUse,
   type FormattedToolUse,
 } from "@/lib/conversations/format-tool-use";
+import {
+  groupContentBlocks,
+  type MessagePartRange,
+} from "@/lib/conversations/group-content-blocks";
 import { cn } from "@/lib/ui/cn";
 import ToolUseGroup from "./ToolUseGroup";
 import ThinkingBlock, {
@@ -24,93 +28,6 @@ import CommandIndicator from "./CommandIndicator";
 import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
 import { splitQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { MessageTextWithRefs } from "@/features/session/conversation/MessageTextWithRefs";
-
-type GroupedItem =
-  | { kind: "block"; block: MessageContentBlock; index: number }
-  | { kind: "tool_group"; blocks: MessageContentBlock[]; startIndex: number }
-  | {
-      kind: "thinking_group";
-      block: CombinedThinkingBlock;
-      startIndex: number;
-    };
-
-type ThinkingContentBlock = Extract<MessageContentBlock, { type: "thinking" }>;
-
-interface CombinedThinkingBlock {
-  text: string;
-  redacted: boolean;
-  redactedCount: number;
-}
-
-/** Group consecutive tool_use/tool_result blocks together. */
-function groupContentBlocks(blocks: MessageContentBlock[]): GroupedItem[] {
-  const result: GroupedItem[] = [];
-  let pending: MessageContentBlock[] = [];
-  let pendingStart = 0;
-  let pendingThinking: ThinkingContentBlock[] = [];
-  let pendingThinkingStart = 0;
-
-  function flushPending() {
-    if (pending.length === 0) return;
-    const toolUseCount = pending.filter((b) => b.type === "tool_use").length;
-    if (toolUseCount > 0) {
-      result.push({
-        kind: "tool_group",
-        blocks: pending,
-        startIndex: pendingStart,
-      });
-    } else {
-      for (let j = 0; j < pending.length; j++) {
-        result.push({
-          kind: "block",
-          block: pending[j]!,
-          index: pendingStart + j,
-        });
-      }
-    }
-    pending = [];
-  }
-
-  function flushThinking() {
-    if (pendingThinking.length === 0) return;
-    const visibleText = pendingThinking
-      .filter((block) => !block.redacted && block.text.length > 0)
-      .map((block) => block.text);
-    const redactedCount = pendingThinking.filter(
-      (block) => block.redacted,
-    ).length;
-    result.push({
-      kind: "thinking_group",
-      block: {
-        text: visibleText.join("\n\n"),
-        redacted: visibleText.length === 0 && redactedCount > 0,
-        redactedCount,
-      },
-      startIndex: pendingThinkingStart,
-    });
-    pendingThinking = [];
-  }
-
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i]!;
-    if (block.type === "tool_use" || block.type === "tool_result") {
-      flushThinking();
-      if (pending.length === 0) pendingStart = i;
-      pending.push(block);
-    } else if (block.type === "thinking") {
-      flushPending();
-      if (pendingThinking.length === 0) pendingThinkingStart = i;
-      pendingThinking.push(block);
-    } else {
-      flushPending();
-      flushThinking();
-      result.push({ kind: "block", block, index: i });
-    }
-  }
-  flushPending();
-  flushThinking();
-  return result;
-}
 
 export interface ToolResultLookup {
   get(
@@ -211,6 +128,13 @@ interface Props {
    */
   queuedMetadata?: QueuedMessageMetadata | null;
   thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
+  /**
+   * Slice of the message's grouped content to render. The transcript splits a
+   * message across virtualized rows, so each row draws only its own units and
+   * only the final one draws the trailing file cards. Omit to render the whole
+   * message (non-virtualized hosts).
+   */
+  part?: MessagePartRange;
 }
 
 export default memo(function MessageContent({
@@ -218,16 +142,24 @@ export default memo(function MessageContent({
   worktreePath,
   queuedMetadata,
   thinkingExpansionCommand,
+  part,
 }: Props): React.JSX.Element {
   const grouped = useMemo(() => groupContentBlocks(content), [content]);
   const resultLookup = useMemo(() => buildToolResultLookup(content), [content]);
   // Surfaced from the whole message so the cards stay visible even when the
   // tool-uses that produced them are collapsed into a grouped rendering (4.x).
   const fileRefs = useMemo(() => extractMarkdownFileRefs(content), [content]);
+  // Adjacency lookups below index the full grouped list, so a slice keeps its
+  // absolute positions rather than being re-based to zero.
+  const start = part ? Math.min(part.start, grouped.length) : 0;
+  const end = part ? Math.min(part.end, grouped.length) : grouped.length;
+  const isLastPart = part === undefined || part.index === part.count - 1;
+  const visible = grouped.slice(start, end);
 
   return (
     <>
-      {grouped.map((item, idx) => {
+      {visible.map((item, offset) => {
+        const idx = start + offset;
         if (item.kind === "tool_group") {
           return (
             <ToolUseGroup
@@ -356,9 +288,10 @@ export default memo(function MessageContent({
         // into the paired tool_use indicator via resultLookup above.
         return null;
       })}
-      {fileRefs.map((fileRef) => (
-        <MarkdownFileCard key={fileRef.docPath} fileRef={fileRef} />
-      ))}
+      {isLastPart &&
+        fileRefs.map((fileRef) => (
+          <MarkdownFileCard key={fileRef.docPath} fileRef={fileRef} />
+        ))}
     </>
   );
 });

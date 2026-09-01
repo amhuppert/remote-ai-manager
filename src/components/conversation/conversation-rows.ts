@@ -1,5 +1,12 @@
 import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
-import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import type {
+  MessageContentBlock,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
+import {
+  groupContentBlocks,
+  type MessagePartRange,
+} from "@/lib/conversations/group-content-blocks";
 import type { DisplayMessage } from "@/hooks/conversation/use-display-messages";
 export interface CollabEnvelope {
   workflowId: string;
@@ -23,9 +30,30 @@ export interface TranscriptExtensionRowData {
 }
 
 export type ConversationRow =
-  | { kind: "message"; messageIndex: number; msg: DisplayMessage }
+  | {
+      kind: "message";
+      messageIndex: number;
+      msg: DisplayMessage;
+      /**
+       * Which slice of the message this row renders. A message contributes one
+       * row per renderable unit, so the transcript's single virtualizer bounds
+       * mounted content by the viewport rather than by turn length.
+       */
+      part: MessagePartRange;
+    }
   | { kind: "collab"; workflowId: string }
   | { kind: "extension"; ext: TranscriptExtensionRowData };
+
+/**
+ * Rewrites a message's blocks before it is split into rows. Applied once here
+ * rather than per render so the part count always matches what is displayed —
+ * a transform that hides blocks must not leave empty trailing rows behind.
+ * Returning an empty array drops the message entirely.
+ */
+export type TranscriptContentTransform = (
+  content: MessageContentBlock[],
+  messageIndex: number,
+) => MessageContentBlock[];
 
 export function isCollabTriggerMessage(message: TranscriptMessage): boolean {
   for (const block of message.content) {
@@ -55,8 +83,44 @@ export function buildConversationRows(
   collab: CollabEnvelope | undefined,
   hiddenMessageIndex: number | null = null,
   extensions: readonly TranscriptExtensionRowData[] = [],
+  transformContent?: TranscriptContentTransform,
 ): ConversationRow[] {
   const isHidden = (i: number) => i === hiddenMessageIndex;
+
+  /**
+   * One row per renderable unit. An empty message still yields a single row so
+   * its role header and affordances survive; a message the transform empties
+   * yields none.
+   */
+  function messageRows(
+    msg: DisplayMessage,
+    messageIndex: number,
+  ): ConversationRow[] {
+    const content = transformContent
+      ? transformContent(msg.content, messageIndex)
+      : msg.content;
+    // A transform that hides every block withdraws the message; a message that
+    // was natively empty still renders its header and affordances.
+    if (content !== msg.content && content.length === 0) return [];
+    const displayed = content === msg.content ? msg : { ...msg, content };
+    const count = groupContentBlocks(content).length;
+    if (count <= 1) {
+      return [
+        {
+          kind: "message",
+          messageIndex,
+          msg: displayed,
+          part: { index: 0, count: 1, start: 0, end: count },
+        },
+      ];
+    }
+    return Array.from({ length: count }, (_unused, index) => ({
+      kind: "message" as const,
+      messageIndex,
+      msg: displayed,
+      part: { index, count, start: index, end: index + 1 },
+    }));
+  }
 
   // Bucket extension rows by anchor. Out-of-range anchors prepend/append so a
   // card can never be dropped; supplied order is kept within a shared anchor.
@@ -80,7 +144,7 @@ export function buildConversationRows(
   const rows: ConversationRow[] = [...extBefore];
   for (let i = 0; i < messages.length; i++) {
     if (!isHidden(i)) {
-      rows.push({ kind: "message", messageIndex: i, msg: messages[i]! });
+      rows.push(...messageRows(messages[i]!, i));
     }
     if (collab && i === anchor) {
       rows.push({ kind: "collab", workflowId: collab.workflowId });
@@ -118,7 +182,7 @@ export function computeRowKey(row: ConversationRow): string {
   if (row.kind === "extension") {
     return `extension:${row.ext.key}`;
   }
-  return `${row.messageIndex}:${row.msg.role}:${row.msg.timestamp ?? "no-ts"}`;
+  return `${row.messageIndex}:${row.part.index}:${row.msg.role}:${row.msg.timestamp ?? "no-ts"}`;
 }
 
 export function topmostMessageIndexForRange(

@@ -37,6 +37,7 @@ import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import type {
   ConversationBackgroundActivity,
   ConversationStatus,
+  MessageContentBlock,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
@@ -257,6 +258,18 @@ function TranscriptCore({
     ],
     [extensions, rawMessages],
   );
+  // Applied here rather than per rendered row: the transform decides how many
+  // renderable units a message has, so the split must see its output. It also
+  // stops the projection from re-running for every row on every render.
+  const transformContent = extensions?.transformContent;
+  const rowContentTransform = useMemo(
+    () =>
+      transformContent === undefined
+        ? undefined
+        : (content: MessageContentBlock[], messageIndex: number) =>
+            transformContent(content, messageIndex, rawMessages),
+    [transformContent, rawMessages],
+  );
   const rows = useMemo(
     () =>
       buildConversationRows(
@@ -264,8 +277,15 @@ function TranscriptCore({
         collabEnvelope,
         hiddenMessageIndex,
         extensionRows,
+        rowContentTransform,
       ),
-    [displayMessages, collabEnvelope, hiddenMessageIndex, extensionRows],
+    [
+      displayMessages,
+      collabEnvelope,
+      hiddenMessageIndex,
+      extensionRows,
+      rowContentTransform,
+    ],
   );
 
   const internalVirtuosoRef = useRef<VirtuosoHandle | null>(null);
@@ -335,6 +355,7 @@ function TranscriptCore({
         queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
         provisional={row.msg.provisional}
         messageIndex={row.messageIndex}
+        part={row.part}
         isLast={isLast}
         selectedBackend={backend}
         worktreePath={worktreePath}
@@ -356,22 +377,14 @@ function TranscriptCore({
   const renderMessage = useCallback<
     ConversationVirtuosoListProps["renderMessage"]
   >(
-    ({ row }) => {
-      const content = extensions?.transformContent?.(
-        row.msg.content,
-        row.messageIndex,
-        rawMessages,
-      );
-      if (content !== undefined && content.length === 0) return null;
-      return activeRenderMessageRow({
-        row:
-          content === undefined || content === row.msg.content
-            ? row
-            : { ...row, msg: { ...row.msg, content } },
+    // The content transform already ran when the rows were built, so the row
+    // handed over here is final.
+    ({ row }) =>
+      activeRenderMessageRow({
+        row,
         isLast: row.messageIndex === lastVisibleMessageIndex,
-      });
-    },
-    [activeRenderMessageRow, extensions, lastVisibleMessageIndex, rawMessages],
+      }),
+    [activeRenderMessageRow, lastVisibleMessageIndex],
   );
 
   const renderCollabRow = collab?.renderRow;

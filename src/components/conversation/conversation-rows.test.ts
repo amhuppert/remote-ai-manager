@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { TranscriptMessage } from "@/lib/conversations/schemas";
+
+/** Every message in these fixtures has one text block, so one part. */
+const SINGLE_PART = { index: 0, count: 1, start: 0, end: 1 };
+import type {
+  MessageContentBlock,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
 import {
   buildConversationRows,
   computeRowKey,
@@ -28,8 +34,8 @@ describe("conversation rows", () => {
     const messages = [message("user", "hello"), message("assistant", "hi")];
 
     expect(buildConversationRows(messages, undefined)).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
-      { kind: "message", messageIndex: 1, msg: messages[1] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
+      { kind: "message", messageIndex: 1, msg: messages[1], part: SINGLE_PART },
     ]);
   });
 
@@ -43,11 +49,11 @@ describe("conversation rows", () => {
 
     expect(findCollabAnchorIndex(messages)).toBe(2);
     expect(buildConversationRows(messages, { workflowId: "wf-1" })).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
-      { kind: "message", messageIndex: 1, msg: messages[1] },
-      { kind: "message", messageIndex: 2, msg: messages[2] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
+      { kind: "message", messageIndex: 1, msg: messages[1], part: SINGLE_PART },
+      { kind: "message", messageIndex: 2, msg: messages[2], part: SINGLE_PART },
       { kind: "collab", workflowId: "wf-1" },
-      { kind: "message", messageIndex: 3, msg: messages[3] },
+      { kind: "message", messageIndex: 3, msg: messages[3], part: SINGLE_PART },
     ]);
   });
 
@@ -56,7 +62,7 @@ describe("conversation rows", () => {
 
     expect(findCollabAnchorIndex(messages)).toBe(-1);
     expect(buildConversationRows(messages, { workflowId: "wf-2" })).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
       { kind: "collab", workflowId: "wf-2" },
     ]);
   });
@@ -66,11 +72,21 @@ describe("conversation rows", () => {
     const second = message("assistant", "two", "same");
 
     expect(
-      computeRowKey({ kind: "message", messageIndex: 0, msg: first }),
-    ).toBe("0:assistant:same");
+      computeRowKey({
+        kind: "message",
+        messageIndex: 0,
+        msg: first,
+        part: SINGLE_PART,
+      }),
+    ).toBe("0:0:assistant:same");
     expect(
-      computeRowKey({ kind: "message", messageIndex: 1, msg: second }),
-    ).toBe("1:assistant:same");
+      computeRowKey({
+        kind: "message",
+        messageIndex: 1,
+        msg: second,
+        part: SINGLE_PART,
+      }),
+    ).toBe("1:0:assistant:same");
   });
 
   it("computes collab keys with a fallback for empty workflow IDs", () => {
@@ -101,7 +117,12 @@ describe("conversation rows", () => {
 
   it("keeps row keys stable for the same logical row", () => {
     const msg = message("user", "stable", null);
-    const row = { kind: "message" as const, messageIndex: 4, msg };
+    const row = {
+      kind: "message" as const,
+      messageIndex: 4,
+      msg,
+      part: SINGLE_PART,
+    };
 
     expect(computeRowKey(row)).toBe(computeRowKey({ ...row }));
   });
@@ -115,9 +136,9 @@ describe("conversation rows", () => {
     ];
 
     expect(buildConversationRows(messages, undefined, 2)).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
-      { kind: "message", messageIndex: 1, msg: messages[1] },
-      { kind: "message", messageIndex: 3, msg: messages[3] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
+      { kind: "message", messageIndex: 1, msg: messages[1], part: SINGLE_PART },
+      { kind: "message", messageIndex: 3, msg: messages[3], part: SINGLE_PART },
     ]);
   });
 
@@ -131,9 +152,9 @@ describe("conversation rows", () => {
     expect(
       buildConversationRows(messages, { workflowId: "wf-hide" }, 1),
     ).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
       { kind: "collab", workflowId: "wf-hide" },
-      { kind: "message", messageIndex: 2, msg: messages[2] },
+      { kind: "message", messageIndex: 2, msg: messages[2], part: SINGLE_PART },
     ]);
   });
 
@@ -141,8 +162,8 @@ describe("conversation rows", () => {
     const messages = [message("user", "hi"), message("assistant", "hey")];
 
     expect(buildConversationRows(messages, undefined, null)).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
-      { kind: "message", messageIndex: 1, msg: messages[1] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
+      { kind: "message", messageIndex: 1, msg: messages[1], part: SINGLE_PART },
     ]);
   });
 });
@@ -159,9 +180,9 @@ describe("buildConversationRows — extension rows (spawn-card seam)", () => {
     expect(
       buildConversationRows(messages, undefined, null, [ext("card-1", 0)]),
     ).toEqual([
-      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
       { kind: "extension", ext: ext("card-1", 0) },
-      { kind: "message", messageIndex: 1, msg: messages[1] },
+      { kind: "message", messageIndex: 1, msg: messages[1], part: SINGLE_PART },
     ]);
   });
 
@@ -175,7 +196,7 @@ describe("buildConversationRows — extension rows (spawn-card seam)", () => {
       ]),
     ).toEqual([
       { kind: "extension", ext: ext("early", -1) },
-      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "message", messageIndex: 0, msg: messages[0], part: SINGLE_PART },
       { kind: "extension", ext: ext("late", 9) },
     ]);
   });
@@ -213,5 +234,124 @@ describe("buildConversationRows — extension rows (spawn-card seam)", () => {
     expect(computeRowKey({ kind: "extension", ext: ext("spawn:p1", 2) })).toBe(
       "extension:spawn:p1",
     );
+  });
+});
+
+describe("buildConversationRows — block-granular parts", () => {
+  function toolUse(id: string): MessageContentBlock {
+    return { type: "tool_use", id, name: "Bash", input: {} };
+  }
+  function thinking(text: string): MessageContentBlock {
+    return { type: "thinking", text, redacted: false };
+  }
+  function assistantWith(content: MessageContentBlock[]): TranscriptMessage {
+    return { role: "assistant", content, timestamp: "2024-06-15T10:00:00Z" };
+  }
+
+  it("emits one row per grouped content item so a long turn is not one row", () => {
+    // A turn with three separately-renderable units: text, a tool group, then
+    // more text. Today this is a single row that mounts all of them at once.
+    const msg = assistantWith([
+      { type: "text", text: "first" },
+      toolUse("t1"),
+      { type: "text", text: "second" },
+    ]);
+
+    const rows = buildConversationRows([msg], undefined);
+
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.kind === "message" && row.part.index)).toEqual(
+      [0, 1, 2],
+    );
+    expect(
+      rows.every((row) => row.kind === "message" && row.part.count === 3),
+    ).toBe(true);
+  });
+
+  it("gives every part the same message index so navigation still resolves", () => {
+    const rows = buildConversationRows(
+      [
+        message("user", "hi"),
+        assistantWith([thinking("a"), { type: "text", text: "b" }]),
+      ],
+      undefined,
+    );
+
+    expect(
+      rows.map((row) => (row.kind === "message" ? row.messageIndex : null)),
+    ).toEqual([0, 1, 1]);
+    // Scroll-to-message takes the first matching row: part 0 of the message.
+    expect(
+      rows.findIndex((r) => r.kind === "message" && r.messageIndex === 1),
+    ).toBe(1);
+  });
+
+  it("gives each part a disjoint grouped-item slice covering the whole message", () => {
+    const msg = assistantWith([
+      { type: "text", text: "a" },
+      toolUse("t1"),
+      { type: "text", text: "b" },
+    ]);
+
+    const rows = buildConversationRows([msg], undefined);
+    const ranges = rows.map((row) =>
+      row.kind === "message" ? [row.part.start, row.part.end] : null,
+    );
+
+    expect(ranges).toEqual([
+      [0, 1],
+      [1, 2],
+      [2, 3],
+    ]);
+  });
+
+  it("still emits one row for a message with no renderable content", () => {
+    const rows = buildConversationRows([assistantWith([])], undefined);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "message",
+      part: { index: 0, count: 1, start: 0, end: 0 },
+    });
+  });
+
+  it("keys each part distinctly so Virtuoso does not collapse them", () => {
+    const msg = assistantWith([{ type: "text", text: "a" }, toolUse("t1")]);
+
+    const keys = buildConversationRows([msg], undefined).map(computeRowKey);
+
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("applies the content transform before splitting, so hidden blocks do not create empty rows", () => {
+    const msg = assistantWith([
+      { type: "text", text: "kept" },
+      { type: "text", text: "hidden" },
+    ]);
+
+    const rows = buildConversationRows([msg], undefined, null, [], (content) =>
+      content.filter(
+        (block) => block.type !== "text" || block.text !== "hidden",
+      ),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "message", part: { count: 1 } });
+  });
+
+  it("drops a message the transform empties entirely", () => {
+    const rows = buildConversationRows(
+      [
+        message("user", "keep"),
+        assistantWith([{ type: "text", text: "drop" }]),
+      ],
+      undefined,
+      null,
+      [],
+      (_content, messageIndex) => (messageIndex === 1 ? [] : _content),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "message", messageIndex: 0 });
   });
 });

@@ -539,3 +539,89 @@ describe("MessageRow", () => {
     expect(container.querySelector(".debug-action-card")).toBeNull();
   });
 });
+
+describe("MessageRow — split across transcript rows", () => {
+  const splitMessage = makeMessage({
+    role: "assistant",
+    content: [
+      { type: "text", text: "opening prose" },
+      { type: "thinking", text: "deliberating", redacted: false },
+      { type: "text", text: "closing prose" },
+    ],
+  });
+
+  function renderPart(index: number, count = 3) {
+    return renderWithQuery(
+      <MessageRow
+        msg={splitMessage}
+        messageIndex={2}
+        part={{ index, count, start: index, end: index + 1 }}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        lastMessageExtras={null}
+      />,
+    );
+  }
+
+  it("renders the role header on the opening part only", () => {
+    renderPart(0);
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+  });
+
+  it("omits the role header on later parts, so a turn shows one header", () => {
+    renderPart(1);
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+  });
+
+  it("renders each part's own content slice and no other part's", () => {
+    renderPart(0);
+    expect(screen.getByText("opening prose")).toBeInTheDocument();
+    expect(screen.queryByText("closing prose")).not.toBeInTheDocument();
+  });
+
+  it("renders the message affordances on the closing part only", () => {
+    const { unmount } = renderPart(2);
+    expect(
+      screen.getByRole("button", { name: /copy message as markdown/i }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderPart(1);
+    expect(
+      screen.queryByRole("button", { name: /copy message as markdown/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks only the closing part so inter-message spacing is paid once", () => {
+    const { container, unmount } = renderPart(2);
+    expect(
+      container.querySelector('.message[data-part-last="true"]'),
+    ).not.toBeNull();
+    unmount();
+
+    const { container: middle } = renderPart(1);
+    expect(middle.querySelector('.message[data-part-last="true"]')).toBeNull();
+  });
+
+  it("keeps every part addressable by its message index for navigation", () => {
+    const { container } = renderPart(1);
+    expect(container.querySelector('[data-msg-index="2"]')).not.toBeNull();
+  });
+
+  it("renders an unsplit message whole when no part is supplied", () => {
+    renderWithQuery(
+      <MessageRow
+        msg={splitMessage}
+        messageIndex={0}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        lastMessageExtras={null}
+      />,
+    );
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByText("opening prose")).toBeInTheDocument();
+    expect(screen.getByText("closing prose")).toBeInTheDocument();
+  });
+});

@@ -66,6 +66,7 @@ export function useMessageRowRenderer({
           queuedMetadata={msg.queued ? msg.queued.metadata : undefined}
           provisional={msg.provisional}
           messageIndex={messageIndex}
+          part={row.part}
           isLast={isLast}
           selectedBackend={selectedBackend}
           worktreePath={worktreePath}

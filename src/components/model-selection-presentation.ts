@@ -36,6 +36,14 @@ export function parameterValueEmphasis(
  * general UI module: rainbow is only reachable from here.
  *
  * Reduced motion halts the gradient scroll; the gradient itself still renders.
+ *
+ * Both recipes scroll `background-position`, which the compositor cannot
+ * animate — every frame is a main-thread repaint that lasts as long as the
+ * control is on screen. Left unpromoted the repaint takes the whole enclosing
+ * layer with it, which measured 17% of the main thread on an otherwise idle
+ * page (command-center#97); `will-change` confines it to the control and
+ * roughly halves that. It is gated on `motion-safe` so reduced motion, which
+ * stops the animation, does not pay for a permanent compositing layer.
  */
 
 /**
@@ -63,6 +71,7 @@ export const RAINBOW_TRIGGER_CLASS = cn(
   "[background-clip:padding-box,padding-box,border-box]",
   "[background-size:200%_auto,100%_100%,200%_auto]",
   "motion-safe:animate-[rainbow-border-shift_3s_linear_infinite]",
+  "motion-safe:will-change-[background-position]",
   "shadow-[0_0_8px_var(--rainbow-glow),0_0_20px_var(--rainbow-glow-blue)]",
   "hover:shadow-[0_0_12px_var(--rainbow-glow-strong),0_0_24px_var(--cc-rainbow-glow-blue-a15)]",
   "data-[state=open]:shadow-[0_0_0_3px_var(--rainbow-glow),0_0_14px_var(--cc-rainbow-glow-violet-a15)]",
@@ -78,4 +87,5 @@ export const RAINBOW_TEXT_CLASS = cn(
   "[background-image:var(--rainbow-gradient)] [background-size:200%_auto]",
   "[-webkit-background-clip:text] [background-clip:text] [-webkit-text-fill-color:transparent]",
   "font-bold motion-safe:animate-[rainbow-shift_3s_linear_infinite]",
+  "motion-safe:will-change-[background-position]",
 );
