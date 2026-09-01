@@ -1608,7 +1608,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Seeding is derived from the delivery delta: fresh delivered criteria become delivered_elsewhere, soft-stale criteria become pending_reaffirmation, undelivered/hard-stale/deferred criteria become selected, and waivers stay waived. A second attempt is refused while one is live. Graph configuration belongs to the managed definition in Workflow Builder.",
+      "Seeding is derived from the delivery delta: fresh delivered criteria become delivered_elsewhere, soft-stale criteria become pending_reaffirmation, undelivered/hard-stale/deferred criteria become selected, and waivers stay waived. A second attempt is refused while one is live. The launch — graph, workflow config, and charter — belongs to the managed definition: author it with `cctl workflow edit <definition-id>` or Workflow Builder while the attempt is a draft; only the server-owned provenance is locked until propose freezes the charter.",
     related: [
       {
         command: "spec plan edit",
@@ -1651,7 +1651,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, binding }`. Graph configuration belongs to the linked managed definition and is edited through `cctl workflow get/edit` or Workflow Builder. Run `cctl spec schema plan-edit` for the exact binding shape. Every edit bumps the draft revision, so a second write must re-read first.",
+      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, binding }`. The launch itself — graph, workflow config, and the charter (mission, invariants, conventions, sources) — belongs to the linked managed definition and is edited while the attempt is a draft through `cctl workflow get/edit` (an `update-charter` op carries its fields at the top level of the operation) or Workflow Builder; `cctl spec plan propose` freezes the charter, and `cctl spec plan reopen` hands it back. Run `cctl spec schema plan-edit` for the exact binding shape. Every edit bumps the draft revision, so a second write must re-read first.",
     related: [
       {
         command: "spec plan get",

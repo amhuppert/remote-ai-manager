@@ -23,9 +23,11 @@ import {
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
 import { validateCharterSourceAuthoredShapes } from "@/lib/workflow-graph/validation";
 import type { ManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
 import type { DeliveryPlanBinding } from "./delivery-plan";
+import { workflowDefinitionHash } from "./delivery-plan-hash";
 import {
   createDeliveryPlanService,
   type DeliveryPlanService,
@@ -271,7 +273,7 @@ describe("delivery-plan service v3 lifecycle", () => {
     expect(opened.value.workflowDefinition.id).toBe(orphan.id);
   });
 
-  it("edits only binding bytes and proposes the exact definition identity", async () => {
+  it("edits only binding bytes and proposes the frozen definition identity", async () => {
     const world = createWorld(db);
     const edited = await openClean(world);
 
@@ -284,7 +286,7 @@ describe("delivery-plan service v3 lifecycle", () => {
     expect(proposed.value.document.binding).toEqual(deferredBinding());
     expect(proposed.value.workflowDefinition).toMatchObject({
       id: edited.workflowDefinition.id,
-      revision: edited.workflowDefinition.revision,
+      revision: edited.workflowDefinition.revision + 1,
     });
     const snapshot = world.repos.plans.findSnapshotById(
       proposed.value.attempt.proposedSnapshotId!,
@@ -294,7 +296,7 @@ describe("delivery-plan service v3 lifecycle", () => {
       candidateId: edited.workflowDefinition.id,
       workflowDefinition: {
         id: edited.workflowDefinition.id,
-        revision: edited.workflowDefinition.revision,
+        revision: edited.workflowDefinition.revision + 1,
       },
     });
     expect(snapshot?.content_json).not.toContain('"launch"');
@@ -653,5 +655,114 @@ describe("delivery-plan service v3 lifecycle", () => {
     }
 
     expect(lockKeys).toEqual(Array(5).fill(candidateId));
+  });
+
+  it("lets a definition edit author the charter of an open draft and of a reopened draft", async () => {
+    const world = createWorld(db);
+    const opened = await openClean(world);
+    const charterEdit = {
+      type: "update-charter" as const,
+      mission: "Deliver the approved spec, not the plan-authoring stub.",
+      invariants: [
+        { id: "inv-one", statement: "Every criterion maps to a context." },
+      ],
+    };
+
+    const draft = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: opened.workflowDefinition.id,
+    });
+    const draftEdit = applyDefinitionEdits(draft!, [charterEdit]);
+    expect(draftEdit.ok).toBe(true);
+    if (!draftEdit.ok) return;
+    expect(draftEdit.record.definition.charter.mission).toBe(
+      charterEdit.mission,
+    );
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const reopened = await world.service.reopen({
+      spec: SPEC,
+      reason: "Author the real charter.",
+      actor: AGENT,
+    });
+    if (!reopened.ok)
+      throw new Error(reopened.refusal.unmetConditions.join(" "));
+    const clone = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: reopened.value.workflowDefinition.id,
+    });
+    const cloneEdit = applyDefinitionEdits(clone!, [charterEdit]);
+    expect(cloneEdit.ok).toBe(true);
+    const cloneSourceIds = clone!.definition.charter.sourcesOfTruth.map(
+      (source) => source.id,
+    );
+    expect(
+      cloneSourceIds.filter((id) => id === "native-sdd-pinned-spec"),
+    ).toHaveLength(1);
+    expect(
+      cloneSourceIds.filter((id) => id === "native-sdd-claims"),
+    ).toHaveLength(1);
+  });
+
+  it("freezes the charter into the definition revision the candidate names at propose", async () => {
+    const world = createWorld(db);
+    const edited = await openClean(world);
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+
+    const frozen = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: edited.workflowDefinition.id,
+    });
+    expect(frozen?.revision).toBe(edited.workflowDefinition.revision + 1);
+    expect(frozen?.definition.lockedRegions?.map((lock) => lock.paths)).toEqual(
+      [["/charter"], ["/origin", "/approvalRequired"]],
+    );
+    expect(proposed.value.workflowDefinition).toMatchObject({
+      id: frozen!.id,
+      revision: frozen!.revision,
+      definitionHash: workflowDefinitionHash(frozen!),
+    });
+    const locked = applyDefinitionEdits(frozen!, [
+      { type: "update-charter", mission: "Too late." },
+    ]);
+    expect(locked.ok).toBe(false);
+    if (locked.ok) return;
+    expect(locked.issues[0]?.code).toBe("region_locked");
+  });
+
+  it("thaws the frozen definition when the proposal commit fails", async () => {
+    const stored = createManagedDefinitionTestService();
+    const plans = createDeliveryPlanTestRepos(db).plans;
+    const world = createWorld(db, {
+      managedDefinitions: stored,
+      plans: {
+        ...plans,
+        propose: () => {
+          throw new Error("database write failed");
+        },
+      },
+    });
+    const edited = await openClean(world);
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+
+    expect(proposed.ok).toBe(false);
+    const definition = await stored.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: edited.workflowDefinition.id,
+    });
+    expect(
+      definition?.definition.lockedRegions?.flatMap((lock) => lock.paths),
+    ).not.toContain("/charter");
+    expect(
+      applyDefinitionEdits(definition!, [
+        { type: "update-charter", mission: "Still authorable." },
+      ]).ok,
+    ).toBe(true);
   });
 });

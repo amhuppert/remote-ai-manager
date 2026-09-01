@@ -16,7 +16,10 @@ import {
   type SpecDeliveryPlanRepo,
 } from "./spec-delivery-plan-repo";
 import type { ManagedWorkflowDefinitionService } from "@/lib/specs/managed-workflow-definition-service";
-import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
+import {
+  finalizeDeliveryPlanLaunch,
+  type DeliveryPlanLaunchStage,
+} from "@/lib/specs/delivery-plan-finalization";
 import { workflowDefinitionHash } from "@/lib/specs/delivery-plan-hash";
 import type {
   WorkflowDefinitionDraft,
@@ -48,6 +51,8 @@ export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionS
     attemptId: string;
     definitionId: string;
     launch: WorkflowDefinitionDraft;
+    stage: DeliveryPlanLaunchStage;
+    revision?: number;
   }) => {
     const finalized = finalizeDeliveryPlanLaunch({
       specId: input.specId,
@@ -56,12 +61,13 @@ export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionS
       attemptId: input.attemptId,
       candidateId: input.definitionId,
       launch: input.launch,
+      stage: input.stage,
     });
     const record: WorkflowDefinitionRecord = {
       ...finalized,
       id: input.definitionId,
       schemaVersion: 1,
-      revision: 1,
+      revision: input.revision ?? 1,
       layout: { ...finalized.layout, workflowId: input.definitionId },
       createdAt: "2026-08-31T00:00:00.000Z",
       updatedAt: "2026-08-31T00:00:00.000Z",
@@ -86,6 +92,7 @@ export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionS
         attemptId: input.attemptId,
         definitionId: input.attemptId,
         launch: input.launch,
+        stage: "draft",
       }),
     clone: async (input) => {
       const source = records.get(input.sourceDefinitionId);
@@ -97,6 +104,26 @@ export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionS
         attemptId: input.attemptId,
         definitionId: input.cloneDefinitionId,
         launch: source,
+        stage: "draft",
+      });
+    },
+    restage: async (input) => {
+      const existing = records.get(input.workflowDefinitionId);
+      if (!existing) throw new Error("definition missing");
+      if (existing.revision !== input.expectedRevision) {
+        throw new Error(
+          `stale revision ${input.expectedRevision}, stored ${existing.revision}`,
+        );
+      }
+      return save({
+        specId: input.spec.id,
+        specSlug: input.spec.slug,
+        pinnedRevisionId: input.pinnedRevisionId,
+        attemptId: input.attemptId,
+        definitionId: existing.id,
+        launch: existing,
+        stage: input.stage,
+        revision: existing.revision + 1,
       });
     },
     getExact: async (input) => {

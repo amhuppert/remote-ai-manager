@@ -10,6 +10,14 @@ import {
   pinnedSpecDocumentPath,
 } from "./delivery-plan";
 
+/**
+ * Which locks a managed definition carries. A draft is the authoring surface
+ * for the launch, so only the provenance the server minted is locked and the
+ * charter stays open to `update-charter` and the builder; a candidate is the
+ * envelope a sign-off binds, so its charter is locked as well.
+ */
+export type DeliveryPlanLaunchStage = "draft" | "candidate";
+
 export interface DeliveryPlanLaunchFinalizationInput {
   readonly specId: string;
   readonly specSlug: string;
@@ -17,6 +25,7 @@ export interface DeliveryPlanLaunchFinalizationInput {
   readonly attemptId: string;
   readonly candidateId: string;
   readonly launch: WorkflowDefinitionMutation;
+  readonly stage?: DeliveryPlanLaunchStage;
 }
 
 export type FinalizeAndAdmitDeliveryPlanLaunchInput = Omit<
@@ -31,6 +40,15 @@ export interface FinalizeAndAdmitDeliveryPlanLaunchDeps {
   ): Promise<AuthoredWorkflowLaunchAdmissionResult>;
 }
 
+const SERVER_OWNED_SOURCE_IDS: ReadonlySet<string> = new Set([
+  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+  NATIVE_SDD_CLAIMS_SOURCE_ID,
+]);
+const SERVER_OWNED_SOURCE_LOCATOR_PREFIXES = [
+  ".cc/graph-workflow-docs/spec/",
+  ".cc/graph-workflow-docs/spec-bindings/",
+] as const;
+
 export function candidateClaimsDocumentPath(candidateId: string): string {
   return `.cc/graph-workflow-docs/spec-bindings/${candidateId}/claims.md`;
 }
@@ -44,13 +62,68 @@ export function deliveryPlanCandidateSourceUri(input: {
   return `spec-plan://${input.specId}/revisions/${input.pinnedRevisionId}/attempts/${input.attemptId}/candidates/${input.candidateId}`;
 }
 
+export function isServerOwnedDeliveryPlanSource(source: {
+  readonly id: string;
+  readonly locator: string;
+}): boolean {
+  return (
+    SERVER_OWNED_SOURCE_IDS.has(source.id) ||
+    SERVER_OWNED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
+      source.locator.startsWith(prefix),
+    )
+  );
+}
+
+/**
+ * The sources an author owns, with the rank gaps the server-owned entries leave
+ * closed so authored relative order survives. Finalization re-injects the
+ * server-owned pair around the result, which is what keeps a launch that
+ * already carries them — a reopened candidate, a re-proposed draft — from
+ * accumulating a duplicate pair per hop.
+ */
+export function authoredDeliveryPlanSources<
+  T extends {
+    readonly id: string;
+    readonly locator: string;
+    readonly rank: number;
+  },
+>(sources: readonly T[]): T[] {
+  const serverOwnedRanks = sources.flatMap((source) =>
+    isServerOwnedDeliveryPlanSource(source) ? [source.rank] : [],
+  );
+  return sources
+    .filter((source) => !isServerOwnedDeliveryPlanSource(source))
+    .map((source) => ({
+      ...source,
+      rank:
+        source.rank -
+        serverOwnedRanks.filter((rank) => rank < source.rank).length,
+    }));
+}
+
 export function finalizeDeliveryPlanLaunch(
   input: DeliveryPlanLaunchFinalizationInput,
 ): WorkflowDefinitionMutation {
+  const stage = input.stage ?? "candidate";
   const sourceUri = deliveryPlanCandidateSourceUri(input);
-  const authoredSources = input.launch.definition.charter.sourcesOfTruth.map(
-    (source) => ({ ...source, rank: source.rank + 2 }),
-  );
+  const authoredSources = authoredDeliveryPlanSources(
+    input.launch.definition.charter.sourcesOfTruth,
+  ).map((source) => ({ ...source, rank: source.rank + 2 }));
+  const charterLock = {
+    paths: ["/charter"],
+    sourceUri,
+    reason: "The signed native SDD candidate owns workflow governance.",
+    instruction:
+      "Before launch, reopen and re-propose the plan; during a run, use the audited charter-amendment act.",
+  };
+  const provenanceLock = {
+    paths: ["/origin", "/approvalRequired"],
+    sourceUri,
+    reason:
+      "The signed native SDD candidate owns provenance and approval policy.",
+    instruction:
+      "Before launch, reopen and re-propose the plan; after launch, replace the execution.",
+  };
 
   return workflowDefinitionMutationSchema.parse({
     ...input.launch,
@@ -83,23 +156,10 @@ export function finalizeDeliveryPlanLaunch(
         ],
       },
       origin: { sourceUri },
-      lockedRegions: [
-        {
-          paths: ["/charter"],
-          sourceUri,
-          reason: "The signed native SDD candidate owns workflow governance.",
-          instruction:
-            "Before launch, reopen and re-propose the plan; during a run, use the audited charter-amendment act.",
-        },
-        {
-          paths: ["/origin", "/approvalRequired"],
-          sourceUri,
-          reason:
-            "The signed native SDD candidate owns provenance and approval policy.",
-          instruction:
-            "Before launch, reopen and re-propose the plan; after launch, replace the execution.",
-        },
-      ],
+      lockedRegions:
+        stage === "candidate"
+          ? [charterLock, provenanceLock]
+          : [provenanceLock],
       approvalRequired: false,
     },
   });

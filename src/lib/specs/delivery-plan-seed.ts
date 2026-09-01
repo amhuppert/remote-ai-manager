@@ -1,20 +1,8 @@
 import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
 
-import {
-  NATIVE_SDD_CLAIMS_SOURCE_ID,
-  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
-  type DeliveryPlanBinding,
-} from "./delivery-plan";
+import type { DeliveryPlanBinding } from "./delivery-plan";
+import { authoredDeliveryPlanSources } from "./delivery-plan-finalization";
 import type { CriterionDeliveryClass } from "./delivery-delta";
-
-const RESERVED_SOURCE_IDS = new Set([
-  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
-  NATIVE_SDD_CLAIMS_SOURCE_ID,
-]);
-const RESERVED_SOURCE_LOCATOR_PREFIXES = [
-  ".cc/graph-workflow-docs/spec/",
-  ".cc/graph-workflow-docs/spec-bindings/",
-] as const;
 
 /**
  * The only thing a new attempt can seed from: a finalized version-2 candidate.
@@ -131,27 +119,9 @@ export function seedDeliveryPlanFromLast(input: {
     origin: _origin,
     ...definition
   } = launch.definition;
-  const reservedRanks = definition.charter.sourcesOfTruth.flatMap((source) =>
-    RESERVED_SOURCE_IDS.has(source.id) ||
-    RESERVED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
-      source.locator.startsWith(prefix),
-    )
-      ? [source.rank]
-      : [],
+  const sourcesOfTruth = authoredDeliveryPlanSources(
+    definition.charter.sourcesOfTruth,
   );
-  const sourcesOfTruth = definition.charter.sourcesOfTruth
-    .filter(
-      (source) =>
-        !RESERVED_SOURCE_IDS.has(source.id) &&
-        !RESERVED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
-          source.locator.startsWith(prefix),
-        ),
-    )
-    .map((source) => ({
-      ...source,
-      rank:
-        source.rank - reservedRanks.filter((rank) => rank < source.rank).length,
-    }));
   const selectedCriteria = new Set(
     input.dispositions
       .filter((disposition) => disposition.disposition === "in_scope")

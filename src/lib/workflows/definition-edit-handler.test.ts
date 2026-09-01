@@ -239,4 +239,50 @@ describe("runDefinitionEditRequest", () => {
     );
     expect(persistedTask?.instructions).toBe("Do the new thing.");
   });
+
+  it("rejects an update-charter op whose fields are nested under a charter key instead of silently applying nothing", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 3 });
+    const { persist } = persistSpy(record);
+    const response = await runDefinitionEditRequest({
+      rawBody: {
+        expectedRevision: 3,
+        operations: [
+          {
+            type: "update-charter",
+            charter: { mission: "Deliver the approved spec." },
+          },
+        ],
+      },
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      persist,
+    });
+    expect(response.status).toBe(400);
+    expect(await bodyOf(response)).toMatchObject({
+      error: "Invalid edit request",
+      issues: [
+        expect.objectContaining({
+          path: "operations.0",
+          message: expect.stringContaining("charter"),
+        }),
+      ],
+    });
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("rejects an update-charter op that names no charter field", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 3 });
+    const { persist } = persistSpy(record);
+    const response = await runDefinitionEditRequest({
+      rawBody: {
+        expectedRevision: 3,
+        operations: [{ type: "update-charter" }],
+      },
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      persist,
+    });
+    expect(response.status).toBe(400);
+    expect(persist).not.toHaveBeenCalled();
+  });
 });

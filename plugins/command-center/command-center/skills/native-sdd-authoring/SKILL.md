@@ -66,7 +66,7 @@ Inspect stage and return-path contracts with `cctl spec status --help`,
 
 ## Managed delivery workflow
 
-After Design sign-off, open an attempt with `cctl spec plan open <slug>`. The receipt names a real project workflow definition and its Workflow Builder link. Read graph configuration with `cctl workflow get <definitionId>` and edit it with `cctl workflow edit <definitionId>` or Workflow Builder, using the definition revision as its compare-and-swap token.
+After Design sign-off, open an attempt with `cctl spec plan open <slug>`. The receipt names a real project workflow definition and its Workflow Builder link. Read graph configuration with `cctl workflow get <definitionId>` and edit it with `cctl workflow edit <definitionId>` or Workflow Builder, using the definition revision as its compare-and-swap token. The charter (mission, invariants, conventions, sources) is authored the same way while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the two server-owned sources (`native-sdd-pinned-spec`, `native-sdd-claims`) are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
 
 The plan document is version 3 and binding-only. Read it with `cctl spec plan get <slug>`, then submit `{ "expectedDraftRevision": ..., "binding": ... }` with `cctl spec plan edit <slug> --file <plan.json>`. Keep payloads under `.cc/temp/`. Graph and binding revisions are independent; re-read the surface whose write was refused.
 

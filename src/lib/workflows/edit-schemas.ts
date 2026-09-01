@@ -196,104 +196,139 @@ export const CHARTER_CONTENT_EDIT_FIELDS = Object.keys(
 export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
   "type",
   [
-    z.object({
-      type: z.literal("update-workflow"),
-      name: z.string().trim().min(1).optional(),
-      description: z.string().trim().min(1).nullable().optional(),
-    }),
-    z.object({
-      type: z.literal("update-charter"),
-      ...charterContentEditShape,
-    }),
-    z.object({
-      type: z.literal("update-workflow-config"),
-      ...definitionEditWorkflowConfigShape,
-    }),
-    z.object({
-      type: z.literal("add-context"),
-      id: z.string().trim().min(1),
-      title: z.string().trim().min(1),
-      acceptanceCriteria: acceptanceCriteriaSchema,
-      description: z.string().trim().min(1).optional(),
-      // Context identity, not a config override — so it sits beside `title`
-      // rather than in the cascade block above, and carries no `null` clear
-      // (an absent field on a brand-new context IS the cleared state).
-      outputSchema: contextOutputSchemaSchema.optional(),
-      routing: graphWorkflowContextRoutingPolicySchema.optional(),
-      // Same identity tier. Optional in the VOCABULARY, required in the
-      // definition: the applier gives a placement-less add the single-member
-      // lane an added context already had, so an existing caller keeps working
-      // and a caller that means to group says so explicitly.
-      placement: contextPlacementSchema.optional(),
-      ...definitionEditAddContextConfigShape,
-    }),
-    z.object({
-      type: z.literal("update-context"),
-      contextId: z.string().trim().min(1),
-      title: z.string().trim().min(1).optional(),
-      description: z.string().trim().min(1).nullable().optional(),
-      acceptanceCriteria: acceptanceCriteriaSchema.optional(),
-      // Present replaces the declaration wholesale (a JSON Schema document has
-      // no meaningful partial merge), `null` drops it and returns the context
-      // to free-form output, absent leaves it untouched.
-      outputSchema: contextOutputSchemaSchema.nullable().optional(),
-      // Same replace/clear semantics; `null` returns the context to the
-      // `independent` default.
-      routing: graphWorkflowContextRoutingPolicySchema.nullable().optional(),
-      // Replaces wholesale, and NOT nullable: a context always has a placement,
-      // so there is no cleared state to spell. Moving lanes and re-drawing owned
-      // paths are one edit because the grade discriminates on both.
-      placement: contextPlacementSchema.optional(),
-      ...definitionEditUpdateContextConfigShape,
-    }),
-    z.object({
-      type: z.literal("remove-context"),
-      contextId: z.string().trim().min(1),
-      deleteTasks: z.boolean().optional(),
-    }),
-    z.object({
-      type: z.literal("add-task"),
-      id: z.string().trim().min(1),
-      contextId: z.string().trim().min(1),
-      title: z.string().trim().min(1),
-      instructions: z.string().trim().min(1),
-      metadata: z.record(z.string(), z.string()).optional(),
-      position: definitionEditTaskPositionSchema.optional(),
-    }),
-    z.object({
-      type: z.literal("update-task"),
-      taskId: z.string().trim().min(1),
-      title: z.string().trim().min(1).optional(),
-      instructions: z.string().trim().min(1).optional(),
-      metadata: z.record(z.string(), z.string()).nullable().optional(),
-    }),
-    z.object({
-      type: z.literal("remove-task"),
-      taskId: z.string().trim().min(1),
-    }),
-    z.object({
-      type: z.literal("move-task"),
-      taskId: z.string().trim().min(1),
-      contextId: z.string().trim().min(1).optional(),
-      position: definitionEditTaskPositionSchema.optional(),
-    }),
-    z.object({
-      type: z.literal("reorder-tasks"),
-      contextId: z.string().trim().min(1),
-      orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
-    }),
-    z.object({
-      type: z.literal("add-edge"),
-      sourceContextId: z.string().trim().min(1),
-      targetContextId: z.string().trim().min(1),
-      when: graphWorkflowEdgeGuardSchema.optional(),
-    }),
+    z
+      .object({
+        type: z.literal("update-workflow"),
+        name: z.string().trim().min(1).optional(),
+        description: z.string().trim().min(1).nullable().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("update-charter"),
+        ...charterContentEditShape,
+      })
+      .strict()
+      .refine(
+        (value) =>
+          CHARTER_CONTENT_EDIT_FIELDS.some(
+            (field) => value[field as keyof typeof value] !== undefined,
+          ),
+        {
+          message:
+            "update-charter requires at least one charter field to change (mission, conventions, nonGoals, vocabulary, testStrategy, knownAmbiguities, invariants, sourcesOfTruth) at the top level of the operation",
+        },
+      ),
+    z
+      .object({
+        type: z.literal("update-workflow-config"),
+        ...definitionEditWorkflowConfigShape,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("add-context"),
+        id: z.string().trim().min(1),
+        title: z.string().trim().min(1),
+        acceptanceCriteria: acceptanceCriteriaSchema,
+        description: z.string().trim().min(1).optional(),
+        // Context identity, not a config override — so it sits beside `title`
+        // rather than in the cascade block above, and carries no `null` clear
+        // (an absent field on a brand-new context IS the cleared state).
+        outputSchema: contextOutputSchemaSchema.optional(),
+        routing: graphWorkflowContextRoutingPolicySchema.optional(),
+        // Same identity tier. Optional in the VOCABULARY, required in the
+        // definition: the applier gives a placement-less add the single-member
+        // lane an added context already had, so an existing caller keeps working
+        // and a caller that means to group says so explicitly.
+        placement: contextPlacementSchema.optional(),
+        ...definitionEditAddContextConfigShape,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("update-context"),
+        contextId: z.string().trim().min(1),
+        title: z.string().trim().min(1).optional(),
+        description: z.string().trim().min(1).nullable().optional(),
+        acceptanceCriteria: acceptanceCriteriaSchema.optional(),
+        // Present replaces the declaration wholesale (a JSON Schema document has
+        // no meaningful partial merge), `null` drops it and returns the context
+        // to free-form output, absent leaves it untouched.
+        outputSchema: contextOutputSchemaSchema.nullable().optional(),
+        // Same replace/clear semantics; `null` returns the context to the
+        // `independent` default.
+        routing: graphWorkflowContextRoutingPolicySchema.nullable().optional(),
+        // Replaces wholesale, and NOT nullable: a context always has a placement,
+        // so there is no cleared state to spell. Moving lanes and re-drawing owned
+        // paths are one edit because the grade discriminates on both.
+        placement: contextPlacementSchema.optional(),
+        ...definitionEditUpdateContextConfigShape,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("remove-context"),
+        contextId: z.string().trim().min(1),
+        deleteTasks: z.boolean().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("add-task"),
+        id: z.string().trim().min(1),
+        contextId: z.string().trim().min(1),
+        title: z.string().trim().min(1),
+        instructions: z.string().trim().min(1),
+        metadata: z.record(z.string(), z.string()).optional(),
+        position: definitionEditTaskPositionSchema.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("update-task"),
+        taskId: z.string().trim().min(1),
+        title: z.string().trim().min(1).optional(),
+        instructions: z.string().trim().min(1).optional(),
+        metadata: z.record(z.string(), z.string()).nullable().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("remove-task"),
+        taskId: z.string().trim().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("move-task"),
+        taskId: z.string().trim().min(1),
+        contextId: z.string().trim().min(1).optional(),
+        position: definitionEditTaskPositionSchema.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("reorder-tasks"),
+        contextId: z.string().trim().min(1),
+        orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("add-edge"),
+        sourceContextId: z.string().trim().min(1),
+        targetContextId: z.string().trim().min(1),
+        when: graphWorkflowEdgeGuardSchema.optional(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("update-edge"),
         edgeId: z.string().trim().min(1),
         ...edgeGuardEditShape,
       })
+      .strict()
       .refine((value) => value.when !== undefined, {
         message: "update-edge requires at least one field to change",
       }),
@@ -302,31 +337,42 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
         type: z.literal("remove-edge"),
         ...removeEdgeShape,
       })
+      .strict()
       .refine(hasRemoveEdgeAddressing, REMOVE_EDGE_ADDRESSING),
-    z.object({
-      type: z.literal("add-parameter"),
-      declaration: parameterDeclarationSchema,
-    }),
-    z.object({
-      type: z.literal("update-parameter"),
-      name: z.string().trim().min(1),
-      declaration: parameterDeclarationSchema,
-    }),
-    z.object({
-      type: z.literal("remove-parameter"),
-      name: z.string().trim().min(1),
-    }),
-    z.object({
-      type: z.literal("add-prerequisite"),
-      prerequisite: prerequisiteSchema,
-    }),
+    z
+      .object({
+        type: z.literal("add-parameter"),
+        declaration: parameterDeclarationSchema,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("update-parameter"),
+        name: z.string().trim().min(1),
+        declaration: parameterDeclarationSchema,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("remove-parameter"),
+        name: z.string().trim().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("add-prerequisite"),
+        prerequisite: prerequisiteSchema,
+      })
+      .strict(),
     // Matched by identity (kind + path/skill); prerequisites carry no ids.
-    z.object({
-      type: z.literal("remove-prerequisite"),
-      kind: z.enum(["path", "skill"]),
-      path: z.string().trim().min(1).optional(),
-      skill: z.string().trim().min(1).optional(),
-    }),
+    z
+      .object({
+        type: z.literal("remove-prerequisite"),
+        kind: z.enum(["path", "skill"]),
+        path: z.string().trim().min(1).optional(),
+        skill: z.string().trim().min(1).optional(),
+      })
+      .strict(),
   ],
 );
 export type DefinitionEditOperation = z.infer<

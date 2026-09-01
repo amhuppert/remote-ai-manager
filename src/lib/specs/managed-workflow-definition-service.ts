@@ -5,7 +5,10 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import type { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
-import { finalizeDeliveryPlanLaunch } from "./delivery-plan-finalization";
+import {
+  finalizeDeliveryPlanLaunch,
+  type DeliveryPlanLaunchStage,
+} from "./delivery-plan-finalization";
 import type { Spec } from "./schemas";
 import {
   definitionMutationCoordinator,
@@ -69,6 +72,19 @@ export interface ManagedWorkflowDefinitionService {
     sourceDefinitionId: string;
     cloneDefinitionId: string;
   }): Promise<WorkflowDefinitionRecord>;
+  /**
+   * Rewrite a managed definition at the given stage as its next revision:
+   * `candidate` freezes the charter a proposal binds, `draft` hands it back to
+   * the authoring surfaces. The identity (id, origin) never changes.
+   */
+  restage(input: {
+    spec: Spec;
+    pinnedRevisionId: string;
+    attemptId: string;
+    workflowDefinitionId: string;
+    expectedRevision: number;
+    stage: DeliveryPlanLaunchStage;
+  }): Promise<WorkflowDefinitionRecord>;
   getExact(input: {
     projectPath: string;
     workflowDefinitionId: string;
@@ -83,6 +99,7 @@ function finalizedDraft(input: {
   attemptId: string;
   candidateId: string;
   launch: WorkflowDefinitionDraft;
+  stage: DeliveryPlanLaunchStage;
 }): WorkflowDefinitionDraft {
   return finalizeDeliveryPlanLaunch({
     specId: input.spec.id,
@@ -91,6 +108,7 @@ function finalizedDraft(input: {
     attemptId: input.attemptId,
     candidateId: input.candidateId,
     launch: input.launch,
+    stage: input.stage,
   });
 }
 
@@ -178,6 +196,7 @@ export function createManagedWorkflowDefinitionService(deps: {
       attemptId: input.attemptId,
       candidateId: input.definitionId,
       launch: input.launch,
+      stage: "draft",
     });
     const draft = {
       ...finalized,
@@ -308,6 +327,45 @@ export function createManagedWorkflowDefinitionService(deps: {
         launch: source,
         event: "cloned",
       });
+    },
+    async restage(input) {
+      const scope = projectScope(input.spec.projectPath);
+      const existing = await deps.storage.get(
+        scope,
+        input.workflowDefinitionId,
+      );
+      if (!existing) {
+        throw new ManagedWorkflowDefinitionIntegrityError(
+          input.workflowDefinitionId,
+          "definition file is missing",
+        );
+      }
+      const finalized = finalizedDraft({
+        spec: input.spec,
+        pinnedRevisionId: input.pinnedRevisionId,
+        attemptId: input.attemptId,
+        candidateId: existing.id,
+        launch: existing,
+        stage: input.stage,
+      });
+      const restaged = await deps.storage.update(
+        scope,
+        existing.id,
+        input.expectedRevision,
+        {
+          ...finalized,
+          layout: { ...finalized.layout, workflowId: existing.id },
+        },
+      );
+      logger.info("specs.delivery-plan.definition.restaged", {
+        specId: input.spec.id,
+        attemptId: input.attemptId,
+        workflowDefinitionId: restaged.id,
+        stage: input.stage,
+        revision: restaged.revision,
+        definitionHash: workflowDefinitionHash(restaged),
+      });
+      return restaged;
     },
     async getExact(input) {
       const record = await deps.storage.get(

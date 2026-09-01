@@ -367,6 +367,38 @@ export function createDeliveryPlanService(
   }
 
   /**
+   * A proposal that failed to commit would otherwise leave the definition
+   * frozen under a draft attempt — a charter nobody can author. Restoring the
+   * draft stage keeps the attempt editable; a failure here is logged rather
+   * than raised so the commit error stays the one the caller sees.
+   */
+  async function thawAfterFailedProposal(
+    spec: Spec,
+    attempt: SpecDeliveryPlanAttemptRow,
+    frozen: WorkflowDefinitionRecord,
+  ): Promise<void> {
+    try {
+      await deps.managedDefinitions.restage({
+        spec,
+        pinnedRevisionId: attempt.pinned_revision_id,
+        attemptId: attempt.id,
+        workflowDefinitionId: frozen.id,
+        expectedRevision: frozen.revision,
+        stage: "draft",
+      });
+    } catch (thawError) {
+      logger.error("specs.delivery-plan.definition.thaw_failed", {
+        specId: spec.id,
+        attemptId: attempt.id,
+        workflowDefinitionId: frozen.id,
+        revision: frozen.revision,
+        error:
+          thawError instanceof Error ? thawError.message : String(thawError),
+      });
+    }
+  }
+
+  /**
    * What the draft still owes, read through the projection `propose` refuses
    * on. A frozen attempt owes nothing: its bytes were admitted and linted at
    * proposal and cannot change, so re-admitting them would only report the same
@@ -828,37 +860,55 @@ export function createDeliveryPlanService(
               },
             };
           }
-          const candidateRecord: DeliveryPlanCandidateRecord = {
-            protocol: "native-sdd-delivery-candidate/v3",
-            schemaVersion: 3,
-            specId: input.spec.id,
-            attemptId: attempt.id,
-            candidateId: definition.id,
-            pinnedRevisionId: attempt.pinned_revision_id,
-            draftRevision: attempt.draft_revision,
-            workflowDefinition: {
-              id: definition.id,
-              revision: definition.revision,
-              definitionHash: workflowDefinitionHash(definition),
-            },
-            binding: document.binding,
-            bindingHash: deliveryPlanBindingHash(document.binding),
-          };
-          const candidateHash = deliveryPlanCandidateHash(candidateRecord);
           try {
-            const proposed = deps.plans.propose({
+            // The freeze is the lock. The draft definition keeps its charter
+            // authorable; proposing writes the candidate-stage revision a
+            // sign-off binds, so the manifest names the frozen bytes.
+            const frozen = await deps.managedDefinitions.restage({
+              spec: input.spec,
+              pinnedRevisionId: attempt.pinned_revision_id,
               attemptId: attempt.id,
-              expectedDraftRevision: attempt.draft_revision,
-              snapshotId: deps.nextId(),
-              proposedAt: deps.now(),
-              actor: input.actor,
-              candidate: { record: candidateRecord, candidateHash },
+              workflowDefinitionId: definition.id,
+              expectedRevision: definition.revision,
+              stage: "candidate",
             });
+            const candidateRecord: DeliveryPlanCandidateRecord = {
+              protocol: "native-sdd-delivery-candidate/v3",
+              schemaVersion: 3,
+              specId: input.spec.id,
+              attemptId: attempt.id,
+              candidateId: frozen.id,
+              pinnedRevisionId: attempt.pinned_revision_id,
+              draftRevision: attempt.draft_revision,
+              workflowDefinition: {
+                id: frozen.id,
+                revision: frozen.revision,
+                definitionHash: workflowDefinitionHash(frozen),
+              },
+              binding: document.binding,
+              bindingHash: deliveryPlanBindingHash(document.binding),
+            };
+            const candidateHash = deliveryPlanCandidateHash(candidateRecord);
+            let proposed: ReturnType<SpecDeliveryPlanRepo["propose"]>;
+            try {
+              proposed = deps.plans.propose({
+                attemptId: attempt.id,
+                expectedDraftRevision: attempt.draft_revision,
+                snapshotId: deps.nextId(),
+                proposedAt: deps.now(),
+                actor: input.actor,
+                candidate: { record: candidateRecord, candidateHash },
+              });
+            } catch (error) {
+              await thawAfterFailedProposal(input.spec, attempt, frozen);
+              throw error;
+            }
             logger.info("specs.delivery-plan.proposed", {
               specId: input.spec.id,
               attemptId: attempt.id,
               candidateId: candidateRecord.candidateId,
               candidateHash,
+              workflowDefinitionRevision: frozen.revision,
             });
             const view = await project(proposed.attempt, input.spec);
             publishPlanChange(input.spec, view, "proposed");
@@ -1650,8 +1700,7 @@ function nextAct(
       return {
         actor: "agent",
         command: `cctl spec plan edit ${spec.slug} --file <plan.json>`,
-        reason:
-          "Author one graph launch and its immutable accountability binding.",
+        reason: `Author the launch graph and its charter on the managed workflow definition with \`cctl workflow edit ${attempt.workflow_definition_id ?? attempt.id} --file <ops.json>\`; this act writes the immutable accountability binding.`,
       };
     case "proposed":
       return {

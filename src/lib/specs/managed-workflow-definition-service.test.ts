@@ -171,4 +171,68 @@ describe("managed workflow definition service", () => {
       }),
     ).resolves.toEqual(clone);
   });
+
+  it("restages a draft into a frozen candidate and back through storage revisions", async () => {
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => tempDir,
+    });
+    const service = createManagedWorkflowDefinitionService({ storage });
+    const opened = await service.open({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-restage",
+      launch: createWorkflowDefinitionRecord(),
+    });
+    expect(
+      opened.definition.lockedRegions?.flatMap((lock) => lock.paths),
+    ).not.toContain("/charter");
+
+    const frozen = await service.restage({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-restage",
+      workflowDefinitionId: opened.id,
+      expectedRevision: opened.revision,
+      stage: "candidate",
+    });
+    expect(frozen.revision).toBe(opened.revision + 1);
+    expect(frozen.definition.lockedRegions?.map((lock) => lock.paths)).toEqual([
+      ["/charter"],
+      ["/origin", "/approvalRequired"],
+    ]);
+    await expect(
+      service.getExact({
+        projectPath: SPEC.projectPath,
+        workflowDefinitionId: opened.id,
+        revision: frozen.revision,
+        definitionHash: workflowDefinitionHash(frozen),
+      }),
+    ).resolves.toEqual(frozen);
+
+    const thawed = await service.restage({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-restage",
+      workflowDefinitionId: opened.id,
+      expectedRevision: frozen.revision,
+      stage: "draft",
+    });
+    expect(thawed.revision).toBe(frozen.revision + 1);
+    expect(thawed.definition).toEqual(opened.definition);
+
+    const clone = await service.clone({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-restage",
+      sourceDefinitionId: opened.id,
+      cloneDefinitionId: "attempt-restage-clone",
+    });
+    const cloneSourceIds = clone.definition.charter.sourcesOfTruth.map(
+      (source) => source.id,
+    );
+    expect(new Set(cloneSourceIds).size).toBe(cloneSourceIds.length);
+    expect(
+      clone.definition.lockedRegions?.flatMap((lock) => lock.paths),
+    ).not.toContain("/charter");
+  });
 });
