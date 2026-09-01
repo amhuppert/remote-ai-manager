@@ -11,6 +11,12 @@ export interface SelectionDraft {
   rect: DOMRect;
   /** Runtime source block used to restore keyboard focus after composition. */
   block: HTMLElement;
+  /**
+   * The range the selection covers, kept for consumers whose question is about
+   * the selection's own DOM ancestry rather than its block — a clip asking
+   * whether the passage sits inside a code span, most of all.
+   */
+  range: Range;
 }
 
 function sameAnchor(a: CommentAnchor, b: CommentAnchor): boolean {
@@ -74,7 +80,7 @@ export function useTextSelectionComment(
       setDraft((prev) =>
         prev && sameAnchor(prev.anchor, anchor)
           ? prev
-          : { anchor, rect, block },
+          : { anchor, rect, block, range },
       );
     };
 

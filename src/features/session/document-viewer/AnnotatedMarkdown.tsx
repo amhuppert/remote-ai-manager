@@ -11,6 +11,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { AnnotatedClipAction } from "@/components/notepad-capture/AnnotatedClipAction";
 import { SourceMappedDocumentMarkdown } from "@/components/markdown/Markdown";
 import MarkdownViewport from "@/components/markdown/MarkdownViewport";
 import {
@@ -21,11 +22,14 @@ import {
 import { Button } from "@/components/ui/Button";
 import type { DocumentRef } from "@/lib/document-comments/schemas";
 import type {
+  ClipCaptureCapability,
+  ClipSelectionContext,
   CommentComposerCapability,
   MarkdownAnnotationTarget,
   MarkdownAnnotationTone,
   ResolvedMarkdownAnnotation,
 } from "@/components/document-viewer/annotation-contract";
+import type { ClipFragmentInput } from "@/lib/notepads/capture-fragment";
 import { groupResolvedAnnotations } from "./anchor-dom";
 import CommentGutterPin from "./CommentGutterPin";
 import CommentPopover from "./CommentPopover";
@@ -53,6 +57,12 @@ export interface AnnotatedMarkdownProps {
   annotationNoun?: { singular: string; plural: string };
   onActivateAnnotation?: (target: MarkdownAnnotationTarget) => void;
   composer?: CommentComposerCapability;
+  /**
+   * The host's opt-in to clipping a selection into a notepad. Supplying it adds
+   * Clip to the one selection affordance beside Comment; omitting it leaves the
+   * affordance exactly as it was.
+   */
+  clip?: ClipCaptureCapability;
   /**
    * The document rendering itself. Defaults to the canonical source-mapped
    * document adapter — a host whose content is a DIALECT of Markdown (the
@@ -208,17 +218,27 @@ function CommentGutter({
 }
 
 /**
- * Anchors Radix Popover to the current selection and keeps dismissal coordinated
- * with asynchronous persistence so a pending write cannot discard its draft.
+ * The one affordance a selection raises on an annotated host: Comment, Clip, or
+ * both, in a single positioned trigger. Anchors Radix Popover to the current
+ * selection for the comment composer and keeps dismissal coordinated with
+ * asynchronous persistence so a pending write cannot discard its draft.
+ *
+ * A host that supplies neither capability never mounts this layer, so a
+ * read-only surface still raises nothing at all.
  */
-function SelectionCommentLayer({
+function SelectionAffordanceLayer({
   draft,
   clear,
   composer,
+  clip,
+  projectName,
 }: {
   draft: SelectionDraft | null;
   clear: () => void;
-  composer: CommentComposerCapability;
+  composer?: CommentComposerCapability;
+  clip?: ClipCaptureCapability;
+  /** Where a clip's destination resolves — the annotated document's project. */
+  projectName: string;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -289,6 +309,24 @@ function SelectionCommentLayer({
   const placedTrigger =
     triggerPosition?.draft === draft ? triggerPosition : null;
 
+  // Described the moment the affordance appears rather than on click: the
+  // capability answers from the live block, which is on screen exactly while
+  // the affordance is. The host returns provenance DATA; the fragment shape is
+  // rendered downstream by the capture builder alone (D20).
+  const clipSelection: ClipSelectionContext = {
+    anchor: draft.anchor,
+    text: draft.anchor.quote,
+    block: draft.block,
+    range: draft.range,
+  };
+  const clipInput: ClipFragmentInput | null = clip?.enabled
+    ? {
+        text: clipSelection.text,
+        isCode: clip.deriveIsCode(clipSelection),
+        provenance: clip.buildProvenance(clipSelection),
+      }
+    : null;
+
   return (
     <Popover
       open={open}
@@ -305,57 +343,71 @@ function SelectionCommentLayer({
       {createPortal(
         <span
           ref={triggerRef}
-          className="fixed z-popover"
+          className="fixed z-popover inline-flex items-center gap-xs"
           style={
             placedTrigger
               ? { top: placedTrigger.top, left: placedTrigger.left }
               : { visibility: "hidden" }
           }
         >
-          <PopoverTrigger asChild>
-            <Button type="button" variant="default" size="touch">
-              <span aria-hidden="true" className="text-[0.85rem] leading-none">
-                +
-              </span>
-              Comment
-            </Button>
-          </PopoverTrigger>
+          {composer ? (
+            <PopoverTrigger asChild>
+              <Button type="button" variant="default" size="touch">
+                <span
+                  aria-hidden="true"
+                  className="text-[0.85rem] leading-none"
+                >
+                  +
+                </span>
+                Comment
+              </Button>
+            </PopoverTrigger>
+          ) : null}
+          {clipInput ? (
+            <AnnotatedClipAction
+              projectName={projectName}
+              clip={clipInput}
+              onClipped={clear}
+            />
+          ) : null}
         </span>,
         document.body,
       )}
-      <PopoverContent
-        ref={contentRef}
-        aria-label="Add comment"
-        unstyled
-        contentClassName="z-popover outline-none"
-        onEscapeKeyDown={(event) => {
-          if (pending) event.preventDefault();
-          else restoreSourceFocusRef.current = true;
-        }}
-        onInteractOutside={(event) => {
-          if (pending) event.preventDefault();
-          else restoreSourceFocusRef.current = false;
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          if (restoreSourceFocusRef.current) {
-            const sourceBlock = draft.block;
-            if (!sourceBlock.hasAttribute("tabindex")) {
-              sourceBlock.setAttribute("tabindex", "-1");
+      {composer ? (
+        <PopoverContent
+          ref={contentRef}
+          aria-label="Add comment"
+          unstyled
+          contentClassName="z-popover outline-none"
+          onEscapeKeyDown={(event) => {
+            if (pending) event.preventDefault();
+            else restoreSourceFocusRef.current = true;
+          }}
+          onInteractOutside={(event) => {
+            if (pending) event.preventDefault();
+            else restoreSourceFocusRef.current = false;
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (restoreSourceFocusRef.current) {
+              const sourceBlock = draft.block;
+              if (!sourceBlock.hasAttribute("tabindex")) {
+                sourceBlock.setAttribute("tabindex", "-1");
+              }
+              sourceBlock.focus();
             }
-            sourceBlock.focus();
-          }
-          clear();
-        }}
-      >
-        <CommentPopover
-          anchor={draft.anchor}
-          composer={composer}
-          onCancel={closeAndRestoreSource}
-          onSuccess={closeAfterSuccess}
-          onPendingChange={setPending}
-        />
-      </PopoverContent>
+            clear();
+          }}
+        >
+          <CommentPopover
+            anchor={draft.anchor}
+            composer={composer}
+            onCancel={closeAndRestoreSource}
+            onSuccess={closeAfterSuccess}
+            onPendingChange={setPending}
+          />
+        </PopoverContent>
+      ) : null}
     </Popover>
   );
 }
@@ -415,6 +467,7 @@ export default function AnnotatedMarkdown({
   annotationNoun = DEFAULT_ANNOTATION_NOUN,
   onActivateAnnotation,
   composer,
+  clip,
   renderDocument: DocumentRenderer = SourceMappedDocumentMarkdown,
 }: AnnotatedMarkdownProps): React.JSX.Element {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -468,11 +521,13 @@ export default function AnnotatedMarkdown({
           </div>
         )}
       </MarkdownViewport>
-      {composer ? (
-        <SelectionCommentLayer
+      {composer || clip?.enabled ? (
+        <SelectionAffordanceLayer
           draft={draft}
           clear={clear}
           composer={composer}
+          clip={clip}
+          projectName={docRef.projectName}
         />
       ) : null}
     </div>

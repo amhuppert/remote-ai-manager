@@ -333,6 +333,7 @@ function TranscriptCore({
       <MessageRow
         msg={row.msg}
         queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
+        provisional={row.msg.provisional}
         messageIndex={row.messageIndex}
         isLast={isLast}
         selectedBackend={backend}

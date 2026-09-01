@@ -35,8 +35,16 @@ export interface QueuedDisplayMeta {
  * extends `TranscriptMessage`, a `DisplayMessage[]` is assignable wherever a
  * `TranscriptMessage[]` was expected, so existing renderers keep compiling and
  * simply ignore `queued`.
+ *
+ * `provisional` marks an in-flight optimistic row: its display index and
+ * content are not durable yet, so reference-bearing actions (copy-reference,
+ * clip) must not be offered on it — the same exclusion queued rows get via
+ * `queued`.
  */
-export type DisplayMessage = TranscriptMessage & { queued?: QueuedDisplayMeta };
+export type DisplayMessage = TranscriptMessage & {
+  queued?: QueuedDisplayMeta;
+  provisional?: true;
+};
 
 /** Structural shape of a store optimistic-queue entry consumed by the pure
  * projection. Matches `OptimisticQueueEntry` in the session-detail store. */
@@ -79,7 +87,12 @@ export function buildDisplayProjection({
 }: BuildDisplayProjectionInput): DisplayMessage[] {
   const base: DisplayMessage[] =
     optimisticMessages.length > 0
-      ? [...messages.slice(0, messageCountBeforeSubmit), ...optimisticMessages]
+      ? [
+          ...messages.slice(0, messageCountBeforeSubmit),
+          ...optimisticMessages.map(
+            (message): DisplayMessage => ({ ...message, provisional: true }),
+          ),
+        ]
       : [...messages];
 
   // Delivery stamps the transcript user row with the durable queue row's id,

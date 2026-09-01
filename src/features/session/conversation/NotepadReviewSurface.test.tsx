@@ -22,6 +22,8 @@ import type {
   NotepadCommentReply,
   ResolvedNotepadCommentThread,
 } from "@/lib/notepads/schemas";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
@@ -846,5 +848,88 @@ describe("NotepadReviewSurface — dispatching open comments", () => {
     expect(
       await within(bar).findByText("conversation is archived"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("NotepadReviewSurface — clipping a selection", () => {
+  const CLIP_TARGET = {
+    id: "np-target",
+    scope: "project" as const,
+    projectPath: "/p1",
+    projectName: "p1",
+    name: "capture target",
+    revision: 2,
+    writeMode: "full-edit" as const,
+    pinned: false,
+    archived: false,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:00.000Z",
+  };
+
+  /** The reference a clip from THIS surface must carry: the notepad under review. */
+  const SOURCE_XML = buildNotepadRefXml({
+    notepadId: "np-a",
+    name: "release plan",
+    scope: "global",
+    projectName: null,
+  });
+
+  beforeEach(() => {
+    useSessionDetailStore.getState().resetStore();
+    useToastStoreForTesting.setState({ toasts: [] });
+    api.json("GET", /^\/api\/notepads\?project=p1/, {
+      notepads: [CLIP_TARGET],
+    });
+  });
+
+  it("offers clip beside comment on the one selection affordance", async () => {
+    stubComments();
+    const { container } = renderSurface();
+    await screen.findByTestId("notepad-preview-chip");
+
+    stubSelectionOverText(container, "migration");
+    fireEvent.pointerUp(document);
+
+    const comment = await screen.findByRole("button", { name: "Comment" });
+    const clip = await screen.findByRole("button", { name: "Clip" });
+    expect(clip.parentElement).toBe(comment.parentElement);
+  });
+
+  it("lands the quoted selection attributed to this notepad's reference", async () => {
+    const user = userEvent.setup();
+    stubComments();
+    const appended: unknown[] = [];
+    api.reply("POST", "/api/notepads/np-target/content", (request) => {
+      appended.push(request.jsonBody);
+      return {
+        json: {
+          notepad: {
+            id: "np-target",
+            scope: "project",
+            projectPath: "/p1",
+            name: "capture target",
+            content: "existing",
+            revision: 3,
+            writeMode: "full-edit",
+            pinned: false,
+            archived: false,
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-31T00:00:00.000Z",
+          },
+        },
+      };
+    });
+    const { container } = renderSurface();
+    await screen.findByTestId("notepad-preview-chip");
+
+    stubSelectionOverText(container, "migration");
+    fireEvent.pointerUp(document);
+    await user.click(await screen.findByRole("button", { name: "Clip" }));
+
+    await waitFor(() => expect(appended).toHaveLength(1));
+    expect(appended[0]).toEqual({
+      operation: "append",
+      content: `> migration\n— ${SOURCE_XML}`,
+    });
   });
 });

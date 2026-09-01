@@ -131,6 +131,8 @@ export const useSwitchRightPaneTab = () =>
 export const useOpenContextArtifactPanel = () =>
   useSessionDetailStore((s) => s.openContextArtifactPanel);
 export const useOpenNotepad = () => useSessionDetailStore((s) => s.openNotepad);
+export const useOpenNotepadPanel = () =>
+  useSessionDetailStore((s) => s.openNotepadPanel);
 export const useCloseNotepad = () =>
   useSessionDetailStore((s) => s.closeNotepad);
 export const useSetNotepadSort = () =>

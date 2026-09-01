@@ -67,6 +67,10 @@ describe("useVoiceWiring", () => {
       toggleRecording: vi.fn(),
       stopRecording: vi.fn(),
       cancelRecording: vi.fn(),
+      hasRetryableRecording: false,
+      ensureAvailable: async () => true,
+      retryTranscription: vi.fn(),
+      discardRecording: vi.fn(),
     })) as typeof useVoiceRecorder);
 
     renderHook(() => {
@@ -100,6 +104,10 @@ describe("useVoiceWiring", () => {
       toggleRecording: vi.fn(),
       stopRecording: vi.fn(),
       cancelRecording: vi.fn(),
+      hasRetryableRecording: false,
+      ensureAvailable: async () => true,
+      retryTranscription: vi.fn(),
+      discardRecording: vi.fn(),
     })) as typeof useVoiceRecorder);
     const editorElement = document.createElement("div");
     const input = document.createElement("textarea");
@@ -159,6 +167,10 @@ describe("useVoiceWiring", () => {
         toggleRecording,
         stopRecording,
         cancelRecording: vi.fn(),
+        hasRetryableRecording: false,
+        ensureAvailable: async () => true,
+        retryTranscription: vi.fn(),
+        discardRecording: vi.fn(),
       };
     }) as typeof useVoiceRecorder);
 
@@ -216,6 +228,10 @@ describe("useVoiceWiring", () => {
         toggleRecording: vi.fn(),
         stopRecording: vi.fn(),
         cancelRecording: vi.fn(),
+        hasRetryableRecording: false,
+        ensureAvailable: async () => true,
+        retryTranscription: vi.fn(),
+        discardRecording: vi.fn(),
       };
     }) as typeof useVoiceRecorder);
 
@@ -250,6 +266,10 @@ describe("useVoiceWiring", () => {
       toggleRecording,
       stopRecording: vi.fn(),
       cancelRecording: vi.fn(),
+      hasRetryableRecording: false,
+      ensureAvailable: async () => true,
+      retryTranscription: vi.fn(),
+      discardRecording: vi.fn(),
     })) as typeof useVoiceRecorder);
 
     const handleSendPrompt = vi.fn(async () => {});

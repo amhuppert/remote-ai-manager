@@ -11,6 +11,7 @@ import AnnotatedMarkdown, {
   type PersistCommentInput,
   useLiveMarkdownAnchorResolution,
 } from "@/components/document-viewer/AnnotatedMarkdown";
+import { specSectionClipCapability } from "./spec-section-clip";
 import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CopyTicketReferenceButton from "@/components/references/CopyTicketReferenceButton";
 import {
@@ -524,6 +525,7 @@ export function SpecDetailContent({
                       slug={detail.spec.slug}
                       specId={detail.spec.id}
                       revisionId={snapshot.revision.id}
+                      revisionNumber={snapshot.revision.number}
                       revisionState={snapshot.revision.state}
                       specAbandoned={readOnly}
                     />
@@ -1289,6 +1291,7 @@ function SpecProseSection({
   slug,
   specId,
   revisionId,
+  revisionNumber,
   revisionState,
   specAbandoned,
 }: {
@@ -1298,6 +1301,8 @@ function SpecProseSection({
   slug: string;
   specId: string;
   revisionId: string;
+  /** The revision on screen, named by a clip's reference. */
+  revisionNumber: number;
   revisionState: "draft" | "proposed" | "approved" | "withdrawn";
   specAbandoned: boolean;
 }): React.JSX.Element | null {
@@ -1414,6 +1419,16 @@ function SpecProseSection({
     revisionState === "proposed" && !specAbandoned
       ? { kind: "persist-only", submit: createComment }
       : undefined;
+  // Clip is not gated the way commenting is: it writes to the reader's notepad,
+  // not to the spec, so an approved or abandoned revision — exactly the prose
+  // worth carrying into notes — stays clippable.
+  const clip = specSectionClipCapability({
+    projectName,
+    slug,
+    elementId: section.element.id,
+    sectionTitle: payload.title,
+    revision: revisionNumber,
+  });
 
   return (
     <section
@@ -1444,6 +1459,7 @@ function SpecProseSection({
             threadListRef.current?.focus(target)
           }
           composer={composer}
+          clip={clip}
         />
       </div>
       {resolvedPlacements.length > 0 ? (

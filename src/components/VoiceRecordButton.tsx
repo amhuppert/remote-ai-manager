@@ -12,7 +12,8 @@ interface VoiceRecordButtonProps {
   unavailableReason?: string;
 }
 
-function formatTime(seconds: number): string {
+/** The recording clock every voice surface shows while capturing: m:ss. */
+export function formatVoiceElapsed(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
@@ -86,7 +87,7 @@ export function VoiceRecordButton({
               className="absolute top-[-6px] right-[-6px] rounded-sm bg-red px-[4px] py-[2px] font-mono text-[0.7rem] leading-none whitespace-nowrap text-white"
               aria-hidden="true"
             >
-              {formatTime(elapsedTime)}
+              {formatVoiceElapsed(elapsedTime)}
             </span>
           )}
         </>

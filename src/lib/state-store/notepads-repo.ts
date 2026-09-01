@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { composeAppendedNotepadContent } from "@/lib/notepads/append-composition";
 import {
   notepadAuthorKindSchema,
   notepadImageSchema,
@@ -340,15 +341,6 @@ const ORIGIN_BY_OPERATION = {
 } as const;
 
 /**
- * Append composes onto whatever is currently persisted, separated by a blank
- * line — and onto nothing at all when the notepad is empty, so an agent's first
- * append does not open the content with stray whitespace.
- */
-function composeAppended(current: string, payload: string): string {
-  return current.length === 0 ? payload : `${current}\n\n${payload}`;
-}
-
-/**
  * Measure the canonical text actually being persisted, in both columns that
  * hold it. Called from inside the write transaction — the derivation is a
  * length scan and the emission is deferred past the critical section — so the
@@ -611,7 +603,7 @@ export function createNotepadsRepo(
 
       const content =
         input.operation === "append"
-          ? composeAppended(current.content, input.content)
+          ? composeAppendedNotepadContent(current.content, input.content)
           : input.content;
       const revision = current.revision + 1;
       checkContentSize(input.notepadId, content);

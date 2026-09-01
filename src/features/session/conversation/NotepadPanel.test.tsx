@@ -6,6 +6,9 @@ import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import { vi } from "vitest";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
+import { getOpenNotepadClipTarget } from "@/components/notepad/open-editor-registry";
+import { composeAppendedNotepadContent } from "@/lib/notepads/append-composition";
+import { buildClipFragment } from "@/lib/notepads/capture-fragment";
 import { registerNotepadSseReactions } from "@/lib/notepads/sse-reactions";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import type {
@@ -1444,6 +1447,255 @@ describe("NotepadPanel — live updates", () => {
     const banner = screen.getByTestId("notepad-live-banner");
     expect(banner).toHaveTextContent("agent wrote rev 6 · just now");
     expect(banner).not.toHaveTextContent("rev 5");
+  });
+
+  it("lands a clip through the open editor's handle without raising the banner (R22.5)", async () => {
+    stubDefaultList();
+    stubEditableNotepad("base text");
+    const { queryClient, fake } = setupLive();
+    const user = userEvent.setup();
+    renderPanel(true, queryClient);
+    await openNotepadRow(user);
+
+    // The open view registered its clip target — the seam clip landing
+    // routes through when the destination is the open notepad.
+    const handle = getOpenNotepadClipTarget("np-a");
+    expect(handle).not.toBeNull();
+
+    const fragment = buildClipFragment({
+      text: "worth keeping",
+      isCode: false,
+      provenance: { kind: "path", path: "docs/notes.md" },
+    });
+    act(() => handle!.appendFragment(fragment));
+
+    // The clip is in the editor immediately, before any HTTP write, with no
+    // banner: it is the user's own edit, not an external write.
+    expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
+      "worth keeping",
+    );
+    expect(api.requestsTo("POST", "/api/notepads/np-a/content")).toHaveLength(
+      0,
+    );
+    expect(screen.queryByTestId("notepad-live-banner")).not.toBeInTheDocument();
+
+    // Autosave persists it with the server-rule composition, byte-identical…
+    await waitFor(
+      () =>
+        expect(
+          api.requestsTo("POST", "/api/notepads/np-a/content").length,
+        ).toBe(1),
+      { timeout: 4000 },
+    );
+    const body = api.requestsTo("POST", "/api/notepads/np-a/content")[0]
+      ?.jsonBody as { content: string };
+    expect(body.content).toBe(
+      composeAppendedNotepadContent("base text", fragment),
+    );
+
+    // …and the flush's user-authored SSE echo adjudicates as our own write.
+    await act(async () => {
+      fake.emit(
+        "notepad-changed",
+        changedEvent({ revision: 4, authorKind: "user" }),
+      );
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("notepad-live-banner")).not.toBeInTheDocument();
+  });
+
+  /**
+   * A notepad server that enforces the guarded-write contract the real route
+   * has: an `enforceBaseRevision` write whose base is not the current head
+   * refuses with 409 stale_revision; everything else lands and advances.
+   */
+  function stubGuardedNotepad(initialContent: string, initialRevision = 3) {
+    const server = { content: initialContent, revision: initialRevision };
+    api.reply("GET", "/api/notepads/np-a", () => ({
+      json: notepadBody({ content: server.content, revision: server.revision }),
+    }));
+    api.reply("POST", "/api/notepads/np-a/content", (req) => {
+      const body = req.jsonBody as {
+        content: string;
+        baseRevision?: number;
+        enforceBaseRevision?: boolean;
+      };
+      if (
+        body.enforceBaseRevision === true &&
+        body.baseRevision !== server.revision
+      ) {
+        return {
+          status: 409,
+          json: {
+            error: `This write states revision ${body.baseRevision}, but the notepad is now at revision ${server.revision}.`,
+            code: "stale_revision",
+          },
+        };
+      }
+      server.content = body.content;
+      server.revision += 1;
+      return {
+        json: notepadBody({
+          content: server.content,
+          revision: server.revision,
+        }),
+      };
+    });
+    return server;
+  }
+
+  it("open-view Undo posts a revision-guarded update and adopts the trimmed head", async () => {
+    stubDefaultList();
+    const server = stubGuardedNotepad("base text");
+    const { queryClient, fake } = setupLive();
+    const user = userEvent.setup();
+    renderPanel(true, queryClient);
+    await openNotepadRow(user);
+
+    const target = getOpenNotepadClipTarget("np-a");
+    expect(target).not.toBeNull();
+    const fragment = buildClipFragment({
+      text: "worth keeping",
+      isCode: false,
+      provenance: { kind: "path", path: "docs/notes.md" },
+    });
+    act(() => target!.appendFragment(fragment));
+    // The clip's autosave flush lands as revision 4 before undo runs.
+    await waitFor(() => expect(server.revision).toBe(4), { timeout: 4000 });
+
+    let undone: boolean | undefined;
+    await act(async () => {
+      undone = await target!.undoAppend(fragment);
+    });
+    expect(undone).toBe(true);
+
+    // The undo write is a compare-and-swap on the clip's own head.
+    const undoPost = api
+      .requestsTo("POST", "/api/notepads/np-a/content")
+      .at(-1);
+    expect(undoPost?.jsonBody).toMatchObject({
+      operation: "update",
+      content: "base text",
+      baseRevision: 4,
+      enforceBaseRevision: true,
+    });
+    expect(server.content).toBe("base text");
+    expect(
+      screen.getByTestId("notepad-editor-input").textContent,
+    ).not.toContain("worth keeping");
+
+    // The undo's own user-authored echo raises no banner.
+    await act(async () => {
+      fake.emit(
+        "notepad-changed",
+        changedEvent({ revision: 5, authorKind: "user" }),
+      );
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("notepad-live-banner")).not.toBeInTheDocument();
+  });
+
+  it("open-view Undo refuses when an external write landed after the clip (unadopted head)", async () => {
+    stubDefaultList();
+    const server = stubGuardedNotepad("base text");
+    const { queryClient, fake } = setupLive();
+    const user = userEvent.setup();
+    renderPanel(true, queryClient);
+    await openNotepadRow(user);
+
+    const target = getOpenNotepadClipTarget("np-a");
+    const fragment = buildClipFragment({
+      text: "worth keeping",
+      isCode: false,
+      provenance: { kind: "path", path: "docs/notes.md" },
+    });
+    act(() => target!.appendFragment(fragment));
+    await waitFor(() => expect(server.revision).toBe(4), { timeout: 4000 });
+
+    // An external write advances the head; its SSE event arrives but the
+    // refetch has NOT delivered yet — the buffer still ends with the
+    // fragment, which is exactly the window a local-only tail check misses.
+    server.content = "external truth";
+    server.revision = 5;
+    api.reply("GET", "/api/notepads/np-a", () => ({
+      json: notepadBody({
+        content: composeAppendedNotepadContent("base text", fragment),
+        revision: 4,
+      }),
+    }));
+    await act(async () => {
+      fake.emit(
+        "notepad-changed",
+        changedEvent({ revision: 5, authorKind: "agent" }),
+      );
+      await Promise.resolve();
+    });
+
+    let undone: boolean | undefined;
+    await act(async () => {
+      undone = await target!.undoAppend(fragment);
+    });
+
+    // The guard refuses server-side: nothing overwrites the newer head.
+    expect(undone).toBe(false);
+    expect(server.content).toBe("external truth");
+    expect(server.revision).toBe(5);
+  });
+
+  it("keeps the open notepad clippable in read mode — user write path, no banner (R22.5)", async () => {
+    stubDefaultList();
+    stubEditableNotepad("base text");
+    const { queryClient, fake } = setupLive();
+    const user = userEvent.setup();
+    renderPanel(true, queryClient);
+    await openNotepadRow(user);
+    await user.click(screen.getByRole("radio", { name: "read" }));
+    expect(
+      screen.queryByTestId("notepad-editor-input"),
+    ).not.toBeInTheDocument();
+
+    // No editor is mounted, but the notepad is still open in the right pane:
+    // the clip target must stay registered so a landed clip goes through the
+    // open view instead of arriving as an external write.
+    const target = getOpenNotepadClipTarget("np-a");
+    expect(target).not.toBeNull();
+
+    const fragment = buildClipFragment({
+      text: "worth keeping",
+      isCode: false,
+      provenance: { kind: "path", path: "docs/notes.md" },
+    });
+    act(() => target!.appendFragment(fragment));
+
+    // The append persists through autosave with the shared composition rule…
+    await waitFor(
+      () =>
+        expect(
+          api.requestsTo("POST", "/api/notepads/np-a/content").length,
+        ).toBe(1),
+      { timeout: 4000 },
+    );
+    const body = api.requestsTo("POST", "/api/notepads/np-a/content")[0]
+      ?.jsonBody as { content: string };
+    expect(body.content).toBe(
+      composeAppendedNotepadContent("base text", fragment),
+    );
+
+    // …and its user-authored SSE echo raises no external-write banner.
+    await act(async () => {
+      fake.emit(
+        "notepad-changed",
+        changedEvent({ revision: 4, authorKind: "user" }),
+      );
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("notepad-live-banner")).not.toBeInTheDocument();
+
+    // Returning to the editor shows the landed clip: the buffer carried it.
+    await user.click(screen.getByRole("radio", { name: "write" }));
+    expect(screen.getByTestId("notepad-editor-input").textContent).toContain(
+      "worth keeping",
+    );
   });
 
   it("routes View diff to history with the revision selected versus previous", async () => {

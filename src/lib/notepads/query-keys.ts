@@ -27,6 +27,12 @@ export const notepadKeys = {
   /** The picker's reachable set: global notepads merged with one project's. */
   pickerList: (projectName: string) =>
     [...notepadKeys.lists(), "picker", projectName] as const,
+  /**
+   * Global-scope notepads alone: the destination pool a capture chooses from
+   * when the route puts the user in no project at all.
+   */
+  globalList: (sort: NotepadSort, includeArchived: boolean) =>
+    [...notepadKeys.lists(), "global", { sort, includeArchived }] as const,
   /** The right-pane browse list; params that vary the response are in the key. */
   panelList: (
     projectName: string,

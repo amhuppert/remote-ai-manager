@@ -553,6 +553,33 @@ describe("notepad content writes", () => {
     expect((await repo.find(created.id))?.content).toBe("agent text");
   });
 
+  it("refuses a user write stating enforceBaseRevision over a stale base with a 409", async () => {
+    const created = await createGlobal("undo-guarded", "v1");
+    await handlers.contentPOST(
+      browserRequest(
+        `/api/notepads/${created.id}/content`,
+        jsonInit("POST", { operation: "update", content: "v2" }),
+      ),
+      ctx({ notepadId: created.id }),
+    );
+
+    const refused = await handlers.contentPOST(
+      browserRequest(
+        `/api/notepads/${created.id}/content`,
+        jsonInit("POST", {
+          operation: "update",
+          content: "v1",
+          baseRevision: 1,
+          enforceBaseRevision: true,
+        }),
+      ),
+      ctx({ notepadId: created.id }),
+    );
+    expect(refused.status).toBe(409);
+    expect((await bodyOf(refused))["code"]).toBe("stale_revision");
+    expect((await repo.find(created.id))?.content).toBe("v2");
+  });
+
   it("refuses an agent update on a read-only notepad with a 403 naming the mode", async () => {
     const created = await createNotepad({
       scope: "global",

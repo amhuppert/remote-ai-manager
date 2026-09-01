@@ -8,6 +8,7 @@ describe("HOTKEY_REGISTRY", () => {
       "helpModal",
       "commandLauncher",
       "voiceToggle",
+      "voiceQuickCapture",
       "stopTurn",
       "clearInput",
       "toggleSidebar",
@@ -73,6 +74,7 @@ describe("HOTKEY_REGISTRY", () => {
     expect(HOTKEY_REGISTRY.firstMessage.keys).toBe("g>g");
     expect(HOTKEY_REGISTRY.lastMessage.keys).toBe("shift+g");
     expect(HOTKEY_REGISTRY.voiceToggle.keys).toBe("ctrl+shift+.");
+    expect(HOTKEY_REGISTRY.voiceQuickCapture.keys).toBe("ctrl+shift+,");
     expect(HOTKEY_REGISTRY.stopTurn.keys).toBe("ctrl+.");
     expect(HOTKEY_REGISTRY.viewAlignment.keys).toBe("v>a");
     expect(HOTKEY_REGISTRY.viewArtifact.keys).toBe("v>r");
@@ -101,7 +103,11 @@ describe("HOTKEY_REGISTRY", () => {
       .map((definition) => definition.id)
       .sort();
 
-    expect(directPromptIds).toEqual(["stopTurn", "voiceToggle"]);
+    expect(directPromptIds).toEqual([
+      "stopTurn",
+      "voiceQuickCapture",
+      "voiceToggle",
+    ]);
   });
 
   it("does not assign direct Alt/Option shortcuts", async () => {
@@ -155,6 +161,37 @@ describe("getHotkeySequences", () => {
       ["g", "3"],
     ]);
     expect(getHotkeySequences(null)).toEqual([]);
+  });
+
+  it("reads a comma that is the key itself, not an alternatives separator", async () => {
+    const { getHotkeySequences } = await import("./hotkeys");
+
+    expect(getHotkeySequences("ctrl+shift+,")).toEqual([["ctrl+shift+,"]]);
+    expect(getHotkeySequences(",")).toEqual([[","]]);
+    expect(getHotkeySequences("ctrl+shift+,,ctrl+shift+.")).toEqual([
+      ["ctrl+shift+,"],
+      ["ctrl+shift+."],
+    ]);
+  });
+
+  it("gives every registry binding a dispatchable stroke", async () => {
+    const { HOTKEY_REGISTRY, getHotkeySequences } = await import("./hotkeys");
+
+    // A binding whose text parses to no sequence, or to a stroke ending in a
+    // dangling modifier, is dead: the dispatcher builds event strokes like
+    // "ctrl+shift+," and can never match it. Pinning only the keys string let
+    // voiceQuickCapture ship as a no-op.
+    for (const definition of Object.values(HOTKEY_REGISTRY)) {
+      if (definition.keys === null) continue;
+      const sequences = getHotkeySequences(definition.keys);
+      expect(sequences.length).toBeGreaterThan(0);
+      for (const sequence of sequences) {
+        expect(sequence.length).toBeGreaterThan(0);
+        for (const stroke of sequence) {
+          expect(stroke.endsWith("+")).toBe(false);
+        }
+      }
+    }
   });
 });
 

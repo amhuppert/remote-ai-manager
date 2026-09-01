@@ -9,6 +9,7 @@ import {
 import type {
   SpecElementRefAttrs,
   SpecRefAttrs,
+  SpecSectionRefAttrs,
 } from "@/lib/prompt-editor/spec-mention-nodes";
 
 export type RefSegment =
@@ -26,6 +27,7 @@ export type RefSegment =
   | { type: "task-ref"; attrs: SpecElementRefAttrs; raw: string }
   | { type: "question-ref"; attrs: SpecElementRefAttrs; raw: string }
   | { type: "assumption-ref"; attrs: SpecElementRefAttrs; raw: string }
+  | { type: "section-ref"; attrs: SpecSectionRefAttrs; raw: string }
   | { type: "notepad-ref"; attrs: NotepadRefAttrs; raw: string };
 
 /**

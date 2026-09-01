@@ -48,27 +48,30 @@ export const POST_TRANSCRIBE = withTracing(async (request) => {
     );
   }
 
-  const projectName = formData.get("projectName");
-  if (!projectName || typeof projectName !== "string") {
-    logger.warn("voice.transcribe.rejected", {
-      reason: "missing-project-name",
-    });
-    return NextResponse.json(
-      { error: "Missing projectName" } satisfies ApiError,
-      { status: 400 },
-    );
-  }
+  // A named project must still resolve; an unnamed one is not an error. A
+  // voice capture bound for a global notepad has no project to name, and the
+  // upstream contract declares projectPath optional — so absence travels
+  // through untouched rather than being filled in with a guess.
+  const projectNameValue = formData.get("projectName");
+  const projectName =
+    typeof projectNameValue === "string" && projectNameValue.length > 0
+      ? projectNameValue
+      : null;
 
-  const project = await resolveProjectOr404(
-    { resolveProjectPath },
-    projectName,
-  );
-  if (!project.ok) {
-    logger.warn("voice.transcribe.rejected", {
-      reason: "project-not-found",
+  let projectPath: string | undefined;
+  if (projectName !== null) {
+    const project = await resolveProjectOr404(
+      { resolveProjectPath },
       projectName,
-    });
-    return project.response;
+    );
+    if (!project.ok) {
+      logger.warn("voice.transcribe.rejected", {
+        reason: "project-not-found",
+        projectName,
+      });
+      return project.response;
+    }
+    projectPath = project.value;
   }
 
   const contextValue = formData.get("context");
@@ -76,7 +79,7 @@ export const POST_TRANSCRIBE = withTracing(async (request) => {
 
   const result = await proxyTranscribe({
     audio,
-    projectPath: project.value,
+    ...(projectPath === undefined ? {} : { projectPath }),
     context,
   });
   if (!result.ok) {

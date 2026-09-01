@@ -17,6 +17,8 @@ export type {
 export type { ResolvedComment } from "@/features/session/document-viewer/types";
 export { NOT_ANNOTATABLE_CLASS } from "./annotation-contract";
 export type {
+  ClipCaptureCapability,
+  ClipSelectionContext,
   CommentComposerCapability,
   MarkdownAnchorState,
   MarkdownAnnotationSource,

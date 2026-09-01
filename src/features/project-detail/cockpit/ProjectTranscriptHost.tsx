@@ -98,6 +98,7 @@ export default function ProjectTranscriptHost({
         <MessageRow
           msg={content === row.msg.content ? row.msg : { ...row.msg, content }}
           queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
+          provisional={row.msg.provisional}
           messageIndex={row.messageIndex}
           isLast={isLast}
           selectedBackend={selectedBackend}

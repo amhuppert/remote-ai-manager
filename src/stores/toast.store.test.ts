@@ -68,6 +68,28 @@ describe("toast.store", () => {
     expect(useToastStoreForTesting.getState().toasts).toHaveLength(0);
   });
 
+  it("stores multiple actions and keeps the toast until explicit dismissal", () => {
+    const open = vi.fn();
+    const undo = vi.fn();
+    pushToast("Clipped to Inbox", {
+      actions: [
+        { label: "Open", onClick: open },
+        { label: "Undo", onClick: undo },
+      ],
+    });
+    const toast = useToastStoreForTesting.getState().toasts[0]!;
+    expect(toast.actions?.map((action) => action.label)).toEqual([
+      "Open",
+      "Undo",
+    ]);
+
+    vi.advanceTimersByTime(60_000);
+    expect(useToastStoreForTesting.getState().toasts).toHaveLength(1);
+
+    dismissToast(toast.id);
+    expect(useToastStoreForTesting.getState().toasts).toHaveLength(0);
+  });
+
   it("replaces an actionable toast in place and restores it if already dismissed", () => {
     const viewTicket = vi.fn();
     const openConversation = vi.fn();

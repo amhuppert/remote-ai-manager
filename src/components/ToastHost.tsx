@@ -178,6 +178,7 @@ export function GenericToastSource(): React.JSX.Element | null {
           key={t.id}
           message={t.message}
           action={t.action}
+          actions={t.actions}
           onDismiss={() => dismiss(t.id)}
           placement="stacked"
         />

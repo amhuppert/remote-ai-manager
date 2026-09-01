@@ -257,6 +257,12 @@ export interface NotepadPanelSlice {
    */
   notepadExternalWrite: NotepadExternalWrite | null;
   openNotepad: (notepadId: string) => void;
+  /**
+   * Open a notepad AND route the UI to it: right pane on the Notepad tab,
+   * revealed via the split layout when the current layout has no right-pane
+   * column. What a clip toast's Open action invokes from outside the panel.
+   */
+  openNotepadPanel: (notepadId: string) => void;
   closeNotepad: () => void;
   setNotepadSort: (sort: NotepadSort) => void;
   setNotepadViewMode: (mode: NotepadViewMode) => void;

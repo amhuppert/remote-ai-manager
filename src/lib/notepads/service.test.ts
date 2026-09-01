@@ -450,6 +450,45 @@ describe("agent compare-and-swap", () => {
     ]);
   });
 
+  it("refuses a user write that opts into revision enforcement over a stale base", async () => {
+    // Clip undo's guard: the tail check and the removal must be atomic, so
+    // the undo states its base and opts in — a write that landed between its
+    // read and its post refuses instead of being silently overwritten.
+    const notepad = await createGlobal("Guarded", { content: "one" });
+    await service.writeContent(notepad.id, {
+      operation: "update",
+      content: "two",
+      author: USER,
+    });
+
+    const refused = await service.writeContent(notepad.id, {
+      operation: "update",
+      content: "one",
+      author: USER,
+      baseRevision: 1,
+      enforceBaseRevision: true,
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.code).toBe("stale_revision");
+    if (refused.error.code !== "stale_revision") return;
+    expect(refused.error.currentRevision).toBe(2);
+
+    // The racing write survives untouched…
+    const reloaded = await service.get(notepad.id);
+    expect(reloaded.ok && reloaded.value.content).toBe("two");
+
+    // …and the same guarded write lands after a fresh read.
+    const retried = await service.writeContent(notepad.id, {
+      operation: "update",
+      content: "one",
+      author: USER,
+      baseRevision: reloaded.ok ? reloaded.value.revision : 0,
+      enforceBaseRevision: true,
+    });
+    expect(retried.ok).toBe(true);
+  });
+
   it("appends onto the current content under the same compare-and-swap", async () => {
     const notepad = await createGlobal("Growing", { content: "first" });
 

@@ -20,6 +20,7 @@ import {
 } from "@/lib/specs/approval-ledger";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import type { SpecApprovalRow } from "@/lib/specs/schemas";
+import { buildSpecSectionReferenceXml } from "@/lib/prompt-editor/spec-reference-contract";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import type { SpecCommentView } from "@/lib/specs/view-schemas";
 
@@ -166,6 +167,76 @@ function ledgerOf(subjects: ApprovalLedgerSubject[]): ApprovalLedger {
     carryRule: APPROVAL_CARRY_RULE,
   };
 }
+
+const SECOND_SECTION_BODY = "Out of scope: mobile capture and dictation.";
+const SECOND_SECTION_QUOTE = "mobile capture";
+
+/**
+ * A revision with two prose sections. Clip provenance is only falsifiable with
+ * more than one section on screen: with a single section, a spec-scoped
+ * reference and the section's own reference are indistinguishable.
+ */
+function withSecondSection<
+  T extends {
+    currentRevision: { elements: readonly unknown[] };
+  },
+>(payload: T): T {
+  const elements = payload.currentRevision.elements;
+  return {
+    ...payload,
+    currentRevision: {
+      ...payload.currentRevision,
+      elements: [
+        ...elements,
+        {
+          element: {
+            id: "section-scope",
+            specId: executingSpec.id,
+            kind: "section",
+            number: null,
+            parentElementId: null,
+            createdAt: NOW,
+          },
+          version: {
+            revisionId: detailRevision.id,
+            elementId: "section-scope",
+            position: elements.length,
+            payload: {
+              kind: "section",
+              role: "intent_non_goals",
+              title: "Non-goals",
+              body: SECOND_SECTION_BODY,
+            },
+            payloadHash: `hash-${SECOND_SECTION_BODY}`,
+            elementVersion: 1,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        },
+      ],
+    },
+  };
+}
+
+const captureTargetNotepad = {
+  id: "np-target",
+  scope: "project",
+  projectPath: "/command-center",
+  projectName: "command-center",
+  name: "capture target",
+  revision: 2,
+  writeMode: "full-edit",
+  pinned: false,
+  archived: false,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+const capturedNotepad = {
+  ...captureTargetNotepad,
+  content: "existing",
+  revision: 3,
+};
 
 function detailPayload(
   sectionBody = "Lifecycle spine: draft, review, execution, delivery.",
@@ -813,6 +884,98 @@ describe("Spec Studio detail routes", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("offers clip beside comment and lands the selection under the selected section's reference", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd",
+      withSecondSection({ ...detailPayload(), comments: [] }),
+    );
+    api.json("GET", /^\/api\/notepads\?project=command-center/, {
+      notepads: [captureTargetNotepad],
+    });
+    const appended: unknown[] = [];
+    api.reply("POST", "/api/notepads/np-target/content", (request) => {
+      appended.push(request.jsonBody);
+      return { json: { notepad: capturedNotepad } };
+    });
+    const user = userEvent.setup();
+    const { container } = renderWithQuery(<SpecDetailPage />);
+    const quote = "draft, review";
+
+    await screen.findByText(
+      "Lifecycle spine: draft, review, execution, delivery.",
+    );
+    await waitFor(() =>
+      expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
+    );
+    stubSelectionOverText(container, quote);
+    fireEvent.pointerUp(document);
+
+    const comment = await screen.findByRole("button", { name: "Comment" });
+    const clip = await screen.findByRole("button", { name: "Clip" });
+    // One affordance: both actions share the single positioned trigger.
+    expect(clip.parentElement).toBe(comment.parentElement);
+
+    await user.click(clip);
+
+    await waitFor(() => expect(appended).toHaveLength(1));
+    // The reference names the section the quote came from, not the spec root:
+    // the page renders a second section, so a spec-scoped reference would be
+    // indistinguishable between them and would read back to neither.
+    expect(appended[0]).toEqual({
+      operation: "append",
+      content: `> ${quote}\n— ${buildSpecSectionReferenceXml({
+        projectName: "command-center",
+        slug: "native-sdd",
+        elementId: "section-intent",
+        name: "Intent",
+        revision: "4",
+      })}`,
+    });
+  });
+
+  it("attributes a clip to the second section when the selection sits there", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd",
+      withSecondSection({ ...detailPayload(), comments: [] }),
+    );
+    api.json("GET", /^\/api\/notepads\?project=command-center/, {
+      notepads: [captureTargetNotepad],
+    });
+    const appended: unknown[] = [];
+    api.reply("POST", "/api/notepads/np-target/content", (request) => {
+      appended.push(request.jsonBody);
+      return { json: { notepad: capturedNotepad } };
+    });
+    const user = userEvent.setup();
+    const { container } = renderWithQuery(<SpecDetailPage />);
+    const quote = SECOND_SECTION_QUOTE;
+
+    await screen.findByText(SECOND_SECTION_BODY);
+    await waitFor(() =>
+      expect(container.querySelector("[data-cc-line]")).not.toBeNull(),
+    );
+    stubSelectionOverText(container, quote);
+    fireEvent.pointerUp(document);
+
+    await user.click(await screen.findByRole("button", { name: "Clip" }));
+
+    await waitFor(() => expect(appended).toHaveLength(1));
+    expect(appended[0]).toEqual({
+      operation: "append",
+      content: `> ${quote}\n— ${buildSpecSectionReferenceXml({
+        projectName: "command-center",
+        slug: "native-sdd",
+        elementId: "section-scope",
+        name: "Non-goals",
+        revision: "4",
+      })}`,
+    });
   });
 
   it("persists a prose selection as a spec review comment", async () => {

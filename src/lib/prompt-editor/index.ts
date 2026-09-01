@@ -33,14 +33,19 @@ export {
   DecisionMentionNode,
   QuestionMentionNode,
   RequirementMentionNode,
+  SectionMentionNode,
   SpecMentionNode,
   TaskMentionNode,
   buildSpecReadCommand,
   buildSpecReferenceXml,
+  buildSpecSectionReadCommand,
+  buildSpecSectionReferenceXml,
   specElementRefAttrsSchema,
   specElementRefAttrsToMentionAttrs,
   specRefAttrsSchema,
   specRefAttrsToMentionAttrs,
+  specSectionRefAttrsSchema,
+  specSectionRefAttrsToMentionAttrs,
 } from "./spec-mention-nodes";
 export type {
   SpecElementMentionAttrs,
@@ -48,6 +53,8 @@ export type {
   SpecMentionAttrs,
   SpecRefAttrs,
   SpecReferenceType,
+  SpecSectionMentionAttrs,
+  SpecSectionRefAttrs,
 } from "./spec-mention-nodes";
 export { NotepadImageNode } from "./notepad-image-node";
 export type {

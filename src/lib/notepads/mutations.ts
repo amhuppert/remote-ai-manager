@@ -240,11 +240,43 @@ export interface WriteNotepadContentVariables {
   notepadId: string;
   content: string;
   /**
-   * The head revision the editor loaded. A user write is never refused for
-   * staleness — the server records it as the new head regardless — but stating
-   * the base keeps the revision chain honest in history.
+   * The head revision the editor loaded. An ordinary user write is never
+   * refused for staleness — the server records it as the new head regardless
+   * — but stating the base keeps the revision chain honest in history.
    */
   baseRevision: number;
+  /**
+   * Opt the write into treating `baseRevision` as a compare-and-swap: the
+   * server refuses it as stale when the head has advanced. Stated by
+   * conditional acts (clip undo) whose validity check must be atomic with
+   * the write; omit for ordinary saves.
+   */
+  enforceBaseRevision?: boolean;
+}
+
+/** POST one content write and hand back the authoritative head. */
+async function postContentWrite(
+  notepadId: string,
+  body: Record<string, unknown>,
+): Promise<Notepad> {
+  const response = await mutationFetch(
+    `${notepadUrl(notepadId)}/content`,
+    "notepads.write_content",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    notepadDetailResponseSchema,
+  );
+  return response.notepad;
+}
+
+function adoptWrittenNotepad(queryClient: QueryClient, notepad: Notepad): void {
+  adoptNotepad(queryClient, notepad);
+  void queryClient.invalidateQueries({
+    queryKey: notepadKeys.revisions(notepad.id),
+  });
 }
 
 export function useWriteNotepadContentMutation() {
@@ -254,24 +286,38 @@ export function useWriteNotepadContentMutation() {
       notepadId,
       content,
       baseRevision,
-    }: WriteNotepadContentVariables) => {
-      const response = await mutationFetch(
-        `${notepadUrl(notepadId)}/content`,
-        "notepads.write_content",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ operation: "update", content, baseRevision }),
-        },
-        notepadDetailResponseSchema,
-      );
-      return response.notepad;
-    },
+      enforceBaseRevision,
+    }: WriteNotepadContentVariables) =>
+      postContentWrite(notepadId, {
+        operation: "update",
+        content,
+        baseRevision,
+        ...(enforceBaseRevision === undefined ? {} : { enforceBaseRevision }),
+      }),
     onSuccess: (notepad) => {
-      adoptNotepad(queryClient, notepad);
-      void queryClient.invalidateQueries({
-        queryKey: notepadKeys.revisions(notepad.id),
-      });
+      adoptWrittenNotepad(queryClient, notepad);
+    },
+  });
+}
+
+export interface AppendNotepadContentVariables {
+  notepadId: string;
+  /**
+   * The payload alone. The server composes it onto the current head — the
+   * separator is the append rule's, not the caller's — so an append states no
+   * base revision: it never has to have read the content it grows.
+   */
+  content: string;
+}
+
+export function useAppendNotepadContentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ notepadId, content }: AppendNotepadContentVariables) =>
+      postContentWrite(notepadId, { operation: "append", content }),
+    onSuccess: (notepad) => {
+      adoptWrittenNotepad(queryClient, notepad);
+      void queryClient.invalidateQueries({ queryKey: notepadKeys.lists() });
     },
   });
 }

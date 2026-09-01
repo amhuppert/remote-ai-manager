@@ -21,11 +21,19 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { WithTooltip } from "@/components/ui/WithTooltip";
+import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
   NotepadEditor,
   type NotepadEditorHandle,
 } from "@/components/notepad/NotepadEditor";
+import { setOpenNotepadClipTarget } from "@/components/notepad/open-editor-registry";
+import { ApiCallError } from "@/lib/api/errors";
+import {
+  composeAppendedNotepadContent,
+  trimAppendedNotepadContent,
+} from "@/lib/notepads/append-composition";
 import { NotepadPreview } from "@/components/notepad/NotepadPreview";
+import { useMultilineVoice } from "@/hooks/use-multiline-voice";
 import { useNotepadDetailQuery } from "@/lib/notepads/queries";
 import {
   useRestoreNotepadRevisionMutation,
@@ -491,6 +499,99 @@ export default function NotepadOpenView({
     ],
   );
 
+  /**
+   * Undo of a landed clip, with the same our-own-write treatment as a restore:
+   * deferred flushes, parked-event adjudication, and a read-only editor while
+   * in flight. The local tail check alone cannot be trusted — an external
+   * write this view has seen but not yet adopted leaves the fragment at the
+   * buffer tail while the server head has moved on — so the removal posts
+   * under an enforced base revision: the head this view has adopted. A newer
+   * head refuses the write as stale, and the undo reports it cannot run
+   * instead of overwriting the other party's revision.
+   */
+  const handleUndoAppend = useCallback(
+    async (fragment: string): Promise<boolean> => {
+      const state = autosaveRef.current;
+      if (!state.initialized || state.restoreInFlight) return false;
+      state.restoreInFlight = true;
+      setRestoring(true);
+      // A flush already posted must settle first: its response advances the
+      // base to the clip's own head — the revision this undo swaps against.
+      while (state.flight !== null) {
+        await state.flight;
+      }
+      const trimmed = trimAppendedNotepadContent(state.text, fragment);
+      if (trimmed === null) {
+        state.restoreInFlight = false;
+        setRestoring(false);
+        if (state.text !== state.savedText) flush();
+        return false;
+      }
+      try {
+        const saved = await writeContentRef.current({
+          notepadId,
+          content: trimmed,
+          baseRevision: state.baseRevision,
+          enforceBaseRevision: true,
+        });
+        state.restoreInFlight = false;
+        setRestoring(false);
+        // The response reveals the undo's own revision: drop its echo,
+        // surface any genuinely external write parked during the flight.
+        const external = settleParkedEvents(saved.revision);
+        adoptHead(saved);
+        reconcileBannerAfterOwnWrite(saved.revision, external, false);
+        return true;
+      } catch (error) {
+        state.restoreInFlight = false;
+        setRestoring(false);
+        reconcileBannerExternalOnly(
+          settleParkedEvents(null),
+          state.text !== state.savedText,
+        );
+        // A draft deferred while the undo held the head resumes autosaving.
+        if (state.text !== state.savedText) flush();
+        if (error instanceof ApiCallError && error.code === "stale_revision") {
+          return false;
+        }
+        throw error;
+      }
+    },
+    [
+      notepadId,
+      adoptHead,
+      flush,
+      settleParkedEvents,
+      reconcileBannerAfterOwnWrite,
+      reconcileBannerExternalOnly,
+    ],
+  );
+
+  // The clip target stays registered for the whole open-view lifetime (once
+  // content is loaded), not just while the editor is mounted: in read, review,
+  // and history modes a landed clip routes through the autosave buffer under
+  // the shared composition rule, so it is still this session's own
+  // user-authored write (R22.5) and never arrives as an external write. With
+  // the editor mounted, the same target routes through the document instead.
+  const contentLoaded = notepad !== undefined;
+  useEffect(() => {
+    if (!contentLoaded) return;
+    setOpenNotepadClipTarget(notepadId, {
+      appendFragment(fragment) {
+        const editor = editorRef.current;
+        if (editor) {
+          editor.appendFragment(fragment);
+          return;
+        }
+        handleContentChange(
+          composeAppendedNotepadContent(autosaveRef.current.text, fragment),
+        );
+      },
+      undoAppend: handleUndoAppend,
+    });
+    return () => setOpenNotepadClipTarget(notepadId, null);
+  }, [contentLoaded, notepadId, handleContentChange, handleUndoAppend]);
+
   // Attribute an external head advance the moment its change event arrives:
   // clean buffer → the landed-write strip; dirty buffer → the collision
   // notice. Content is not touched here — the clean case adopts it below once
@@ -555,6 +656,56 @@ export default function NotepadOpenView({
     const text = state.initialized ? state.text : currentText;
     void navigator.clipboard.writeText(text);
   }, [flush, currentText]);
+
+  /** The editor is mounted — and so dictatable — in the write layouts only. */
+  const editorMounted =
+    !historyOpen && viewMode !== "read" && viewMode !== "review";
+
+  // Dictation is the composer's voice interaction on this editor: the same
+  // hook, the same record button, and the same voiceToggle hotkey, which the
+  // hook registers focus-gated and arbitrates against every other voice
+  // surface. Dictated text is typed text — it lands through insertText and
+  // persists on the ordinary autosave path.
+  const dictationTextRef = useRef("");
+  dictationTextRef.current = currentText;
+  const [editorFocused, setEditorFocused] = useState(false);
+
+  useEffect(() => {
+    const isEditorTarget = (target: EventTarget | null) => {
+      const editorElement = editorRef.current?.editor?.view.dom;
+      return (
+        target instanceof Node && (editorElement?.contains(target) ?? false)
+      );
+    };
+    const syncFocus = (target: EventTarget | null) => {
+      setEditorFocused(isEditorTarget(target));
+    };
+    const handleFocusIn = (event: FocusEvent) => syncFocus(event.target);
+    const handleFocusOut = () => {
+      requestAnimationFrame(() => syncFocus(document.activeElement));
+    };
+
+    syncFocus(document.activeElement);
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("focusout", handleFocusOut);
+    return () => {
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("focusout", handleFocusOut);
+    };
+  }, []);
+
+  const dictation = useMultilineVoice({
+    projectName,
+    valueRef: dictationTextRef,
+    getContext: () =>
+      editorRef.current?.serialize() ?? dictationTextRef.current,
+    insertText: (text) => editorRef.current?.insertText(text),
+    focus: () => editorRef.current?.focus(),
+    isFocused: editorFocused,
+    // A pending restore owns the buffer (the editor is read-only for that
+    // window), and the read/review layouts have no editor to dictate into.
+    hotkeyEnabled: editorMounted && !restoring,
+  });
 
   if (detailQuery.isLoading) {
     return (
@@ -708,6 +859,16 @@ export default function NotepadOpenView({
               </SelectItem>
             </SelectContent>
           </Select>
+          {editorMounted ? (
+            <VoiceRecordButton
+              isRecording={dictation.isRecording}
+              isProcessing={dictation.isProcessing}
+              elapsedTime={dictation.elapsedTime}
+              isAvailable={dictation.isAvailable}
+              toggleRecording={dictation.toggleRecording}
+              disabled={restoring}
+            />
+          ) : null}
           <Button
             variant="ghost"
             size="sm"

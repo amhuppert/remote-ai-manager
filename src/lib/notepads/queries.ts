@@ -129,6 +129,27 @@ export const notepadQueries = {
       refetchOnReconnect: false,
     }),
 
+  /**
+   * Global notepads alone. The picker and panel lists both need a project to
+   * merge against; a capture raised outside every project has none, and must
+   * still see the global pool it will land in.
+   */
+  globalList: (sort: NotepadSort, includeArchived: boolean) =>
+    queryOptions({
+      queryKey: notepadKeys.globalList(sort, includeArchived),
+      queryFn: async ({ signal }) => {
+        const params = new URLSearchParams({ scope: "global", sort });
+        if (includeArchived) params.set("archived", "true");
+        const response = await apiFetch(
+          `/api/notepads?${params.toString()}`,
+          notepadListResponseSchema,
+          { signal },
+        );
+        return response.notepads;
+      },
+      refetchOnReconnect: false,
+    }),
+
   /** The browse list: global + one project's notepads, server-ordered. */
   panelList: (
     projectName: string,
@@ -256,6 +277,17 @@ export function useNotepadDetailQuery(
     ...notepadQueries.detail(notepadId ?? ""),
     enabled:
       notepadId !== null && notepadId.length > 0 && (options?.enabled ?? true),
+  });
+}
+
+export function useNotepadGlobalListQuery(
+  sort: NotepadSort,
+  includeArchived: boolean,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    ...notepadQueries.globalList(sort, includeArchived),
+    enabled: options?.enabled ?? true,
   });
 }
 

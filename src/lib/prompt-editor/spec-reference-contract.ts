@@ -25,8 +25,25 @@ export const specElementRefAttrsSchema = z
   })
   .strict();
 
+/**
+ * Sections are the one spec element kind with no handle, so their reference is
+ * addressed by the stable element id `spec show` publishes rather than by the
+ * `<slug>/<handle>` address every other element kind uses.
+ */
+export const specSectionRefAttrsSchema = z
+  .object({
+    "project-name": z.string().min(1),
+    slug: z.string().min(1),
+    "element-id": z.string().min(1),
+    name: z.string(),
+    revision: revisionSchema,
+    "read-command": z.string().min(1),
+  })
+  .strict();
+
 export type SpecRefAttrs = z.infer<typeof specRefAttrsSchema>;
 export type SpecElementRefAttrs = z.infer<typeof specElementRefAttrsSchema>;
+export type SpecSectionRefAttrs = z.infer<typeof specSectionRefAttrsSchema>;
 
 export interface SpecMentionAttrs {
   projectName: string;
@@ -38,6 +55,10 @@ export interface SpecMentionAttrs {
 
 export interface SpecElementMentionAttrs extends SpecMentionAttrs {
   handle: string;
+}
+
+export interface SpecSectionMentionAttrs extends SpecMentionAttrs {
+  elementId: string;
 }
 
 export type SpecReferenceType =
@@ -70,7 +91,6 @@ export function buildSpecReferenceXml(
   const projectName = stringAttr(attrs, "projectName");
   const slug = stringAttr(attrs, "slug");
   const handle = stringAttr(attrs, "handle");
-  const xmlTag = `${referenceType}-ref`;
   const values: Array<[string, string]> = [
     ["project-name", projectName],
     ["slug", slug],
@@ -84,10 +104,58 @@ export function buildSpecReferenceXml(
       buildSpecReadCommand(projectName, slug, handle || undefined),
     ],
   );
+  return renderRefTag(`${referenceType}-ref`, values);
+}
+
+function renderRefTag(
+  xmlTag: string,
+  values: ReadonlyArray<readonly [string, string]>,
+): string {
   const rendered = values
     .map(([name, value]) => `${name}="${escapeXmlAttr(value)}"`)
     .join(" ");
   return `<${xmlTag} ${rendered} />`;
+}
+
+/**
+ * Sections have no handle, so `spec get`'s `<slug>/<handle>` address cannot
+ * name one; the id-taking read is its own verb.
+ */
+export function buildSpecSectionReadCommand(
+  projectName: string,
+  slug: string,
+  elementId: string,
+): string {
+  return `cctl spec section get ${quoteAgentCommandArgument(slug)} --id ${quoteAgentCommandArgument(elementId)} --project ${quoteAgentCommandArgument(projectName)}`;
+}
+
+export function buildSpecSectionReferenceXml(
+  attrs: Record<string, unknown>,
+): string {
+  const projectName = stringAttr(attrs, "projectName");
+  const slug = stringAttr(attrs, "slug");
+  const elementId = stringAttr(attrs, "elementId");
+  return renderRefTag("section-ref", [
+    ["project-name", projectName],
+    ["slug", slug],
+    ["element-id", elementId],
+    ["name", stringAttr(attrs, "name")],
+    ["revision", stringAttr(attrs, "revision")],
+    ["read-command", buildSpecSectionReadCommand(projectName, slug, elementId)],
+  ]);
+}
+
+export function specSectionRefAttrsToMentionAttrs(
+  attrs: SpecSectionRefAttrs,
+): SpecSectionMentionAttrs {
+  return {
+    projectName: attrs["project-name"],
+    slug: attrs.slug,
+    elementId: attrs["element-id"],
+    name: attrs.name,
+    revision: attrs.revision,
+    readCommand: attrs["read-command"],
+  };
 }
 
 export function specRefAttrsToMentionAttrs(

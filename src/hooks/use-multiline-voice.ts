@@ -40,7 +40,13 @@ export function createVoiceOwnership(): VoiceOwnership {
   };
 }
 
-const voiceOwnership = createVoiceOwnership();
+/**
+ * The one app-wide voice owner. Every surface that can record — each composer
+ * and the global quick capture — claims this same object, so two microphones
+ * can never be live at once; a claim by a second surface stops the incumbent
+ * rather than layering on top of it.
+ */
+export const voiceOwnership = createVoiceOwnership();
 
 export interface UseMultilineVoiceArgs<TResult = void> {
   projectName?: string;
@@ -160,11 +166,12 @@ export function useMultilineVoice<TResult = void>({
   const toggleRecording = useCallback(() => {
     if (!enabled) return;
     if (!isRecording) {
-      const claimed = voiceOwnership.claim({
-        id: ownerId,
-        stop: cancelVoice,
-      });
-      if (!claimed) return;
+      const owner = { id: ownerId, stop: cancelVoice };
+      // A claim against a live owner reports the eviction, not a grant: the
+      // incumbent is stopped and releases as it goes, so the retry is what
+      // makes one press take the microphone over rather than merely silencing
+      // the other surface and dropping the user's press.
+      if (!voiceOwnership.claim(owner) && !voiceOwnership.claim(owner)) return;
     }
     void toggleRecorder();
   }, [cancelVoice, enabled, isRecording, ownerId, toggleRecorder]);

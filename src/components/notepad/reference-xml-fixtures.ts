@@ -23,6 +23,8 @@ export const REFERENCE_XML_FIXTURES: Record<ReferenceType, string> = {
     '<question-ref project-name="command-center" slug="native-sdd" handle="Q2" name="Which retention period applies?" revision="3" read-command="cctl spec get &apos;native-sdd/Q2&apos; --project &apos;command-center&apos;" />',
   assumption:
     '<assumption-ref project-name="command-center" slug="native-sdd" handle="A1" name="SQLite remains authoritative" revision="3" read-command="cctl spec get &apos;native-sdd/A1&apos; --project &apos;command-center&apos;" />',
+  section:
+    '<section-ref project-name="command-center" slug="native-sdd" element-id="sec-intent" name="Intent" revision="3" read-command="cctl spec section get &apos;native-sdd&apos; --id &apos;sec-intent&apos; --project &apos;command-center&apos;" />',
   notepad:
     '<notepad-ref notepad-id="np-7f3a" name="Release checklist" scope="project" project-name="command-center" read-command="cctl notepad get &apos;np-7f3a&apos;" />',
 };

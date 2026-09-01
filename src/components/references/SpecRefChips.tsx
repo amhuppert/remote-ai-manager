@@ -7,10 +7,13 @@ import { HoverCard } from "radix-ui";
 import type { StatusChipTone } from "@/components/ui/StatusChip";
 import {
   buildSpecReadCommand,
+  buildSpecSectionReadCommand,
   type SpecElementMentionAttrs,
   type SpecElementRefAttrs,
   type SpecMentionAttrs,
   type SpecRefAttrs,
+  type SpecSectionMentionAttrs,
+  type SpecSectionRefAttrs,
 } from "@/lib/prompt-editor/spec-reference-contract";
 import {
   useSpecElementQuery,
@@ -238,6 +241,38 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
     );
   }
 
+  /**
+   * A prose section's chip. Sections carry no handle, so none of the live
+   * element reads — all addressed by `<slug>/<handle>` — resolve one: the chip
+   * renders the title and revision the reference captured, and the deep link
+   * lands on the spec page where the revision's prose sections are rendered.
+   */
+  function SpecSectionRefTranscriptChip({
+    attrs,
+  }: {
+    attrs: SpecSectionRefAttrs;
+  }): React.JSX.Element {
+    const title = attrs.name || attrs["element-id"];
+    return (
+      <Link
+        href={specStudioHref(attrs["project-name"], attrs.slug)}
+        className={cn(referenceChipBase, elementReferenceChipClass)}
+        aria-label={`${attrs.slug} section ${title} revision ${attrs.revision}`}
+        title={title}
+        data-spec-section-ref-chip=""
+      >
+        <SectionGlyph />
+        <span className="font-semibold text-text-primary">{attrs.slug}</span>
+        <span className="max-w-[180px] truncate text-text-secondary">
+          {title}
+        </span>
+        <span className="shrink-0 text-text-tertiary">
+          rev {attrs.revision}
+        </span>
+      </Link>
+    );
+  }
+
   function SpecRefEditorChip(
     props: ReactNodeViewProps<HTMLElement>,
   ): React.JSX.Element {
@@ -260,6 +295,10 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
           <SpecElementRefTranscriptChip
             attrs={elementMentionToWireAttrs(normalized)}
           />
+        ) : "elementId" in normalized ? (
+          <SpecSectionRefTranscriptChip
+            attrs={sectionMentionToWireAttrs(normalized)}
+          />
         ) : (
           <SpecRefTranscriptChip attrs={specMentionToWireAttrs(normalized)} />
         )}
@@ -280,6 +319,7 @@ export function createSpecRefChips(deps: SpecRefChipDeps) {
     SpecRefEditorChip,
     SpecRefTranscriptChip,
     SpecElementRefTranscriptChip,
+    SpecSectionRefTranscriptChip,
   };
 }
 
@@ -594,19 +634,39 @@ function SpecGlyph(): React.JSX.Element {
   );
 }
 
+/** Prose lines under a heading rule — a narrative section, not a document. */
+function SectionGlyph(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.2}
+      aria-hidden="true"
+      className="h-[11px] w-[11px] shrink-0 text-text-tertiary"
+    >
+      <path d="M2.5 3.5h11M2.5 7h8M2.5 10h11M2.5 13h6" />
+    </svg>
+  );
+}
+
 function normalizeEditorAttrs(
   attrs: Record<string, unknown>,
-): SpecMentionAttrs | SpecElementMentionAttrs {
+): SpecMentionAttrs | SpecElementMentionAttrs | SpecSectionMentionAttrs {
   const projectName = stringAttr(attrs["projectName"]);
   const slug = stringAttr(attrs["slug"]);
   const name = stringAttr(attrs["name"]);
   const revision = stringAttr(attrs["revision"]) || "1";
   const handle = stringAttr(attrs["handle"]);
+  const elementId = stringAttr(attrs["elementId"]);
   const readCommand =
     stringAttr(attrs["readCommand"]) ||
-    buildSpecReadCommand(projectName, slug, handle || undefined);
+    (elementId
+      ? buildSpecSectionReadCommand(projectName, slug, elementId)
+      : buildSpecReadCommand(projectName, slug, handle || undefined));
   const common = { projectName, slug, name, revision, readCommand };
-  return handle ? { ...common, handle } : common;
+  if (handle) return { ...common, handle };
+  return elementId ? { ...common, elementId } : common;
 }
 
 function stringAttr(value: unknown): string {
@@ -632,6 +692,15 @@ function elementMentionToWireAttrs(
   };
 }
 
+function sectionMentionToWireAttrs(
+  attrs: SpecSectionMentionAttrs,
+): SpecSectionRefAttrs {
+  return {
+    ...specMentionToWireAttrs(attrs),
+    "element-id": attrs.elementId,
+  };
+}
+
 const productionChips = createSpecRefChips({
   useSpecSummary: useSpecSummaryQuery,
   useSpecElement: useSpecElementQuery,
@@ -641,6 +710,8 @@ export const SpecRefEditorChip = productionChips.SpecRefEditorChip;
 export const SpecRefTranscriptChip = productionChips.SpecRefTranscriptChip;
 export const SpecElementRefTranscriptChip =
   productionChips.SpecElementRefTranscriptChip;
+export const SpecSectionRefTranscriptChip =
+  productionChips.SpecSectionRefTranscriptChip;
 
 export {
   CopyReferenceControl,

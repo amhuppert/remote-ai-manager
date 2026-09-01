@@ -29,6 +29,7 @@ import {
   ReferencePicker,
   RefPasteHandler,
   RequirementMentionNode,
+  SectionMentionNode,
   serializePromptDoc,
   SpecMentionNode,
   TaskMentionNode,
@@ -38,6 +39,7 @@ import {
   type PickerSelection,
   type PickerTrigger,
 } from "@/lib/prompt-editor";
+import { composeAppendedNotepadContent } from "@/lib/notepads/append-composition";
 import {
   uploadNotepadImage,
   notepadImageUrl,
@@ -62,6 +64,18 @@ export interface NotepadEditorHandle {
    */
   setContent(text: string): void;
   focus(): void;
+  /**
+   * Insert plain text at the current selection — the prompt editor handle's
+   * semantics, so dictation behaves identically in both editors.
+   */
+  insertText(text: string): void;
+  /**
+   * Append a capture fragment through the document rather than the content
+   * route, so a capture into the notepad the user has open never arrives as an
+   * external write. Applies the same composition rule the server append does,
+   * so both landing paths persist byte-identical content.
+   */
+  appendFragment(text: string): void;
   /** The underlying Tiptap editor instance, for advanced callers. */
   editor: Editor | null;
 }
@@ -189,6 +203,7 @@ export const NotepadEditor = forwardRef<
       TaskMentionNode,
       QuestionMentionNode,
       AssumptionMentionNode,
+      SectionMentionNode,
       NotepadMentionNode,
       NotepadImageNode.configure({ notepadId }),
       RefPasteHandler,
@@ -284,6 +299,34 @@ export const NotepadEditor = forwardRef<
       },
       focus() {
         editor?.commands.focus();
+      },
+      insertText(text) {
+        if (!editor) return;
+        editor
+          .chain()
+          .focus()
+          .setTextSelection(editor.state.selection.head)
+          .insertContent(text)
+          .run();
+      },
+      appendFragment(text) {
+        if (!editor) return;
+        const current = serializePromptDoc({
+          doc: editor.state.doc,
+          attachments: [],
+        }).prompt;
+        // Composed over the canonical text, not the document: the separator
+        // rule is stated in characters, and this is the same string the server
+        // would have composed had the write gone through the content route.
+        editor.commands.setContent(
+          deserializePromptDoc(
+            {
+              prompt: composeAppendedNotepadContent(current, text),
+              images: [],
+            },
+            { notepadImages: true },
+          ),
+        );
       },
       get editor() {
         return editor;

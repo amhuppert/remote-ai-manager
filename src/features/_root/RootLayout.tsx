@@ -7,6 +7,7 @@ import ToastHost from "@/components/ToastHost";
 import DevToolsGate from "@/components/DevToolsGate";
 import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
 import QuickTicketHost from "@/components/quick-ticket/QuickTicketHost";
+import VoiceQuickCaptureHost from "@/components/notepad-capture/VoiceQuickCaptureHost";
 import MergeDoneTicketPromptHost from "@/components/MergeDoneTicketPromptHost";
 import {
   HotkeyProvider,
@@ -73,6 +74,7 @@ export default function RootLayout({
             <UiTooltipProvider>
               {children}
               <QuickTicketHost />
+              <VoiceQuickCaptureHost />
             </UiTooltipProvider>
             <NotificationListener />
             <ToastHost />

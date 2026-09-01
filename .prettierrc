@@ -112,6 +112,7 @@
         "src/components/references/**/*.{ts,tsx}",
         "src/features/spec-studio/**/*.{ts,tsx}",
         "src/components/notepad/**/*.{ts,tsx}",
+        "src/components/notepad-capture/**/*.{ts,tsx}",
         "src/features/session/document-viewer/AnnotatedMarkdown.tsx",
         "src/features/session/document-viewer/AnnotatedMarkdown.stories.tsx",
         "src/features/session/document-viewer/AnnotatedMarkdown.test.tsx",

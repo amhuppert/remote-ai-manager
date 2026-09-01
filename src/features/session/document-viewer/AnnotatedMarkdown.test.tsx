@@ -17,13 +17,21 @@ import type {
   DocumentRef,
 } from "@/lib/document-comments/schemas";
 import type {
+  ClipCaptureCapability,
+  ClipSelectionContext,
   CommentComposerCapability,
   MarkdownAnnotationSource,
   MarkdownAnnotationTarget,
   ResolvedMarkdownAnnotation,
 } from "@/components/document-viewer/annotation-contract";
+import { selectionLiesWithinCode } from "@/components/notepad-capture/clip-code-ancestry";
+import { renderWithQuery } from "@/test/component-mocks";
 import { useLiveMarkdownAnchorResolution } from "./use-live-markdown-anchor-resolution";
-import { findCommentBlock, rangeFromBlockOffsets } from "./anchor-dom";
+import {
+  blockAnnotatableText,
+  findCommentBlock,
+  rangeFromBlockOffsets,
+} from "./anchor-dom";
 import AnnotatedMarkdown, {
   _resetAnnotatorBoundaryForTesting,
   _setAnnotatorBoundaryForTesting,
@@ -285,7 +293,7 @@ function renderAnnotated(
     kind: "persist-or-send",
     submit,
   };
-  const utils = render(
+  const utils = renderWithQuery(
     <ResolvedAnnotationHarness
       docRef={DOC_REF}
       content={DOC}
@@ -297,6 +305,31 @@ function renderAnnotated(
     />,
   );
   return { ...utils, onActivateAnnotation, submit };
+}
+
+/** A host capability that records every selection the seam describes to it. */
+function recordingClipCapability(
+  overrides: Partial<ClipCaptureCapability> = {},
+): {
+  capability: ClipCaptureCapability;
+  seen: ClipSelectionContext[];
+} {
+  const seen: ClipSelectionContext[] = [];
+  return {
+    seen,
+    capability: {
+      enabled: true,
+      buildProvenance: (selection) => {
+        seen.push(selection);
+        return { kind: "path", path: "docs/design-review.md" };
+      },
+      deriveIsCode: (selection) => {
+        seen.push(selection);
+        return false;
+      },
+      ...overrides,
+    },
+  };
 }
 
 async function findSourceRoot(container: HTMLElement): Promise<HTMLElement> {
@@ -813,5 +846,200 @@ describe("AnnotatedMarkdown composition", () => {
     expect(
       screen.queryByRole("button", { name: /on this passage$/ }),
     ).toBeNull();
+  });
+});
+
+/**
+ * A document whose code arrives the way production renders it: a fenced block
+ * (whose source stamps land on the renderer's WRAPPING container, not on the
+ * <pre> inside it) and an inline code span inside a prose block.
+ */
+const CODE_DOC = [
+  "# Guide", // 1
+  "", // 2
+  "## Usage", // 3
+  "", // 4
+  "Read it with `cctl notepad get np-1` from any conversation.", // 5
+  "", // 6
+  "```ts", // 7
+  "const landed = await land(fragment);", // 8
+  "```", // 9
+  "",
+].join("\n");
+
+/** Select `quote` within the stamped block at `line`, as a reader's drag would. */
+function stubSelectionInBlock(
+  container: HTMLElement,
+  line: number,
+  sectionId: string,
+  quote: string,
+): HTMLElement {
+  const block = findCommentBlock(container, { line, sectionId });
+  if (block === null) throw new Error(`no stamped block at line ${line}`);
+  const text = blockAnnotatableText(block);
+  const start = text.indexOf(quote);
+  if (start < 0) throw new Error(`block at line ${line} has no ${quote}`);
+  const range = withRect(
+    rangeFromBlockOffsets(block, start, start + quote.length)!,
+  );
+  vi.spyOn(window, "getSelection").mockReturnValue({
+    isCollapsed: false,
+    rangeCount: 1,
+    getRangeAt: () => range,
+    removeAllRanges: vi.fn(),
+  } as unknown as Selection);
+  return block;
+}
+
+describe("AnnotatedMarkdown — code ancestry as production renders it", () => {
+  it("classifies a fenced-code selection as code, though the stamp sits on the wrapper", async () => {
+    const { capability, seen } = recordingClipCapability();
+    const { container } = renderAnnotated({
+      content: CODE_DOC,
+      clip: capability,
+    });
+    await findSourceRoot(container);
+    const block = stubSelectionInBlock(container, 7, "usage", "const landed");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    // The production renderer stamps the WRAPPING container, so the block the
+    // seam resolves is not the <pre> — the exact shape the check must survive.
+    expect(block.tagName).toBe("DIV");
+    expect(block.hasAttribute("data-markdown-code-block")).toBe(true);
+    const selection = seen[0];
+    if (selection === undefined) throw new Error("capability never consulted");
+    expect(selectionLiesWithinCode(selection)).toBe(true);
+  });
+
+  it("classifies an inline-code selection inside prose as code", async () => {
+    const { capability, seen } = recordingClipCapability();
+    const { container } = renderAnnotated({
+      content: CODE_DOC,
+      clip: capability,
+    });
+    await findSourceRoot(container);
+    // A substring strictly inside the span, which is what a real drag or
+    // double-click produces: browsers resolve both endpoints to the deepest
+    // text node, so the range sits within <code> rather than touching the
+    // paragraph text on either side of it.
+    stubSelectionInBlock(container, 5, "usage", "notepad get");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    const selection = seen[0];
+    if (selection === undefined) throw new Error("capability never consulted");
+    expect(selection.block.tagName).toBe("P");
+    expect(selectionLiesWithinCode(selection)).toBe(true);
+  });
+
+  it("classifies ordinary prose as not code", async () => {
+    const { capability, seen } = recordingClipCapability();
+    const { container } = renderAnnotated({
+      content: CODE_DOC,
+      clip: capability,
+    });
+    await findSourceRoot(container);
+    stubSelectionInBlock(container, 5, "usage", "from any conversation");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    const selection = seen[0];
+    if (selection === undefined) throw new Error("capability never consulted");
+    expect(selectionLiesWithinCode(selection)).toBe(false);
+  });
+});
+
+describe("AnnotatedMarkdown — the one selection affordance offers comment and clip", () => {
+  it("offers both actions from a single affordance when the host opts into clip", async () => {
+    const { capability } = recordingClipCapability();
+    const { container } = renderAnnotated({ clip: capability });
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    const comment = screen.getByRole("button", { name: "Comment" });
+    const clip = screen.getByRole("button", { name: "Clip" });
+    // One affordance, not two: both actions share the single positioned,
+    // body-portaled trigger, so no second floating surface competes for the
+    // same selection.
+    expect(clip.parentElement).toBe(comment.parentElement);
+    expect(comment.parentElement?.parentElement).toBe(document.body);
+    expect(container.contains(comment)).toBe(false);
+  });
+
+  it("offers comment alone when the host supplies no clip capability", async () => {
+    const { container } = renderAnnotated();
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    expect(screen.getByRole("button", { name: "Comment" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clip" })).toBeNull();
+  });
+
+  it("withholds clip while the host's capability is disabled", async () => {
+    const { capability } = recordingClipCapability({ enabled: false });
+    const { container } = renderAnnotated({ clip: capability });
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    expect(screen.getByRole("button", { name: "Comment" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clip" })).toBeNull();
+  });
+
+  it("offers clip alone on a host that cannot take comments", async () => {
+    const { capability } = recordingClipCapability();
+    const { container } = renderAnnotated({
+      composer: undefined,
+      clip: capability,
+    });
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    expect(screen.getByRole("button", { name: "Clip" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Comment" })).toBeNull();
+  });
+
+  it("describes the live selection to the capability as anchor, rendered text, and block", async () => {
+    const { capability, seen } = recordingClipCapability();
+    const { container } = renderAnnotated({ clip: capability });
+    await findSourceRoot(container);
+    const block = stubSelectionOverPassage(
+      container,
+      "agent-produced markdown",
+    );
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    for (const selection of seen) {
+      expect(selection.text).toBe("agent-produced markdown");
+      expect(selection.anchor.quote).toBe("agent-produced markdown");
+      expect(selection.anchor.line).toBe(5);
+      expect(selection.block).toBe(block);
+    }
   });
 });

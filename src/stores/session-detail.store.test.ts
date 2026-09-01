@@ -666,6 +666,35 @@ describe("session-detail.store — context-artifact panel", () => {
   });
 });
 
+describe("session-detail.store — openNotepadPanel", () => {
+  beforeEach(resetStore);
+
+  it("opens the notepad on the right-pane Notepad tab", () => {
+    useSessionDetailStore.getState().openNotepadPanel("np-1");
+    const state = useSessionDetailStore.getState();
+    expect(state.openNotepadId).toBe("np-1");
+    expect(state.rightPaneTab).toBe("notepad");
+  });
+
+  it("reveals the right pane from the conversation-only layout via split", () => {
+    expect(useSessionDetailStore.getState().layout).toBe("conversation");
+    useSessionDetailStore.getState().openNotepadPanel("np-1");
+    expect(useSessionDetailStore.getState().layout).toBe("split");
+  });
+
+  it("drops out of panes to the split layout", () => {
+    useSessionDetailStore.setState({ layout: "panes" });
+    useSessionDetailStore.getState().openNotepadPanel("np-1");
+    expect(useSessionDetailStore.getState().layout).toBe("split");
+  });
+
+  it("leaves a right-pane-showing layout untouched", () => {
+    useSessionDetailStore.setState({ layout: "diff" });
+    useSessionDetailStore.getState().openNotepadPanel("np-1");
+    expect(useSessionDetailStore.getState().layout).toBe("diff");
+  });
+});
+
 describe("session-detail.store — message nav request", () => {
   beforeEach(resetStore);
 

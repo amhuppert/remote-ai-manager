@@ -17,6 +17,8 @@ const placementClass: Record<ToastPlacement, string> = {
 interface ToastProps {
   message: string;
   action?: ToastAction;
+  /** Additional actions rendered after `action`, in order. */
+  actions?: ToastAction[];
   onDismiss: () => void;
   placement?: ToastPlacement;
 }
@@ -24,6 +26,7 @@ interface ToastProps {
 export default function Toast({
   message,
   action,
+  actions,
   onDismiss,
   placement = "standalone",
 }: ToastProps): React.JSX.Element {
@@ -51,18 +54,19 @@ export default function Toast({
       aria-live="polite"
     >
       {message}
-      {action && (
+      {[...(action ? [action] : []), ...(actions ?? [])].map((entry) => (
         <button
+          key={entry.label}
           type="button"
           className="ml-[12px] inline-flex min-h-[24px] min-w-[24px] cursor-pointer items-center justify-center rounded-full border border-solid border-cyan-dim bg-transparent px-[10px] py-[2px] font-mono text-[0.72rem] font-semibold text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
           onClick={() => {
-            action.onClick();
+            entry.onClick();
             onDismiss();
           }}
         >
-          {action.label}
+          {entry.label}
         </button>
-      )}
+      ))}
       <WithTooltip label="Dismiss notification">
         <button
           type="button"

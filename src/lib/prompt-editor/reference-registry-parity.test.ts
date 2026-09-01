@@ -6,13 +6,18 @@ import { ConversationMentionNode } from "./conversation-mention-node";
 import { deserializePromptDoc } from "./deserializer";
 import { MessageMentionNode } from "./message-mention-node";
 import { NotepadMentionNode } from "./notepad-mention-node";
-import { REFERENCE_REGISTRY, getReferenceByType } from "./reference-registry";
+import {
+  REFERENCE_REGISTRY,
+  getReferenceByType,
+  type ReferencePickerContext,
+} from "./reference-registry";
 import { serializePromptDoc } from "./serializer";
 import {
   AssumptionMentionNode,
   DecisionMentionNode,
   QuestionMentionNode,
   RequirementMentionNode,
+  SectionMentionNode,
   SpecMentionNode,
   TaskMentionNode,
 } from "./spec-mention-nodes";
@@ -65,6 +70,11 @@ const REFERENCE_FIXTURES = [
     xml: '<assumption-ref project-name="command-center" slug="native-sdd" handle="A1" name="SQLite remains authoritative" revision="3" read-command="cctl spec get &apos;native-sdd/A1&apos; --project &apos;command-center&apos;" />',
   },
   {
+    type: "section",
+    nodeName: "sectionMention",
+    xml: '<section-ref project-name="command-center" slug="native-sdd" element-id="sec-intent" name="Intent" revision="3" read-command="cctl spec section get &apos;native-sdd&apos; --id &apos;sec-intent&apos; --project &apos;command-center&apos;" />',
+  },
+  {
     type: "notepad",
     nodeName: "notepadMention",
     xml: '<notepad-ref notepad-id="np-7f3a" name="Release checklist" scope="project" project-name="command-center" read-command="cctl notepad get &apos;np-7f3a&apos;" />',
@@ -77,6 +87,18 @@ const REFERENCE_FIXTURES = [
  */
 const GLOBAL_NOTEPAD_XML =
   '<notepad-ref notepad-id="np-0001" name="Standing house rules" scope="global" read-command="cctl notepad get &apos;np-0001&apos;" />';
+
+const PICKER_CONTEXT: ReferencePickerContext = {
+  currentProjectName: "command-center",
+  currentConversationId: null,
+  conversations: [],
+  tickets: [],
+  specs: [],
+  notepads: [],
+  selectedSpec: null,
+  includeFinishedTickets: false,
+  includeArchivedConversations: false,
+};
 
 function roundTrip(xml: string): {
   prompt: string;
@@ -94,6 +116,7 @@ function roundTrip(xml: string): {
       TaskMentionNode,
       QuestionMentionNode,
       AssumptionMentionNode,
+      SectionMentionNode,
       NotepadMentionNode,
     ],
     content: deserializePromptDoc({ prompt: xml, images: [] }),
@@ -232,6 +255,17 @@ describe("existing reference serialization/parser parity", () => {
         hasPickerSource: true,
       },
       {
+        type: "section",
+        nodeName: "sectionMention",
+        xmlTag: "section-ref",
+        hasAttrsSchema: true,
+        hasBuildXml: true,
+        hasParseAttrs: true,
+        hasEditorChip: true,
+        hasTranscriptChip: true,
+        hasPickerSource: true,
+      },
+      {
         type: "notepad",
         nodeName: "notepadMention",
         xmlTag: "notepad-ref",
@@ -243,6 +277,34 @@ describe("existing reference serialization/parser parity", () => {
         hasPickerSource: true,
       },
     ]);
+  });
+
+  /**
+   * A section has no handle, so its address is the element id — and the read
+   * command must be re-derived from it rather than trusted from the wire, the
+   * same guarantee the notepad kind gets from its immutable id.
+   */
+  it("re-derives the section read command from the element id", () => {
+    const entry = getReferenceByType("section");
+    const attrs = entry.parseAttrs({
+      "project-name": "command-center",
+      slug: "native-sdd",
+      "element-id": "sec-intent",
+      name: "Intent",
+      revision: "3",
+      "read-command": "cctl spec section get 'native-sdd' --id 'stale-id'",
+    });
+
+    expect(entry.buildXml(attrs)).toContain(
+      'read-command="cctl spec section get &apos;native-sdd&apos; --id &apos;sec-intent&apos; --project &apos;command-center&apos;"',
+    );
+  });
+
+  /** Sections are addressed by id, so the picker cannot offer them. */
+  it("keeps the section kind out of the reference picker", () => {
+    expect(
+      getReferenceByType("section").pickerSource.getItems("", PICKER_CONTEXT),
+    ).toEqual([]);
   });
 
   it("round-trips a global notepad reference without a project attribute", () => {

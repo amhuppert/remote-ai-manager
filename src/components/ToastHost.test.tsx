@@ -172,6 +172,34 @@ describe("ToastHost", () => {
     expect(screen.getByText("Second notification")).toBeInTheDocument();
   });
 
+  it("renders a multi-action toast with every action reachable", () => {
+    const open = vi.fn();
+    const undo = vi.fn();
+    act(() => {
+      useToastStoreForTesting.setState({
+        toasts: [
+          {
+            id: "t1",
+            message: "Clipped to Inbox",
+            createdAt: 0,
+            actions: [
+              { label: "Open", onClick: open },
+              { label: "Undo", onClick: undo },
+            ],
+          },
+        ],
+      });
+    });
+
+    render(<GenericToastSource />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+    // Acting on a toast consumes it, like the single-action form.
+    expect(screen.queryByText("Clipped to Inbox")).not.toBeInTheDocument();
+  });
+
   it("mounts every toast source simultaneously through one host", () => {
     act(() => {
       useNotificationStore.getState().enqueueInputToast({

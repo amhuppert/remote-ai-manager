@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
+import TranscriptClipCapture from "@/components/notepad-capture/TranscriptClipCapture";
+import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import ConversationTranscript, {
   type TranscriptNav,
 } from "@/components/conversation/ConversationTranscript";
@@ -97,6 +99,14 @@ export default function ConversationPanelContainer({
   });
   const [nav, setNav] = useState<TranscriptNav | null>(null);
 
+  // The same conversation identity the row renderer stamps as the clip source;
+  // the capture instance scopes to the panel body so a pane surface elsewhere
+  // never lands a selection under this conversation's provenance.
+  const clipTarget = useMemo<ContextArtifactTarget>(
+    () => ({ scope: "session", projectName, sessionName, conversationId }),
+    [projectName, sessionName, conversationId],
+  );
+
   const renderMessageRow = useMessageRowRenderer({
     activeConversation,
     selectedBackend,
@@ -132,33 +142,40 @@ export default function ConversationPanelContainer({
   );
 
   const transcript = (
-    <ConversationTranscript
-      scope={{ kind: "session", projectName, sessionName, conversationId }}
-      backend={selectedBackend}
-      status={activeConversation?.status}
-      pendingQueue={activeConversation?.pendingQueue}
-      backgroundActivity={backgroundActivity}
-      worktreePath={worktreePath}
-      thinkingExpansionCommand={thinkingExpansionCommand}
-      renderMessageRow={renderMessageRow}
-      collab={{
-        envelope: collabEnvelopeForConversation,
-        hiddenMessageIndex,
-        renderRow: renderCollabRow,
-        suppressIndicator: hasActiveCollab,
-      }}
-      extensions={workflowReceiptExtensions}
-      showInFlightBanners
-      leadingSlot={
-        <div
-          ref={setCollabPinnedTopTarget}
-          className="collab-pinned-top-target sticky -top-lg z-[5] -mx-lg -mt-lg mb-0 border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base px-lg py-sm empty:hidden data-[visible=false]:hidden max-768:-top-sm max-768:-mx-sm max-768:-mt-sm max-768:border-b-0 max-768:px-0 max-768:py-0"
-          data-visible={isCollabPassageInView ? "true" : "false"}
-        />
-      }
-      onNavChange={setNav}
-      virtuosoRef={virtuosoRef}
-    />
+    <>
+      <TranscriptClipCapture
+        target={clipTarget}
+        conversationName={activeConversation?.name ?? null}
+        within={panelBodyRef}
+      />
+      <ConversationTranscript
+        scope={{ kind: "session", projectName, sessionName, conversationId }}
+        backend={selectedBackend}
+        status={activeConversation?.status}
+        pendingQueue={activeConversation?.pendingQueue}
+        backgroundActivity={backgroundActivity}
+        worktreePath={worktreePath}
+        thinkingExpansionCommand={thinkingExpansionCommand}
+        renderMessageRow={renderMessageRow}
+        collab={{
+          envelope: collabEnvelopeForConversation,
+          hiddenMessageIndex,
+          renderRow: renderCollabRow,
+          suppressIndicator: hasActiveCollab,
+        }}
+        extensions={workflowReceiptExtensions}
+        showInFlightBanners
+        leadingSlot={
+          <div
+            ref={setCollabPinnedTopTarget}
+            className="collab-pinned-top-target sticky -top-lg z-[5] -mx-lg -mt-lg mb-0 border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base px-lg py-sm empty:hidden data-[visible=false]:hidden max-768:-top-sm max-768:-mx-sm max-768:-mt-sm max-768:border-b-0 max-768:px-0 max-768:py-0"
+            data-visible={isCollabPassageInView ? "true" : "false"}
+          />
+        }
+        onNavChange={setNav}
+        virtuosoRef={virtuosoRef}
+      />
+    </>
   );
 
   return (

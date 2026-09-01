@@ -22,6 +22,7 @@ import CopyMessageButton, { msgActionBtnClass } from "./CopyMessageButton";
 import CopyMessageRefButton, {
   type MessageRefMeta,
 } from "./CopyMessageRefButton";
+import ClipMessageButton from "./notepad-capture/ClipMessageButton";
 import GenerateNameFromMessageButton from "./GenerateNameFromMessageButton";
 
 interface MessageActionsProps {
@@ -206,12 +207,21 @@ function ActionBar({
     <div className="mt-xs ml-auto flex w-fit items-center gap-[2px]">
       <CopyMessageButton content={content} />
       {compactionTarget && messageRef && role && (
-        <CopyMessageRefButton
-          target={compactionTarget}
-          messageIndex={messageIndex}
-          role={role}
-          meta={messageRef}
-        />
+        <>
+          <CopyMessageRefButton
+            target={compactionTarget}
+            messageIndex={messageIndex}
+            role={role}
+            meta={messageRef}
+          />
+          <ClipMessageButton
+            target={compactionTarget}
+            messageIndex={messageIndex}
+            role={role}
+            meta={messageRef}
+            content={content}
+          />
+        </>
       )}
       {compactionTarget && (
         <GenerateNameFromMessageButton

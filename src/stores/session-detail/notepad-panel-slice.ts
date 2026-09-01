@@ -23,6 +23,18 @@ export const createNotepadPanelSlice: SessionDetailSliceCreator<
       state.openNotepadId = notepadId;
     }),
 
+  // Mirrors openContextArtifactPanel's reveal rule: panes and conversation-only
+  // give the right pane no column, so opening switches to the split layout
+  // (without persisting over the user's saved layout preference).
+  openNotepadPanel: (notepadId) =>
+    set((state) => {
+      state.openNotepadId = notepadId;
+      state.rightPaneTab = "notepad";
+      if (state.layout === "panes" || state.layout === "conversation") {
+        state.layout = "split";
+      }
+    }),
+
   closeNotepad: () =>
     set((state) => {
       state.openNotepadId = null;

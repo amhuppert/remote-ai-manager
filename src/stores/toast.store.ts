@@ -11,10 +11,13 @@ export interface ToastItem {
   message: string;
   createdAt: number;
   action?: ToastAction;
+  /** Additional actions rendered alongside `action` (e.g. Open + Undo). */
+  actions?: ToastAction[];
 }
 
 export interface ToastOptions {
   action?: ToastAction;
+  actions?: ToastAction[];
 }
 
 interface ToastState {
@@ -39,10 +42,14 @@ const useToastStore = create<ToastStore>()(
       const id = crypto.randomUUID();
       const createdAt = Date.now();
       const action = options?.action;
+      const actions = options?.actions;
       set((state) => {
-        state.toasts.push({ id, message, createdAt, action });
+        state.toasts.push({ id, message, createdAt, action, actions });
       });
-      if (!action) setTimeout(() => get().dismiss(id), TOAST_TTL_MS);
+      // An actionable toast waits for the user; only pure status auto-expires.
+      if (!action && (actions?.length ?? 0) === 0) {
+        setTimeout(() => get().dismiss(id), TOAST_TTL_MS);
+      }
       return id;
     },
 

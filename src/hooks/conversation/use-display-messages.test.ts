@@ -576,8 +576,27 @@ describe("buildDisplayProjection", () => {
     expect(result).toEqual([
       messages[0],
       messages[1],
-      optimisticMessages[0],
-      optimisticMessages[1],
+      { ...optimisticMessages[0], provisional: true },
+      { ...optimisticMessages[1], provisional: true },
+    ]);
+  });
+
+  it("marks appended optimistic messages provisional — durable base rows never", () => {
+    const messages = [msg("user", "u1"), msg("assistant", "a1")];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [msg("user", "u2"), msg("assistant", "streaming")],
+      messageCountBeforeSubmit: 2,
+      sending: true,
+      pendingQueue: [],
+      optimisticQueue: [],
+    });
+
+    expect(result.map((row) => row.provisional)).toEqual([
+      undefined,
+      undefined,
+      true,
+      true,
     ]);
   });
 });

@@ -22,6 +22,7 @@ import {
   notepadAnnotationSources,
   withLiveAnchorStates,
 } from "./notepad-review-annotations";
+import { notepadReviewClipCapability } from "./notepad-review-clip";
 import { useNotepadStampedBlocks } from "./notepad-stamped-blocks";
 
 export interface NotepadReviewSurfaceProps {
@@ -166,6 +167,14 @@ export default function NotepadReviewSurface({
     [notepadId, notepadName, notepadScope, projectName],
   );
 
+  // A clip taken while reviewing this notepad points back at it — the same
+  // reference the dispatch bar sends, so provenance and dispatch address the
+  // notepad identically, by id (R24.1).
+  const clip = useMemo(
+    () => notepadReviewClipCapability(dispatchRef),
+    [dispatchRef],
+  );
+
   const persistComment = createComment.mutateAsync;
   const composer = useMemo<CommentComposerCapability>(
     () => ({
@@ -203,6 +212,7 @@ export default function NotepadReviewSurface({
           onActivateAnnotation={activateAnnotation}
           renderDocument={renderDocument}
           composer={composer}
+          clip={clip}
         />
       </div>
       <NotepadCommentThreads

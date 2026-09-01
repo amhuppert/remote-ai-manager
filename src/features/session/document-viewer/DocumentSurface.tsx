@@ -26,6 +26,7 @@ import type {
   PersistCommentInput,
 } from "@/components/document-viewer/annotation-contract";
 import AnnotatedMarkdown from "./AnnotatedMarkdown";
+import { documentClipCapability } from "./document-clip";
 import CommentCard, { type CommentCardSave } from "./CommentCard";
 import PendingCommentsTray from "./PendingCommentsTray";
 import { ConversationTargetPicker } from "./ConversationTargetPicker";
@@ -314,6 +315,10 @@ export default function DocumentSurface({
     () => ({ kind: "persist-or-send", submit: handleCreateComment }),
     [handleCreateComment],
   );
+  const clip = useMemo(
+    () => documentClipCapability(docRef.docPath),
+    [docRef.docPath],
+  );
 
   const handleActivateAnnotation = useCallback(
     (target: MarkdownAnnotationTarget): void => {
@@ -392,6 +397,7 @@ export default function DocumentSurface({
           annotations={annotations}
           onActivateAnnotation={handleActivateAnnotation}
           composer={composer}
+          clip={clip}
         />
       </div>
 

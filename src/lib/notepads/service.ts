@@ -459,6 +459,14 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
     content: string;
     author: NotepadAuthor;
     baseRevision: number | null;
+    /**
+     * Whether the stated base is a compare-and-swap. Every agent write is; a
+     * user write is only when it opted in (a conditional act like clip undo)
+     * — an ordinary user save whose base is stale still lands as the next
+     * revision, because refusing it would discard keystrokes, the one loss
+     * revision history cannot recover.
+     */
+    enforceBaseRevision: boolean;
     restoredFromRevision: number | null;
     change: NotepadChangedEvent["change"];
   }): Promise<NotepadResult<Notepad>> {
@@ -473,10 +481,7 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
       authorConversationId:
         input.author.kind === "agent" ? input.author.conversationId : null,
       baseRevision: input.baseRevision,
-      // Only an agent write is a compare-and-swap. A user save whose base is
-      // stale still lands as the next revision — refusing it would discard
-      // keystrokes, the one loss revision history cannot recover.
-      enforceBaseRevision: isAgent,
+      enforceBaseRevision: input.enforceBaseRevision,
       // A user write is not mode-governed: the mode is their control over
       // agents, not over themselves.
       permittedWriteModes: isAgent
@@ -688,7 +693,8 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
     async writeContent(notepadId, input) {
       const parsed = notepadContentWriteSchema.safeParse(input);
       if (!parsed.success) return validationFailed(parsed.error);
-      const { operation, content, author, baseRevision } = parsed.data;
+      const { operation, content, author, baseRevision, enforceBaseRevision } =
+        parsed.data;
 
       return writeContentInternal({
         notepadId,
@@ -697,6 +703,8 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
         content,
         author,
         baseRevision: baseRevision ?? null,
+        enforceBaseRevision:
+          author.kind === "agent" || enforceBaseRevision === true,
         restoredFromRevision: null,
         change: "updated",
       });
@@ -727,6 +735,7 @@ export function createNotepadService(deps: NotepadServiceDeps): NotepadService {
         // Restore is a user act taken against what is on screen; the CAS token
         // it states is the current head, so it never races itself.
         baseRevision: author.kind === "agent" ? current.revision : null,
+        enforceBaseRevision: author.kind === "agent",
         restoredFromRevision: revision,
         change: "restored",
       });

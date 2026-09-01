@@ -27,6 +27,7 @@ export type HotkeyId =
   | "helpModal"
   | "commandLauncher"
   | "voiceToggle"
+  | "voiceQuickCapture"
   | "stopTurn"
   | "clearInput"
   | "toggleSidebar"
@@ -93,8 +94,18 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     id: "voiceToggle",
     keys: "ctrl+shift+.",
     label: "Toggle voice recording",
-    description: "Start or stop voice recording for the prompt",
+    description: "Start or stop voice recording for the focused editor",
     category: "general",
+    allowInEditable: true,
+  },
+  voiceQuickCapture: {
+    id: "voiceQuickCapture",
+    keys: "ctrl+shift+,",
+    label: "Voice quick capture",
+    description: "Record a voice note into a notepad from anywhere",
+    category: "creation",
+    // A thought worth capturing usually arrives mid-sentence, so this fires
+    // while a prompt or editor holds focus — voiceToggle's precedent.
     allowInEditable: true,
   },
   stopTurn: {
@@ -463,9 +474,17 @@ export const PROMPT_EDITING_SHORTCUTS: readonly PromptEditingShortcutDefinition[
     },
   ];
 
+/**
+ * A comma separates alternative bindings ("g>1,g>2"), but it is also a key a
+ * binding can be bound to ("ctrl+shift+,"). It is the separator only where a
+ * key could not be: after a modifier's `+`, and at the start of the text,
+ * a comma is the key itself.
+ */
+const ALTERNATIVES_SEPARATOR = /(?<=[^+]),/;
+
 export function getHotkeySequences(keys: string | null): string[][] {
   if (!keys) return [];
-  return keys.split(",").map((sequence) =>
+  return keys.split(ALTERNATIVES_SEPARATOR).map((sequence) =>
     sequence
       .split(">")
       .map((stroke) => stroke.trim().toLowerCase())

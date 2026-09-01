@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { catalogBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
 import ConversationTranscript from "@/components/conversation/ConversationTranscript";
+import TranscriptClipCapture from "@/components/notepad-capture/TranscriptClipCapture";
 import MessageRow from "@/components/conversation/MessageRow";
 import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
 import { useCollabContext } from "@/features/session/hooks/use-collab-context";
@@ -97,6 +98,7 @@ export default function PaneConversationBody({
     rawMessages: messagesQuery.data ?? [],
     openDocById,
   });
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   // The pane has no sticky pinned-top region; the passage renders inline only.
   const [, setCollabRowEl] = useState<HTMLDivElement | null>(null);
   const renderCollabRow = useCollabRowRenderer({
@@ -141,6 +143,7 @@ export default function PaneConversationBody({
       <MessageRow
         msg={row.msg}
         queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
+        provisional={row.msg.provisional}
         messageIndex={row.messageIndex}
         isLast={isLast}
         selectedBackend={selectedBackend}
@@ -168,7 +171,17 @@ export default function PaneConversationBody({
     // `pane__body` is kept as a rule-less anchor: conversation-panes.css applies
     // a pane-context density override to the shared `.conversation` thread via
     // `.pane__body > .conversation`. The body's own box is utility-owned.
-    <div className="pane__body flex min-h-0 flex-1 cursor-auto flex-col overflow-hidden">
+    <div
+      ref={bodyRef}
+      className="pane__body flex min-h-0 flex-1 cursor-auto flex-col overflow-hidden"
+    >
+      {/* Scoped to this pane's body: sibling panes run their own instance, and
+          only the pane containing the selection may claim it. */}
+      <TranscriptClipCapture
+        target={compactionTarget}
+        conversationName={conversationState?.name ?? null}
+        within={bodyRef}
+      />
       <ConversationTranscript
         scope={{ kind: "session", projectName, sessionName, conversationId }}
         backend={selectedBackend}

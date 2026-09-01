@@ -13,6 +13,7 @@ import {
   SpecElementRefTranscriptChip,
   SpecRefEditorChip,
   SpecRefTranscriptChip,
+  SpecSectionRefTranscriptChip,
 } from "@/components/references/SpecRefChips";
 import {
   buildConversationRefXml,
@@ -54,10 +55,13 @@ import { ticketRefAttrsToMentionAttrs } from "./ticket-mention-node";
 import {
   buildSpecReadCommand,
   buildSpecReferenceXml,
+  buildSpecSectionReferenceXml,
   specElementRefAttrsSchema,
   specElementRefAttrsToMentionAttrs,
   specRefAttrsSchema,
   specRefAttrsToMentionAttrs,
+  specSectionRefAttrsSchema,
+  specSectionRefAttrsToMentionAttrs,
 } from "./spec-mention-nodes";
 
 export type ReferenceType =
@@ -70,6 +74,7 @@ export type ReferenceType =
   | "task"
   | "question"
   | "assumption"
+  | "section"
   | "notepad";
 export type ReferenceNodeName =
   | "conversationMention"
@@ -81,6 +86,7 @@ export type ReferenceNodeName =
   | "taskMention"
   | "questionMention"
   | "assumptionMention"
+  | "sectionMention"
   | "notepadMention";
 export type ReferenceXmlTag =
   | "conversation-ref"
@@ -92,6 +98,7 @@ export type ReferenceXmlTag =
   | "task-ref"
   | "question-ref"
   | "assumption-ref"
+  | "section-ref"
   | "notepad-ref";
 
 export interface ReferencePickerSource {
@@ -745,6 +752,31 @@ export const REFERENCE_REGISTRY = [
       queryAliases: ["assumption", "assumptions"],
       getItems: (query, context) =>
         specElementPickerItems("assumption", query, context),
+    },
+  },
+  {
+    type: "section",
+    nodeName: "sectionMention",
+    xmlTag: "section-ref",
+    attrsSchema: specSectionRefAttrsSchema,
+    buildXml: buildSpecSectionReferenceXml,
+    parseAttrs: (attrs: unknown) => ({
+      ...specSectionRefAttrsToMentionAttrs(
+        specSectionRefAttrsSchema.parse(attrs),
+      ),
+    }),
+    EditorChip: SpecRefEditorChip,
+    TranscriptChip: transcriptChip(
+      specSectionRefAttrsSchema,
+      SpecSectionRefTranscriptChip,
+    ),
+    // Sections are addressed by element id and have no handle, so nothing in
+    // the picker's spec inventory can offer one — a section reference is only
+    // ever minted by a surface that already has the section in hand (a clip).
+    pickerSource: {
+      groupLabel: "Sections",
+      queryAliases: ["section", "sections"],
+      getItems: () => [],
     },
   },
   {

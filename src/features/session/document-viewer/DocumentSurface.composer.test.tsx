@@ -5,9 +5,12 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  ClipCaptureCapability,
+  ClipSelectionContext,
   CommentComposerCapability,
   PersistCommentInput,
 } from "@/components/document-viewer/annotation-contract";
+import { buildClipFragment } from "@/lib/notepads/capture-fragment";
 import type { DocumentComment } from "@/lib/document-comments/schemas";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 
@@ -30,14 +33,38 @@ const ANCHOR = {
 };
 
 let capturedComposer: CommentComposerCapability | undefined;
+let capturedClip: ClipCaptureCapability | undefined;
 
 function CapturingAnnotationSurface({
   composer,
+  clip,
 }: AnnotatedMarkdownProps): React.JSX.Element {
   useEffect(() => {
     capturedComposer = composer;
-  }, [composer]);
+    capturedClip = clip;
+  }, [composer, clip]);
   return <div data-testid="annotation-surface" />;
+}
+
+/** A selection as the seam describes it to a host capability. */
+function selectionIn(html: string, text: string): ClipSelectionContext {
+  const host = document.createElement("div");
+  host.innerHTML = html;
+  const block = host.firstElementChild;
+  if (!(block instanceof HTMLElement)) throw new Error("no block rendered");
+  // A range over the deepest text node holding `text`, as a browser resolves a
+  // real selection — the block alone cannot answer inline-code ancestry.
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node !== null && !(node.textContent ?? "").includes(text)) {
+    node = walker.nextNode();
+  }
+  if (node === null) throw new Error(`no text node holds ${text}`);
+  const at = (node.textContent ?? "").indexOf(text);
+  const range = document.createRange();
+  range.setStart(node, at);
+  range.setEnd(node, at + text.length);
+  return { anchor: { ...ANCHOR, quote: text }, text, block, range };
 }
 
 function makeClient(): QueryClient {
@@ -158,6 +185,7 @@ describe("DocumentSurface composer", () => {
 
   beforeEach(() => {
     capturedComposer = undefined;
+    capturedClip = undefined;
     requests = requestHarness();
     vi.stubGlobal("fetch", requests.fetch);
     useSessionDetailStore.getState().resetStore();
@@ -225,5 +253,55 @@ describe("DocumentSurface composer", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Agent unavailable")).toBeInTheDocument();
+  });
+});
+
+describe("DocumentSurface clip provenance", () => {
+  beforeEach(() => {
+    capturedComposer = undefined;
+    capturedClip = undefined;
+    vi.stubGlobal("fetch", requestHarness().fetch);
+    useSessionDetailStore.getState().resetStore();
+    _setAnnotationSurfaceForTesting(CapturingAnnotationSurface);
+  });
+
+  afterEach(() => {
+    cleanup();
+    _resetAnnotationSurfaceForTesting();
+    vi.unstubAllGlobals();
+  });
+
+  it("supplies the document's repo-relative path as clip provenance", async () => {
+    renderSurface(makeClient());
+    await waitFor(() => expect(capturedClip).toBeDefined());
+
+    const clip = capturedClip;
+    if (clip === undefined) throw new Error("no clip capability supplied");
+
+    const selection = selectionIn(
+      "<p>durable feedback</p>",
+      "durable feedback",
+    );
+    expect(clip.enabled).toBe(true);
+    expect(clip.buildProvenance(selection)).toEqual({
+      kind: "path",
+      path: "doc.md",
+    });
+    expect(clip.deriveIsCode(selection)).toBe(false);
+    expect(
+      clip.deriveIsCode(
+        selectionIn(
+          `<div data-markdown-code-block><pre><code>bun run dev</code></pre></div>`,
+          "bun run dev",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      buildClipFragment({
+        text: selection.text,
+        isCode: clip.deriveIsCode(selection),
+        provenance: clip.buildProvenance(selection),
+      }),
+    ).toBe("> durable feedback\n— doc.md");
   });
 });

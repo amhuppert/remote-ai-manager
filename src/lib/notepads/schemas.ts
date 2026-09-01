@@ -358,8 +358,12 @@ export type UpdateNotepadInput = z.infer<typeof updateNotepadInputSchema>;
 
 /**
  * An agent write MUST state the revision it is based on (the strict CAS
- * contract); a user write never does, because a user save is never refused for
- * staleness — refusing it would discard keystrokes history cannot recover.
+ * contract); a user write ordinarily does not, because a user save is never
+ * refused for staleness — refusing it would discard keystrokes history cannot
+ * recover. `enforceBaseRevision` is the narrow user opt-in for writes that are
+ * conditional by nature (clip undo removes a suffix only while it is still the
+ * tail): the stated base becomes a compare-and-swap, so a racing write refuses
+ * instead of being silently overwritten.
  */
 export const notepadContentWriteSchema = z
   .object({
@@ -367,6 +371,7 @@ export const notepadContentWriteSchema = z
     content: z.string(),
     author: notepadAuthorSchema,
     baseRevision: z.number().int().positive().optional(),
+    enforceBaseRevision: z.boolean().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -375,6 +380,16 @@ export const notepadContentWriteSchema = z
         code: "custom",
         path: ["baseRevision"],
         message: "agent writes must state the revision they are based on",
+      });
+    }
+    if (
+      value.enforceBaseRevision === true &&
+      value.baseRevision === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseRevision"],
+        message: "an enforced write must state the revision it is based on",
       });
     }
   });

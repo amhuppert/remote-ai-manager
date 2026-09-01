@@ -14,6 +14,10 @@ import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import { findMessageRefs } from "@/lib/conversations/ref-parser";
 import { messageRefAttrsSchema } from "@/lib/conversations/schemas";
 import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
+import { buildClipFragment } from "@/lib/notepads/capture-fragment";
+import { extractCopyText } from "@/components/copy-message-text";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 
 const target: ContextArtifactTarget = {
   scope: "session",
@@ -312,6 +316,138 @@ describe("MessageActions copy-reference action", () => {
       findMessageRefs(writeText.mock.calls[0]![0])[0]!.attrs,
     );
     expect(attrs.role).toBe("user");
+  });
+});
+
+describe("MessageActions clip action", () => {
+  const writeText = vi.fn<(text: string) => Promise<void>>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    writeText.mockReset().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    useSessionDetailStore.getState().resetStore();
+    useToastStoreForTesting.setState({ toasts: [] });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const NOTEPAD_ROW = {
+    id: "np-1",
+    scope: "project",
+    projectPath: "/repos/p1",
+    projectName: "p1",
+    name: "capture target",
+    revision: 1,
+    writeMode: "full-edit",
+    pinned: false,
+    archived: false,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-20T00:00:00.000Z",
+  };
+
+  /** Artifact routes plus the notepad listing/append the clip landing hits. */
+  function routeClipFetch(artifacts: ContextArtifactListItem[]) {
+    fetchSpy.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === LIST_URL && method === "GET") return jsonResponse(artifacts);
+      if (url.startsWith("/api/notepads?") && method === "GET") {
+        return jsonResponse({ notepads: [NOTEPAD_ROW] });
+      }
+      if (url === "/api/notepads/np-1/content" && method === "POST") {
+        return jsonResponse({
+          notepad: { ...NOTEPAD_ROW, content: "landed", revision: 2 },
+        });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    });
+  }
+
+  function appendBodies(): unknown[] {
+    return fetchSpy.mock.calls
+      .filter((call) => String(call[0]) === "/api/notepads/np-1/content")
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)));
+  }
+
+  it("offers Clip under exactly the copy-reference gate", () => {
+    routeClipFetch([]);
+    renderActions({ compactionTarget: undefined, messageRef: messageRefMeta });
+    expect(
+      screen.queryByRole("button", { name: "Clip message to notepad" }),
+    ).not.toBeInTheDocument();
+
+    renderActions({ messageRef: undefined });
+    expect(
+      screen.queryByRole("button", { name: "Clip message to notepad" }),
+    ).not.toBeInTheDocument();
+
+    renderActions({ messageRef: messageRefMeta });
+    expect(
+      screen.getByRole("button", { name: "Clip message to notepad" }),
+    ).toBeInTheDocument();
+  });
+
+  it("clips the full message text as a non-code fragment carrying copy-reference's exact XML", async () => {
+    routeClipFetch([]);
+    renderActions({ messageRef: messageRefMeta });
+
+    // Capture the reference the Copy-reference action would produce — the
+    // clip's provenance must be built from the same inputs.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy message reference" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copiedXml = writeText.mock.calls[0]![0];
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clip message to notepad" }),
+    );
+    await waitFor(() => expect(appendBodies()).toHaveLength(1));
+
+    expect(appendBodies()[0]).toEqual({
+      operation: "append",
+      content: buildClipFragment({
+        text: extractCopyText(toolContent),
+        isCode: false,
+        provenance: { kind: "ref", xml: copiedXml },
+      }),
+    });
+  });
+
+  it("advertises a complete compaction on the clipped reference like copy-reference does", async () => {
+    routeClipFetch([buildArtifactListItem()]);
+    renderActions({ messageRef: messageRefMeta });
+    await screen.findByRole("button", { name: "View compacted message" });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clip message to notepad" }),
+    );
+    await waitFor(() => expect(appendBodies()).toHaveLength(1));
+
+    const content = (appendBodies()[0] as { content: string }).content;
+    const attrs = messageRefAttrsSchema.parse(
+      findMessageRefs(content)[0]!.attrs,
+    );
+    expect(attrs.compacted).toBe("true");
+    expect(attrs["compact-artifact-id"]).toBe("art-1");
+  });
+
+  it("clips nothing when the message has no copyable text", () => {
+    routeClipFetch([]);
+    renderActions({
+      messageRef: messageRefMeta,
+      content: [{ type: "tool_use", name: "Bash" }],
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clip message to notepad" }),
+    );
+
+    expect(appendBodies()).toHaveLength(0);
   });
 });
 

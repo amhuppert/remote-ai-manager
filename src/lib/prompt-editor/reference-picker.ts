@@ -183,6 +183,7 @@ const GLYPH_BY_ITEM_KIND: Record<PickerItemKind, PickerGlyph> = {
   task: "spec",
   question: "spec",
   assumption: "spec",
+  section: "spec",
   notepad: "notepad",
 };
 

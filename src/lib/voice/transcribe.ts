@@ -20,7 +20,12 @@ export function _setTranscribeFetchForTesting(fn: FetchFn | undefined): void {
 
 export interface TranscribeProxyInput {
   audio: File;
-  projectPath: string;
+  /**
+   * Optional, as the Voice2Text contract declares it. A capture whose
+   * destination is a global notepad belongs to no project; the field is then
+   * omitted rather than filled with a guess.
+   */
+  projectPath?: string;
   context?: string;
 }
 
@@ -48,7 +53,7 @@ export async function proxyTranscribe(
 ): Promise<TranscribeProxyResult> {
   const formData = new FormData();
   formData.set("audio", input.audio);
-  formData.set("projectPath", input.projectPath);
+  if (input.projectPath) formData.set("projectPath", input.projectPath);
 
   if (input.context && input.context.trim()) {
     formData.set("context", input.context);
@@ -59,7 +64,7 @@ export async function proxyTranscribe(
       logger,
       "voice.transcribe.upstream",
       {
-        projectPath: input.projectPath,
+        projectPath: input.projectPath ?? null,
         hasContext: Boolean(input.context && input.context.trim()),
         audioBytes: input.audio.size,
       },
@@ -87,7 +92,7 @@ export async function proxyTranscribe(
     const parsed = transcribeResponseSchema.safeParse(body);
     if (!parsed.success) {
       logger.warn("voice.transcribe.upstream.invalid", {
-        projectPath: input.projectPath,
+        projectPath: input.projectPath ?? null,
         issuePaths: parsed.error.issues.map((issue) => issue.path.join(".")),
       });
       return {

@@ -1,14 +1,21 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import { SpecRefEditorChip } from "@/components/references/SpecRefChips";
-import type { SpecElementMentionAttrs } from "./spec-reference-contract";
+import type {
+  SpecElementMentionAttrs,
+  SpecSectionMentionAttrs,
+} from "./spec-reference-contract";
 export {
   buildSpecReadCommand,
   buildSpecReferenceXml,
+  buildSpecSectionReadCommand,
+  buildSpecSectionReferenceXml,
   specElementRefAttrsSchema,
   specElementRefAttrsToMentionAttrs,
   specRefAttrsSchema,
   specRefAttrsToMentionAttrs,
+  specSectionRefAttrsSchema,
+  specSectionRefAttrsToMentionAttrs,
 } from "./spec-reference-contract";
 export type {
   SpecElementMentionAttrs,
@@ -16,6 +23,8 @@ export type {
   SpecMentionAttrs,
   SpecReferenceType,
   SpecRefAttrs,
+  SpecSectionMentionAttrs,
+  SpecSectionRefAttrs,
 } from "./spec-reference-contract";
 
 type SpecReferenceNodeName =
@@ -24,10 +33,17 @@ type SpecReferenceNodeName =
   | "decisionMention"
   | "taskMention"
   | "questionMention"
-  | "assumptionMention";
+  | "assumptionMention"
+  | "sectionMention";
+
+/**
+ * How a node addresses what it points at: the spec itself, one handled element,
+ * or — for a section, the one element kind with no handle — its element id.
+ */
+type SpecReferenceAddress = "spec" | "handle" | "element-id";
 
 interface AttrSpec {
-  key: keyof SpecElementMentionAttrs;
+  key: keyof SpecElementMentionAttrs | keyof SpecSectionMentionAttrs;
   dataAttr: string;
   defaultValue: string;
 }
@@ -40,18 +56,30 @@ const COMMON_ATTR_SPECS: AttrSpec[] = [
   { key: "readCommand", dataAttr: "data-read-command", defaultValue: "" },
 ];
 
+const ADDRESS_ATTR_SPEC: Record<SpecReferenceAddress, AttrSpec | null> = {
+  spec: null,
+  handle: { key: "handle", dataAttr: "data-handle", defaultValue: "" },
+  "element-id": {
+    key: "elementId",
+    dataAttr: "data-element-id",
+    defaultValue: "",
+  },
+};
+
 function createSpecReferenceNode(
   name: SpecReferenceNodeName,
   dataMarker: string,
-  includeHandle: boolean,
+  address: SpecReferenceAddress,
 ) {
-  const attrSpecs = includeHandle
-    ? [
-        ...COMMON_ATTR_SPECS.slice(0, 2),
-        { key: "handle", dataAttr: "data-handle", defaultValue: "" } as const,
-        ...COMMON_ATTR_SPECS.slice(2),
-      ]
-    : COMMON_ATTR_SPECS;
+  const addressSpec = ADDRESS_ATTR_SPEC[address];
+  const attrSpecs =
+    addressSpec === null
+      ? COMMON_ATTR_SPECS
+      : [
+          ...COMMON_ATTR_SPECS.slice(0, 2),
+          addressSpec,
+          ...COMMON_ATTR_SPECS.slice(2),
+        ];
 
   return Node.create({
     name,
@@ -84,19 +112,23 @@ function createSpecReferenceNode(
     },
 
     renderHTML({ HTMLAttributes }) {
-      const slug = String(HTMLAttributes["data-slug"] ?? "");
-      const handle = String(HTMLAttributes["data-handle"] ?? "");
       return [
         "span",
         mergeAttributes(HTMLAttributes, { [dataMarker]: "" }),
-        handle ? `${slug}/${handle}` : slug,
+        renderAddress(
+          String(HTMLAttributes["data-slug"] ?? ""),
+          addressSpec === null
+            ? ""
+            : String(HTMLAttributes[addressSpec.dataAttr] ?? ""),
+        ),
       ];
     },
 
     renderText({ node }) {
-      const slug = String(node.attrs["slug"] ?? "");
-      const handle = String(node.attrs["handle"] ?? "");
-      return handle ? `${slug}/${handle}` : slug;
+      return renderAddress(
+        String(node.attrs["slug"] ?? ""),
+        addressSpec === null ? "" : String(node.attrs[addressSpec.key] ?? ""),
+      );
     },
 
     addNodeView() {
@@ -105,38 +137,49 @@ function createSpecReferenceNode(
   });
 }
 
+/** The address a chip falls back to as plain text: `<slug>` or `<slug>/<addr>`. */
+function renderAddress(slug: string, address: string): string {
+  return address ? `${slug}/${address}` : slug;
+}
+
 export const SpecMentionNode = createSpecReferenceNode(
   "specMention",
   "data-spec-mention",
-  false,
+  "spec",
 );
 
 export const RequirementMentionNode = createSpecReferenceNode(
   "requirementMention",
   "data-requirement-mention",
-  true,
+  "handle",
 );
 
 export const DecisionMentionNode = createSpecReferenceNode(
   "decisionMention",
   "data-decision-mention",
-  true,
+  "handle",
 );
 
 export const TaskMentionNode = createSpecReferenceNode(
   "taskMention",
   "data-task-mention",
-  true,
+  "handle",
 );
 
 export const QuestionMentionNode = createSpecReferenceNode(
   "questionMention",
   "data-question-mention",
-  true,
+  "handle",
 );
 
 export const AssumptionMentionNode = createSpecReferenceNode(
   "assumptionMention",
   "data-assumption-mention",
-  true,
+  "handle",
+);
+
+export const SectionMentionNode = createSpecReferenceNode(
+  "sectionMention",
+  "data-section-mention",
+  "element-id",
 );

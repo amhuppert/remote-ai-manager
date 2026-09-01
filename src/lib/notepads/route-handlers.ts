@@ -260,6 +260,12 @@ const contentBodySchema = z
     operation: notepadWriteOperationSchema,
     content: z.string(),
     baseRevision: z.number().int().positive().optional(),
+    /**
+     * User opt-in to treat `baseRevision` as a compare-and-swap — stated by
+     * conditional acts like clip undo, whose tail check must be atomic with
+     * the write. Agent writes are always enforced regardless.
+     */
+    enforceBaseRevision: z.boolean().optional(),
   })
   .strict();
 
@@ -614,6 +620,9 @@ export function createNotepadsRouteHandlers(
           content: body.value.content,
           ...(body.value.baseRevision !== undefined
             ? { baseRevision: body.value.baseRevision }
+            : {}),
+          ...(body.value.enforceBaseRevision !== undefined
+            ? { enforceBaseRevision: body.value.enforceBaseRevision }
             : {}),
           author: author.value,
         }),

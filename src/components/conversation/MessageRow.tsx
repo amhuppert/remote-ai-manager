@@ -71,6 +71,12 @@ export interface MessageRowProps {
    * `queuedMetadata` prop on `MessageContent`. Omit for transcript rows.
    */
   queuedMetadata?: QueuedMessageMetadata | null;
+  /**
+   * True for an in-flight optimistic row (streamed during an active turn):
+   * its display index and content are not durable, so it gets no
+   * reference-bearing actions — the same exclusion queued rows get.
+   */
+  provisional?: boolean;
   messageIndex: number;
   isLast: boolean;
   selectedBackend: AgentBackendId;
@@ -113,6 +119,7 @@ export interface MessageRowProps {
 const MessageRow = memo(function MessageRow({
   msg,
   queuedMetadata,
+  provisional,
   messageIndex,
   isLast,
   selectedBackend,
@@ -146,6 +153,34 @@ const MessageRow = memo(function MessageRow({
     );
   }
   const isUserMsg = msg.role === "user";
+  // The copy-reference gate: only rows whose display index is their durable
+  // transcript position can produce a message reference. Queued rows render at
+  // a provisional index, and in-flight optimistic rows are not durable at all,
+  // so neither gets the Copy-reference action nor the clip-source stamp below.
+  const messageRef =
+    queuedMetadata === undefined && !provisional
+      ? {
+          conversationName: conversationName ?? null,
+          timestamp: msg.timestamp,
+          model: msg.modelSelection?.modelId ?? null,
+        }
+      : undefined;
+  // The clip-source contract consumed by the transcript's selection-clip
+  // affordance: stamped under exactly the copy-reference gate, so a selection
+  // over any other row never offers Clip (R22).
+  const clipSourceAttrs =
+    compactionTarget && messageRef
+      ? {
+          "data-clip-index": messageIndex,
+          "data-clip-role": msg.role,
+          ...(msg.timestamp === null
+            ? {}
+            : { "data-clip-timestamp": msg.timestamp }),
+          ...(messageRef.model === null
+            ? {}
+            : { "data-clip-model": messageRef.model }),
+        }
+      : {};
   const iterationIndex =
     msg.origin?.source === "workflow"
       ? msg.origin.workflow?.iterationIndex
@@ -189,7 +224,7 @@ const MessageRow = memo(function MessageRow({
         )}
         <MessageTimestamp timestamp={msg.timestamp} />
       </div>
-      <div className="message-content">
+      <div className="message-content" {...clipSourceAttrs}>
         <MessageContent
           content={msg.content}
           worktreePath={worktreePath}
@@ -213,17 +248,7 @@ const MessageRow = memo(function MessageRow({
         onFork={onFork}
         forkProjectName={forkProjectName}
         compactionTarget={compactionTarget}
-        messageRef={
-          // Queued rows render at a provisional index that may not be their
-          // final transcript position, so they get no Copy-reference action.
-          queuedMetadata === undefined
-            ? {
-                conversationName: conversationName ?? null,
-                timestamp: msg.timestamp,
-                model: msg.modelSelection?.modelId ?? null,
-              }
-            : undefined
-        }
+        messageRef={messageRef}
       />
     </div>
   );
