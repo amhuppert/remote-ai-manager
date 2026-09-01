@@ -1,7 +1,4 @@
-import {
-  attachmentGetCommand,
-  ticketFollowCommand,
-} from "./attachment-commands";
+import { attachmentGetCommand } from "./attachment-commands";
 import type { TicketAttachment, TicketAttachmentKind } from "./schemas";
 
 /**
@@ -61,14 +58,7 @@ function commandsFor(
   identifier: string,
   attachment: TicketAttachment,
 ): string[] {
-  const retrieval = attachmentGetCommand(identifier, attachment.id);
-  if (attachment.payload.kind === "related_ticket") {
-    return [
-      retrieval,
-      ticketFollowCommand(attachment.payload.identifierSnapshot),
-    ];
-  }
-  return [retrieval];
+  return [attachmentGetCommand(identifier, attachment.id)];
 }
 
 export function buildAttachmentIndex(

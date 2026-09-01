@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  TICKET_PROSE_MAX_BYTES,
   conversationAttachmentPayloadSchema,
   createTicketResponseSchema,
   createTicketInputSchema,
@@ -14,9 +15,20 @@ import {
   ticketIdentitySchema,
   ticketListItemSchema,
   ticketListQuerySchema,
+  ticketRelationshipDeleteResponseSchema,
+  ticketRelationshipMutationResponseSchema,
+  ticketRelationshipPageSchema,
+  ticketRelationshipRoleSchema,
+  ticketRelationshipTypeSchema,
+  ticketRelationshipViewSchema,
   ticketSchema,
   ticketSessionLinkSchema,
   ticketStatusSchema,
+  ticketStatusUpdateAuthorSchema,
+  ticketStatusUpdateCreateResponseSchema,
+  ticketStatusUpdatePageSchema,
+  ticketStatusUpdateSchema,
+  ticketStatusUpdateSummarySchema,
   ticketWorkTypeSchema,
 } from "./schemas";
 
@@ -285,13 +297,15 @@ describe("attachment payload union", () => {
     expect(ticketAttachmentPayloadSchema.parse(payload)).toEqual(payload);
   });
 
-  it("accepts a related_ticket payload", () => {
+  it("rejects the compatibility-only related_ticket payload", () => {
     const payload = {
       kind: "related_ticket",
       ticketId: "t-2",
       identifierSnapshot: "command-center#13",
     };
-    expect(ticketAttachmentPayloadSchema.parse(payload)).toEqual(payload);
+    expect(ticketAttachmentPayloadSchema.safeParse(payload).success).toBe(
+      false,
+    );
   });
 
   it("accepts a note payload", () => {
@@ -419,6 +433,8 @@ describe("createTicketResponseSchema", () => {
         projectName: "command-center",
         attachments: [],
         sessions: [],
+        relationships: [],
+        statusUpdates: { total: 0, recent: [] },
       },
       warnings: [
         {
@@ -538,8 +554,201 @@ describe("list item and detail", () => {
           endReason: "finished",
         },
       ],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     expect(ticketDetailSchema.parse(detail)).toEqual(detail);
+  });
+});
+
+describe("relationship and status-update contracts", () => {
+  const relationship = {
+    id: "rel-1",
+    role: "depends_on",
+    otherTicket: {
+      id: "t-2",
+      projectName: "runtime",
+      number: 4,
+      title: "Ship runtime support",
+      status: "in_progress",
+    },
+    description: "Needed before integration.",
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T01:00:00.000Z",
+  } as const;
+
+  const userUpdate = {
+    id: "update-1",
+    ticketId: "t-1",
+    bodyMarkdown: "Implemented the first slice.",
+    author: { kind: "user" },
+    createdAt: "2026-07-10T02:00:00.000Z",
+  } as const;
+
+  const agentUpdate = {
+    id: "update-2",
+    ticketId: "t-1",
+    bodyMarkdown: "Validation passed.",
+    author: {
+      kind: "agent",
+      conversationId: "conv-1",
+      conversationName: "Implement relationships",
+      projectName: "command-center",
+      scope: "session",
+      sessionName: "csm/relationships",
+      backend: "codex",
+      redactedProfileSnapshot: {
+        tier: "project",
+        id: "ticket-implementer",
+        name: "Ticket Implementer",
+        revision: 2,
+        sourceContentHash: `sha256:${"a".repeat(64)}`,
+        resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+      },
+    },
+    createdAt: "2026-07-10T03:00:00.000Z",
+  } as const;
+
+  it.each(["related", "depends_on", "parent_child"])(
+    "accepts relationship type %s",
+    (type) => {
+      expect(ticketRelationshipTypeSchema.parse(type)).toBe(type);
+    },
+  );
+
+  it.each(["related", "depends_on", "blocks", "parent", "child"])(
+    "accepts relative role %s",
+    (role) => {
+      expect(ticketRelationshipRoleSchema.parse(role)).toBe(role);
+    },
+  );
+
+  it("parses strict relationship views and pages", () => {
+    expect(ticketRelationshipViewSchema.parse(relationship)).toEqual(
+      relationship,
+    );
+    expect(
+      ticketRelationshipViewSchema.safeParse({
+        ...relationship,
+        sourceTicketId: "t-1",
+      }).success,
+    ).toBe(false);
+
+    const page = { items: [relationship], total: 3, nextCursor: "cursor-2" };
+    expect(ticketRelationshipPageSchema.parse(page)).toEqual(page);
+  });
+
+  it("enforces the shared UTF-8 prose boundary", () => {
+    const exact = "é".repeat(TICKET_PROSE_MAX_BYTES / 2);
+    expect(
+      ticketRelationshipViewSchema.safeParse({
+        ...relationship,
+        description: exact,
+      }).success,
+    ).toBe(true);
+    expect(
+      ticketRelationshipViewSchema.safeParse({
+        ...relationship,
+        description: `${exact}é`,
+      }).success,
+    ).toBe(false);
+    expect(
+      ticketStatusUpdateSchema.safeParse({
+        ...userUpdate,
+        bodyMarkdown: " \n\t ",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses user and immutable redacted agent attribution", () => {
+    expect(ticketStatusUpdateAuthorSchema.parse(userUpdate.author)).toEqual(
+      userUpdate.author,
+    );
+    expect(ticketStatusUpdateAuthorSchema.parse(agentUpdate.author)).toEqual(
+      agentUpdate.author,
+    );
+    expect(
+      ticketStatusUpdateAuthorSchema.safeParse({
+        ...agentUpdate.author,
+        instructions: "secret",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires project-scoped agent attribution to omit a session name", () => {
+    expect(
+      ticketStatusUpdateAuthorSchema.safeParse({
+        kind: "agent",
+        conversationId: agentUpdate.author.conversationId,
+        conversationName: agentUpdate.author.conversationName,
+        projectName: agentUpdate.author.projectName,
+        scope: "project",
+        backend: agentUpdate.author.backend,
+        redactedProfileSnapshot: agentUpdate.author.redactedProfileSnapshot,
+      }).success,
+    ).toBe(true);
+    expect(
+      ticketStatusUpdateAuthorSchema.safeParse({
+        ...agentUpdate.author,
+        scope: "project",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses update entities, summaries, and pages", () => {
+    expect(ticketStatusUpdateSchema.parse(userUpdate)).toEqual(userUpdate);
+    expect(
+      ticketStatusUpdateSummarySchema.parse({
+        total: 2,
+        recent: [agentUpdate, userUpdate],
+      }),
+    ).toEqual({ total: 2, recent: [agentUpdate, userUpdate] });
+    expect(
+      ticketStatusUpdatePageSchema.parse({
+        items: [agentUpdate],
+        total: 2,
+        nextCursor: null,
+      }),
+    ).toEqual({ items: [agentUpdate], total: 2, nextCursor: null });
+    expect(
+      ticketStatusUpdateSummarySchema.safeParse({
+        total: 6,
+        recent: Array.from({ length: 6 }, (_, index) => ({
+          ...userUpdate,
+          id: `update-${index}`,
+        })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses mutation response envelopes with authoritative tickets", () => {
+    const ticket = {
+      ...validTicket,
+      projectName: "command-center",
+      attachments: [],
+      sessions: [],
+      relationships: [relationship],
+      statusUpdates: { total: 1, recent: [userUpdate] },
+    };
+
+    expect(
+      ticketRelationshipMutationResponseSchema.parse({
+        relationship,
+        tickets: [ticket],
+      }),
+    ).toEqual({ relationship, tickets: [ticket] });
+    expect(
+      ticketRelationshipDeleteResponseSchema.parse({
+        relationshipId: relationship.id,
+        tickets: [ticket],
+      }),
+    ).toEqual({ relationshipId: relationship.id, tickets: [ticket] });
+    expect(
+      ticketStatusUpdateCreateResponseSchema.parse({
+        update: userUpdate,
+        ticket,
+      }),
+    ).toEqual({ update: userUpdate, ticket });
   });
 });
 
@@ -601,6 +810,68 @@ describe("ticket error union", () => {
     expect(ticketErrorSchema.parse(error)).toEqual(error);
   });
 
+  it.each([
+    {
+      code: "relationship_self_link",
+      details: {
+        source: { projectName: "command-center", number: 12 },
+        target: { projectName: "command-center", number: 12 },
+      },
+      rationale: "A relationship must connect two distinct tickets.",
+    },
+    {
+      code: "relationship_scope",
+      details: {
+        source: { projectName: "command-center", number: 12 },
+        target: { projectName: "runtime", number: 4 },
+      },
+      rationale:
+        "Parent/child hierarchy is project-local so ownership and project deletion stay deterministic.",
+    },
+    {
+      code: "relationship_conflict",
+      details: { reason: "duplicate", relationshipId: "rel-1" },
+      rationale:
+        "One logical relationship owns one rationale; update the existing relationship instead.",
+    },
+    {
+      code: "relationship_cycle",
+      details: {
+        relationType: "depends_on",
+        source: { projectName: "command-center", number: 12 },
+        target: { projectName: "runtime", number: 4 },
+      },
+      rationale:
+        "Dependency and parent graphs stay acyclic so direction and ancestry remain interpretable.",
+    },
+    {
+      code: "status_update_actor_required",
+      details: {},
+      rationale:
+        "Agent-authored updates require a resolvable conversation so source provenance remains durable.",
+    },
+    {
+      code: "status_update_actor_not_found",
+      details: { conversationId: "missing" },
+      rationale:
+        "Agent-authored updates require a resolvable conversation so source provenance remains durable.",
+    },
+  ] as const)("parses designed refusal $code", (error) => {
+    expect(ticketErrorSchema.parse(error)).toEqual(error);
+  });
+
+  it("parses relationship_not_found with typed details", () => {
+    const error = {
+      code: "relationship_not_found",
+      details: {
+        identifier: "command-center#12",
+        relationshipId: "rel-missing",
+      },
+    } as const;
+
+    expect(ticketErrorSchema.parse(error)).toEqual(error);
+  });
+
   it("rejects an unknown error code", () => {
     expect(
       ticketErrorSchema.safeParse({ code: "boom", reason: "x" }).success,
@@ -636,6 +907,19 @@ describe("ticket-changed event", () => {
     expect(ticketChangedEventSchema.parse(session)).toEqual(session);
   });
 
+  it.each(["relationships", "status_updates"] as const)(
+    "parses a %s change without changing the attachment index",
+    (change) => {
+      expect(
+        ticketChangedEventSchema.parse({
+          ...createdEvent,
+          change,
+          attachmentIndexChanged: false,
+        }),
+      ).toEqual({ ...createdEvent, change, attachmentIndexChanged: false });
+    },
+  );
+
   it("rejects an unknown change kind", () => {
     expect(
       ticketChangedEventSchema.safeParse({ ...createdEvent, change: "renamed" })
@@ -660,13 +944,6 @@ describe("resolvedAttachmentSchema", () => {
     createdAt: "2026-07-10T00:00:00.000Z",
     updatedAt: "2026-07-10T00:00:00.000Z",
   };
-  const detail = {
-    ...validTicket,
-    projectName: "command-center",
-    attachments: [],
-    sessions: [],
-  };
-
   it.each([
     [
       "file",
@@ -707,36 +984,17 @@ describe("resolvedAttachmentSchema", () => {
         readCommands: [],
       },
     ],
-    [
-      "available related ticket",
-      {
-        kind: "related_ticket",
-        attachment,
-        available: true,
-        ticket: detail,
-        followCommand: "cctl ticket get command-center#12",
-      },
-    ],
-    [
-      "unavailable related ticket",
-      {
-        kind: "related_ticket",
-        attachment,
-        available: false,
-        identifierSnapshot: "command-center#9",
-      },
-    ],
     ["note", { kind: "note", attachment, markdown: "remember this" }],
   ])("accepts a resolved %s", (_label, resolved) => {
     expect(resolvedAttachmentSchema.safeParse(resolved).success).toBe(true);
   });
 
-  it("rejects an unavailable related ticket that claims availability", () => {
+  it("rejects compatibility-only resolved related-ticket projections", () => {
     expect(
       resolvedAttachmentSchema.safeParse({
         kind: "related_ticket",
         attachment,
-        available: true,
+        available: false,
         identifierSnapshot: "command-center#9",
       }).success,
     ).toBe(false);

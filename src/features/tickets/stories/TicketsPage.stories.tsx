@@ -155,6 +155,8 @@ function detailFromListItem(item: TicketListItem): TicketDetail {
               endReason: null,
             },
           ],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
   };
 }
 

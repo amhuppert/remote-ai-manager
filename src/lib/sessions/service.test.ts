@@ -222,6 +222,7 @@ function createTestDeps() {
     captureTicketProjectDeletion: vi.fn().mockResolvedValue({
       projectName: "repo",
       ticketNumbers: [],
+      externalNeighborTicketIds: [],
     }),
     publishTicketProjectDeletion: vi.fn(),
     sweepLaneWorktrees: sweepLaneWorktreesMock,
@@ -1754,7 +1755,11 @@ describe("deleteProject", () => {
     };
     (deps.captureTicketProjectDeletion as Mock).mockImplementation(async () => {
       phases.push("capture");
-      return { projectName: "repo", ticketNumbers: [2] };
+      return {
+        projectName: "repo",
+        ticketNumbers: [2],
+        externalNeighborTicketIds: [],
+      };
     });
     (deps.cleanupTicketContentForProject as Mock).mockImplementation(
       async () => {
@@ -1789,7 +1794,11 @@ describe("deleteProject", () => {
     (deps.captureTicketProjectDeletion as Mock).mockImplementation(async () => {
       deletionEntered.resolve();
       await releaseDeletion.promise;
-      return { projectName: "repo", ticketNumbers: [] };
+      return {
+        projectName: "repo",
+        ticketNumbers: [],
+        externalNeighborTicketIds: [],
+      };
     });
     service = createSessionService(deps);
 
@@ -1967,7 +1976,11 @@ describe("deleteProject", () => {
 
   it("captures ticket identities before the project cascade and publishes their deletion afterward", async () => {
     readStateMock.mockResolvedValue(stateWithProject("/projects/repo"));
-    const snapshot = { projectName: "repo", ticketNumbers: [3, 5] };
+    const snapshot = {
+      projectName: "repo",
+      ticketNumbers: [3, 5],
+      externalNeighborTicketIds: ["external-1", "external-2"],
+    };
     (deps.captureTicketProjectDeletion as Mock).mockResolvedValue(snapshot);
 
     const result = await service.deleteProject("/projects/repo");
@@ -1975,6 +1988,11 @@ describe("deleteProject", () => {
     expect(result.deletedTicketNumbers).toEqual([3, 5]);
     expect(deps.captureTicketProjectDeletion).toHaveBeenCalledWith(
       "/projects/repo",
+    );
+    expect(deps.deleteProjectRow).toHaveBeenCalledWith(
+      "/projects/repo",
+      snapshot.externalNeighborTicketIds,
+      expect.any(String),
     );
     expect(deps.publishTicketProjectDeletion).toHaveBeenCalledWith(snapshot);
     const captureOrder = (deps.captureTicketProjectDeletion as Mock).mock

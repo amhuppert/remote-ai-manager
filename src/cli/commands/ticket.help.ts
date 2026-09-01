@@ -11,6 +11,7 @@ const REF_PLACEHOLDER = "<number | project#number>";
 
 const WORK_TYPES = "feature|bug|research|tech_debt|performance";
 const STATUSES = "not_started|in_progress|done|blocked|closed";
+const RELATIONSHIP_ROLES = "related|depends_on|blocks|parent|child";
 
 const typeFlag = {
   name: "type",
@@ -38,11 +39,11 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
   {
     path: ["ticket"],
     summary:
-      "create, list, read, update, delete, start work on, and attach context to work tickets",
+      "create, list, read, update, link, post updates to, and attach context to work tickets",
     description:
       "Manage Command Center tickets — durable work items owned by one project, identified as <project>#<number>.",
     usage: [
-      "cctl ticket <create|list|get|update|delete|start|attach|attachment>",
+      "cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment>",
     ],
     flags: [],
     examples: [],
@@ -60,6 +61,14 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
       {
         command: "ticket attachment",
         oneLiner: "read, edit, or remove attached context",
+      },
+      {
+        command: "ticket relation",
+        oneLiner: "manage structural links between tickets",
+      },
+      {
+        command: "ticket status-update",
+        oneLiner: "post and read append-only progress updates",
       },
     ],
   },
@@ -163,9 +172,9 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["ticket", "get"],
-    summary: "read one ticket in full",
+    summary: "read one ticket with bounded collaboration outlines",
     description:
-      "Read a ticket's fields, sessions, and attachment index. A bare <number> resolves through the ambient project scope; <project>#<number> works from anywhere.",
+      "Read a ticket's fields, sessions, and attachment index plus at most 20 grouped relationship outlines and the five newest status-update outlines. Every outline carries its stable id and exact drill-down command; omission metadata names the full list command. A bare <number> resolves through the ambient project scope; <project>#<number> works from anywhere.",
     usage: [`cctl ticket get ${REF_PLACEHOLDER}`],
     flags: [],
     examples: [
@@ -182,6 +191,14 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     related: [
       { command: "ticket update", oneLiner: "change fields or status" },
       { command: "ticket list", oneLiner: "find ticket numbers" },
+      {
+        command: "ticket relation list",
+        oneLiner: "page through all relationships",
+      },
+      {
+        command: "ticket status-update list",
+        oneLiner: "page through the complete update log",
+      },
     ],
   },
   {
@@ -295,10 +312,303 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
+    path: ["ticket", "relation"],
+    summary: "list, read, add, edit, and remove ticket relationships",
+    description:
+      "Manage durable relationships between tickets. Reads are bounded outlines with stable relationship ids; only 'get' returns a full Markdown rationale.",
+    usage: ["cctl ticket relation <list|get|add|update|remove>"],
+    flags: [],
+    examples: [],
+    domainContext:
+      "Roles are relative to the ticket named first: depends_on/blocks and parent/child are inverse views of one directed edge; related is symmetric.\nBare references resolve independently through the ambient project, so qualify BOTH references when ambient scope is not intended.\nSetting a new parent atomically replaces the old parent. Dependencies are informational and never gate work.",
+    related: [
+      {
+        command: "ticket get",
+        oneLiner: "read the bounded relationship outline on a ticket",
+      },
+      {
+        command: "ticket attach ticket",
+        oneLiner: "retained compatibility alias for a related edge",
+      },
+      {
+        command: "ticket status-update",
+        oneLiner: "record progress separately from structural links",
+      },
+    ],
+  },
+  {
+    path: ["ticket", "relation", "list"],
+    summary: "list newest relationships as bounded outlines",
+    description:
+      "List relationship outlines newest-first, optionally filtered by the role relative to this ticket. Defaults to 20 and accepts at most 100; a truncated page returns an opaque cursor and the exact continuation command.",
+    usage: [
+      `cctl ticket relation list ${REF_PLACEHOLDER} [--role <${RELATIONSHIP_ROLES}>] [--limit <n>] [--cursor <opaque>]`,
+    ],
+    flags: [
+      {
+        name: "role",
+        kind: "value",
+        valuePlaceholder: `<${RELATIONSHIP_ROLES}>`,
+        description: "filter by the role relative to the named ticket",
+      },
+      {
+        name: "limit",
+        kind: "value",
+        valuePlaceholder: "<1-100>",
+        description: "page size (default: 20; maximum: 100)",
+      },
+      {
+        name: "cursor",
+        kind: "value",
+        valuePlaceholder: "<opaque>",
+        description: "opaque continuation cursor returned by the previous page",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl ticket relation list command-center#12 --role depends_on --limit 20",
+        explanation:
+          "lists only prerequisites from command-center#12's perspective; pass a returned --cursor unchanged",
+      },
+    ],
+    related: [
+      { command: "ticket relation get", oneLiner: "read one full rationale" },
+      { command: "ticket relation add", oneLiner: "add another relationship" },
+      { command: "ticket get", oneLiner: "read the grouped ticket outline" },
+    ],
+  },
+  {
+    path: ["ticket", "relation", "get"],
+    summary: "read one relationship and its full rationale",
+    description:
+      "Read one relationship by the stable id shown in a ticket or relation outline. This is the only relationship read that returns the full Markdown rationale; oversized output becomes an artifact under .cc/temp/.",
+    usage: [`cctl ticket relation get ${REF_PLACEHOLDER} <relationshipId>`],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl ticket relation get command-center#12 rel-3f9a",
+        explanation: "use the relationship id exactly as an outline printed it",
+      },
+    ],
+    related: [
+      { command: "ticket relation list", oneLiner: "find relationship ids" },
+      { command: "ticket relation update", oneLiner: "edit this rationale" },
+      { command: "ticket relation remove", oneLiner: "remove this edge" },
+    ],
+  },
+  {
+    path: ["ticket", "relation", "add"],
+    summary: "add a relationship relative to one ticket",
+    description:
+      "Add one related, dependency, or hierarchy edge. Both ticket references resolve independently; qualify both when ambient scope is not intended. Graph, scope, self-link, and uniqueness refusals are server-authoritative and return typed rationales.",
+    usage: [
+      `cctl ticket relation add ${REF_PLACEHOLDER} <otherNumber | project#number> --role <${RELATIONSHIP_ROLES}> [--description "<markdown>"]`,
+    ],
+    flags: [
+      {
+        name: "role",
+        kind: "value",
+        valuePlaceholder: `<${RELATIONSHIP_ROLES}>`,
+        description:
+          "required — role of the other ticket relative to the first",
+      },
+      {
+        name: "description",
+        kind: "value",
+        valuePlaceholder: '"<markdown>"',
+        fileSource: true,
+        description: "optional Markdown rationale; omission means no rationale",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl ticket relation add command-center#12 platform#7 --role depends_on --description-file .cc/temp/rationale.md",
+        explanation:
+          "qualifies both references for a cross-project dependency and reads shell-sensitive Markdown from a file",
+      },
+    ],
+    related: [
+      { command: "ticket relation list", oneLiner: "inspect existing edges" },
+      { command: "ticket relation get", oneLiner: "read the created edge" },
+      {
+        command: "ticket attach ticket",
+        oneLiner: "compatibility alias limited to related edges",
+      },
+    ],
+  },
+  {
+    path: ["ticket", "relation", "update"],
+    summary: "replace or clear a relationship rationale",
+    description:
+      "Replace the Markdown rationale without changing relationship identity. An explicit empty inline --description clears it; an empty file remains an invalid prose source.",
+    usage: [
+      `cctl ticket relation update ${REF_PLACEHOLDER} <relationshipId> --description "<markdown>"`,
+    ],
+    flags: [
+      {
+        name: "description",
+        kind: "value",
+        valuePlaceholder: '"<markdown>"',
+        fileSource: true,
+        allowEmpty: true,
+        description:
+          "required — replacement Markdown; an explicit empty inline value clears it",
+      },
+    ],
+    examples: [
+      {
+        invocation: 'cctl ticket relation update 12 rel-3f9a --description=""',
+        explanation:
+          "clears the rationale while retaining the relationship and its stable id",
+      },
+    ],
+    related: [
+      { command: "ticket relation get", oneLiner: "read before editing" },
+      {
+        command: "ticket relation remove",
+        oneLiner: "remove the edge instead",
+      },
+    ],
+  },
+  {
+    path: ["ticket", "relation", "remove"],
+    summary: "remove a relationship",
+    description:
+      "Remove one relationship by its stable id. Linked tickets remain; only the edge is deleted. Terminal: no hint.",
+    usage: [`cctl ticket relation remove ${REF_PLACEHOLDER} <relationshipId>`],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl ticket relation remove 12 rel-3f9a",
+        explanation: "removes the edge after reading it with relation get",
+      },
+    ],
+    related: [
+      { command: "ticket relation get", oneLiner: "review before removing" },
+      { command: "ticket relation list", oneLiner: "find relationship ids" },
+      {
+        command: "ticket relation update",
+        oneLiner: "retain it and edit the rationale",
+      },
+    ],
+  },
+  {
+    path: ["ticket", "status-update"],
+    summary: "post and read append-only ticket status updates",
+    description:
+      "Manage deliberate Markdown progress posts, separate from the ticket status field and automatic activity. Routine reads are bounded outlines; only 'get' returns a full body and provenance snapshot.",
+    usage: ["cctl ticket status-update <add|list|get>"],
+    flags: [],
+    examples: [],
+    domainContext:
+      "Status updates are append-only: there are no edit or delete verbs.\nAgent attribution comes only from the authenticated caller's CC_CONVERSATION_ID; callers cannot override provenance with --conversation.",
+    related: [
+      {
+        command: "ticket get",
+        oneLiner: "read the five newest update outlines",
+      },
+      {
+        command: "ticket relation",
+        oneLiner: "manage structural links separately from progress posts",
+      },
+    ],
+  },
+  {
+    path: ["ticket", "status-update", "add"],
+    summary: "append a Markdown status update",
+    description:
+      "Append one non-empty Markdown progress post. Agent provenance is taken from CC_CONVERSATION_ID and cannot be supplied or overridden as payload; every local prose and identity error fails before the request.",
+    usage: [
+      `cctl ticket status-update add ${REF_PLACEHOLDER} --body "<markdown>"`,
+    ],
+    flags: [
+      {
+        name: "body",
+        kind: "value",
+        valuePlaceholder: '"<markdown>"',
+        fileSource: true,
+        description: "required — non-empty GitHub-flavored Markdown body",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl ticket status-update add 12 --body-file .cc/temp/status.md",
+        explanation:
+          "uses a file for Markdown containing quotes, backticks, dollars, or newlines",
+      },
+    ],
+    related: [
+      { command: "ticket status-update list", oneLiner: "read the update log" },
+      { command: "ticket status-update get", oneLiner: "read one full update" },
+    ],
+  },
+  {
+    path: ["ticket", "status-update", "list"],
+    summary: "list newest status updates as bounded outlines",
+    description:
+      "List update outlines newest-first with author kind, profile label, backend, conversation id, and a bounded body preview. Defaults to 20 and accepts at most 100; a truncated page returns an opaque cursor and exact continuation command.",
+    usage: [
+      `cctl ticket status-update list ${REF_PLACEHOLDER} [--limit <n>] [--cursor <opaque>]`,
+    ],
+    flags: [
+      {
+        name: "limit",
+        kind: "value",
+        valuePlaceholder: "<1-100>",
+        description: "page size (default: 20; maximum: 100)",
+      },
+      {
+        name: "cursor",
+        kind: "value",
+        valuePlaceholder: "<opaque>",
+        description: "opaque continuation cursor returned by the previous page",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl ticket status-update list command-center#12 --limit 20",
+        explanation:
+          "pass the returned --cursor unchanged to continue without gaps or duplicates",
+      },
+    ],
+    related: [
+      { command: "ticket status-update get", oneLiner: "read one full body" },
+      {
+        command: "ticket status-update add",
+        oneLiner: "append another update",
+      },
+      { command: "ticket get", oneLiner: "read the five newest outlines" },
+    ],
+  },
+  {
+    path: ["ticket", "status-update", "get"],
+    summary: "read one full status update and provenance snapshot",
+    description:
+      "Read one update by the stable id shown in an outline. Returns the complete Markdown body and, for an agent author, the durable redacted conversation/profile provenance; oversized output becomes an artifact under .cc/temp/.",
+    usage: [`cctl ticket status-update get ${REF_PLACEHOLDER} <updateId>`],
+    flags: [],
+    examples: [
+      {
+        invocation:
+          "cctl ticket status-update get command-center#12 update-3f9a",
+        explanation:
+          "use the update id exactly as a list or ticket outline printed it",
+      },
+    ],
+    related: [
+      { command: "ticket status-update list", oneLiner: "find update ids" },
+      { command: "ticket status-update add", oneLiner: "append a new post" },
+    ],
+  },
+  {
     path: ["ticket", "attach"],
     summary: "attach described context to a ticket",
     description:
-      "Attach one of five context kinds to a ticket. Every attachment carries a required --description explaining what it contains and why it matters — the descriptions ARE the ticket's attachment index.",
+      "Attach one of four canonical context kinds (file, conversation, session, note). The retained ticket leaf is a compatibility-only alias for a related relationship and does not create an attachment. Every canonical attachment carries a required --description explaining what it contains and why it matters — the descriptions ARE the ticket's attachment index.",
     usage: [
       `cctl ticket attach <file|conversation|session|ticket|note> ${REF_PLACEHOLDER} … --description "<what and why>"`,
     ],
@@ -409,9 +719,9 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["ticket", "attach", "ticket"],
-    summary: "attach a related ticket",
+    summary: "compatibility alias for adding a related relationship",
     description:
-      "Link another ticket as context. The reference resolves to the related ticket's current detail when read; a deleted related ticket yields a typed unavailable result.",
+      "Compatibility alias for 'ticket relation add --role related'. It calls the relationship route and never writes an attachment; use the relation command for new automation.",
     usage: [
       `cctl ticket attach ticket ${REF_PLACEHOLDER} <relatedNumber | project#number> --description "<how it relates>"`,
     ],
@@ -425,7 +735,11 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     ],
     related: [
       { command: "ticket get", oneLiner: "follow the related ticket" },
-      { command: "ticket attachment get", oneLiner: "resolve the link" },
+      {
+        command: "ticket relation add",
+        oneLiner: "use the canonical relationship command",
+      },
+      { command: "ticket relation get", oneLiner: "read the rationale" },
     ],
   },
   {
@@ -467,7 +781,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "attachment"],
     summary: "read, edit, refresh, and remove ticket attachments",
     description:
-      "Operate on one attachment by its id (from the index shown by 'ticket get' or 'ticket list'). Works in any ticket status, including after work has started.",
+      "Operate on one attachment by its id (from the index shown by 'ticket get' or 'ticket list'). Migrated relationship ids remain readable, editable, and removable through this compatibility adapter; refresh stays conversation-only. Works in any ticket status, including after work has started.",
     usage: [
       `cctl ticket attachment <get|update|refresh|remove> ${REF_PLACEHOLDER} <attachmentId>`,
     ],

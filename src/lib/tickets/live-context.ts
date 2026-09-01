@@ -8,6 +8,14 @@ import {
   renderAttachmentIndexLines,
 } from "./attachment-index";
 import { ticketFollowCommand } from "./attachment-commands";
+import {
+  buildRelationshipIndex,
+  renderRelationshipIndexLines,
+} from "./relationship-index";
+import {
+  buildStatusUpdateIndex,
+  renderStatusUpdateIndexLines,
+} from "./status-update-index";
 import type { TicketStatus } from "./schemas";
 import { formatTicketIdentifier } from "./references";
 
@@ -42,10 +50,8 @@ export interface LiveTicketContextProvider {
 }
 
 /**
- * Renders the complete typed attachment index (entries never omitted;
- * bounded per-entry descriptions with an explicit ellipsis) plus exact
- * retrieval commands. Attachment bodies are never inlined — agents fetch
- * content through the listed commands.
+ * Renders bounded collaboration indexes plus exact retrieval commands.
+ * Attachment bodies and full relationship/update Markdown are never inlined.
  */
 export function renderActiveTicketBlock(ticket: LinkedTicketContext): string {
   const identifier = formatTicketIdentifier(
@@ -61,12 +67,28 @@ export function renderActiveTicketBlock(ticket: LinkedTicketContext): string {
     entries.length === 0
       ? ["attachments: none"]
       : ["attachments:", ...renderAttachmentIndexLines(entries)];
+  const relationshipLines = renderRelationshipIndexLines(
+    buildRelationshipIndex({
+      identifier,
+      relationships: ticket.relationships,
+    }),
+  );
+  const statusUpdateLines = renderStatusUpdateIndexLines(
+    buildStatusUpdateIndex({
+      identifier,
+      statusUpdates: ticket.statusUpdates,
+    }),
+  );
   return [
     "<active-ticket>",
     `identifier: ${identifier}`,
     `title: ${ticket.title}`,
     `status: ${TICKET_STATUS_LABELS[ticket.status]}`,
     ...attachmentLines,
+    "relationship index:",
+    ...relationshipLines,
+    "status update index:",
+    ...statusUpdateLines,
     `refresh: ${ticketFollowCommand(identifier)}`,
     "</active-ticket>",
   ].join("\n");
@@ -94,6 +116,8 @@ export function createLiveTicketContextProvider(
           ticket.number,
         ),
         entryCount: ticket.attachments.length,
+        relationshipCount: ticket.relationships.length,
+        statusUpdateCount: ticket.statusUpdates.total,
         renderedChars: block.length,
         durationMs: performance.now() - startedAt,
       });

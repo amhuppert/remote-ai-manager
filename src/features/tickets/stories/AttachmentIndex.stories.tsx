@@ -3,9 +3,7 @@ import { userEvent, within } from "storybook/test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { GenericToastSource } from "@/components/ToastHost";
-import { ticketFollowCommand } from "@/lib/tickets/attachment-commands";
 import { useTicketDetailQuery } from "@/lib/tickets/queries";
-import { formatTicketIdentifier } from "@/lib/tickets/references";
 import type {
   TicketAttachment,
   TicketAttachmentPayload,
@@ -14,7 +12,7 @@ import type {
 import AttachmentIndex from "@/features/tickets/components/AttachmentIndex";
 
 // ---------------------------------------------------------------------------
-// Sample data — one attachment per kind, on a CLOSED ticket so every
+// Sample data — one canonical attachment per kind, on a CLOSED ticket so every
 // interaction story doubles as proof that attachment CRUD ignores status.
 // ---------------------------------------------------------------------------
 
@@ -73,15 +71,6 @@ const ALL_KINDS: TicketAttachment[] = [
     },
   ),
   makeAttachment(
-    "att-rel",
-    "Parent epic tracking the dossier performance work.",
-    {
-      kind: "related_ticket",
-      ticketId: "t-cc-7",
-      identifierSnapshot: "command-center#7",
-    },
-  ),
-  makeAttachment(
     "att-note",
     "Constraints agreed with maintainers before starting.",
     {
@@ -105,24 +94,11 @@ function makeDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     updatedAt: minutesAgo(6),
     attachments: ALL_KINDS,
     sessions: [],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
     ...overrides,
   };
 }
-
-const RELATED_DETAIL: TicketDetail = {
-  id: "t-cc-7",
-  projectPath: "/home/alex/github/command-center",
-  projectName: "command-center",
-  number: 7,
-  title: "Dossier performance epic",
-  description: "",
-  workType: "performance",
-  status: "in_progress",
-  createdAt: daysAgo(20),
-  updatedAt: daysAgo(4),
-  attachments: [],
-  sessions: [],
-};
 
 // ---------------------------------------------------------------------------
 // Fetch harness — the index renders from the query cache over a mocked fetch,
@@ -165,14 +141,6 @@ function resolveBody(attachment: TicketAttachment): unknown {
         finished: true,
         conversationIds: ["conv-40", "conv-41"],
         readCommands: [`cctl session get ${payload.sessionName}`],
-      };
-    case "related_ticket":
-      return {
-        kind: "related_ticket",
-        attachment,
-        available: true,
-        ticket: RELATED_DETAIL,
-        followCommand: ticketFollowCommand(payload.identifierSnapshot),
       };
     case "note":
       return { kind: "note", attachment, markdown: payload.markdown };
@@ -331,15 +299,6 @@ function jsonPayloadFromInput(
         kind: "session",
         projectPath: `/home/alex/github/${String(input.projectName)}`,
         sessionName: String(input.sessionName),
-      };
-    case "related_ticket":
-      return {
-        kind: "related_ticket",
-        ticketId: `t-${String(input.projectName)}-${String(input.number)}`,
-        identifierSnapshot: formatTicketIdentifier(
-          String(input.projectName),
-          Number(input.number),
-        ),
       };
     default:
       return { kind: "note", markdown: String(input.markdown) };

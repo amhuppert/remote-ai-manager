@@ -1,7 +1,13 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  infiniteQueryOptions,
+  queryOptions,
+  useInfiniteQuery,
+  useQuery,
+} from "@tanstack/react-query";
 import { z } from "zod";
 
 import { apiFetch } from "@/lib/api/fetcher";
+import { TICKET_PAGE_DEFAULT_LIMIT } from "./disclosure-limits";
 import {
   normalizeTicketListFilters,
   ticketListSearchParams,
@@ -15,6 +21,9 @@ import {
   ticketDetailSchema,
   ticketLinkSummarySchema,
   ticketListItemSchema,
+  ticketRelationshipPageSchema,
+  ticketStatusUpdatePageSchema,
+  type TicketRelationshipRole,
 } from "./schemas";
 
 const ticketListResponseSchema = z.array(ticketListItemSchema);
@@ -31,6 +40,27 @@ export function ticketListUrl(filters: TicketListFilters): string {
     return `/api/projects/${encodeURIComponent(filters.projectName)}/tickets?${params.toString()}`;
   }
   return `/api/tickets?${params.toString()}`;
+}
+
+function ticketCollectionPageUrl(
+  projectName: string,
+  number: number,
+  collection: "relationships" | "status-updates",
+  options: {
+    cursor: string | null;
+    role?: TicketRelationshipRole | null;
+  },
+): string {
+  const params = new URLSearchParams({
+    limit: String(TICKET_PAGE_DEFAULT_LIMIT),
+  });
+  if (options.role !== undefined && options.role !== null) {
+    params.set("role", options.role);
+  }
+  if (options.cursor !== null) {
+    params.set("cursor", options.cursor);
+  }
+  return `/api/projects/${encodeURIComponent(projectName)}/tickets/${number}/${collection}?${params.toString()}`;
 }
 
 export const ticketQueries = {
@@ -92,6 +122,45 @@ export const ticketQueries = {
         ),
       refetchOnReconnect: false,
     }),
+  relationships: (
+    projectName: string,
+    number: number,
+    role: TicketRelationshipRole | null = null,
+  ) =>
+    infiniteQueryOptions({
+      queryKey: ticketKeys.relationships(projectName, number, role),
+      initialPageParam: null as string | null,
+      queryFn: async ({ pageParam, signal, client }) => {
+        await waitForTicketMutations(client, { projectName, number }, signal);
+        return apiFetch(
+          ticketCollectionPageUrl(projectName, number, "relationships", {
+            cursor: pageParam,
+            role,
+          }),
+          ticketRelationshipPageSchema,
+          { signal },
+        );
+      },
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      refetchOnReconnect: false,
+    }),
+  statusUpdates: (projectName: string, number: number) =>
+    infiniteQueryOptions({
+      queryKey: ticketKeys.statusUpdates(projectName, number),
+      initialPageParam: null as string | null,
+      queryFn: async ({ pageParam, signal, client }) => {
+        await waitForTicketMutations(client, { projectName, number }, signal);
+        return apiFetch(
+          ticketCollectionPageUrl(projectName, number, "status-updates", {
+            cursor: pageParam,
+          }),
+          ticketStatusUpdatePageSchema,
+          { signal },
+        );
+      },
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      refetchOnReconnect: false,
+    }),
 };
 
 export function useTicketListQuery(input: TicketListFilterInput = {}) {
@@ -100,6 +169,23 @@ export function useTicketListQuery(input: TicketListFilterInput = {}) {
 
 export function useTicketDetailQuery(projectName: string, number: number) {
   return useQuery(ticketQueries.detail(projectName, number));
+}
+
+export function useTicketRelationshipsQuery(
+  projectName: string,
+  number: number,
+  role: TicketRelationshipRole | null = null,
+) {
+  return useInfiniteQuery(
+    ticketQueries.relationships(projectName, number, role),
+  );
+}
+
+export function useTicketStatusUpdatesQuery(
+  projectName: string,
+  number: number,
+) {
+  return useInfiniteQuery(ticketQueries.statusUpdates(projectName, number));
 }
 
 export function useTicketSessionLinksQuery(projectName: string) {

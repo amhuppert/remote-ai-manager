@@ -262,7 +262,7 @@ describe("createTicketMaterializer", () => {
     },
   );
 
-  it("skips note, session, and related-ticket attachments without writes or registrations", async () => {
+  it("skips note and session attachments without writes or registrations", async () => {
     const attachments: TicketAttachment[] = [
       baseAttachment(NOTE_ATTACHMENT_ID, "a note", {
         kind: "note",
@@ -272,11 +272,6 @@ describe("createTicketMaterializer", () => {
         kind: "session",
         projectPath: PROJECT_PATH,
         sessionName: "other-session",
-      }),
-      baseAttachment("77777777-7777-4777-8777-777777777777", "a related", {
-        kind: "related_ticket",
-        ticketId: "88888888-8888-4888-8888-888888888888",
-        identifierSnapshot: "demo#3",
       }),
     ];
 

@@ -71,6 +71,8 @@ const CHANGES: readonly TicketChangedEvent["change"][] = [
   "deleted",
   "attachments",
   "session",
+  "relationships",
+  "status_updates",
 ];
 
 function genItem(
@@ -493,6 +495,72 @@ describe("applyTicketChangedEvent", () => {
         ?.find((r) => r.id === "alpha-1")?.activeSessionName,
     ).toBe("ticket-session");
   });
+
+  it.each(["relationships", "status_updates"] as const)(
+    "invalidates nested status pages once for a duplicate %s revision",
+    (change) => {
+      const { client, t1 } = seededClient();
+      const statusKey = ticketKeys.statusUpdates("alpha", 1);
+      client.setQueryData(statusKey, {
+        pages: [{ items: [], total: 0, nextCursor: null }],
+        pageParams: [null],
+      });
+      const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+      const event: TicketChangedEvent = {
+        type: "ticket-changed",
+        change,
+        projectName: "alpha",
+        ticketNumber: 1,
+        listItem: {
+          ...t1,
+          updatedAt: "2026-09-01T00:00:00.000Z",
+        },
+        attachmentIndexChanged: false,
+      };
+
+      applyTicketChangedEvent(client, event);
+
+      expect(client.getQueryState(statusKey)?.isInvalidated).toBe(true);
+      expect(invalidateSpy).toHaveBeenCalledTimes(1);
+
+      applyTicketChangedEvent(client, event);
+
+      expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["relationships", "status_updates"] as const)(
+    "cannot resurrect a deleted ticket with a later-looking %s frame",
+    (change) => {
+      const { client, t1 } = seededClient();
+      const deletion: TicketChangedEvent = {
+        type: "ticket-changed",
+        change: "deleted",
+        projectName: "alpha",
+        ticketNumber: 1,
+        listItem: null,
+        attachmentIndexChanged: false,
+      };
+      applyTicketChangedEvent(client, deletion);
+      const resetSpy = vi.spyOn(client, "resetQueries");
+
+      applyTicketChangedEvent(client, {
+        ...deletion,
+        change,
+        listItem: {
+          ...t1,
+          updatedAt: "2099-01-01T00:00:00.000Z",
+        },
+      });
+
+      expect(
+        client
+          .getQueryData<TicketListItem[]>(allKey)
+          ?.some((row) => row.id === t1.id),
+      ).toBe(false);
+      expect(resetSpy).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("applyTicketChangedEvent — pending optimistic overlays", () => {

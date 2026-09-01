@@ -294,6 +294,8 @@ describe("ticketListItemFromDetail", () => {
           endReason: null,
         },
       ],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
 
     expect(ticketListItemFromDetail(detail)).toEqual({

@@ -218,6 +218,7 @@ const BOOLEAN_FLAG_ARGS = new Set(
 export function parseArgv(
   argv: string[],
   booleanArgs: Set<string> = BOOLEAN_FLAG_ARGS,
+  emptyValueArgs: Set<string> = new Set(),
 ): ParsedArgv {
   const flags: GlobalFlags = { json: false };
   const values: Record<string, string> = {};
@@ -272,12 +273,16 @@ export function parseArgv(
     if (eq === -1) {
       value = argv[i + 1];
       i++;
-      if (value === undefined || value === "" || value.startsWith("--")) {
+      if (
+        value === undefined ||
+        (value === "" && !emptyValueArgs.has(`--${name}`)) ||
+        value.startsWith("--")
+      ) {
         return { kind: "error", message: `flag --${name} requires a value` };
       }
     } else {
       value = arg.slice(eq + 1);
-      if (value === "") {
+      if (value === "" && !emptyValueArgs.has(`--${name}`)) {
         return { kind: "error", message: `flag --${name} requires a value` };
       }
     }
@@ -997,11 +1002,24 @@ function parseEnvelopeStdout(stdout: string): Record<string, unknown> | null {
 
 /**
  * Prose payloads are agent-authored scratch — a task summary, a brief, a note.
- * 256 KiB is orders of magnitude past any of them and well short of the binary
- * or transcript a mis-pointed path would drag in, so the cap catches the wrong
- * file without ever refusing a real one.
+ * 256 KiB is orders of magnitude past any of them and well short of a bulk
+ * payload accidentally supplied as prose, so the cap catches the wrong input
+ * without ever refusing a real one.
  */
-const PROSE_FILE_MAX_BYTES = 256 * 1024;
+const PROSE_ARG_MAX_BYTES = 256 * 1024;
+
+function proseSizeFailure(
+  value: string,
+  source: string,
+  json: boolean,
+): CliResult | null {
+  const bytes = Buffer.byteLength(value, "utf8");
+  if (bytes <= PROSE_ARG_MAX_BYTES) return null;
+  return usageFailure(
+    `${source} is ${bytes} bytes — the limit is ${PROSE_ARG_MAX_BYTES}`,
+    json,
+  );
+}
 
 /**
  * The one value behind a `fileSource` flag: either the inline `--<name>` or the
@@ -1033,7 +1051,12 @@ export async function resolveProseArg(
       ),
     };
   }
-  if (filePath === undefined) return { ok: true, value: inline };
+  if (filePath === undefined) {
+    if (inline === undefined) return { ok: true, value: undefined };
+    const sizeFailure = proseSizeFailure(inline, `--${name}`, json);
+    if (sizeFailure !== null) return { ok: false, result: sizeFailure };
+    return { ok: true, value: inline };
+  }
 
   const raw = await host.readTextFile(filePath);
   if (raw === null) {
@@ -1042,16 +1065,12 @@ export async function resolveProseArg(
       result: usageFailure(`cannot read --${fileFlag} "${filePath}"`, json),
     };
   }
-  const bytes = Buffer.byteLength(raw, "utf8");
-  if (bytes > PROSE_FILE_MAX_BYTES) {
-    return {
-      ok: false,
-      result: usageFailure(
-        `--${fileFlag} "${filePath}" is ${bytes} bytes — the limit is ${PROSE_FILE_MAX_BYTES}`,
-        json,
-      ),
-    };
-  }
+  const sizeFailure = proseSizeFailure(
+    raw,
+    `--${fileFlag} "${filePath}"`,
+    json,
+  );
+  if (sizeFailure !== null) return { ok: false, result: sizeFailure };
   // Surrounding whitespace is an artifact of how the file was written, not part
   // of the prose; an all-whitespace file is a mis-authored payload, not content.
   const text = raw.trim();

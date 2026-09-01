@@ -24,6 +24,23 @@ function indexNames(db: Db, table: string): string[] {
   return idx.map((i) => i.name);
 }
 
+function indexColumns(
+  db: Db,
+  index: string,
+): Array<{ name: string; desc: number }> {
+  const rows = db.pragma(`index_xinfo(${index})`) as Array<{
+    name: string | null;
+    desc: number;
+    key: number;
+  }>;
+  return rows
+    .filter(
+      (row): row is { name: string; desc: number; key: 1 } =>
+        row.key === 1 && row.name !== null,
+    )
+    .map(({ name, desc }) => ({ name, desc }));
+}
+
 function insertProject(db: Db, rootPath: string): void {
   db.prepare(`INSERT INTO projects (root_path) VALUES (?)`).run(rootPath);
 }
@@ -75,6 +92,48 @@ function insertLink(
   ).run(row);
 }
 
+function insertRelationship(
+  db: Db,
+  overrides: Partial<Record<string, unknown>> = {},
+): void {
+  const row = {
+    id: "r-1",
+    relation_type: "related",
+    source_ticket_id: "t-1",
+    target_ticket_id: "t-2",
+    description: "",
+    created_at: "2026-07-10T00:00:00.000Z",
+    updated_at: "2026-07-10T00:00:00.000Z",
+    ...overrides,
+  };
+  db.prepare(
+    `INSERT INTO ticket_relationships
+       (id, relation_type, source_ticket_id, target_ticket_id, description, created_at, updated_at)
+     VALUES
+       (@id, @relation_type, @source_ticket_id, @target_ticket_id, @description, @created_at, @updated_at)`,
+  ).run(row);
+}
+
+function insertStatusUpdate(
+  db: Db,
+  overrides: Partial<Record<string, unknown>> = {},
+): void {
+  const row = {
+    id: "u-1",
+    ticket_id: "t-1",
+    body_markdown: "Work continues.",
+    author_json: JSON.stringify({ kind: "user" }),
+    created_at: "2026-07-10T00:00:00.000Z",
+    ...overrides,
+  };
+  db.prepare(
+    `INSERT INTO ticket_status_updates
+       (id, ticket_id, body_markdown, author_json, created_at)
+     VALUES
+       (@id, @ticket_id, @body_markdown, @author_json, @created_at)`,
+  ).run(row);
+}
+
 describe("ticket tables DDL", () => {
   let db: Db | undefined;
   let tempDir: string | undefined;
@@ -88,13 +147,16 @@ describe("ticket tables DDL", () => {
     }
   });
 
-  it("creates all four ticket tables on a fresh in-memory DB", () => {
+  it("creates every ticket table on a fresh in-memory DB", () => {
     db = _createTestDb({ inMemory: true });
     const tables = tableNames(db);
     expect(tables).toContain("ticket_counters");
     expect(tables).toContain("tickets");
     expect(tables).toContain("ticket_attachments");
     expect(tables).toContain("ticket_sessions");
+    expect(tables).toContain("ticket_relationships");
+    expect(tables).toContain("ticket_relationship_legacy_aliases");
+    expect(tables).toContain("ticket_status_updates");
   });
 
   it("creates the documented columns", () => {
@@ -133,6 +195,27 @@ describe("ticket tables DDL", () => {
       "ended_at",
       "end_reason",
     ]);
+    expect(columnNames(db, "ticket_relationships")).toEqual([
+      "id",
+      "relation_type",
+      "source_ticket_id",
+      "target_ticket_id",
+      "description",
+      "created_at",
+      "updated_at",
+    ]);
+    expect(columnNames(db, "ticket_status_updates")).toEqual([
+      "id",
+      "ticket_id",
+      "body_markdown",
+      "author_json",
+      "created_at",
+    ]);
+    expect(columnNames(db, "ticket_relationship_legacy_aliases")).toEqual([
+      "legacy_attachment_id",
+      "relationship_id",
+      "anchor_ticket_id",
+    ]);
   });
 
   it("creates the list-query and partial active-unique indexes", () => {
@@ -151,6 +234,40 @@ describe("ticket tables DDL", () => {
     expect(linkIdx).toContain("uq_ticket_sessions_active_session");
     expect(linkIdx).toContain("idx_ticket_sessions_ticket_linked");
     expect(linkIdx).toContain("idx_ticket_sessions_project_session");
+
+    expect(indexColumns(db, "idx_ticket_relationships_source_updated")).toEqual(
+      [
+        { name: "source_ticket_id", desc: 0 },
+        { name: "updated_at", desc: 1 },
+        { name: "id", desc: 1 },
+      ],
+    );
+    expect(indexColumns(db, "idx_ticket_relationships_target_updated")).toEqual(
+      [
+        { name: "target_ticket_id", desc: 0 },
+        { name: "updated_at", desc: 1 },
+        { name: "id", desc: 1 },
+      ],
+    );
+    expect(indexNames(db, "ticket_relationships")).toContain(
+      "uq_ticket_relationships_parent_child_target",
+    );
+    expect(
+      indexColumns(db, "idx_ticket_status_updates_ticket_created"),
+    ).toEqual([
+      { name: "ticket_id", desc: 0 },
+      { name: "created_at", desc: 1 },
+      { name: "id", desc: 1 },
+    ]);
+    expect(
+      indexColumns(
+        db,
+        "idx_ticket_relationship_legacy_aliases_anchor_relationship",
+      ),
+    ).toEqual([
+      { name: "anchor_ticket_id", desc: 0 },
+      { name: "relationship_id", desc: 0 },
+    ]);
   });
 
   describe("CHECK constraints", () => {
@@ -195,6 +312,44 @@ describe("ticket tables DDL", () => {
         }),
       ).toThrow(/CHECK/);
     });
+
+    it("enforces relationship type, endpoint, and symmetric-order invariants", () => {
+      db = _createTestDb({ inMemory: true });
+      insertProject(db, "/repo");
+      insertTicket(db);
+      insertTicket(db, { id: "t-2", ticket_number: 2 });
+
+      expect(() =>
+        insertRelationship(db!, { relation_type: "mentions" }),
+      ).toThrow(/CHECK/);
+      expect(() =>
+        insertRelationship(db!, {
+          source_ticket_id: "t-1",
+          target_ticket_id: "t-1",
+        }),
+      ).toThrow(/CHECK/);
+      expect(() =>
+        insertRelationship(db!, {
+          source_ticket_id: "t-2",
+          target_ticket_id: "t-1",
+        }),
+      ).toThrow(/CHECK/);
+
+      insertRelationship(db!, { relation_type: "depends_on" });
+    });
+
+    it("rejects blank status updates and invalid author JSON", () => {
+      db = _createTestDb({ inMemory: true });
+      insertProject(db, "/repo");
+      insertTicket(db);
+
+      expect(() => insertStatusUpdate(db!, { body_markdown: "   " })).toThrow(
+        /CHECK/,
+      );
+      expect(() =>
+        insertStatusUpdate(db!, { author_json: "not-json" }),
+      ).toThrow(/CHECK/);
+    });
   });
 
   describe("unique constraints", () => {
@@ -217,6 +372,34 @@ describe("ticket tables DDL", () => {
         n: number;
       };
       expect(count.n).toBe(2);
+    });
+
+    it("enforces logical relationship uniqueness per type and direction", () => {
+      db = _createTestDb({ inMemory: true });
+      insertProject(db, "/repo");
+      insertTicket(db);
+      insertTicket(db, { id: "t-2", ticket_number: 2 });
+      insertRelationship(db);
+
+      expect(() => insertRelationship(db!, { id: "r-2" })).toThrow(/UNIQUE/);
+      insertRelationship(db, { id: "r-3", relation_type: "depends_on" });
+    });
+
+    it("allows only one direct parent per child", () => {
+      db = _createTestDb({ inMemory: true });
+      insertProject(db, "/repo");
+      insertTicket(db);
+      insertTicket(db, { id: "t-2", ticket_number: 2 });
+      insertTicket(db, { id: "t-3", ticket_number: 3 });
+      insertRelationship(db, { relation_type: "parent_child" });
+
+      expect(() =>
+        insertRelationship(db!, {
+          id: "r-2",
+          relation_type: "parent_child",
+          source_ticket_id: "t-3",
+        }),
+      ).toThrow(/UNIQUE/);
     });
   });
 
@@ -270,15 +453,23 @@ describe("ticket tables DDL", () => {
   });
 
   describe("foreign keys", () => {
-    it("cascades a project delete to tickets, attachments, and links", () => {
+    it("cascades a project delete to every ticket-owned row", () => {
       db = _createTestDb({ inMemory: true });
       insertProject(db, "/repo");
       insertTicket(db);
+      insertTicket(db, { id: "t-2", ticket_number: 2 });
       db.prepare(
         `INSERT INTO ticket_attachments (id, ticket_id, description, payload_json, created_at, updated_at)
          VALUES ('a-1', 't-1', 'note', '{"kind":"note","markdown":"x"}', '2026-07-10', '2026-07-10')`,
       ).run();
       insertLink(db);
+      insertRelationship(db);
+      db.prepare(
+        `INSERT INTO ticket_relationship_legacy_aliases
+           (legacy_attachment_id, relationship_id, anchor_ticket_id)
+         VALUES ('legacy-a-1', 'r-1', 't-1')`,
+      ).run();
+      insertStatusUpdate(db);
 
       db.prepare(`DELETE FROM projects WHERE root_path = '/repo'`).run();
 
@@ -286,6 +477,9 @@ describe("ticket tables DDL", () => {
         "tickets",
         "ticket_attachments",
         "ticket_sessions",
+        "ticket_relationships",
+        "ticket_relationship_legacy_aliases",
+        "ticket_status_updates",
       ]) {
         const count = db
           .prepare(`SELECT COUNT(*) AS n FROM ${table}`)
@@ -327,6 +521,9 @@ describe("ticket tables DDL", () => {
     expect(tables).toContain("tickets");
     expect(tables).toContain("ticket_attachments");
     expect(tables).toContain("ticket_sessions");
+    expect(tables).toContain("ticket_relationships");
+    expect(tables).toContain("ticket_relationship_legacy_aliases");
+    expect(tables).toContain("ticket_status_updates");
   });
 
   it("adds a nullable incarnation column without guessing for legacy links", () => {

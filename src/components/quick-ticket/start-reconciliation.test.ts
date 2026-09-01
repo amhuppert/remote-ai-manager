@@ -22,6 +22,8 @@ const queuedOutput = {
     updatedAt: "2026-07-19T12:00:01.000Z",
     attachments: [],
     sessions: [],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
   },
   sessionName: "ticket-capture-the-bug",
   conversationId: "conversation-12",

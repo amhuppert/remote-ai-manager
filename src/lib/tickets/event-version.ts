@@ -132,6 +132,11 @@ export function isStaleTicketChangedEvent(
   event: TicketChangedEvent,
   options: { includeCachedVersion?: boolean } = {},
 ): boolean {
+  const remembered = rememberedVersion(
+    queryClient,
+    event.projectName,
+    event.ticketNumber,
+  );
   const current = currentVersion(
     queryClient,
     event.projectName,
@@ -141,6 +146,13 @@ export function isStaleTicketChangedEvent(
   if (event.change === "deleted") return current.deleted;
   if (current.deleted) return true;
   if (event.listItem === null || current.updatedAt === null) return false;
+  if (
+    remembered?.latestEvent &&
+    remembered.updatedAt !== null &&
+    event.listItem.updatedAt <= remembered.updatedAt
+  ) {
+    return true;
+  }
   return event.listItem.updatedAt < current.updatedAt;
 }
 

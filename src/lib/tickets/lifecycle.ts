@@ -32,6 +32,7 @@ interface TicketLifecycleRepo {
     projectPath: string;
     sort: "updated";
   }): Promise<TicketListItem[]>;
+  listExternalRelationshipNeighborIds(projectPath: string): Promise<string[]>;
 }
 
 export interface ReconcileTicketSessionLifecycleInput {
@@ -43,6 +44,7 @@ export interface ReconcileTicketSessionLifecycleInput {
 export interface TicketProjectDeletionSnapshot {
   projectName: string;
   ticketNumbers: number[];
+  externalNeighborTicketIds: string[];
 }
 
 export interface TicketLifecycleObserverDeps {
@@ -124,13 +126,18 @@ export function createTicketLifecycleObserver(
       projectPath: string,
     ): Promise<TicketProjectDeletionSnapshot> {
       const items = await deps.repo.list({ projectPath, sort: "updated" });
+      const externalNeighborTicketIds =
+        await deps.repo.listExternalRelationshipNeighborIds(projectPath);
       return {
         projectName: items[0]?.projectName ?? path.basename(projectPath),
         ticketNumbers: items.map((item) => item.number),
+        externalNeighborTicketIds,
       };
     },
 
-    publishProjectDeletion(snapshot: TicketProjectDeletionSnapshot): void {
+    async publishProjectDeletion(
+      snapshot: TicketProjectDeletionSnapshot,
+    ): Promise<void> {
       for (const ticketNumber of snapshot.ticketNumbers) {
         publishChange(deps, {
           change: "deleted",
@@ -139,9 +146,27 @@ export function createTicketLifecycleObserver(
           listItem: null,
         });
       }
+      let survivorCount = 0;
+      for (const ticketId of snapshot.externalNeighborTicketIds) {
+        const detail = await deps.repo.findById(ticketId);
+        if (detail === null) continue;
+        const listItem = await deps.repo.findListItem(
+          detail.projectPath,
+          detail.number,
+        );
+        if (listItem === null) continue;
+        publishChange(deps, {
+          change: "relationships",
+          projectName: detail.projectName,
+          ticketNumber: detail.number,
+          listItem,
+        });
+        survivorCount += 1;
+      }
       logger.info("tickets.lifecycle.project_deleted", {
         projectName: snapshot.projectName,
         ticketCount: snapshot.ticketNumbers.length,
+        survivorCount,
       });
     },
   };
@@ -177,5 +202,5 @@ export async function publishTicketProjectDeletion(
   snapshot: TicketProjectDeletionSnapshot,
 ): Promise<void> {
   const observer = await createProductionObserver();
-  observer.publishProjectDeletion(snapshot);
+  await observer.publishProjectDeletion(snapshot);
 }

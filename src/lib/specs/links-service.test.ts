@@ -129,6 +129,8 @@ beforeEach(() => {
       },
     ],
     sessions: [],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
   };
   tickets.set(1, ticketOne);
 
@@ -173,6 +175,8 @@ beforeEach(() => {
           updatedAt: now(),
           attachments: [],
           sessions: [],
+          relationships: [],
+          statusUpdates: { total: 0, recent: [] },
         };
         tickets.set(number, ticket);
         return { ok: true, value: ticket };

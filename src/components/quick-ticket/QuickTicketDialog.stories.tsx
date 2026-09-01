@@ -140,6 +140,8 @@ function installStoryFetch(behavior: CreateBehavior): () => void {
           updatedAt: createdAt,
           attachments: [],
           sessions: [],
+          relationships: [],
+          statusUpdates: { total: 0, recent: [] },
         },
         warnings: [],
       });

@@ -12,6 +12,7 @@ import {
 } from "@/lib/tickets/attachment-commands";
 import { parseTicketIdentifier } from "@/lib/tickets/references";
 import {
+  deletedTicketAttachmentSchema,
   effectiveSnapshotStatus,
   startTicketOutputSchema,
   createTicketResponseSchema,
@@ -20,8 +21,16 @@ import {
   ticketListItemSchema,
   ticketListSortSchema,
   ticketLinkSummarySchema,
+  ticketRelationshipDeleteResponseSchema,
+  ticketRelationshipMutationResponseSchema,
+  ticketRelationshipPageSchema,
+  ticketRelationshipRoleSchema,
+  ticketRelationshipViewSchema,
   ticketStartModeSchema,
   ticketStatusSchema,
+  ticketStatusUpdateCreateResponseSchema,
+  ticketStatusUpdatePageSchema,
+  ticketStatusUpdateSchema,
   ticketWorkTypeSchema,
   deletedTicketSchema,
   type TicketAttachment,
@@ -29,6 +38,10 @@ import {
   type TicketLinkSummary,
   type TicketListItem,
 } from "@/lib/tickets/schemas";
+import {
+  decodeTicketKeysetCursor,
+  normalizeTicketPageLimit,
+} from "@/lib/tickets/ticket-keyset-cursor";
 import { dispatchGroup } from "../dispatch";
 import {
   STDOUT_BUDGET_BYTES,
@@ -45,34 +58,50 @@ import {
   failure,
   failureFromRequest,
   invalidResponseFailure,
+  issueDetailLines,
   render,
   readSessionEnv,
   resolveProjectContext,
   resolveProseArg,
   resolveToken,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
+  type CliRequestResult,
   type CliResult,
   type GlobalFlags,
   type TokenSource,
 } from "../shared";
+import {
+  buildRelationshipOutline,
+  buildRelationshipPageProjection,
+  buildStatusUpdateOutline,
+  buildStatusUpdatePageProjection,
+  buildTicketGetProjection,
+  emitTicketDisclosure,
+  legacyRelatedTicketAttachmentSchema,
+  legacyRemovedRelatedTicketSchema,
+  legacyResolvedRelatedTicketSchema,
+  renderRelationshipDetailText,
+  renderRelationshipPageText,
+  renderStatusUpdateDetailText,
+  renderStatusUpdatePageText,
+  renderTicketGetText,
+} from "./ticket-disclosure";
 
 /**
  * `cctl ticket` — the agent ticket command group (ticket-system design §CLI
- * Contract): CRUD (`create|list|get|update|delete`), context attachment
- * (`attach <kind>` for the five kinds), and per-attachment operations
- * (`attachment get|update|refresh|remove`). Ticket references come in two forms: a
- * bare `<number>` resolving through the ambient project scope, and the
- * cross-scope `<project>#<number>` that works from any conversation. All
- * deterministic checks (subcommand, flags, reference shape, enum values, file
- * readability) fail at exit 2 before any network round-trip; an unknown ticket
- * is a server 404 (`ticket_not_found`) and exits 1 via the shared failure
- * mapping. `get` renders the typed attachment index in full — descriptions plus
- * exact retrieval/follow commands, in both text and `--json` — and `list`
- * carries per-ticket attachment counts, adding the bounded index for the rows
- * it shows under `--attachments`, so agents can selectively retrieve content
- * without paying for an index fetch per ticket in the project.
+ * Contract): CRUD (`create|list|get|update|delete`), relationship and
+ * append-only status-update commands, four canonical context attachments plus
+ * the `attach ticket` relationship compatibility alias, and per-attachment
+ * operations (`attachment get|update|refresh|remove`). Ticket references come
+ * in two forms: a bare `<number>` resolving through the ambient project scope,
+ * and the cross-scope `<project>#<number>` that works from any conversation.
+ * Deterministic checks fail at exit 2 before a request; semantic graph and actor
+ * refusals exit 1 with their structured server fields. Scoped reads expose
+ * bounded outlines with stable drill-down handles, while their explicit get
+ * verbs return full Markdown subject to the shared stdout artifact budget.
  */
 
 const REF_USAGE = "<number> or <project>#<number>";
@@ -269,40 +298,53 @@ function attachmentPath(
   return `${attachmentsPath(projectName, number)}/${encodePathSegment(attachmentId)}`;
 }
 
+function relationshipsPath(
+  projectName: string,
+  number: number,
+  relationshipId?: string,
+): string {
+  const base = `${ticketPath(projectName, number)}/relationships`;
+  return relationshipId === undefined
+    ? base
+    : `${base}/${encodePathSegment(relationshipId)}`;
+}
+
+function statusUpdatesPath(
+  projectName: string,
+  number: number,
+  updateId?: string,
+): string {
+  const base = `${ticketPath(projectName, number)}/status-updates`;
+  return updateId === undefined
+    ? base
+    : `${base}/${encodePathSegment(updateId)}`;
+}
+
 /** `attachments:` block for text output — entries via the shared renderer. */
 function renderIndexText(entries: AttachmentIndexEntry[]): string {
   if (entries.length === 0) return "attachments: none\n";
   return `attachments:\n${renderAttachmentIndexLines(entries).join("\n")}\n`;
 }
 
-function renderDetailText(
+function sessionDetailLines(
   detail: TicketDetail,
   sessionLinks: Record<string, TicketLinkSummary> | null,
-): string {
-  const lines = [
-    `${identifierOf(detail)}  ${detail.title}`,
-    `status: ${detail.status}  type: ${detail.workType}  created: ${detail.createdAt}  updated: ${detail.updatedAt}`,
-  ];
-  if (detail.sessions.length > 0) {
-    const sessions = detail.sessions
-      .map((link) => {
-        if (link.endedAt !== null) {
-          return `${link.sessionName} (ended: ${link.endReason ?? "unknown"})`;
-        }
-        const current = sessionLinks?.[link.sessionName];
-        const active =
-          current?.ticketId === detail.id &&
-          current.linkedAt === link.linkedAt &&
-          current.active;
-        return `${link.sessionName} (${active ? "active" : "status unknown"})`;
-      })
-      .join(", ");
-    lines.push(`sessions: ${sessions}`);
-  }
-  if (detail.description !== "") {
-    lines.push("", detail.description);
-  }
-  return `${lines.join("\n")}\n`;
+): string[] {
+  if (detail.sessions.length === 0) return [];
+  const sessions = detail.sessions
+    .map((link) => {
+      if (link.endedAt !== null) {
+        return `${link.sessionName} (ended: ${link.endReason ?? "unknown"})`;
+      }
+      const current = sessionLinks?.[link.sessionName];
+      const active =
+        current?.ticketId === detail.id &&
+        current.linkedAt === link.linkedAt &&
+        current.active;
+      return `${link.sessionName} (${active ? "active" : "status unknown"})`;
+    })
+    .join(", ");
+  return [`sessions: ${sessions}`];
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +370,9 @@ export async function runTicket(
       update: (r) => runTicketUpdate(r, flags, values, env, host),
       delete: (r) => runTicketDelete(r, flags, values, env, host),
       start: (r) => runTicketStart(r, flags, values, lists, env, host),
+      relation: (r) => runTicketRelation(r, flags, values, env, host),
+      "status-update": (r) =>
+        runTicketStatusUpdate(r, flags, values, env, host),
       attach: (r) => runTicketAttach(r, flags, values, env, host),
       attachment: (r) => runTicketAttachment(r, flags, values, env, host),
     },
@@ -679,16 +724,18 @@ async function runTicketGet(
     attachments: detail.attachments,
     mode: "full",
   });
-  const humanBody = `${renderDetailText(detail, sessionLinks)}${renderIndexText(attachmentIndex)}`;
-  return {
-    exitCode: EXIT_OK,
-    stdout: render(json, humanBody, {
-      ok: true,
-      ticket: detail,
-      attachmentIndex,
-    }),
-    stderr: "",
-  };
+  const projection = buildTicketGetProjection(detail, attachmentIndex);
+  return emitTicketDisclosure({
+    host,
+    json,
+    command: "ticket get",
+    namePrefix: `ticket-${projectName}-${ref.ref.number}-get`,
+    text: renderTicketGetText(
+      projection,
+      sessionDetailLines(detail, sessionLinks),
+    ),
+    payload: projection,
+  });
 }
 
 async function runTicketUpdate(
@@ -803,6 +850,698 @@ async function runTicketDelete(
     }),
     stderr: "",
   };
+}
+
+// ---------------------------------------------------------------------------
+// ticket relation
+// ---------------------------------------------------------------------------
+
+const SEMANTIC_TICKET_ERROR_CODES = new Set([
+  "relationship_self_link",
+  "relationship_scope",
+  "relationship_conflict",
+  "relationship_cycle",
+  "status_update_actor_required",
+  "status_update_actor_not_found",
+]);
+
+function ticketRequestFailure(
+  result: Exclude<CliRequestResult, { kind: "ok" }>,
+  json: boolean,
+): CliResult {
+  if (
+    result.kind !== "error" ||
+    result.status !== 400 ||
+    result.code === undefined ||
+    !SEMANTIC_TICKET_ERROR_CODES.has(result.code)
+  ) {
+    return failureFromRequest(result, json);
+  }
+  const detailLines = issueDetailLines(result.issues ?? []);
+  return failure({
+    exitCode: EXIT_OPERATION_FAILED,
+    message: result.error,
+    ...(detailLines.length > 0 ? { detail: detailLines.join("\n") } : {}),
+    ...structuredErrorFields(result),
+    json,
+  });
+}
+
+function artifactNamePart(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/gu, "-");
+}
+
+function ticketDisclosurePrefix(
+  projectName: string,
+  number: number,
+  suffix: string,
+): string {
+  return `ticket-${artifactNamePart(projectName)}-${number}-${artifactNamePart(suffix)}`;
+}
+
+function ticketRefAndIdArguments(
+  rest: string[],
+  command: string,
+  idLabel: string,
+  json: boolean,
+): { ok: true; ref: TicketRef; id: string } | { ok: false; result: CliResult } {
+  if (rest[0] === undefined) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `ticket ${command} requires a <ticket> argument (${REF_USAGE})`,
+        json,
+      ),
+    };
+  }
+  const parsedRef = parseTicketRef(rest[0]);
+  if (!parsedRef.ok) {
+    return { ok: false, result: usageFailure(parsedRef.message, json) };
+  }
+  const id = rest[1];
+  if (id === undefined || id.trim() === "") {
+    return {
+      ok: false,
+      result: usageFailure(
+        `ticket ${command} requires an <${idLabel}> argument`,
+        json,
+      ),
+    };
+  }
+  if (rest.length > 2) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `ticket ${command} takes <ticket> and <${idLabel}> arguments only`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, ref: parsedRef.ref, id };
+}
+
+function relationRefsArguments(
+  rest: string[],
+  json: boolean,
+):
+  | { ok: true; source: TicketRef; target: TicketRef }
+  | { ok: false; result: CliResult } {
+  if (rest.length !== 2) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `ticket relation add requires <ticket> and <other> arguments (${REF_USAGE})`,
+        json,
+      ),
+    };
+  }
+  const source = parseTicketRef(rest[0]!);
+  if (!source.ok) {
+    return { ok: false, result: usageFailure(source.message, json) };
+  }
+  const target = parseTicketRef(rest[1]!);
+  if (!target.ok) {
+    return { ok: false, result: usageFailure(target.message, json) };
+  }
+  return { ok: true, source: source.ref, target: target.ref };
+}
+
+function ticketPageOptions(
+  values: Record<string, string>,
+  command: string,
+  json: boolean,
+):
+  | { ok: true; limit: number; cursor: string | undefined }
+  | { ok: false; result: CliResult } {
+  const rawLimit = values["limit"];
+  const limit = normalizeTicketPageLimit(rawLimit);
+  if (limit === null) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `${command} --limit must be an integer from 1 to 100`,
+        json,
+      ),
+    };
+  }
+  const cursor = values["cursor"];
+  if (cursor !== undefined && decodeTicketKeysetCursor(cursor) === null) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `${command} --cursor must be the opaque cursor returned by the previous page`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, limit, cursor };
+}
+
+async function runTicketRelation(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return dispatchGroup({
+    group: ["ticket", "relation"],
+    rest,
+    json: flags.json,
+    handlers: {
+      list: (r) => runTicketRelationList(r, flags, values, env, host),
+      get: (r) => runTicketRelationGet(r, flags, values, env, host),
+      add: (r) => runTicketRelationAdd(r, flags, values, env, host),
+      update: (r) => runTicketRelationUpdate(r, flags, values, env, host),
+      remove: (r) => runTicketRelationRemove(r, flags, values, env, host),
+    },
+  });
+}
+
+async function runTicketRelationList(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket relation list", json);
+  if (denied) return denied;
+  const ref = ticketRefArgument(rest, "relation list", json);
+  if (!ref.ok) return ref.result;
+  const role = enumFlagValue(
+    values,
+    "role",
+    ticketRelationshipRoleSchema,
+    json,
+  );
+  if (!role.ok) return role.result;
+  const pageOptions = ticketPageOptions(values, "ticket relation list", json);
+  if (!pageOptions.ok) return pageOptions.result;
+
+  const resolved = await resolveTicketTarget(ref.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const query = new URLSearchParams({ limit: String(pageOptions.limit) });
+  if (role.value !== undefined) query.set("role", role.value);
+  if (pageOptions.cursor !== undefined) {
+    query.set("cursor", pageOptions.cursor);
+  }
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "GET",
+    path: `${relationshipsPath(projectName, ref.ref.number)}?${query.toString()}`,
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+
+  const responseSchema = ticketRelationshipPageSchema.refine(
+    (page) => page.items.length <= pageOptions.limit,
+    {
+      path: ["items"],
+      message: `returned more than the requested limit of ${pageOptions.limit}`,
+    },
+  );
+  const parsed = responseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `relationships on ${projectName}#${ref.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${projectName}#${ref.ref.number}`;
+  const projection = buildRelationshipPageProjection(parsed.data, identifier, {
+    ...(role.value !== undefined ? { role: role.value } : {}),
+    limit: pageOptions.limit,
+    ...(pageOptions.cursor !== undefined ? { cursor: pageOptions.cursor } : {}),
+  });
+  const { items, ...metadata } = projection;
+  return emitTicketDisclosure({
+    host,
+    json,
+    command: "ticket relation list",
+    namePrefix: ticketDisclosurePrefix(
+      projectName,
+      ref.ref.number,
+      "relationships",
+    ),
+    text: renderRelationshipPageText(projection),
+    payload: { relationships: items, ...metadata },
+  });
+}
+
+async function runTicketRelationGet(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket relation get", json);
+  if (denied) return denied;
+  const args = ticketRefAndIdArguments(
+    rest,
+    "relation get",
+    "relationshipId",
+    json,
+  );
+  if (!args.ok) return args.result;
+  const resolved = await resolveTicketTarget(args.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "GET",
+    path: relationshipsPath(projectName, args.ref.number, args.id),
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketRelationshipViewSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `relationship ${args.id} on ${projectName}#${args.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${projectName}#${args.ref.number}`;
+  return emitTicketDisclosure({
+    host,
+    json,
+    command: "ticket relation get",
+    namePrefix: ticketDisclosurePrefix(
+      projectName,
+      args.ref.number,
+      `relationship-${args.id}`,
+    ),
+    text: renderRelationshipDetailText(parsed.data, identifier),
+    payload: { relationship: parsed.data },
+  });
+}
+
+async function runTicketRelationAdd(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket relation add", json);
+  if (denied) return denied;
+  const refs = relationRefsArguments(rest, json);
+  if (!refs.ok) return refs.result;
+  const role = enumFlagValue(
+    values,
+    "role",
+    ticketRelationshipRoleSchema,
+    json,
+  );
+  if (!role.ok) return role.result;
+  if (role.value === undefined) {
+    return usageFailure(
+      `ticket relation add requires --role <${ticketRelationshipRoleSchema.options.join("|")}>`,
+      json,
+    );
+  }
+  const description = await resolveProseArg(values, host, "description", json);
+  if (!description.ok) return description.result;
+
+  const source = await resolveTicketTarget(refs.source, flags, env, host);
+  if (!source.ok) return source.result;
+  const target = await resolveTicketTarget(refs.target, flags, env, host);
+  if (!target.ok) return target.result;
+  const result = await cliRequest(host, {
+    server: source.target.server,
+    token: source.target.token,
+    tokenSource: source.target.tokenSource,
+    method: "POST",
+    path: relationshipsPath(source.target.projectName, refs.source.number),
+    body: {
+      target: {
+        projectName: target.target.projectName,
+        number: refs.target.number,
+      },
+      role: role.value,
+      ...(description.value !== undefined
+        ? { description: description.value }
+        : {}),
+    },
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketRelationshipMutationResponseSchema.safeParse(
+    result.body,
+  );
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `ticket relation add on ${source.target.projectName}#${refs.source.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${source.target.projectName}#${refs.source.number}`;
+  const relationship = buildRelationshipOutline(
+    parsed.data.relationship,
+    identifier,
+  );
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `added relationship ${relationship.id} on ${identifier}\nget: ${relationship.getCommand}\n`,
+      { ok: true, relationship },
+    ),
+    stderr: "",
+  };
+}
+
+async function runTicketRelationUpdate(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket relation update", json);
+  if (denied) return denied;
+  const args = ticketRefAndIdArguments(
+    rest,
+    "relation update",
+    "relationshipId",
+    json,
+  );
+  if (!args.ok) return args.result;
+  const description = await resolveProseArg(values, host, "description", json);
+  if (!description.ok) return description.result;
+  if (description.value === undefined) {
+    return usageFailure(
+      'ticket relation update requires --description "<markdown>" or --description-file <path>',
+      json,
+    );
+  }
+  const resolved = await resolveTicketTarget(args.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "PATCH",
+    path: relationshipsPath(projectName, args.ref.number, args.id),
+    body: { description: description.value },
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketRelationshipMutationResponseSchema.safeParse(
+    result.body,
+  );
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `relationship update ${args.id} on ${projectName}#${args.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${projectName}#${args.ref.number}`;
+  const relationship = buildRelationshipOutline(
+    parsed.data.relationship,
+    identifier,
+  );
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `updated relationship ${args.id} on ${identifier}\nget: ${relationship.getCommand}\n`,
+      { ok: true, relationship },
+    ),
+    stderr: "",
+  };
+}
+
+async function runTicketRelationRemove(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket relation remove", json);
+  if (denied) return denied;
+  const args = ticketRefAndIdArguments(
+    rest,
+    "relation remove",
+    "relationshipId",
+    json,
+  );
+  if (!args.ok) return args.result;
+  const resolved = await resolveTicketTarget(args.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "DELETE",
+    path: relationshipsPath(projectName, args.ref.number, args.id),
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketRelationshipDeleteResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `relationship remove ${args.id} on ${projectName}#${args.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `removed relationship ${args.id} from ${projectName}#${args.ref.number}\n`,
+      {
+        ok: true,
+        removed: { relationshipId: parsed.data.relationshipId },
+      },
+    ),
+    stderr: "",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ticket status-update
+// ---------------------------------------------------------------------------
+
+async function runTicketStatusUpdate(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return dispatchGroup({
+    group: ["ticket", "status-update"],
+    rest,
+    json: flags.json,
+    handlers: {
+      add: (r) => runTicketStatusUpdateAdd(r, flags, values, env, host),
+      list: (r) => runTicketStatusUpdateList(r, flags, values, env, host),
+      get: (r) => runTicketStatusUpdateGet(r, flags, values, env, host),
+    },
+  });
+}
+
+async function runTicketStatusUpdateAdd(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket status-update add", json);
+  if (denied) return denied;
+  if (flags.conversation !== undefined) {
+    return usageFailure(
+      "ticket status-update add does not accept --conversation — agent provenance comes only from CC_CONVERSATION_ID",
+      json,
+    );
+  }
+  const ref = ticketRefArgument(rest, "status-update add", json);
+  if (!ref.ok) return ref.result;
+  const body = await resolveProseArg(values, host, "body", json);
+  if (!body.ok) return body.result;
+  if (body.value === undefined || body.value.trim() === "") {
+    return usageFailure(
+      'ticket status-update add requires a non-empty --body "<markdown>" or --body-file <path>',
+      json,
+    );
+  }
+  const resolved = await resolveTicketTarget(ref.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const conversationId = env["CC_CONVERSATION_ID"]?.trim();
+  if (token !== null && !conversationId) {
+    return usageFailure(
+      "authenticated ticket status-update add requires CC_CONVERSATION_ID for durable agent provenance",
+      json,
+    );
+  }
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "POST",
+    path: statusUpdatesPath(projectName, ref.ref.number),
+    ...(conversationId
+      ? { headers: { "x-cc-conversation-id": conversationId } }
+      : {}),
+    body: { bodyMarkdown: body.value },
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketStatusUpdateCreateResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `ticket status-update add on ${projectName}#${ref.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${projectName}#${ref.ref.number}`;
+  const update = buildStatusUpdateOutline(parsed.data.update, identifier);
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `added status update ${update.id} to ${identifier}\nget: ${update.getCommand}\n`,
+      { ok: true, update },
+    ),
+    stderr: "",
+  };
+}
+
+async function runTicketStatusUpdateList(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket status-update list", json);
+  if (denied) return denied;
+  const ref = ticketRefArgument(rest, "status-update list", json);
+  if (!ref.ok) return ref.result;
+  const pageOptions = ticketPageOptions(
+    values,
+    "ticket status-update list",
+    json,
+  );
+  if (!pageOptions.ok) return pageOptions.result;
+  const resolved = await resolveTicketTarget(ref.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const query = new URLSearchParams({ limit: String(pageOptions.limit) });
+  if (pageOptions.cursor !== undefined) {
+    query.set("cursor", pageOptions.cursor);
+  }
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "GET",
+    path: `${statusUpdatesPath(projectName, ref.ref.number)}?${query.toString()}`,
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const responseSchema = ticketStatusUpdatePageSchema.refine(
+    (page) => page.items.length <= pageOptions.limit,
+    {
+      path: ["items"],
+      message: `returned more than the requested limit of ${pageOptions.limit}`,
+    },
+  );
+  const parsed = responseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `status updates on ${projectName}#${ref.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${projectName}#${ref.ref.number}`;
+  const projection = buildStatusUpdatePageProjection(parsed.data, identifier, {
+    limit: pageOptions.limit,
+    ...(pageOptions.cursor !== undefined ? { cursor: pageOptions.cursor } : {}),
+  });
+  const { items, ...metadata } = projection;
+  return emitTicketDisclosure({
+    host,
+    json,
+    command: "ticket status-update list",
+    namePrefix: ticketDisclosurePrefix(
+      projectName,
+      ref.ref.number,
+      "status-updates",
+    ),
+    text: renderStatusUpdatePageText(projection),
+    payload: { updates: items, ...metadata },
+  });
+}
+
+async function runTicketStatusUpdateGet(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "ticket status-update get", json);
+  if (denied) return denied;
+  const args = ticketRefAndIdArguments(
+    rest,
+    "status-update get",
+    "updateId",
+    json,
+  );
+  if (!args.ok) return args.result;
+  const resolved = await resolveTicketTarget(args.ref, flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const { server, token, tokenSource, projectName } = resolved.target;
+  const result = await cliRequest(host, {
+    server,
+    token,
+    tokenSource,
+    method: "GET",
+    path: statusUpdatesPath(projectName, args.ref.number, args.id),
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketStatusUpdateSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `status update ${args.id} on ${projectName}#${args.ref.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const identifier = `${projectName}#${args.ref.number}`;
+  return emitTicketDisclosure({
+    host,
+    json,
+    command: "ticket status-update get",
+    namePrefix: ticketDisclosurePrefix(
+      projectName,
+      args.ref.number,
+      `status-update-${args.id}`,
+    ),
+    text: renderStatusUpdateDetailText(parsed.data, identifier),
+    payload: { update: parsed.data },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1074,6 +1813,19 @@ async function runTicketAttachKind(
   const target = resolved.target;
   const identifier = `${target.projectName}#${ref.number}`;
 
+  if (kind === "ticket") {
+    return attachRelatedTicketCompatibility(
+      rest.slice(1),
+      description,
+      target,
+      ref,
+      flags,
+      env,
+      json,
+      host,
+    );
+  }
+
   if (kind === "file") {
     return attachFile(
       rest.slice(1),
@@ -1117,7 +1869,7 @@ async function runTicketAttachKind(
  * ticket carries its own scope when the qualified form is used.
  */
 async function buildJsonAttachPayload(
-  kind: Exclude<AttachKind, "file">,
+  kind: Exclude<AttachKind, "file" | "ticket">,
   args: string[],
   flags: GlobalFlags,
   values: Record<string, string>,
@@ -1152,33 +1904,6 @@ async function buildJsonAttachPayload(
       };
     }
     return { ok: true, value: { kind: "note", markdown } };
-  }
-
-  if (kind === "ticket") {
-    const relatedRaw = args[0];
-    if (relatedRaw === undefined) {
-      return {
-        ok: false,
-        result: usageFailure(
-          `ticket attach ticket requires a related <ticket> argument (${REF_USAGE})`,
-          json,
-        ),
-      };
-    }
-    const related = parseTicketRef(relatedRaw);
-    if (!related.ok) {
-      return { ok: false, result: usageFailure(related.message, json) };
-    }
-    const scope = await resolveTicketTarget(related.ref, flags, env, host);
-    if (!scope.ok) return scope;
-    return {
-      ok: true,
-      value: {
-        kind: "related_ticket",
-        projectName: scope.target.projectName,
-        number: related.ref.number,
-      },
-    };
   }
 
   // conversation | session — both need the ambient project for the payload.
@@ -1222,6 +1947,106 @@ async function buildJsonAttachPayload(
   return {
     ok: true,
     value: { kind: "conversation", projectName, sessionName, conversationId },
+  };
+}
+
+async function attachRelatedTicketCompatibility(
+  args: string[],
+  description: string,
+  source: TicketTarget,
+  sourceRef: TicketRef,
+  flags: GlobalFlags,
+  env: CliEnv,
+  json: boolean,
+  host: CliHost,
+): Promise<CliResult> {
+  const relatedRaw = args[0];
+  if (relatedRaw === undefined) {
+    return usageFailure(
+      `ticket attach ticket requires a related <ticket> argument (${REF_USAGE})`,
+      json,
+    );
+  }
+  const related = parseTicketRef(relatedRaw);
+  if (!related.ok) return usageFailure(related.message, json);
+  const target = await resolveTicketTarget(related.ref, flags, env, host);
+  if (!target.ok) return target.result;
+
+  const result = await cliRequest(host, {
+    server: source.server,
+    token: source.token,
+    tokenSource: source.tokenSource,
+    method: "POST",
+    path: relationshipsPath(source.projectName, sourceRef.number),
+    body: {
+      target: {
+        projectName: target.target.projectName,
+        number: related.ref.number,
+      },
+      role: "related",
+      description,
+    },
+  });
+  if (result.kind !== "ok") return ticketRequestFailure(result, json);
+  const parsed = ticketRelationshipMutationResponseSchema.safeParse(
+    result.body,
+  );
+  if (!parsed.success) {
+    return invalidResponseFailure({
+      what: `ticket attach ticket on ${source.projectName}#${sourceRef.number}`,
+      issues: parsed.error.issues,
+      json,
+    });
+  }
+  const sourceTicket = parsed.data.tickets.find(
+    (ticket) =>
+      ticket.projectName === source.projectName &&
+      ticket.number === sourceRef.number,
+  );
+  if (sourceTicket === undefined) {
+    return invalidResponseFailure({
+      what: `ticket attach ticket on ${source.projectName}#${sourceRef.number}`,
+      issues: [
+        {
+          path: ["tickets"],
+          message: "response omitted the source ticket",
+        },
+      ],
+      json,
+    });
+  }
+  const relationship = parsed.data.relationship;
+  const attachment = legacyRelatedTicketAttachmentSchema.safeParse({
+    id: relationship.id,
+    ticketId: sourceTicket.id,
+    description:
+      relationship.description.trim() === ""
+        ? "Related ticket"
+        : relationship.description,
+    payload: {
+      kind: "related_ticket",
+      ticketId: relationship.otherTicket.id,
+      identifierSnapshot: `${target.target.projectName}#${related.ref.number}`,
+    },
+    createdAt: relationship.createdAt,
+    updatedAt: relationship.updatedAt,
+  });
+  if (!attachment.success) {
+    return invalidResponseFailure({
+      what: `ticket attach ticket on ${source.projectName}#${sourceRef.number}`,
+      issues: attachment.error.issues,
+      json,
+    });
+  }
+  const identifier = `${source.projectName}#${sourceRef.number}`;
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `attached related_ticket ${attachment.data.id} to ${identifier}\n`,
+      { ok: true, attachment: attachment.data },
+    ),
+    stderr: "",
   };
 }
 
@@ -1276,7 +2101,7 @@ async function attachFile(
 
 function attachedResult(
   body: unknown,
-  kindArg: AttachKind,
+  kindArg: Exclude<AttachKind, "ticket">,
   identifier: string,
   json: boolean,
 ): CliResult {
@@ -1369,17 +2194,7 @@ const resolvedAttachmentSchema = z.union([
     conversationIds: z.array(z.string()),
     readCommands: z.array(z.string()),
   }),
-  // One member covers both availability arms (a discriminated union cannot
-  // repeat the "related_ticket" discriminator); presence of `ticket` is the
-  // in-member availability signal.
-  z.looseObject({
-    kind: z.literal("related_ticket"),
-    attachment: ticketAttachmentSchema,
-    available: z.boolean(),
-    ticket: ticketDetailSchema.optional(),
-    followCommand: z.string().optional(),
-    identifierSnapshot: z.string().optional(),
-  }),
+  legacyResolvedRelatedTicketSchema,
   z.looseObject({
     kind: z.literal("note"),
     attachment: ticketAttachmentSchema,
@@ -1389,11 +2204,14 @@ const resolvedAttachmentSchema = z.union([
 
 type AttachmentVerb = "get" | "update" | "refresh" | "remove";
 
-const removedAttachmentSchema = z.object({
-  attachmentId: z.string().min(1),
-  ticketId: z.string().min(1),
-  kind: z.enum(["file", "conversation", "session", "related_ticket", "note"]),
-});
+const attachmentMutationResponseSchema = z.union([
+  ticketAttachmentSchema,
+  legacyRelatedTicketAttachmentSchema,
+]);
+const removedAttachmentSchema = z.union([
+  deletedTicketAttachmentSchema,
+  legacyRemovedRelatedTicketSchema,
+]);
 type ResolvedAttachmentBody = z.infer<typeof resolvedAttachmentSchema>;
 
 function unresolvedConversationRefreshResult(
@@ -1479,10 +2297,10 @@ function renderResolvedText(
       resolved.finished ? "finished" : "live"
     }, ${resolved.conversationIds.length} conversation(s))\nread commands:\n${commands}\n`;
   }
-  const ticket = resolved.ticket;
-  if (!resolved.available || ticket === undefined) {
+  if (resolved.available !== true) {
     return `${header}\nrelated ticket ${resolved.identifierSnapshot ?? "(unknown)"} is no longer available (deleted)\n`;
   }
+  const ticket = resolved.ticket;
   const relatedIndex = buildAttachmentIndex({
     identifier: identifierOf(ticket),
     attachments: ticket.attachments,
@@ -1708,7 +2526,7 @@ async function runTicketAttachmentVerb(
     });
     if (result.kind !== "ok") return failureFromRequest(result, json);
 
-    const parsed = ticketAttachmentSchema.safeParse(result.body);
+    const parsed = attachmentMutationResponseSchema.safeParse(result.body);
     if (!parsed.success) {
       return invalidResponseFailure({
         what: `attachment update ${attachmentId} on ${identifier}`,

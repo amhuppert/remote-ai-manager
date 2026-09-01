@@ -54,6 +54,8 @@ const DETAIL: TicketDetail = {
   updatedAt: "2026-07-11T10:00:00.000Z",
   attachments: [],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 afterEach(() => {
@@ -388,6 +390,92 @@ describe("TicketDetailView mutation feedback", () => {
           .toasts.some((toast) => toast.message.includes("Blocked")),
       ).toBe(true),
     );
+  });
+});
+
+describe("TicketDetailView collaboration sections", () => {
+  it("orders description, status updates, relationships, and context attachments", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const path = new URL(
+        typeof input === "string" ? input : input.toString(),
+        "http://localhost",
+      ).pathname;
+      if (path.endsWith("/status-updates")) {
+        return Response.json({ items: [], total: 0, nextCursor: null });
+      }
+      if (path.endsWith("/tickets/session-links")) return Response.json({});
+      if (path.includes("/ticket-read-through/")) {
+        return Response.json({ specs: [] });
+      }
+      return Response.json(DETAIL);
+    });
+    renderDetail();
+
+    await screen.findByRole("heading", { name: DETAIL.title });
+    const sections = [
+      screen.getByRole("region", { name: "Description" }),
+      screen.getByRole("region", { name: "Status updates" }),
+      screen.getByRole("region", { name: "Relationships" }),
+      screen.getByRole("region", { name: "Context attachments" }),
+    ];
+    expect(
+      sections.every(
+        (section, index) =>
+          index === 0 ||
+          Boolean(
+            sections[index - 1]!.compareDocumentPosition(section) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  it("explains relationship, update, hierarchy, and linked-ticket deletion effects", async () => {
+    const detail: TicketDetail = {
+      ...DETAIL,
+      relationships: [
+        {
+          id: "relationship-1",
+          role: "child",
+          otherTicket: {
+            id: "ticket-13",
+            projectName: DETAIL.projectName,
+            number: 13,
+            title: "Child ticket",
+            status: "not_started",
+          },
+          description: "",
+          createdAt: DETAIL.createdAt,
+          updatedAt: DETAIL.updatedAt,
+        },
+      ],
+      statusUpdates: { total: 4, recent: [] },
+    };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const path = new URL(
+        typeof input === "string" ? input : input.toString(),
+        "http://localhost",
+      ).pathname;
+      if (path.endsWith("/status-updates")) {
+        return Response.json({ items: [], total: 4, nextCursor: null });
+      }
+      if (path.endsWith("/tickets/session-links")) return Response.json({});
+      if (path.includes("/ticket-read-through/")) {
+        return Response.json({ specs: [] });
+      }
+      return Response.json(detail);
+    });
+    renderDetail();
+    const user = userEvent.setup();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Delete ticket" }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("1 relationship");
+    expect(dialog).toHaveTextContent("4 status updates");
+    expect(dialog).toHaveTextContent("children become top-level");
+    expect(dialog).toHaveTextContent("Linked tickets are not deleted");
   });
 });
 

@@ -54,6 +54,82 @@ const ENTRIES = allHelpEntries();
 const KEYS = new Set(ENTRIES.map((entry) => pathKey(entry.path)));
 
 describe("help registry contract", () => {
+  it("registers the complete ticket relationship and append-only update surface", () => {
+    const required = [
+      "ticket relation",
+      "ticket relation list",
+      "ticket relation get",
+      "ticket relation add",
+      "ticket relation update",
+      "ticket relation remove",
+      "ticket status-update",
+      "ticket status-update add",
+      "ticket status-update list",
+      "ticket status-update get",
+    ];
+    for (const command of required) {
+      expect(
+        ENTRIES.find((entry) => pathKey(entry.path) === command),
+        `${command}: missing help entry`,
+      ).toBeDefined();
+    }
+
+    const relation = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket relation",
+    );
+    expect(relation?.domainContext).toMatch(/relative/i);
+    expect(relation?.domainContext).toMatch(/replaces the old parent/i);
+
+    const updates = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket status-update",
+    );
+    expect(updates?.domainContext).toMatch(/append-only/i);
+  });
+
+  it("derives ticket prose file flags and marks only rationale update as empty-capable", () => {
+    const relationAdd = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket relation add",
+    );
+    const relationUpdate = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket relation update",
+    );
+    const statusAdd = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket status-update add",
+    );
+
+    expect(
+      relationAdd?.flags.find((flag) => flag.name === "description"),
+    ).toMatchObject({
+      kind: "value",
+      fileSource: true,
+    });
+    expect(
+      relationUpdate?.flags.find((flag) => flag.name === "description"),
+    ).toMatchObject({ kind: "value", fileSource: true, allowEmpty: true });
+    expect(statusAdd?.flags.find((flag) => flag.name === "body")).toMatchObject(
+      {
+        kind: "value",
+        fileSource: true,
+      },
+    );
+  });
+
+  it("documents attach ticket as a compatibility alias and migrated ids as readable", () => {
+    const attachTicket = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket attach ticket",
+    );
+    const attachment = ENTRIES.find(
+      (entry) => pathKey(entry.path) === "ticket attachment",
+    );
+    expect(`${attachTicket?.summary} ${attachTicket?.description}`).toMatch(
+      /compatibility alias/i,
+    );
+    expect(attachTicket?.description).toContain(
+      "ticket relation add --role related",
+    );
+    expect(attachment?.description).toMatch(/migrated relationship ids/i);
+  });
+
   it("teaches the atomic model selection accepted by agent run", () => {
     const entry = ENTRIES.find(
       (candidate) => pathKey(candidate.path) === "agent run",

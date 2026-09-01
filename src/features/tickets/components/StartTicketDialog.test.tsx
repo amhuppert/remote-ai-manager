@@ -91,6 +91,8 @@ const STARTED_TICKET: TicketDetail = {
   updatedAt: "2026-07-11T10:00:00.000Z",
   attachments: [],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 function renderDeferredStart() {
@@ -332,6 +334,8 @@ describe("StartTicketDialog", () => {
           updatedAt: "2026-07-11T10:00:00.000Z",
           attachments: [],
           sessions: [],
+          relationships: [],
+          statusUpdates: { total: 0, recent: [] },
         },
         sessionName: "csm/harden-ticket-context",
         conversationId: "conv-12",

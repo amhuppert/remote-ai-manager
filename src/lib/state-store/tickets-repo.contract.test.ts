@@ -106,7 +106,11 @@ describe("atomic number allocation", () => {
     expect(first.number).toBe(1);
     expect(second.number).toBe(2);
 
-    const deleted = await repo.delete(PROJECT_PATH, second.number);
+    const deleted = await repo.delete(
+      PROJECT_PATH,
+      second.number,
+      "2026-07-10T00:00:00.001Z",
+    );
     expect(deleted).not.toBeNull();
 
     const third = await repo.create(makeCreateInput());
@@ -149,7 +153,7 @@ describe("atomic number allocation", () => {
 });
 
 describe("ticket CRUD", () => {
-  it("find returns the detail with projectName, attachments, and sessions", async () => {
+  it("find returns the complete aggregate with empty collaboration surfaces", async () => {
     const ticket = await repo.create(makeCreateInput({ title: "Find me" }));
     const detail = await repo.find(PROJECT_PATH, ticket.number);
 
@@ -159,6 +163,8 @@ describe("ticket CRUD", () => {
     expect(detail.projectName).toBe("command-center");
     expect(detail.attachments).toEqual([]);
     expect(detail.sessions).toEqual([]);
+    expect(detail.relationships).toEqual([]);
+    expect(detail.statusUpdates).toEqual({ total: 0, recent: [] });
   });
 
   it("find and update return null for an unknown ticket", async () => {
@@ -171,7 +177,9 @@ describe("ticket CRUD", () => {
         updatedAt: "2026-07-10T01:00:00.000Z",
       }),
     ).toBeNull();
-    expect(await repo.delete(PROJECT_PATH, 99)).toBeNull();
+    expect(
+      await repo.delete(PROJECT_PATH, 99, "2026-07-10T01:00:00.000Z"),
+    ).toBeNull();
   });
 
   it("update changes only the provided fields and stamps updated_at", async () => {
@@ -218,12 +226,19 @@ describe("ticket CRUD", () => {
     const ticket = await repo.create(makeCreateInput());
     await repo.addAttachment(makeAttachment(ticket.id));
 
-    const deleted = await repo.delete(PROJECT_PATH, ticket.number);
+    const deleted = await repo.delete(
+      PROJECT_PATH,
+      ticket.number,
+      "2026-07-10T01:00:00.000Z",
+    );
     expect(deleted).toEqual({
-      id: ticket.id,
-      projectPath: PROJECT_PATH,
-      projectName: "command-center",
-      number: ticket.number,
+      deleted: {
+        id: ticket.id,
+        projectPath: PROJECT_PATH,
+        projectName: "command-center",
+        number: ticket.number,
+      },
+      survivingNeighbors: [],
     });
 
     const orphans = db
@@ -268,6 +283,191 @@ describe("ticket CRUD", () => {
       .prepare("SELECT root_path FROM projects WHERE root_path = ?")
       .get(discovered);
     expect(row).toEqual({ root_path: discovered });
+  });
+});
+
+describe("ticket relationship aggregate", () => {
+  it("adds one canonical dependency and returns both authoritative endpoint details", async () => {
+    const dependent = await repo.create(
+      makeCreateInput({ title: "Dependent ticket" }),
+    );
+    const prerequisite = await repo.create(
+      makeCreateInput({
+        projectPath: OTHER_PROJECT,
+        title: "Prerequisite ticket",
+      }),
+    );
+
+    const result = await repo.addRelationship({
+      id: "rel-1",
+      anchorTicketId: dependent.id,
+      relationType: "depends_on",
+      sourceTicketId: dependent.id,
+      targetTicketId: prerequisite.id,
+      description: "The runtime must land first.",
+      createdAt: "2026-07-10T01:00:00.000Z",
+    });
+
+    expect(result.relationship).toMatchObject({
+      id: "rel-1",
+      role: "depends_on",
+      otherTicket: {
+        id: prerequisite.id,
+        projectName: "other",
+        number: prerequisite.number,
+      },
+      description: "The runtime must land first.",
+      updatedAt: "2026-07-10T01:00:00.000Z",
+    });
+    expect(result.replacedRelationshipId).toBeNull();
+    expect(result.tickets.map(({ id }) => id).sort()).toEqual(
+      [dependent.id, prerequisite.id].sort(),
+    );
+    expect(new Set(result.tickets.map(({ updatedAt }) => updatedAt))).toEqual(
+      new Set(["2026-07-10T01:00:00.000Z"]),
+    );
+
+    const dependentDetail = await repo.find(PROJECT_PATH, dependent.number);
+    const prerequisiteDetail = await repo.find(
+      OTHER_PROJECT,
+      prerequisite.number,
+    );
+    expect(dependentDetail?.relationships[0]?.role).toBe("depends_on");
+    expect(prerequisiteDetail?.relationships[0]?.role).toBe("blocks");
+  });
+
+  it("reparents atomically and returns the old parent as an affected endpoint", async () => {
+    const oldParent = await repo.create(
+      makeCreateInput({ title: "Old parent" }),
+    );
+    const newParent = await repo.create(
+      makeCreateInput({ title: "New parent" }),
+    );
+    const child = await repo.create(makeCreateInput({ title: "Child" }));
+    await repo.addRelationship({
+      id: "rel-old-parent",
+      anchorTicketId: child.id,
+      relationType: "parent_child",
+      sourceTicketId: oldParent.id,
+      targetTicketId: child.id,
+      description: "",
+      createdAt: "2026-07-10T01:00:00.000Z",
+    });
+
+    const result = await repo.addRelationship({
+      id: "rel-new-parent",
+      anchorTicketId: child.id,
+      relationType: "parent_child",
+      sourceTicketId: newParent.id,
+      targetTicketId: child.id,
+      description: "Ownership moved.",
+      createdAt: "2026-07-10T02:00:00.000Z",
+    });
+
+    expect(result.replacedRelationshipId).toBe("rel-old-parent");
+    expect(result.tickets.map(({ id }) => id).sort()).toEqual(
+      [oldParent.id, newParent.id, child.id].sort(),
+    );
+    expect(
+      (await repo.find(PROJECT_PATH, oldParent.number))?.relationships,
+    ).toEqual([]);
+    expect(
+      (await repo.find(PROJECT_PATH, child.number))?.relationships[0],
+    ).toMatchObject({ id: "rel-new-parent", role: "parent" });
+  });
+
+  it("deletes relationships and bumps each surviving neighbor once in the same transaction", async () => {
+    const target = await repo.create(makeCreateInput({ title: "Delete me" }));
+    const firstNeighbor = await repo.create(
+      makeCreateInput({ title: "First survivor" }),
+    );
+    const secondNeighbor = await repo.create(
+      makeCreateInput({ title: "Second survivor" }),
+    );
+    await repo.addRelationship({
+      id: "rel-delete-dependency",
+      anchorTicketId: target.id,
+      relationType: "depends_on",
+      sourceTicketId: target.id,
+      targetTicketId: firstNeighbor.id,
+      description: "Dependency",
+      createdAt: "2026-07-10T01:00:00.000Z",
+    });
+    const [relatedSourceId, relatedTargetId] = [
+      target.id,
+      firstNeighbor.id,
+    ].sort();
+    await repo.addRelationship({
+      id: "rel-delete-related",
+      anchorTicketId: target.id,
+      relationType: "related",
+      sourceTicketId: relatedSourceId!,
+      targetTicketId: relatedTargetId!,
+      description: "Same neighbor through a second edge",
+      createdAt: "2026-07-10T02:00:00.000Z",
+    });
+    await repo.addRelationship({
+      id: "rel-delete-parent",
+      anchorTicketId: target.id,
+      relationType: "parent_child",
+      sourceTicketId: target.id,
+      targetTicketId: secondNeighbor.id,
+      description: "Child becomes top-level",
+      createdAt: "2026-07-10T03:00:00.000Z",
+    });
+
+    const result = await repo.delete(
+      PROJECT_PATH,
+      target.number,
+      "2026-07-10T04:00:00.000Z",
+    );
+
+    expect(result?.deleted).toMatchObject({
+      id: target.id,
+      number: target.number,
+    });
+    expect(result?.survivingNeighbors.map(({ id }) => id).sort()).toEqual(
+      [firstNeighbor.id, secondNeighbor.id].sort(),
+    );
+    expect(
+      result?.survivingNeighbors.map(({ updatedAt }) => updatedAt),
+    ).toEqual(["2026-07-10T04:00:00.000Z", "2026-07-10T04:00:00.000Z"]);
+    expect(await repo.find(PROJECT_PATH, target.number)).toBeNull();
+    expect(
+      (await repo.find(PROJECT_PATH, firstNeighbor.number))?.relationships,
+    ).toEqual([]);
+    expect(
+      (await repo.find(PROJECT_PATH, secondNeighbor.number))?.relationships,
+    ).toEqual([]);
+  });
+});
+
+describe("ticket status-update aggregate", () => {
+  it("appends an update, bumps the ticket, and assembles the bounded summary", async () => {
+    const ticket = await repo.create(makeCreateInput());
+    const result = await repo.addStatusUpdate({
+      id: "update-1",
+      ticketId: ticket.id,
+      bodyMarkdown: "The persistence slice is complete.",
+      author: { kind: "user" },
+      createdAt: "2026-07-10T01:00:00.000Z",
+    });
+
+    expect(result.update).toEqual({
+      id: "update-1",
+      ticketId: ticket.id,
+      bodyMarkdown: "The persistence slice is complete.",
+      author: { kind: "user" },
+      createdAt: "2026-07-10T01:00:00.000Z",
+    });
+    expect(result.ticket.updatedAt).toBe("2026-07-10T01:00:00.000Z");
+    expect(result.ticket.statusUpdates).toEqual({
+      total: 1,
+      recent: [result.update],
+    });
+    expect(
+      await repo.listStatusUpdates({ ticketId: ticket.id, limit: 20 }),
+    ).toEqual({ items: [result.update], total: 1, nextCursor: null });
   });
 });
 

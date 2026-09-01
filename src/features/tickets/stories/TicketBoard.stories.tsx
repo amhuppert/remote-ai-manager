@@ -132,6 +132,8 @@ function detailFor(item: TicketListItem): TicketDetail {
     updatedAt: item.updatedAt,
     attachments: [],
     sessions: [],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
   };
 }
 

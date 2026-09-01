@@ -12,7 +12,7 @@ import { z } from "zod";
 import type { ApiError } from "@/lib/api/errors";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { createLogger, withTracing } from "@/lib/logging";
-import { notFound } from "@/lib/shared/route-resolution";
+import { jsonError, notFound } from "@/lib/shared/route-resolution";
 import { parseTicketNumberSegment } from "./ticket-number";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type {
@@ -85,6 +85,34 @@ export function ticketErrorResponse(error: TicketError): Response {
         `Attachment not found on ${error.identifier}: ${error.attachmentId}`,
         error.code,
         { attachmentId: error.attachmentId },
+      );
+    case "relationship_not_found":
+      return notFound(
+        `Relationship not found on ${error.details.identifier}: ${error.details.relationshipId}`,
+        error.code,
+        error.details,
+      );
+    case "relationship_self_link":
+    case "relationship_scope":
+    case "status_update_actor_required":
+    case "status_update_actor_not_found":
+      return jsonError(
+        error.rationale,
+        400,
+        error.code,
+        error.details,
+        undefined,
+        error.rationale,
+      );
+    case "relationship_conflict":
+    case "relationship_cycle":
+      return jsonError(
+        error.rationale,
+        409,
+        error.code,
+        error.details,
+        undefined,
+        error.rationale,
       );
     case "active_session":
       return NextResponse.json(

@@ -169,6 +169,8 @@ async function createTicket(
     projectName: path.basename(projectPath),
     attachments: [],
     sessions: [],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
   };
 }
 
@@ -688,7 +690,7 @@ describe("add conversation", () => {
   });
 });
 
-describe("add session and related ticket", () => {
+describe("add session", () => {
   it("stores a session live pointer after validating the session exists", async () => {
     const ticket = await createTicket();
     const service = makeService();
@@ -725,69 +727,6 @@ describe("add session and related ticket", () => {
         kind: "session",
         projectName: PROJECT_NAME,
         sessionName: "ghost",
-      },
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe("validation_failed");
-  });
-
-  it("stores a related ticket as uuid + identifier snapshot", async () => {
-    const host = await createTicket();
-    const target = await createTicket("not_started", OTHER_PROJECT_PATH);
-    const service = makeService();
-
-    const result = await service.add({
-      projectName: PROJECT_NAME,
-      number: host.number,
-      description: "duplicate of",
-      payload: {
-        kind: "related_ticket",
-        projectName: OTHER_PROJECT_NAME,
-        number: target.number,
-      },
-    });
-
-    const attachment = expectOk(result);
-    expect(attachment.payload).toEqual({
-      kind: "related_ticket",
-      ticketId: target.id,
-      identifierSnapshot: `${OTHER_PROJECT_NAME}#${target.number}`,
-    });
-  });
-
-  it("rejects an unknown related ticket with the target identifier", async () => {
-    const host = await createTicket();
-    const service = makeService();
-    const result = await service.add({
-      projectName: PROJECT_NAME,
-      number: host.number,
-      description: "duplicate of",
-      payload: {
-        kind: "related_ticket",
-        projectName: OTHER_PROJECT_NAME,
-        number: 999,
-      },
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toEqual({
-        code: "ticket_not_found",
-        identifier: `${OTHER_PROJECT_NAME}#999`,
-      });
-    }
-  });
-
-  it("rejects attaching a ticket to itself", async () => {
-    const host = await createTicket();
-    const service = makeService();
-    const result = await service.add({
-      projectName: PROJECT_NAME,
-      number: host.number,
-      description: "self",
-      payload: {
-        kind: "related_ticket",
-        projectName: PROJECT_NAME,
-        number: host.number,
       },
     });
     expect(result.ok).toBe(false);
@@ -1431,78 +1370,6 @@ describe("resolve", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("content_unavailable");
-  });
-
-  it("resolves a related ticket to its current detail and attachment index", async () => {
-    const host = await createTicket();
-    const target = await createTicket();
-    const service = makeService();
-    await service.add({
-      projectName: PROJECT_NAME,
-      number: target.number,
-      description: "target note",
-      payload: { kind: "note", markdown: "inside target" },
-    });
-    const added = expectOk(
-      await service.add({
-        projectName: PROJECT_NAME,
-        number: host.number,
-        description: "related",
-        payload: {
-          kind: "related_ticket",
-          projectName: PROJECT_NAME,
-          number: target.number,
-        },
-      }),
-    );
-
-    const resolved = expectOk(
-      await service.resolve({
-        projectName: PROJECT_NAME,
-        number: host.number,
-        attachmentId: added.id,
-      }),
-    );
-    const related = expectResolvedKind(resolved, "related_ticket");
-    expect(related.available).toBe(true);
-    if (related.available) {
-      expect(related.ticket.number).toBe(target.number);
-      expect(related.ticket.attachments).toHaveLength(1);
-    }
-  });
-
-  it("resolves a deleted related ticket to a typed unavailable result", async () => {
-    const host = await createTicket();
-    const target = await createTicket();
-    const service = makeService();
-    const added = expectOk(
-      await service.add({
-        projectName: PROJECT_NAME,
-        number: host.number,
-        description: "related",
-        payload: {
-          kind: "related_ticket",
-          projectName: PROJECT_NAME,
-          number: target.number,
-        },
-      }),
-    );
-    await repo.delete(PROJECT_PATH, target.number);
-
-    const resolved = expectOk(
-      await service.resolve({
-        projectName: PROJECT_NAME,
-        number: host.number,
-        attachmentId: added.id,
-      }),
-    );
-    const related = expectResolvedKind(resolved, "related_ticket");
-    expect(related.available).toBe(false);
-    if (!related.available) {
-      expect(related.identifierSnapshot).toBe(
-        `${PROJECT_NAME}#${target.number}`,
-      );
-    }
   });
 
   it("returns attachment_not_found and ticket_not_found appropriately", async () => {

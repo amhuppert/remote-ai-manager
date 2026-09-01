@@ -197,7 +197,11 @@ describe("deleteProjectRow — durability via reload", () => {
     await fixture.store.setProjectPinned(PROJECT, true);
     expect(await reload().getArchivedProjects()).toContain(PROJECT);
 
-    await fixture.store.deleteProjectRow(PROJECT);
+    await fixture.store.deleteProjectRow(
+      PROJECT,
+      [],
+      "2026-01-02T00:00:00.000Z",
+    );
 
     const store = reload();
     expect(await store.getSession(PROJECT, "s1")).toBeNull();
@@ -207,6 +211,118 @@ describe("deleteProjectRow — durability via reload", () => {
     // removes membership without any array bookkeeping.
     expect(await store.getArchivedProjects()).not.toContain(PROJECT);
     expect(await store.getPinnedProjects()).not.toContain(PROJECT);
+  });
+
+  it("bumps deduplicated external relationship neighbors in the same transaction as the project cascade", async () => {
+    const externalProject = "/other";
+    fixture.db
+      .prepare("INSERT INTO projects (root_path) VALUES (?), (?)")
+      .run(PROJECT, externalProject);
+    const insertTicket = fixture.db.prepare(
+      `INSERT INTO tickets
+         (id, project_path, ticket_number, title, description, work_type,
+          status, created_at, updated_at)
+       VALUES (?, ?, 1, ?, '', 'feature', 'not_started', ?, ?)`,
+    );
+    insertTicket.run(
+      "deleted-ticket",
+      PROJECT,
+      "Deleted ticket",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z",
+    );
+    insertTicket.run(
+      "external-ticket",
+      externalProject,
+      "External ticket",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-03T00:00:00.000Z",
+    );
+    fixture.db
+      .prepare(
+        `INSERT INTO ticket_relationships
+           (id, relation_type, source_ticket_id, target_ticket_id, description,
+            created_at, updated_at)
+         VALUES ('cross-project', 'depends_on', 'deleted-ticket',
+                 'external-ticket', '', ?, ?)`,
+      )
+      .run("2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z");
+
+    await fixture.store.deleteProjectRow(
+      PROJECT,
+      ["external-ticket", "external-ticket"],
+      "2026-01-02T00:00:00.000Z",
+    );
+
+    expect(
+      fixture.db
+        .prepare("SELECT updated_at FROM tickets WHERE id = ?")
+        .get("external-ticket"),
+    ).toEqual({ updated_at: "2026-01-03T00:00:00.001Z" });
+    expect(
+      fixture.db
+        .prepare("SELECT 1 FROM ticket_relationships WHERE id = ?")
+        .get("cross-project"),
+    ).toBeUndefined();
+    expect(
+      fixture.db
+        .prepare("SELECT 1 FROM projects WHERE root_path = ?")
+        .get(PROJECT),
+    ).toBeUndefined();
+  });
+
+  it("rolls back external neighbor revisions when project deletion fails", async () => {
+    const externalProject = "/other";
+    fixture.db
+      .prepare("INSERT INTO projects (root_path) VALUES (?), (?)")
+      .run(PROJECT, externalProject);
+    const insertTicket = fixture.db.prepare(
+      `INSERT INTO tickets
+         (id, project_path, ticket_number, title, description, work_type,
+          status, created_at, updated_at)
+       VALUES (?, ?, 1, ?, '', 'feature', 'not_started', ?, ?)`,
+    );
+    insertTicket.run(
+      "deleted-ticket",
+      PROJECT,
+      "Deleted ticket",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z",
+    );
+    insertTicket.run(
+      "external-ticket",
+      externalProject,
+      "External ticket",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z",
+    );
+    fixture.db.exec(`
+      CREATE TRIGGER refuse_project_delete
+      BEFORE DELETE ON projects
+      WHEN OLD.root_path = '${PROJECT}'
+      BEGIN
+        SELECT RAISE(ABORT, 'refused');
+      END
+    `);
+
+    await expect(
+      fixture.store.deleteProjectRow(
+        PROJECT,
+        ["external-ticket"],
+        "2026-01-02T00:00:00.000Z",
+      ),
+    ).rejects.toThrow("refused");
+
+    expect(
+      fixture.db
+        .prepare("SELECT updated_at FROM tickets WHERE id = ?")
+        .get("external-ticket"),
+    ).toEqual({ updated_at: "2026-01-01T00:00:00.000Z" });
+    expect(
+      fixture.db
+        .prepare("SELECT 1 FROM projects WHERE root_path = ?")
+        .get(PROJECT),
+    ).toEqual({ 1: 1 });
   });
 });
 
@@ -263,7 +379,11 @@ describe("cascade delete — warm cache invalidation (same store)", () => {
       1,
     );
 
-    await fixture.store.deleteProjectRow(PROJECT);
+    await fixture.store.deleteProjectRow(
+      PROJECT,
+      [],
+      "2026-01-02T00:00:00.000Z",
+    );
 
     expect(await fixture.store.getSessionConversations(PROJECT, "s1")).toEqual(
       [],

@@ -22,6 +22,7 @@ import {
   truncateAllTables,
 } from "./state-db";
 import {
+  enforceCurrentSchemaCompatibility,
   publishSchemaCompatibilityBarrier,
   schemaCompatibilityBarrierPath,
 } from "./schema-compatibility";
@@ -1186,8 +1187,30 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 12 after the generalized model-selection cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(12);
+  it("this build understands schema version 13 after the ticket-relationship cutover", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(13);
+  });
+
+  it("refuses a version-12 binary after ticket relationships stamp version 13", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const current = _createTestDbAtPath(dbPath);
+    current
+      .prepare(
+        "INSERT OR IGNORE INTO schema_migrations (version, description) VALUES (13, ?)",
+      )
+      .run("ticket relationships and append-only status updates");
+    current.close();
+
+    const oldBinaryConnection = new Database(dbPath);
+    try {
+      expect(() =>
+        enforceCurrentSchemaCompatibility(oldBinaryConnection, dbPath, 12),
+      ).toThrow(/recorded schema version 13.*known build version 12/i);
+    } finally {
+      oldBinaryConnection.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

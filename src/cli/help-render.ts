@@ -146,8 +146,9 @@ export function renderLeafHelpText(
 
 /**
  * Group-node index (doc 04 §3.2b): header, description, one line per child
- * (`<child path> — <summary>`), then the group's own related/skills. No
- * usage/flags/examples — the hub points at leaves, it does not restate them.
+ * (`<child path> — <summary>`), optional domain context, then the group's own
+ * related/skills. No usage/flags/examples — the hub points at leaves, it does
+ * not restate them.
  */
 export function renderGroupHelpText(
   entry: CommandHelpEntry,
@@ -171,6 +172,7 @@ export function renderGroupHelpText(
     header,
     entry.description,
     commands,
+    contextBlock(entry, []),
     relatedBlock(entry.related),
     skillsBlock(entry.skills),
     GLOBAL_FLAGS_POINTER,

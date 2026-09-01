@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderHook, waitFor } from "@testing-library/react";
 import {
+  type InfiniteData,
   QueryClient,
   QueryClientProvider,
   QueryObserver,
@@ -14,6 +15,8 @@ import type {
   TicketChangedEvent,
   TicketDetail,
   TicketListItem,
+  TicketStatusUpdate,
+  TicketStatusUpdatePage,
 } from "./schemas";
 import {
   normalizeTicketListFilters,
@@ -25,13 +28,17 @@ import { sessionKeys } from "@/lib/sessions/query-keys";
 import { applyTicketChangedEvent } from "./sse-reducer";
 import {
   useAddTicketAttachmentMutation,
+  useAddTicketRelationshipMutation,
+  useAddTicketStatusUpdateMutation,
   useCreateTicketMutation,
   useDeleteTicketMutation,
   useEditTicketAttachmentMutation,
   useRefreshConversationSnapshotMutation,
   useRemoveTicketAttachmentMutation,
+  useRemoveTicketRelationshipMutation,
   useStartTicketMutation,
   useUpdateTicketMutation,
+  useUpdateTicketRelationshipMutation,
 } from "./mutations";
 
 function makeClient() {
@@ -103,6 +110,20 @@ function detail(
     updatedAt: overrides.updatedAt ?? "2026-07-01T00:00:00.000Z",
     attachments: overrides.attachments ?? [],
     sessions: overrides.sessions ?? [],
+    relationships: overrides.relationships ?? [],
+    statusUpdates: overrides.statusUpdates ?? { total: 0, recent: [] },
+  };
+}
+
+function statusUpdate(
+  overrides: Partial<TicketStatusUpdate> & { id: string },
+): TicketStatusUpdate {
+  return {
+    id: overrides.id,
+    ticketId: overrides.ticketId ?? "t1",
+    bodyMarkdown: overrides.bodyMarkdown ?? "A status update",
+    author: overrides.author ?? { kind: "user" },
+    createdAt: overrides.createdAt ?? "2026-08-01T00:00:00.000Z",
   };
 }
 
@@ -2108,6 +2129,540 @@ describe("SSE events interleaved with pending optimistic mutations", () => {
       }),
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData<TicketListItem[]>(allKey)).toEqual([]);
+  });
+});
+
+describe("ticket relationship mutations", () => {
+  it("applies every authoritative endpoint detail and invalidates each endpoint on add", async () => {
+    const client = makeClient();
+    const firstBefore = detail({ id: "t1", number: 1 });
+    const secondBefore = detail({
+      id: "t2",
+      projectPath: "/projects/beta",
+      projectName: "beta",
+      number: 2,
+    });
+    const firstAfter = detail({
+      ...firstBefore,
+      title: "First after",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      relationships: [
+        {
+          id: "rel-1",
+          role: "depends_on",
+          otherTicket: {
+            id: "t2",
+            projectName: "beta",
+            number: 2,
+            title: "Second after",
+            status: "not_started",
+          },
+          description: "Needed first",
+          createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: "2026-08-10T00:00:00.000Z",
+        },
+      ],
+    });
+    const secondAfter = detail({
+      ...secondBefore,
+      title: "Second after",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      relationships: [
+        {
+          ...firstAfter.relationships[0]!,
+          role: "blocks",
+          otherTicket: {
+            id: "t1",
+            projectName: "alpha",
+            number: 1,
+            title: "First after",
+            status: "not_started",
+          },
+        },
+      ],
+    });
+    const firstKey = ticketKeys.detail("alpha", 1);
+    const secondKey = ticketKeys.detail("beta", 2);
+    client.setQueryData(firstKey, firstBefore);
+    client.setQueryData(secondKey, secondBefore);
+    client.setQueryData(allKey, [
+      ticketListItemFromDetail(firstBefore),
+      ticketListItemFromDetail(secondBefore),
+    ]);
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        relationship: firstAfter.relationships[0],
+        tickets: [firstAfter, secondAfter],
+      }),
+    );
+
+    const { result } = renderHook(() => useAddTicketRelationshipMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      target: { projectName: "beta", number: 2 },
+      role: "depends_on",
+      description: "Needed first",
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/alpha/tickets/1/relationships",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          target: { projectName: "beta", number: 2 },
+          role: "depends_on",
+          description: "Needed first",
+        }),
+      }),
+    );
+    expect(client.getQueryData(firstKey)).toEqual(firstAfter);
+    expect(client.getQueryData(secondKey)).toEqual(secondAfter);
+    expect(
+      client
+        .getQueryData<TicketListItem[]>(allKey)
+        ?.map(({ projectName, title }) => [projectName, title]),
+    ).toEqual([
+      ["alpha", "First after"],
+      ["beta", "Second after"],
+    ]);
+    expect(client.getQueryState(firstKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(secondKey)?.isInvalidated).toBe(true);
+  });
+
+  it("cancels an older endpoint read before applying the relationship response", async () => {
+    const client = makeClient();
+    const before = detail({ id: "t1", number: 1, title: "Before" });
+    const after = detail({
+      ...before,
+      title: "After",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    });
+    const key = ticketKeys.detail("alpha", 1);
+    client.setQueryData(key, before);
+    let resolveStaleRead: (value: TicketDetail) => void = () => {};
+    const observer = new QueryObserver<TicketDetail>(client, {
+      queryKey: key,
+      queryFn: () =>
+        new Promise<TicketDetail>((resolve) => {
+          resolveStaleRead = resolve;
+        }),
+      enabled: false,
+      retry: false,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const staleRead = observer.refetch();
+    await waitFor(() =>
+      expect(observer.getCurrentResult().isFetching).toBe(true),
+    );
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        relationship: {
+          id: "rel-1",
+          role: "related",
+          otherTicket: {
+            id: "t2",
+            projectName: "alpha",
+            number: 2,
+            title: "Second",
+            status: "not_started",
+          },
+          description: "",
+          createdAt: after.updatedAt,
+          updatedAt: after.updatedAt,
+        },
+        tickets: [after],
+      }),
+    );
+
+    try {
+      const { result } = renderHook(() => useAddTicketRelationshipMutation(), {
+        wrapper: wrapperFor(client),
+      });
+      result.current.mutate({
+        projectName: "alpha",
+        number: 1,
+        target: { projectName: "alpha", number: 2 },
+        role: "related",
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+      resolveStaleRead(before);
+      await staleRead;
+      expect(client.getQueryData<TicketDetail>(key)?.title).toBe("After");
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("applies the old parent returned by an atomic reparent", async () => {
+    const client = makeClient();
+    const childBefore = detail({ id: "child", number: 3 });
+    const newParentBefore = detail({ id: "parent-new", number: 2 });
+    const oldParentBefore = detail({
+      id: "parent-old",
+      number: 1,
+      relationships: [
+        {
+          id: "rel-old",
+          role: "child",
+          otherTicket: {
+            id: "child",
+            projectName: "alpha",
+            number: 3,
+            title: "A ticket",
+            status: "not_started",
+          },
+          description: "",
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const revision = "2026-08-11T00:00:00.000Z";
+    const childAfter = detail({ ...childBefore, updatedAt: revision });
+    const newParentAfter = detail({ ...newParentBefore, updatedAt: revision });
+    const oldParentAfter = detail({
+      ...oldParentBefore,
+      updatedAt: revision,
+      relationships: [],
+    });
+    for (const seeded of [childBefore, newParentBefore, oldParentBefore]) {
+      client.setQueryData(
+        ticketKeys.detail(seeded.projectName, seeded.number),
+        seeded,
+      );
+    }
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        relationship: {
+          id: "rel-new",
+          role: "parent",
+          otherTicket: {
+            id: "parent-new",
+            projectName: "alpha",
+            number: 2,
+            title: "A ticket",
+            status: "not_started",
+          },
+          description: "",
+          createdAt: revision,
+          updatedAt: revision,
+        },
+        tickets: [childAfter, newParentAfter, oldParentAfter],
+      }),
+    );
+
+    const { result } = renderHook(() => useAddTicketRelationshipMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({
+      projectName: "alpha",
+      number: 3,
+      target: { projectName: "alpha", number: 2 },
+      role: "parent",
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(client.getQueryData(ticketKeys.detail("alpha", 3))).toEqual(
+      childAfter,
+    );
+    expect(client.getQueryData(ticketKeys.detail("alpha", 2))).toEqual(
+      newParentAfter,
+    );
+    expect(client.getQueryData(ticketKeys.detail("alpha", 1))).toEqual(
+      oldParentAfter,
+    );
+    expect(
+      client.getQueryState(ticketKeys.detail("alpha", 1))?.isInvalidated,
+    ).toBe(true);
+  });
+
+  it("applies every endpoint returned by update and remove", async () => {
+    const firstUpdated = detail({
+      id: "t1",
+      number: 1,
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    });
+    const secondUpdated = detail({
+      id: "t2",
+      number: 2,
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    });
+    const relationship = {
+      id: "rel/1",
+      role: "related" as const,
+      otherTicket: {
+        id: "t2",
+        projectName: "alpha",
+        number: 2,
+        title: "A ticket",
+        status: "not_started" as const,
+      },
+      description: "Revised",
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({
+          relationship,
+          tickets: [firstUpdated, secondUpdated],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          relationshipId: "rel/1",
+          tickets: [
+            { ...firstUpdated, updatedAt: "2026-08-13T00:00:00.000Z" },
+            { ...secondUpdated, updatedAt: "2026-08-13T00:00:00.000Z" },
+          ],
+        }),
+      );
+
+    const client = makeClient();
+    const updateHook = renderHook(() => useUpdateTicketRelationshipMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    updateHook.result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      relationshipId: "rel/1",
+      description: "Revised",
+    });
+    await waitFor(() => expect(updateHook.result.current.isSuccess).toBe(true));
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      1,
+      "/api/projects/alpha/tickets/1/relationships/rel%2F1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ description: "Revised" }),
+      }),
+    );
+    expect(client.getQueryData(ticketKeys.detail("alpha", 2))).toEqual(
+      secondUpdated,
+    );
+
+    const removeHook = renderHook(() => useRemoveTicketRelationshipMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    removeHook.result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      relationshipId: "rel/1",
+    });
+    await waitFor(() => expect(removeHook.result.current.isSuccess).toBe(true));
+    expect(fetchSpy).toHaveBeenLastCalledWith(
+      "/api/projects/alpha/tickets/1/relationships/rel%2F1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(
+      client.getQueryData<TicketDetail>(ticketKeys.detail("alpha", 2))
+        ?.updatedAt,
+    ).toBe("2026-08-13T00:00:00.000Z");
+  });
+
+  it("preserves prior cache data when the server refuses the relationship", async () => {
+    const client = makeClient();
+    const before = detail({ id: "t1", number: 1 });
+    const key = ticketKeys.detail("alpha", 1);
+    client.setQueryData(key, before);
+    client.setQueryData(allKey, [ticketListItemFromDetail(before)]);
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ error: "cycle", code: "relationship_cycle" }, 409),
+    );
+
+    const { result } = renderHook(() => useAddTicketRelationshipMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      target: { projectName: "alpha", number: 2 },
+      role: "depends_on",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(client.getQueryData(key)).toEqual(before);
+    expect(client.getQueryData(allKey)).toEqual([
+      ticketListItemFromDetail(before),
+    ]);
+    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+});
+
+describe("useAddTicketStatusUpdateMutation", () => {
+  it("applies the authoritative detail and prepends one deduped first-page update", async () => {
+    const client = makeClient();
+    const newUpdate = statusUpdate({
+      id: "update-new",
+      createdAt: "2026-08-15T00:00:00.000Z",
+    });
+    const older = statusUpdate({
+      id: "update-old",
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
+    const oldest = statusUpdate({
+      id: "update-oldest",
+      createdAt: "2026-08-01T00:00:00.000Z",
+    });
+    const statusKey = ticketKeys.statusUpdates("alpha", 1);
+    const cachedPages: InfiniteData<TicketStatusUpdatePage, string | null> = {
+      pages: [
+        {
+          items: [older, newUpdate],
+          total: 2,
+          nextCursor: "older-page",
+        },
+        {
+          items: [newUpdate, oldest],
+          total: 2,
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null, "older-page"],
+    };
+    const before = detail({ id: "t1" });
+    const after = detail({
+      id: "t1",
+      updatedAt: "2026-08-15T00:00:00.000Z",
+      statusUpdates: { total: 3, recent: [newUpdate, older, oldest] },
+    });
+    client.setQueryData(ticketKeys.detail("alpha", 1), before);
+    client.setQueryData(statusKey, cachedPages);
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ update: newUpdate, ticket: after }),
+    );
+
+    const { result } = renderHook(() => useAddTicketStatusUpdateMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      bodyMarkdown: "A status update",
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/alpha/tickets/1/status-updates",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ bodyMarkdown: "A status update" }),
+      }),
+    );
+    expect(client.getQueryData(ticketKeys.detail("alpha", 1))).toEqual(after);
+    const updatedPages =
+      client.getQueryData<InfiniteData<TicketStatusUpdatePage, string | null>>(
+        statusKey,
+      );
+    expect(updatedPages?.pages[0]?.items.map((update) => update.id)).toEqual([
+      "update-new",
+      "update-old",
+    ]);
+    expect(updatedPages?.pages[1]?.items.map((update) => update.id)).toEqual([
+      "update-oldest",
+    ]);
+    expect(updatedPages?.pages.map((page) => page.total)).toEqual([3, 3]);
+    expect(client.getQueryState(statusKey)?.isInvalidated).toBe(true);
+  });
+
+  it("keeps detail and loaded status pages intact on failure, then invalidates them", async () => {
+    const client = makeClient();
+    const detailKey = ticketKeys.detail("alpha", 1);
+    const statusKey = ticketKeys.statusUpdates("alpha", 1);
+    const before = detail({ id: "t1" });
+    const cachedPages: InfiniteData<TicketStatusUpdatePage, string | null> = {
+      pages: [
+        {
+          items: [statusUpdate({ id: "update-old" })],
+          total: 1,
+          nextCursor: null,
+        },
+      ],
+      pageParams: [null],
+    };
+    client.setQueryData(detailKey, before);
+    client.setQueryData(statusKey, cachedPages);
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ error: "refused", code: "validation_failed" }, 400),
+    );
+
+    const { result } = renderHook(() => useAddTicketStatusUpdateMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      bodyMarkdown: "Rejected",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(client.getQueryData(detailKey)).toEqual(before);
+    expect(client.getQueryData(statusKey)).toEqual(cachedPages);
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(statusKey)?.isInvalidated).toBe(true);
+  });
+
+  it("does not restore detail or status pages when deletion wins the response race", async () => {
+    const client = makeClient();
+    const detailKey = ticketKeys.detail("alpha", 1);
+    const statusKey = ticketKeys.statusUpdates("alpha", 1);
+    const before = detail({ id: "t1" });
+    const update = statusUpdate({
+      id: "update-late",
+      createdAt: "2026-08-20T00:00:00.000Z",
+    });
+    client.setQueryData(detailKey, before);
+    client.setQueryData(statusKey, {
+      pages: [{ items: [], total: 0, nextCursor: null }],
+      pageParams: [null],
+    });
+    client.setQueryData(allKey, [ticketListItemFromDetail(before)]);
+    const requests = controlledFetches();
+
+    const { result } = renderHook(() => useAddTicketStatusUpdateMutation(), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate({
+      projectName: "alpha",
+      number: 1,
+      bodyMarkdown: "Late response",
+    });
+    await waitFor(() => expect(requests).toHaveLength(1));
+
+    applyTicketChangedEvent(client, {
+      type: "ticket-changed",
+      change: "deleted",
+      projectName: "alpha",
+      ticketNumber: 1,
+      listItem: null,
+      attachmentIndexChanged: false,
+    });
+    requests[0]!.resolve(
+      jsonResponse({
+        update,
+        ticket: detail({
+          id: "t1",
+          updatedAt: update.createdAt,
+          statusUpdates: { total: 1, recent: [update] },
+        }),
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(client.getQueryData(detailKey)).toBeUndefined();
+    expect(client.getQueryData(statusKey)).toBeUndefined();
     expect(client.getQueryData<TicketListItem[]>(allKey)).toEqual([]);
   });
 });

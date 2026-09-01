@@ -5,6 +5,8 @@ import {
   booleanFlagNamesFrom,
   buildHelpRegistry,
   childHelpEntries,
+  emptyValueFlagArgsFrom,
+  emptyValueFlagNamesFrom,
   flagNamesFrom,
   resolveHelpEntry,
 } from "./help-registry";
@@ -33,6 +35,12 @@ const proseFlag = (name: string): FlagSpec => ({
   name,
   kind: "value",
   fileSource: true,
+  description: `the ${name}`,
+});
+const emptyValueFlag = (name: string): FlagSpec => ({
+  name,
+  kind: "value",
+  allowEmpty: true,
   description: `the ${name}`,
 });
 const booleanFlag = (name: string): FlagSpec => ({
@@ -247,6 +255,30 @@ describe("booleanFlagArgsFrom", () => {
 
   it("lets a command-local value flag override a boolean declared elsewhere", () => {
     expect(booleanFlagArgsFrom(registry, ["b"])).not.toContain("--config");
+  });
+});
+
+describe("empty value derivation", () => {
+  const registry = buildHelpRegistry([
+    entry({ path: ["ticket"] }),
+    entry({ path: ["ticket", "add"], flags: [valueFlag("description")] }),
+    entry({
+      path: ["ticket", "update"],
+      flags: [emptyValueFlag("description")],
+    }),
+  ]);
+
+  it("derives the global probe set from allowEmpty registry flags", () => {
+    expect(emptyValueFlagNamesFrom(registry)).toEqual(["description"]);
+  });
+
+  it("allows emptiness only on the command that declares it", () => {
+    expect(
+      emptyValueFlagArgsFrom(registry, ["ticket", "update", "12"]),
+    ).toEqual(["--description"]);
+    expect(emptyValueFlagArgsFrom(registry, ["ticket", "add", "12"])).toEqual(
+      [],
+    );
   });
 });
 

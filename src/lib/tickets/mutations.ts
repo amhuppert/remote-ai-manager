@@ -9,7 +9,7 @@
  */
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { QueryClient } from "@tanstack/react-query";
+import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { z } from "zod";
 
 import { ApiCallError } from "@/lib/api/errors";
@@ -56,6 +56,12 @@ import {
   ticketDetailSchema,
   type TicketAttachment,
   type TicketDetail,
+  ticketRelationshipDeleteResponseSchema,
+  ticketRelationshipMutationResponseSchema,
+  ticketStatusUpdateCreateResponseSchema,
+  type TicketRelationshipRole,
+  type TicketStatusUpdate,
+  type TicketStatusUpdatePage,
   type TicketStartMode,
   type UpdateTicketFields,
 } from "./schemas";
@@ -1123,6 +1129,276 @@ export function useStartTicketMutation() {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });
+    },
+  });
+}
+
+export interface AddTicketRelationshipVars {
+  projectName: string;
+  number: number;
+  target: { projectName: string; number: number };
+  role: TicketRelationshipRole;
+  description?: string;
+}
+
+interface TicketCacheIdentity {
+  projectName: string;
+  number: number;
+}
+
+function affectedTicketIdentities(
+  details: readonly TicketDetail[] | undefined,
+  fallback: readonly TicketCacheIdentity[],
+): TicketCacheIdentity[] {
+  const identities = new Map<string, TicketCacheIdentity>();
+  for (const identity of [
+    ...fallback,
+    ...(details ?? []).map(({ projectName, number }) => ({
+      projectName,
+      number,
+    })),
+  ]) {
+    identities.set(
+      JSON.stringify([identity.projectName, identity.number]),
+      identity,
+    );
+  }
+  return [...identities.values()];
+}
+
+async function reconcileAuthoritativeTicketDetails(
+  queryClient: QueryClient,
+  details: readonly TicketDetail[],
+  reconcile: () => void = () => {
+    for (const detail of details) {
+      applyDetailToCaches(queryClient, detail);
+    }
+  },
+): Promise<void> {
+  const identities = affectedTicketIdentities(details, []).sort(
+    (left, right) =>
+      left.projectName.localeCompare(right.projectName) ||
+      left.number - right.number,
+  );
+  const releaseGates: Array<() => void> = [];
+  try {
+    for (const identity of identities) {
+      releaseGates.push(
+        await acquireTicketMutationGate(
+          queryClient,
+          identity.projectName,
+          identity.number,
+        ),
+      );
+    }
+    await Promise.all(
+      identities.map((identity) =>
+        cancelTicketQueries(
+          queryClient,
+          identity.projectName,
+          identity.number,
+        ).catch(() => undefined),
+      ),
+    );
+    reconcile();
+  } finally {
+    for (const release of releaseGates.reverse()) {
+      release();
+    }
+  }
+}
+
+function invalidateAffectedTicketCaches(
+  queryClient: QueryClient,
+  details: readonly TicketDetail[] | undefined,
+  fallback: readonly TicketCacheIdentity[],
+): void {
+  scheduleTicketCacheInvalidation(queryClient, {
+    includeLists: true,
+    details: affectedTicketIdentities(details, fallback),
+  });
+}
+
+export function useAddTicketRelationshipMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      number,
+      ...input
+    }: AddTicketRelationshipVars) =>
+      mutationFetch(
+        `${ticketUrl(projectName, number)}/relationships`,
+        "add-ticket-relationship",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+        ticketRelationshipMutationResponseSchema,
+      ),
+    onSuccess: ({ tickets }) =>
+      reconcileAuthoritativeTicketDetails(queryClient, tickets),
+    onSettled: (response, _error, { projectName, number, target }) => {
+      invalidateAffectedTicketCaches(queryClient, response?.tickets, [
+        { projectName, number },
+        target,
+      ]);
+    },
+  });
+}
+
+export interface UpdateTicketRelationshipVars {
+  projectName: string;
+  number: number;
+  relationshipId: string;
+  description: string;
+}
+
+export function useUpdateTicketRelationshipMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      number,
+      relationshipId,
+      description,
+    }: UpdateTicketRelationshipVars) =>
+      mutationFetch(
+        `${ticketUrl(projectName, number)}/relationships/${encodeURIComponent(relationshipId)}`,
+        "update-ticket-relationship",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description }),
+        },
+        ticketRelationshipMutationResponseSchema,
+      ),
+    onSuccess: ({ tickets }) =>
+      reconcileAuthoritativeTicketDetails(queryClient, tickets),
+    onSettled: (response, _error, { projectName, number }) => {
+      invalidateAffectedTicketCaches(queryClient, response?.tickets, [
+        { projectName, number },
+      ]);
+    },
+  });
+}
+
+export interface RemoveTicketRelationshipVars {
+  projectName: string;
+  number: number;
+  relationshipId: string;
+}
+
+export function useRemoveTicketRelationshipMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      number,
+      relationshipId,
+    }: RemoveTicketRelationshipVars) =>
+      mutationFetch(
+        `${ticketUrl(projectName, number)}/relationships/${encodeURIComponent(relationshipId)}`,
+        "remove-ticket-relationship",
+        { method: "DELETE" },
+        ticketRelationshipDeleteResponseSchema,
+      ),
+    onSuccess: ({ tickets }) =>
+      reconcileAuthoritativeTicketDetails(queryClient, tickets),
+    onSettled: (response, _error, { projectName, number }) => {
+      invalidateAffectedTicketCaches(queryClient, response?.tickets, [
+        { projectName, number },
+      ]);
+    },
+  });
+}
+
+export interface AddTicketStatusUpdateVars {
+  projectName: string;
+  number: number;
+  bodyMarkdown: string;
+}
+
+function prependStatusUpdateToCachedPages(
+  queryClient: QueryClient,
+  projectName: string,
+  number: number,
+  update: TicketStatusUpdate,
+  total: number,
+): void {
+  queryClient.setQueryData<InfiniteData<TicketStatusUpdatePage, string | null>>(
+    ticketKeys.statusUpdates(projectName, number),
+    (cached) => {
+      if (cached === undefined || cached.pages.length === 0) return cached;
+      return {
+        ...cached,
+        pages: cached.pages.map((page, index) => ({
+          ...page,
+          total,
+          items: [
+            ...(index === 0 ? [update] : []),
+            ...page.items.filter((candidate) => candidate.id !== update.id),
+          ],
+        })),
+      };
+    },
+  );
+}
+
+export function useAddTicketStatusUpdateMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      number,
+      bodyMarkdown,
+    }: AddTicketStatusUpdateVars) =>
+      mutationFetch(
+        `${ticketUrl(projectName, number)}/status-updates`,
+        "add-ticket-status-update",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bodyMarkdown }),
+        },
+        ticketStatusUpdateCreateResponseSchema,
+      ),
+    onSuccess: ({ update, ticket }) =>
+      reconcileAuthoritativeTicketDetails(queryClient, [ticket], () => {
+        const responseWasSuperseded = ticketEventVersionSupersedes(
+          queryClient,
+          ticket.projectName,
+          ticket.number,
+          ticket.updatedAt,
+        );
+        applyDetailToCaches(queryClient, ticket);
+        if (
+          responseWasSuperseded ||
+          isAuthoritativelyDeletedTicket(
+            queryClient,
+            ticket.projectName,
+            ticket.number,
+          )
+        ) {
+          return;
+        }
+        prependStatusUpdateToCachedPages(
+          queryClient,
+          ticket.projectName,
+          ticket.number,
+          update,
+          ticket.statusUpdates.total,
+        );
+      }),
+    onSettled: (_response, _error, { projectName, number }) => {
+      invalidateAffectedTicketCaches(queryClient, undefined, [
+        { projectName, number },
+      ]);
     },
   });
 }

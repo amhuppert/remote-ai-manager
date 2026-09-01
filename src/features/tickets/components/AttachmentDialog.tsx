@@ -43,7 +43,6 @@ import {
   useAddTicketAttachmentMutation,
   type JsonAttachmentPayloadInput,
 } from "@/lib/tickets/mutations";
-import { useTicketListQuery } from "@/lib/tickets/queries";
 import type { TicketAttachmentKind } from "@/lib/tickets/schemas";
 import { useOpenerFocus } from "@/hooks/use-opener-focus";
 
@@ -90,7 +89,6 @@ const KIND_OPTIONS: ReadonlyArray<{
   { kind: "file", label: "File" },
   { kind: "conversation", label: "Conversation" },
   { kind: "session", label: "Session" },
-  { kind: "related_ticket", label: "Related ticket" },
   { kind: "note", label: "Note" },
 ];
 
@@ -114,7 +112,6 @@ export default function AttachmentDialog({
   const [conversationLabel, setConversationLabel] = useState("");
   const [sessionName, setSessionName] = useState("");
   const [targetProject, setTargetProject] = useState(projectName);
-  const [ticketNumber, setTicketNumber] = useState("");
   const [markdown, setMarkdown] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [voiceBusyFields, setVoiceBusyFields] = useState<Set<string>>(
@@ -136,7 +133,6 @@ export default function AttachmentDialog({
     setConversationLabel("");
     setSessionName("");
     setTargetProject(projectName);
-    setTicketNumber("");
     setMarkdown("");
     setError(null);
     setVoiceBusyFields(new Set());
@@ -150,7 +146,6 @@ export default function AttachmentDialog({
     onOpenChange(nextOpen);
   };
 
-  const parsedNumber = Number(ticketNumber);
   const kindComplete = (() => {
     switch (kind) {
       case "file":
@@ -161,12 +156,6 @@ export default function AttachmentDialog({
         );
       case "session":
         return sessionName.trim().length > 0 && targetProject.trim().length > 0;
-      case "related_ticket":
-        return (
-          targetProject.trim().length > 0 &&
-          Number.isSafeInteger(parsedNumber) &&
-          parsedNumber > 0
-        );
       case "note":
         return markdown.trim().length > 0;
     }
@@ -222,12 +211,6 @@ export default function AttachmentDialog({
             projectName: targetProject,
             sessionName,
           };
-        case "related_ticket":
-          return {
-            kind: "related_ticket" as const,
-            projectName: targetProject,
-            number: parsedNumber,
-          };
         default:
           return { kind: "note" as const, markdown: nextMarkdown };
       }
@@ -242,8 +225,6 @@ export default function AttachmentDialog({
               : conversationId;
           case "session":
             return `${targetProject} / ${sessionName}`;
-          case "related_ticket":
-            return `${targetProject}#${parsedNumber}`;
           case "note":
             return nextMarkdown.length > 60
               ? `${nextMarkdown.slice(0, 60)}…`
@@ -365,21 +346,6 @@ export default function AttachmentDialog({
               setSessionName("");
             }}
             onSessionChange={setSessionName}
-          />
-        )}
-
-        {kind === "related_ticket" && (
-          <RelatedTicketTargetSelect
-            owningProjectName={projectName}
-            owningTicketNumber={number}
-            projectName={targetProject}
-            ticketNumber={ticketNumber}
-            disabled={pending}
-            onProjectChange={(nextProject) => {
-              setTargetProject(nextProject);
-              setTicketNumber("");
-            }}
-            onTicketNumberChange={setTicketNumber}
           />
         )}
 
@@ -746,95 +712,6 @@ function SessionTargetSelect({
         )}
         {sessionsQuery.isSuccess && sessions.length === 0 && (
           <PickerEmpty>No sessions found in this project</PickerEmpty>
-        )}
-      </FormGroup>
-    </>
-  );
-}
-
-interface RelatedTicketTargetSelectProps {
-  owningProjectName: string;
-  owningTicketNumber: number | undefined;
-  projectName: string;
-  ticketNumber: string;
-  disabled: boolean;
-  onProjectChange: (projectName: string) => void;
-  onTicketNumberChange: (ticketNumber: string) => void;
-}
-
-function RelatedTicketTargetSelect({
-  owningProjectName,
-  owningTicketNumber,
-  projectName,
-  ticketNumber,
-  disabled,
-  onProjectChange,
-  onTicketNumberChange,
-}: RelatedTicketTargetSelectProps): React.JSX.Element {
-  const selectId = useId();
-  const ticketsQuery = useTicketListQuery({ projectName });
-  const tickets = (ticketsQuery.data ?? []).filter(
-    (ticket) =>
-      owningTicketNumber === undefined ||
-      ticket.projectName !== owningProjectName ||
-      ticket.number !== owningTicketNumber,
-  );
-
-  return (
-    <>
-      <TargetProjectSelect
-        value={projectName}
-        disabled={disabled}
-        onValueChange={onProjectChange}
-      />
-      <FormGroup>
-        <FormLabel htmlFor={selectId}>Related ticket</FormLabel>
-        <Select
-          value={ticketNumber}
-          onValueChange={onTicketNumberChange}
-          disabled={
-            disabled ||
-            ticketsQuery.isPending ||
-            (ticketsQuery.data === undefined && ticketsQuery.isFetching)
-          }
-        >
-          <SelectTrigger
-            id={selectId}
-            layoutClassName="w-full"
-            aria-required="true"
-          >
-            <SelectValue
-              placeholder={
-                ticketsQuery.isPending ? "Loading tickets…" : "Choose a ticket…"
-              }
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {tickets.map((ticket) => (
-              <SelectItem
-                key={ticket.id}
-                value={String(ticket.number)}
-                description={ticket.status.replaceAll("_", " ")}
-              >
-                {ticket.projectName}#{ticket.number} · {ticket.title}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {ticketsQuery.isPending && (
-          <PickerLoading>Loading tickets…</PickerLoading>
-        )}
-        {ticketsQuery.isError && (
-          <PickerError
-            retryLabel="Retry tickets"
-            retrying={ticketsQuery.isFetching}
-            onRetry={() => void ticketsQuery.refetch()}
-          >
-            Couldn&apos;t load tickets
-          </PickerError>
-        )}
-        {ticketsQuery.isSuccess && tickets.length === 0 && (
-          <PickerEmpty>No other tickets found in this project</PickerEmpty>
         )}
       </FormGroup>
     </>

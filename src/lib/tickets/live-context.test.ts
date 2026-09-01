@@ -122,7 +122,7 @@ describe("getForSession", () => {
     expect(block).toBeNull();
   });
 
-  it("renders identifier, title, status, complete index, and retrieval commands", async () => {
+  it("renders ticket identity plus bounded attachment, relationship, and status-update indexes", async () => {
     const ticket = await createTicket({ title: "Add durable ticket context" });
     await linkSession(ticket);
     const file = await repo.addAttachment({
@@ -140,17 +140,22 @@ describe("getForSession", () => {
       createdAt: "2026-07-05T01:00:00.000Z",
       updatedAt: "2026-07-05T01:00:00.000Z",
     });
-    const related = await repo.addAttachment({
-      id: "att-rel",
+    const prerequisite = await createTicket({ title: "Ship the runtime" });
+    const relationship = await repo.addRelationship({
+      id: "relationship-1",
+      anchorTicketId: ticket.id,
+      relationType: "depends_on",
+      sourceTicketId: ticket.id,
+      targetTicketId: prerequisite.id,
+      description: "The runtime API must land first.",
+      createdAt: "2026-07-05T02:00:00.000Z",
+    });
+    const statusUpdate = await repo.addStatusUpdate({
+      id: "update-1",
       ticketId: ticket.id,
-      description: "Blocking ticket",
-      payload: {
-        kind: "related_ticket",
-        ticketId: "other-ticket",
-        identifierSnapshot: "command-center#7",
-      },
-      createdAt: "2026-07-05T01:00:00.000Z",
-      updatedAt: "2026-07-05T01:00:00.000Z",
+      bodyMarkdown: "Implemented the durable aggregate.",
+      author: { kind: "user" },
+      createdAt: "2026-07-05T03:00:00.000Z",
     });
 
     const identifier = `command-center#${ticket.number}`;
@@ -166,7 +171,18 @@ describe("getForSession", () => {
       `- ${file.id} file — API contract — cctl ticket attachment get '${identifier}' '${file.id}'`,
     );
     expect(block).toContain(
-      `- ${related.id} related_ticket — Blocking ticket — cctl ticket attachment get '${identifier}' '${related.id}'; cctl ticket get 'command-center#7'`,
+      `- ${relationship.relationship.id} depends_on command-center#${prerequisite.number} [not_started]`,
+    );
+    expect(block).toContain("The runtime API must land first.");
+    expect(block).toContain(
+      `cctl ticket relation get '${identifier}' '${relationship.relationship.id}'`,
+    );
+    expect(block).toContain(
+      `- ${statusUpdate.update.id} ${statusUpdate.update.createdAt} User`,
+    );
+    expect(block).toContain("Implemented the durable aggregate.");
+    expect(block).toContain(
+      `cctl ticket status-update get '${identifier}' '${statusUpdate.update.id}'`,
     );
     expect(block).toContain(`refresh: cctl ticket get '${identifier}'`);
   });
@@ -178,6 +194,10 @@ describe("getForSession", () => {
     const block = await provider.getForSession(PROJECT_PATH, SESSION_NAME);
 
     expect(block).toContain("attachments: none");
+    expect(block).toContain("relationships: 0 total, 0 returned, truncated=no");
+    expect(block).toContain(
+      "status updates: 0 total, 0 returned, truncated=no",
+    );
   });
 
   it("bounds long descriptions with an explicit ellipsis and never omits entries", async () => {
@@ -231,14 +251,106 @@ describe("getForSession", () => {
     expect(third).toContain("attachments: none");
   });
 
+  it("reflects relationship and status-update mutations on the next render", async () => {
+    const ticket = await createTicket();
+    const prerequisite = await createTicket({ title: "Runtime prerequisite" });
+    await linkSession(ticket);
+    const first = await provider.getForSession(PROJECT_PATH, SESSION_NAME);
+    expect(first).toContain("relationships: 0 total, 0 returned, truncated=no");
+    expect(first).toContain(
+      "status updates: 0 total, 0 returned, truncated=no",
+    );
+
+    const relationship = await repo.addRelationship({
+      id: "relationship-freshness",
+      anchorTicketId: ticket.id,
+      relationType: "depends_on",
+      sourceTicketId: ticket.id,
+      targetTicketId: prerequisite.id,
+      description: "Initial prerequisite rationale.",
+      createdAt: "2026-07-10T00:00:01.000Z",
+    });
+    const statusUpdate = await repo.addStatusUpdate({
+      id: "update-freshness",
+      ticketId: ticket.id,
+      bodyMarkdown: "The dependency is now documented.",
+      author: { kind: "user" },
+      createdAt: "2026-07-10T00:00:02.000Z",
+    });
+
+    const second = await provider.getForSession(PROJECT_PATH, SESSION_NAME);
+    expect(second).toContain(relationship.relationship.id);
+    expect(second).toContain("Initial prerequisite rationale.");
+    expect(second).toContain(statusUpdate.update.id);
+    expect(second).toContain("The dependency is now documented.");
+
+    await repo.updateRelationship({
+      anchorTicketId: ticket.id,
+      relationshipId: relationship.relationship.id,
+      description: "Revised prerequisite rationale.",
+      updatedAt: "2026-07-10T00:00:03.000Z",
+    });
+    const third = await provider.getForSession(PROJECT_PATH, SESSION_NAME);
+    expect(third).toContain("Revised prerequisite rationale.");
+    expect(third).not.toContain("Initial prerequisite rationale.");
+
+    await repo.removeRelationship({
+      anchorTicketId: ticket.id,
+      relationshipId: relationship.relationship.id,
+      updatedAt: "2026-07-10T00:00:04.000Z",
+    });
+    const fourth = await provider.getForSession(PROJECT_PATH, SESSION_NAME);
+    expect(fourth).toContain(
+      "relationships: 0 total, 0 returned, truncated=no",
+    );
+    expect(fourth).toContain(statusUpdate.update.id);
+  });
+
   it("logs identifier, entry count, rendered size, and duration — never content", async () => {
     const ticket = await createTicket({ title: "Do not log me" });
     await linkSession(ticket);
     await addNoteAttachment(ticket, "secret description", "SECRET-NOTE-BODY");
+    const related = await createTicket({ title: "Secret related title" });
+    await repo.addRelationship({
+      id: "secret-relationship-id",
+      anchorTicketId: ticket.id,
+      relationType: "related",
+      sourceTicketId: ticket.id,
+      targetTicketId: related.id,
+      description: "SECRET-RELATIONSHIP-RATIONALE",
+      createdAt: "2026-07-10T00:00:01.000Z",
+    });
+    await repo.addStatusUpdate({
+      id: "secret-update-id",
+      ticketId: ticket.id,
+      bodyMarkdown: "SECRET-STATUS-UPDATE-BODY",
+      author: {
+        kind: "agent",
+        conversationId: "secret-conversation-id",
+        conversationName: "Secret conversation name",
+        projectName: "command-center",
+        scope: "project",
+        backend: "codex",
+        redactedProfileSnapshot: {
+          tier: "project",
+          id: "secret-agent-profile",
+          name: "Secret Agent Profile",
+          revision: 7,
+          sourceContentHash: `sha256:${"a".repeat(64)}`,
+          resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+        },
+      },
+      createdAt: "2026-07-10T00:00:02.000Z",
+    });
 
     await provider.getForSession(PROJECT_PATH, SESSION_NAME);
 
-    const calls = [...logSpies.debug.mock.calls, ...logSpies.info.mock.calls];
+    const calls = [
+      ...logSpies.debug.mock.calls,
+      ...logSpies.info.mock.calls,
+      ...logSpies.warn.mock.calls,
+      ...logSpies.error.mock.calls,
+    ];
     const rendered = calls.find(
       ([event]) => event === "tickets.live-context.rendered",
     );
@@ -246,6 +358,8 @@ describe("getForSession", () => {
     const fields = rendered?.[1] as Record<string, unknown>;
     expect(fields.identifier).toBe(`command-center#${ticket.number}`);
     expect(fields.entryCount).toBe(1);
+    expect(fields.relationshipCount).toBe(1);
+    expect(fields.statusUpdateCount).toBe(1);
     expect(typeof fields.renderedChars).toBe("number");
     expect(typeof fields.durationMs).toBe("number");
 
@@ -253,5 +367,13 @@ describe("getForSession", () => {
     expect(allLogged).not.toContain("secret description");
     expect(allLogged).not.toContain("SECRET-NOTE-BODY");
     expect(allLogged).not.toContain("Do not log me");
+    expect(allLogged).not.toContain("SECRET-RELATIONSHIP-RATIONALE");
+    expect(allLogged).not.toContain("SECRET-STATUS-UPDATE-BODY");
+    expect(allLogged).not.toContain("secret-conversation-id");
+    expect(allLogged).not.toContain("Secret conversation name");
+    expect(allLogged).not.toContain("secret-agent-profile");
+    expect(allLogged).not.toContain("Secret Agent Profile");
+    expect(allLogged).not.toContain(`sha256:${"a".repeat(64)}`);
+    expect(allLogged).not.toContain(`sha256:${"b".repeat(64)}`);
   });
 });

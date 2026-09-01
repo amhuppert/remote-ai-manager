@@ -590,7 +590,11 @@ describe("createConversationSnapshotRefreshService", () => {
       }),
     );
     const deleting = gate.runProjectDeletion(PROJECT_PATH, async () => {
-      await repo.delete(PROJECT_PATH, ticket.number);
+      await repo.delete(
+        PROJECT_PATH,
+        ticket.number,
+        "2026-07-10T05:00:00.000Z",
+      );
       deletionStarted.resolve();
       await releaseDeletion.promise;
     });

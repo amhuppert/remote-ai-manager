@@ -1,5 +1,8 @@
 import { z } from "zod";
+import { redactedAgentProfileSnapshotSchema } from "@/lib/agent-profiles/schemas";
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
+import { agentBackendSchema } from "@/lib/shared/schemas";
+import { TICKET_STATUS_UPDATE_RECENT_LIMIT } from "./disclosure-limits";
 
 // ============================================================
 // Enums
@@ -140,14 +143,6 @@ const sessionAttachmentPayloadSchema = z
   })
   .strict();
 
-const relatedTicketAttachmentPayloadSchema = z
-  .object({
-    kind: z.literal("related_ticket"),
-    ticketId: z.string().min(1),
-    identifierSnapshot: z.string().min(1),
-  })
-  .strict();
-
 const noteAttachmentPayloadSchema = z
   .object({
     kind: z.literal("note"),
@@ -159,7 +154,6 @@ export const ticketAttachmentPayloadSchema = z.discriminatedUnion("kind", [
   fileAttachmentPayloadSchema,
   conversationAttachmentPayloadSchema,
   sessionAttachmentPayloadSchema,
-  relatedTicketAttachmentPayloadSchema,
   noteAttachmentPayloadSchema,
 ]);
 export type TicketAttachmentPayload = z.infer<
@@ -190,7 +184,7 @@ export type TicketAttachment = z.infer<typeof ticketAttachmentSchema>;
 export const deletedTicketAttachmentSchema = z.object({
   attachmentId: z.string().min(1),
   ticketId: z.string().min(1),
-  kind: z.enum(["file", "conversation", "session", "related_ticket", "note"]),
+  kind: z.enum(["file", "conversation", "session", "note"]),
   ticketUpdatedAt: z.string().min(1),
 });
 
@@ -264,20 +258,223 @@ export const ticketListItemSchema = z.object({
 });
 export type TicketListItem = z.infer<typeof ticketListItemSchema>;
 
+export const ticketRelationshipTypeSchema = z.enum([
+  "related",
+  "depends_on",
+  "parent_child",
+]);
+export type TicketRelationshipType = z.infer<
+  typeof ticketRelationshipTypeSchema
+>;
+
+export const ticketRelationshipRoleSchema = z.enum([
+  "related",
+  "depends_on",
+  "blocks",
+  "parent",
+  "child",
+]);
+export type TicketRelationshipRole = z.infer<
+  typeof ticketRelationshipRoleSchema
+>;
+
+const ticketRelationshipOtherTicketSchema = z
+  .object({
+    id: z.string().min(1),
+    projectName: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().min(1),
+    status: ticketStatusSchema,
+  })
+  .strict();
+
+export const TICKET_PROSE_MAX_BYTES = 256 * 1024;
+
+function hasAtMostTicketProseBytes(value: string): boolean {
+  return new TextEncoder().encode(value).byteLength <= TICKET_PROSE_MAX_BYTES;
+}
+
+export const ticketRelationshipDescriptionSchema = z
+  .string()
+  .refine(hasAtMostTicketProseBytes, {
+    message: `description must be at most ${TICKET_PROSE_MAX_BYTES} UTF-8 bytes`,
+  });
+
+export const ticketRelationshipViewSchema = z
+  .object({
+    id: z.string().min(1),
+    role: ticketRelationshipRoleSchema,
+    otherTicket: ticketRelationshipOtherTicketSchema,
+    description: ticketRelationshipDescriptionSchema,
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+export type TicketRelationshipView = z.infer<
+  typeof ticketRelationshipViewSchema
+>;
+
+export const ticketRelationshipPageSchema = z
+  .object({
+    items: z.array(ticketRelationshipViewSchema),
+    total: z.number().int().nonnegative(),
+    nextCursor: z.string().min(1).nullable(),
+  })
+  .strict()
+  .superRefine((page, context) => {
+    if (page.total < page.items.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: "total cannot be smaller than the returned item count",
+      });
+    }
+  });
+export type TicketRelationshipPage = z.infer<
+  typeof ticketRelationshipPageSchema
+>;
+
+const userStatusUpdateAuthorSchema = z
+  .object({ kind: z.literal("user") })
+  .strict();
+
+const sharedAgentStatusUpdateAuthorFields = {
+  kind: z.literal("agent"),
+  conversationId: z.string().min(1),
+  conversationName: z.string().nullable(),
+  projectName: z.string().min(1),
+  backend: agentBackendSchema,
+  redactedProfileSnapshot: redactedAgentProfileSnapshotSchema.nullable(),
+};
+
+const projectAgentStatusUpdateAuthorSchema = z
+  .object({
+    ...sharedAgentStatusUpdateAuthorFields,
+    scope: z.literal("project"),
+  })
+  .strict();
+
+const sessionAgentStatusUpdateAuthorSchema = z
+  .object({
+    ...sharedAgentStatusUpdateAuthorFields,
+    scope: z.literal("session"),
+    sessionName: z.string().min(1),
+  })
+  .strict();
+
+export const ticketStatusUpdateAuthorSchema = z.union([
+  userStatusUpdateAuthorSchema,
+  projectAgentStatusUpdateAuthorSchema,
+  sessionAgentStatusUpdateAuthorSchema,
+]);
+export type TicketStatusUpdateAuthor = z.infer<
+  typeof ticketStatusUpdateAuthorSchema
+>;
+
+export const ticketStatusUpdateBodySchema = z
+  .string()
+  .refine((value) => value.trim().length > 0, {
+    message: "bodyMarkdown must be non-empty",
+  })
+  .refine(hasAtMostTicketProseBytes, {
+    message: `bodyMarkdown must be at most ${TICKET_PROSE_MAX_BYTES} UTF-8 bytes`,
+  });
+
+export const ticketStatusUpdateSchema = z
+  .object({
+    id: z.string().min(1),
+    ticketId: z.string().min(1),
+    bodyMarkdown: ticketStatusUpdateBodySchema,
+    author: ticketStatusUpdateAuthorSchema,
+    createdAt: z.string().min(1),
+  })
+  .strict();
+export type TicketStatusUpdate = z.infer<typeof ticketStatusUpdateSchema>;
+
+export const ticketStatusUpdateSummarySchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    recent: z
+      .array(ticketStatusUpdateSchema)
+      .max(TICKET_STATUS_UPDATE_RECENT_LIMIT),
+  })
+  .strict()
+  .superRefine((summary, context) => {
+    if (summary.total < summary.recent.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: "total cannot be smaller than the recent item count",
+      });
+    }
+  });
+export type TicketStatusUpdateSummary = z.infer<
+  typeof ticketStatusUpdateSummarySchema
+>;
+
+export const ticketStatusUpdatePageSchema = z
+  .object({
+    items: z.array(ticketStatusUpdateSchema),
+    total: z.number().int().nonnegative(),
+    nextCursor: z.string().min(1).nullable(),
+  })
+  .strict()
+  .superRefine((page, context) => {
+    if (page.total < page.items.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["total"],
+        message: "total cannot be smaller than the returned item count",
+      });
+    }
+  });
+export type TicketStatusUpdatePage = z.infer<
+  typeof ticketStatusUpdatePageSchema
+>;
+
 export const ticketDetailSchema = ticketSchema.extend({
   projectName: z.string().min(1),
   attachments: z.array(ticketAttachmentSchema),
   sessions: z.array(ticketSessionLinkSchema),
+  relationships: z.array(ticketRelationshipViewSchema),
+  statusUpdates: ticketStatusUpdateSummarySchema,
 });
 export type TicketDetail = z.infer<typeof ticketDetailSchema>;
+
+export const ticketRelationshipMutationResponseSchema = z
+  .object({
+    relationship: ticketRelationshipViewSchema,
+    tickets: z.array(ticketDetailSchema).min(1),
+  })
+  .strict();
+export type TicketRelationshipMutationResponse = z.infer<
+  typeof ticketRelationshipMutationResponseSchema
+>;
+
+export const ticketRelationshipDeleteResponseSchema = z
+  .object({
+    relationshipId: z.string().min(1),
+    tickets: z.array(ticketDetailSchema),
+  })
+  .strict();
+export type TicketRelationshipDeleteResponse = z.infer<
+  typeof ticketRelationshipDeleteResponseSchema
+>;
+
+export const ticketStatusUpdateCreateResponseSchema = z
+  .object({
+    update: ticketStatusUpdateSchema,
+    ticket: ticketDetailSchema,
+  })
+  .strict();
+export type TicketStatusUpdateCreateResponse = z.infer<
+  typeof ticketStatusUpdateCreateResponseSchema
+>;
 
 // ============================================================
 // Resolved attachments (per-kind full-content retrieval)
 // ============================================================
 
-// A plain union, not a discriminated one: `related_ticket` has two arms
-// (available/unavailable) that share the `kind` discriminator and differ on
-// the literal `available` flag.
 export const resolvedAttachmentSchema = z.union([
   z.object({
     kind: z.literal("file"),
@@ -330,19 +527,6 @@ export const resolvedAttachmentSchema = z.union([
     finished: z.boolean(),
     conversationIds: z.array(z.string()),
     readCommands: z.array(z.string()),
-  }),
-  z.object({
-    kind: z.literal("related_ticket"),
-    attachment: ticketAttachmentSchema,
-    available: z.literal(true),
-    ticket: ticketDetailSchema,
-    followCommand: z.string(),
-  }),
-  z.object({
-    kind: z.literal("related_ticket"),
-    attachment: ticketAttachmentSchema,
-    available: z.literal(false),
-    identifierSnapshot: z.string(),
   }),
   z.object({
     kind: z.literal("note"),
@@ -626,6 +810,17 @@ export const ticketValidationIssueSchema = z.object({
 });
 export type TicketValidationIssue = z.infer<typeof ticketValidationIssueSchema>;
 
+export const RELATIONSHIP_SELF_LINK_RATIONALE =
+  "A relationship must connect two distinct tickets.";
+export const RELATIONSHIP_SCOPE_RATIONALE =
+  "Parent/child hierarchy is project-local so ownership and project deletion stay deterministic.";
+export const RELATIONSHIP_DUPLICATE_RATIONALE =
+  "One logical relationship owns one rationale; update the existing relationship instead.";
+export const RELATIONSHIP_CYCLE_RATIONALE =
+  "Dependency and parent graphs stay acyclic so direction and ancestry remain interpretable.";
+export const STATUS_UPDATE_ACTOR_RATIONALE =
+  "Agent-authored updates require a resolvable conversation so source provenance remains durable.";
+
 export const ticketErrorSchema = z.discriminatedUnion("code", [
   z.object({
     code: z.literal("ticket_not_found"),
@@ -643,6 +838,80 @@ export const ticketErrorSchema = z.discriminatedUnion("code", [
     identifier: z.string(),
     attachmentId: z.string(),
   }),
+  z
+    .object({
+      code: z.literal("relationship_not_found"),
+      details: z
+        .object({
+          identifier: z.string().min(1),
+          relationshipId: z.string().min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("relationship_self_link"),
+      details: z
+        .object({
+          source: ticketIdentitySchema,
+          target: ticketIdentitySchema,
+        })
+        .strict(),
+      rationale: z.literal(RELATIONSHIP_SELF_LINK_RATIONALE),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("relationship_scope"),
+      details: z
+        .object({
+          source: ticketIdentitySchema,
+          target: ticketIdentitySchema,
+        })
+        .strict(),
+      rationale: z.literal(RELATIONSHIP_SCOPE_RATIONALE),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("relationship_conflict"),
+      details: z
+        .object({
+          reason: z.literal("duplicate"),
+          relationshipId: z.string().min(1),
+        })
+        .strict(),
+      rationale: z.literal(RELATIONSHIP_DUPLICATE_RATIONALE),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("relationship_cycle"),
+      details: z
+        .object({
+          relationType: z.enum(["depends_on", "parent_child"]),
+          source: ticketIdentitySchema,
+          target: ticketIdentitySchema,
+        })
+        .strict(),
+      rationale: z.literal(RELATIONSHIP_CYCLE_RATIONALE),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("status_update_actor_required"),
+      details: z.object({}).strict(),
+      rationale: z.literal(STATUS_UPDATE_ACTOR_RATIONALE),
+    })
+    .strict(),
+  z
+    .object({
+      code: z.literal("status_update_actor_not_found"),
+      details: z.object({ conversationId: z.string().min(1) }).strict(),
+      rationale: z.literal(STATUS_UPDATE_ACTOR_RATIONALE),
+    })
+    .strict(),
   z.object({
     code: z.literal("active_session"),
     sessionName: z.string(),
@@ -703,7 +972,15 @@ export type StartTicketOutput = z.infer<typeof startTicketOutputSchema>;
 export const ticketChangedEventSchema = z
   .object({
     type: z.literal("ticket-changed"),
-    change: z.enum(["created", "updated", "deleted", "attachments", "session"]),
+    change: z.enum([
+      "created",
+      "updated",
+      "deleted",
+      "attachments",
+      "session",
+      "relationships",
+      "status_updates",
+    ]),
     projectName: z.string().min(1),
     ticketNumber: z.number().int().positive(),
     listItem: ticketListItemSchema.nullable(),

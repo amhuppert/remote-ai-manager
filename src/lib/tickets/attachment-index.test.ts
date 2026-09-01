@@ -57,14 +57,6 @@ function oneOfEveryKind(): TicketAttachment[] {
       },
       "Session where the bug reproduced",
     ),
-    makeAttachment(
-      {
-        kind: "related_ticket",
-        ticketId: "ticket-9",
-        identifierSnapshot: "side-project#7",
-      },
-      "Blocking upstream work",
-    ),
     makeAttachment({ kind: "note", markdown: "remember this" }, "A note"),
   ];
 }
@@ -83,7 +75,6 @@ describe("buildAttachmentIndex", () => {
       "file",
       "conversation",
       "session",
-      "related_ticket",
       "note",
     ]);
     expect(entries.map((entry) => entry.attachmentId)).toEqual(
@@ -104,20 +95,13 @@ describe("buildAttachmentIndex", () => {
     }
   });
 
-  it("adds the follow command for related-ticket entries only", () => {
+  it("returns exactly one retrieval command for every canonical attachment", () => {
     const entries = buildAttachmentIndex({
       identifier: IDENTIFIER,
       attachments: oneOfEveryKind(),
       mode: "full",
     });
-    const related = entries.find((entry) => entry.kind === "related_ticket");
-    expect(related?.commands).toEqual([
-      `cctl ticket attachment get '${IDENTIFIER}' '${related?.attachmentId}'`,
-      "cctl ticket get 'side-project#7'",
-    ]);
-    for (const entry of entries.filter(
-      (candidate) => candidate.kind !== "related_ticket",
-    )) {
+    for (const entry of entries) {
       expect(entry.commands).toHaveLength(1);
     }
   });
@@ -216,9 +200,9 @@ describe("renderAttachmentIndexLines", () => {
     expect(lines[0]).toBe(
       `- ${fileAttachment?.id} file — API contract — cctl ticket attachment get '${IDENTIFIER}' '${fileAttachment?.id}'`,
     );
-    const relatedAttachment = attachments[3];
+    const noteAttachment = attachments[3];
     expect(lines[3]).toBe(
-      `- ${relatedAttachment?.id} related_ticket — Blocking upstream work — cctl ticket attachment get '${IDENTIFIER}' '${relatedAttachment?.id}'; cctl ticket get 'side-project#7'`,
+      `- ${noteAttachment?.id} note — A note — cctl ticket attachment get '${IDENTIFIER}' '${noteAttachment?.id}'`,
     );
   });
 

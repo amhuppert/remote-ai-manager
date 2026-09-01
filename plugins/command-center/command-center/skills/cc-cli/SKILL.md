@@ -156,7 +156,8 @@ command and iterate on the validation errors it returns (one issue per line).
 Prose arguments take a file too. Any flag carrying load-bearing text —
 `workflow task complete --summary`, `workflow task add --instructions`,
 `workflow collab request --brief`, `ticket create --description`, `ticket attach
-note --markdown`, `spec reply --body`, `spec question --text` — accepts
+note --markdown`, `ticket relation add|update --description`, `ticket
+status-update add --body`, `spec reply --body`, `spec question --text` — accepts
 `--<flag>-file <path>` (`-` reads stdin) as an alternative, and `--help` lists
 it. Use it whenever the text carries backticks, quotes, `$`, or newlines: the
 shell has silently blanked a backticked summary in production. Pass one form or
@@ -438,13 +439,13 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl conversation compaction list` — list a conversation's compaction artifacts
   - `cctl conversation compaction list <conversation-id> [--json]`
 
-- `cctl ticket` — create, list, read, update, delete, start work on, and attach context to work tickets
-  - `cctl ticket <create|list|get|update|delete|start|attach|attachment>`
+- `cctl ticket` — create, list, read, update, link, post updates to, and attach context to work tickets
+  - `cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment>`
 - `cctl ticket create` — create a ticket in the ambient project
   - `cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <not_started|in_progress|done|blocked|closed>]`
 - `cctl ticket list` — list tickets with filters
   - `cctl ticket list [--status <status>] [--type <type>] [--sort <created|updated>] [--all] [--limit <n>] [--attachments]`
-- `cctl ticket get` — read one ticket in full
+- `cctl ticket get` — read one ticket with bounded collaboration outlines
   - `cctl ticket get <number | project#number>`
 - `cctl ticket update` — update a ticket's fields or status
   - `cctl ticket update <number | project#number> [--title "<title>"] [--description "<markdown>"] [--type <type>] [--status <status>]`
@@ -452,17 +453,37 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl ticket delete <number | project#number>`
 - `cctl ticket start` — start work on a ticket in a new session
   - `cctl ticket start <number | project#number> --mode <agent|prepared> [--backend <backend>] [--model <model> [--model-param <id=value> ...]]`
+- `cctl ticket relation` — list, read, add, edit, and remove ticket relationships
+  - `cctl ticket relation <list|get|add|update|remove>`
+- `cctl ticket status-update` — post and read append-only ticket status updates
+  - `cctl ticket status-update <add|list|get>`
 - `cctl ticket attach` — attach described context to a ticket
   - `cctl ticket attach <file|conversation|session|ticket|note> <number | project#number> … --description "<what and why>"`
 - `cctl ticket attachment` — read, edit, refresh, and remove ticket attachments
   - `cctl ticket attachment <get|update|refresh|remove> <number | project#number> <attachmentId>`
+- `cctl ticket relation list` — list newest relationships as bounded outlines
+  - `cctl ticket relation list <number | project#number> [--role <related|depends_on|blocks|parent|child>] [--limit <n>] [--cursor <opaque>]`
+- `cctl ticket relation get` — read one relationship and its full rationale
+  - `cctl ticket relation get <number | project#number> <relationshipId>`
+- `cctl ticket relation add` — add a relationship relative to one ticket
+  - `cctl ticket relation add <number | project#number> <otherNumber | project#number> --role <related|depends_on|blocks|parent|child> [--description "<markdown>"]`
+- `cctl ticket relation update` — replace or clear a relationship rationale
+  - `cctl ticket relation update <number | project#number> <relationshipId> --description "<markdown>"`
+- `cctl ticket relation remove` — remove a relationship
+  - `cctl ticket relation remove <number | project#number> <relationshipId>`
+- `cctl ticket status-update add` — append a Markdown status update
+  - `cctl ticket status-update add <number | project#number> --body "<markdown>"`
+- `cctl ticket status-update list` — list newest status updates as bounded outlines
+  - `cctl ticket status-update list <number | project#number> [--limit <n>] [--cursor <opaque>]`
+- `cctl ticket status-update get` — read one full status update and provenance snapshot
+  - `cctl ticket status-update get <number | project#number> <updateId>`
 - `cctl ticket attach file` — attach a file snapshot
   - `cctl ticket attach file <number | project#number> <path> --description "<what and why>" [--media-type <mime>]`
 - `cctl ticket attach conversation` — attach a conversation's compaction snapshot
   - `cctl ticket attach conversation <number | project#number> [<conversationId>] --description "<what and why>"`
 - `cctl ticket attach session` — attach a live session pointer
   - `cctl ticket attach session <number | project#number> <sessionName> --description "<what and why>"`
-- `cctl ticket attach ticket` — attach a related ticket
+- `cctl ticket attach ticket` — compatibility alias for adding a related relationship
   - `cctl ticket attach ticket <number | project#number> <relatedNumber | project#number> --description "<how it relates>"`
 - `cctl ticket attach note` — attach a markdown note
   - `cctl ticket attach note <number | project#number> "<markdown>" --description "<what and why>"`
@@ -827,32 +848,53 @@ carries `total`/`returned`/`truncated`/`reveal`. Each row ends with its
 `attachments: <count>`, read straight from the list payload — the default costs
 exactly one request.
 
-**The attachment index.** `get` always renders the ticket's typed attachment
-index — id, kind, description, and the exact retrieval/follow command per
-entry — in both text and `--json` output (`attachmentIndex` in the envelope).
-`list --attachments` adds the same index (with descriptions bounded by an
-explicit `…`) for the rows it shows, at one request per shown ticket. Retrieve
-any entry's content with the command shown in its index line (`cctl ticket
-attachment get <ticket> <id>`); related-ticket entries also carry a `cctl ticket
-get <project>#<number>` follow command.
+**Disclosure ladder.** Start with `ticket get`. It returns the ticket and
+attachment index, at most 20 relationship outlines grouped as parent, children,
+depends on, blocks, and related, then the five newest status-update outlines.
+Each outline carries a stable id, bounded preview, and exact drill-down command;
+the JSON envelope has the same disclosure level and never expands outline
+Markdown.
 
-- `attach` — five kinds, each with a **required** `--description` (the
-  descriptions are the index): `file <path>` snapshots bytes at attach time
-  (survives source deletion; `--media-type` optional); `conversation
-  [<conversationId>]` snapshots the conversation's compaction (defaults to the
-  current conversation from `CC_CONVERSATION_ID`; an explicit id globally
-  resolves its owning project and session, so no `--session` flag is needed);
-  `session <sessionName>` and `ticket <ref>` are live pointers; `note
-  "<markdown>"` is inline markdown.
-- `attachment get` — resolve full content per kind (file content, compaction
-  markdown with read commands, session state, related-ticket detail plus its
-  own index, note body). A file attachment past the stdout budget — and any
-  binary (base64) file, whatever its size — is written under `.cc/temp/` and
-  stdout carries the manifest (`artifact`, `format`, `bytes`, `sha256`) in place
-  of the content; in `--json` the `attachment.content` field is replaced by the
-  same manifest under `artifact`. `attachment update` edits `--description` (any
-  kind) and `--markdown` (notes). `attachment remove` deletes the entry. All
-  three work in any ticket status.
+Follow `ticket relation list` or `ticket status-update list` when the ticket
+summary reports omitted rows. Both list newest-first, default to 20, cap at 100,
+and return `total`/`returned`/`truncated`; a truncated page supplies an opaque
+cursor and an exact next command preserving the active role, limit, and cursor.
+Use `relation get` or `status-update get` only when the full rationale/body is
+needed. Those full reads and `ticket get` apply the 60,000-byte budget separately
+to text and JSON: oversized output moves under `.cc/temp/`, and stdout carries
+its path, format, byte count, and SHA-256 manifest.
+
+**Relationships.** Interpret every role relative to the first ticket.
+`depends_on`/`blocks` and `parent`/`child` are inverse views of one edge;
+`related` is symmetric. Resolve both references independently: a bare second
+reference uses the ambient project, never the first reference's project, so
+qualify both when ambient scope is not intended. Setting a parent atomically
+replaces the old parent. Treat dependencies as context, not work gates. Supply
+rationales inline or with `--description-file`; use an explicit empty inline
+description on `relation update` to clear one.
+
+**Status updates.** Append deliberate progress posts separately from the ticket
+status field. Updates have no edit or delete command. Supply Markdown inline or
+with `--body-file`. For an authenticated agent call, use the ambient
+`CC_CONVERSATION_ID`; the command refuses `--conversation` overrides so the
+server can preserve durable source provenance.
+
+**Attachment index.** `ticket get` renders each canonical attachment's id,
+kind, description, and exact retrieval command in text and `attachmentIndex` in
+JSON. `list --attachments` adds the same bounded index for shown rows, at one
+request per shown ticket. `attach` creates four canonical kinds, each with a
+required description: file snapshot, conversation compaction snapshot, live
+session pointer, or Markdown note. `attach ticket` remains a compatibility
+alias for `relation add --role related`; it calls the relationship route and
+creates no attachment. Migrated relationship ids remain usable with
+`attachment get|update|remove`; refresh stays conversation-only.
+
+**Designed friction.** Treat self-link, duplicate-edge, graph-cycle,
+same-project hierarchy, and append-only/provenance refusals as deliberate; read
+their structured `code`, `details`, `issues`, and `rationale` before changing
+the request. Classify silent truncation, missing drill-down handles, lost
+structured issues, and help/parser drift as CLI defects rather than constraints
+to work around.
 
 ```
 cctl ticket create --title "Flaky pre-merge gate" --type bug
@@ -864,14 +906,21 @@ cctl ticket list
 cctl ticket get 12
 # → cc#12  Flaky pre-merge gate
 #   status: not_started  type: bug  created: …  updated: …
+#   relationships: total=1 returned=1 truncated=false
+#   depends on:
+#   - rel-3 depends_on — platform#7 [in_progress] API contract
+#     get: cctl ticket relation get cc#12 rel-3
+#   status updates: total=3 returned=1 truncated=true — next: cctl ticket status-update list cc#12 --limit 20
 #   attachments:
 #   - id-7 file — full CI log of the flaky run — cctl ticket attachment get cc#12 id-7
+cctl ticket relation add cc#12 platform#7 --role depends_on --description-file .cc/temp/rationale.md
+cctl ticket status-update add 12 --body-file .cc/temp/update.md
 cctl ticket update 12 --status in_progress
 ```
 
 Related: `cctl conversation compaction get` reads a compaction directly once a
-conversation attachment names it; `cctl ticket get` is the follow command every
-related-ticket entry embeds.
+conversation attachment names it; `cctl ticket relation get` and `cctl ticket
+status-update get` are the full-content drill-down commands emitted by outlines.
 
 ## cctl conversation
 

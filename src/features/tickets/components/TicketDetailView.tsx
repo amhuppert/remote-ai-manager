@@ -49,6 +49,8 @@ import {
   TICKET_WORK_TYPE_ORDER,
 } from "@/lib/tickets/ticket-visuals";
 import AttachmentIndex from "./AttachmentIndex";
+import TicketRelationships from "./TicketRelationships";
+import TicketStatusUpdates from "./TicketStatusUpdates";
 import CopyTicketReferenceButton from "@/components/references/CopyTicketReferenceButton";
 import StartTicketDialog, {
   StartTicketConflictAlert,
@@ -358,6 +360,17 @@ export function TicketDossier({
             attachments={detail.attachments}
           />
 
+          <TicketStatusUpdates
+            projectName={detail.projectName}
+            number={detail.number}
+          />
+
+          <TicketRelationships
+            projectName={detail.projectName}
+            number={detail.number}
+            relationships={detail.relationships}
+          />
+
           <AttachmentIndex
             projectName={detail.projectName}
             number={detail.number}
@@ -401,7 +414,7 @@ export function TicketDossier({
       <ConfirmDialog
         open={deleteOpen}
         title="Delete ticket?"
-        message={`This permanently deletes ${identifier} and its ${detail.attachments.length} attachment${detail.attachments.length === 1 ? "" : "s"}. Number ${detail.number} is never reused. Linked sessions and their worktrees are not touched.`}
+        message={`This permanently deletes ${identifier}, its ${detail.attachments.length} context attachment${detail.attachments.length === 1 ? "" : "s"}, ${detail.relationships.length} relationship${detail.relationships.length === 1 ? "" : "s"}, and ${detail.statusUpdates.total} status update${detail.statusUpdates.total === 1 ? "" : "s"}. Any children become top-level. Linked tickets are not deleted. Number ${detail.number} is never reused. Linked sessions and their worktrees are not touched.`}
         confirmLabel="Delete"
         danger
         onConfirm={confirmDelete}

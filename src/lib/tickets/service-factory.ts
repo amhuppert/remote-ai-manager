@@ -59,6 +59,10 @@ import {
   type TicketAttachmentService,
 } from "./attachment-service";
 import {
+  createLegacyRelatedTicketAdapter,
+  type LegacyRelatedTicketAdapter,
+} from "./legacy-related-ticket-adapter";
+import {
   createCreateAttachmentPlanner,
   type CreateAttachmentPlanner,
 } from "./create-attachment-planner";
@@ -82,6 +86,10 @@ import {
   type LiveTicketContextProvider,
 } from "./live-context";
 import {
+  createTicketRelationshipService,
+  type TicketRelationshipService,
+} from "./relationship-service";
+import {
   createTicketProjectResolver,
   type TicketProjectResolver,
 } from "./project-resolver";
@@ -100,6 +108,10 @@ import type {
   TicketDetail,
 } from "./schemas";
 import { createTicketService, type TicketService } from "./service";
+import {
+  createTicketStatusUpdateService,
+  type TicketStatusUpdateService,
+} from "./status-update-service";
 import {
   createConversationSnapshotRefreshService,
   type ConversationSnapshotRefreshService,
@@ -258,6 +270,73 @@ export function getTicketService(): TicketService {
       },
       // Ticket events are wire-only, but still use typed publication so
       // transport failures retain their delivery outcome and structured logs.
+      publish: publishEvent,
+      now() {
+        return new Date().toISOString();
+      },
+      generateId() {
+        return randomUUID();
+      },
+    }),
+  );
+}
+
+/** One relationship service per process, sharing the aggregate and gates. */
+export function getTicketRelationshipService(): TicketRelationshipService {
+  return getGlobalSingleton("__cc_ticket_relationship_service", () =>
+    createTicketRelationshipService({
+      repo: getTicketsRepo(),
+      resolveProjectPath(projectName) {
+        return getTicketProjectResolver().resolveKnownProjectPath(projectName);
+      },
+      runMultiProjectTicketOperation(projectPaths, operation) {
+        return getTicketProjectOperationGate().runMultiProjectTicketOperation(
+          projectPaths,
+          operation,
+        );
+      },
+      runTicketOperation(key, operation) {
+        return getTicketOperationLock().runExclusive(key, operation);
+      },
+      publish: publishEvent,
+      now() {
+        return new Date().toISOString();
+      },
+      generateId() {
+        return randomUUID();
+      },
+    }),
+  );
+}
+
+/** Compatibility bridge for the retired related-ticket attachment wire shape. */
+export function getLegacyRelatedTicketAdapter(): LegacyRelatedTicketAdapter {
+  return getGlobalSingleton("__cc_legacy_related_ticket_adapter", () =>
+    createLegacyRelatedTicketAdapter({
+      repo: getTicketsRepo(),
+      ticketService: getTicketService(),
+      relationshipService: getTicketRelationshipService(),
+    }),
+  );
+}
+
+/** One status-update service per process, sharing the aggregate and gates. */
+export function getTicketStatusUpdateService(): TicketStatusUpdateService {
+  return getGlobalSingleton("__cc_ticket_status_update_service", () =>
+    createTicketStatusUpdateService({
+      repo: getTicketsRepo(),
+      resolveProjectPath(projectName) {
+        return getTicketProjectResolver().resolveKnownProjectPath(projectName);
+      },
+      runProjectTicketOperation(projectPath, operation) {
+        return getTicketProjectOperationGate().runTicketOperation(
+          projectPath,
+          operation,
+        );
+      },
+      runTicketOperation(key, operation) {
+        return getTicketOperationLock().runExclusive(key, operation);
+      },
       publish: publishEvent,
       now() {
         return new Date().toISOString();

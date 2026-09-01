@@ -26,6 +26,12 @@ import {
   createTicketContentStore,
   type TicketContentStore,
 } from "./content-store";
+import {
+  RELATIONSHIP_DESCRIPTION_PREVIEW_CHARS,
+  STATUS_UPDATE_BODY_PREVIEW_CHARS,
+  TICKET_RELATIONSHIP_OUTLINE_LIMIT,
+  TICKET_STATUS_UPDATE_RECENT_LIMIT,
+} from "./disclosure-limits";
 import type { MaterializeTicketContextInput } from "./materializer";
 import { createTicketOperationLock } from "./operation-lock";
 import { ticketChangedEventSchema, type TicketDetail } from "./schemas";
@@ -71,7 +77,7 @@ interface Recorded {
 
 function nextNow(): string {
   clock += 1;
-  return `2026-07-10T01:00:${String(clock).padStart(2, "0")}.000Z`;
+  return new Date(Date.UTC(2026, 6, 10, 1, 0, clock)).toISOString();
 }
 
 beforeEach(async () => {
@@ -1576,6 +1582,94 @@ describe("kickoff dispatch", () => {
     );
   });
 
+  it("queues bounded relationship and status-update indexes with stable drill-down handles", async () => {
+    const ticket = await createTicket();
+    const relationshipDescriptions: string[] = [];
+    for (
+      let index = 1;
+      index <= TICKET_RELATIONSHIP_OUTLINE_LIMIT + 1;
+      index += 1
+    ) {
+      const otherTicket = await createTicket({
+        title: `Related ticket ${index}`,
+      });
+      const description = `relationship rationale ${index} ${"r".repeat(200)}`;
+      relationshipDescriptions.push(description);
+      await repo.addRelationship({
+        id: `kickoff-relationship-${String(index).padStart(2, "0")}`,
+        anchorTicketId: ticket.id,
+        relationType: "related",
+        sourceTicketId: ticket.id,
+        targetTicketId: otherTicket.id,
+        description,
+        createdAt: nextNow(),
+      });
+    }
+    const statusBodies: string[] = [];
+    for (
+      let index = 1;
+      index <= TICKET_STATUS_UPDATE_RECENT_LIMIT + 2;
+      index += 1
+    ) {
+      const bodyMarkdown = `status update ${index} ${"s".repeat(240)}`;
+      statusBodies.push(bodyMarkdown);
+      await repo.addStatusUpdate({
+        id: `kickoff-update-${String(index).padStart(2, "0")}`,
+        ticketId: ticket.id,
+        bodyMarkdown,
+        author: { kind: "user" },
+        createdAt: nextNow(),
+      });
+    }
+    const { service, recorded } = makeService();
+
+    const result = await service.start({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      mode: "agent",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const prompt = recorded.kickoffs[0]?.input.prompt ?? "";
+    const identifier = `${PROJECT_NAME}#${ticket.number}`;
+    expect(prompt.match(/cctl ticket relation get /g)).toHaveLength(
+      TICKET_RELATIONSHIP_OUTLINE_LIMIT,
+    );
+    expect(prompt.match(/cctl ticket status-update get /g)).toHaveLength(
+      TICKET_STATUS_UPDATE_RECENT_LIMIT,
+    );
+    expect(prompt).toContain(
+      `relationships: ${TICKET_RELATIONSHIP_OUTLINE_LIMIT + 1} total, ${TICKET_RELATIONSHIP_OUTLINE_LIMIT} returned, truncated=yes; rest: cctl ticket relation list '${identifier}'`,
+    );
+    expect(prompt).toContain(
+      `status updates: ${TICKET_STATUS_UPDATE_RECENT_LIMIT + 2} total, ${TICKET_STATUS_UPDATE_RECENT_LIMIT} returned, truncated=yes; rest: cctl ticket status-update list '${identifier}'`,
+    );
+    expect(prompt).toContain(
+      `cctl ticket relation get '${identifier}' 'kickoff-relationship-21'`,
+    );
+    expect(prompt).not.toContain(
+      `cctl ticket relation get '${identifier}' 'kickoff-relationship-01'`,
+    );
+    expect(prompt).toContain(
+      `cctl ticket status-update get '${identifier}' 'kickoff-update-07'`,
+    );
+    expect(prompt).not.toContain(
+      `cctl ticket status-update get '${identifier}' 'kickoff-update-01'`,
+    );
+
+    const newestRelationship = relationshipDescriptions.at(-1) ?? "";
+    expect(prompt).toContain(
+      `${newestRelationship.slice(0, RELATIONSHIP_DESCRIPTION_PREVIEW_CHARS - 1)}…`,
+    );
+    expect(prompt).not.toContain(newestRelationship);
+    const newestStatus = statusBodies.at(-1) ?? "";
+    expect(prompt).toContain(
+      `${newestStatus.slice(0, STATUS_UPDATE_BODY_PREVIEW_CHARS - 1)}…`,
+    );
+    expect(prompt).not.toContain(newestStatus);
+  });
+
   it("prepared mode runs no kickoff and reports initialPromptQueued false", async () => {
     const ticket = await createTicket();
     const { service, recorded } = makeService();
@@ -1656,6 +1750,34 @@ describe("buildTicketKickoffPrompt", () => {
           updatedAt: "2026-07-10T00:00:00.000Z",
         },
       ],
+      relationships: [
+        {
+          id: "relationship-1",
+          role: "blocks",
+          otherTicket: {
+            id: "ticket-2",
+            projectName: "other",
+            number: 4,
+            title: "Dependent rollout",
+            status: "blocked",
+          },
+          description: "This ticket must land before rollout.",
+          createdAt: "2026-07-10T00:00:00.000Z",
+          updatedAt: "2026-07-10T00:00:00.000Z",
+        },
+      ],
+      statusUpdates: {
+        total: 1,
+        recent: [
+          {
+            id: "update-1",
+            ticketId: "ticket-1",
+            bodyMarkdown: "Investigated the flaky gate.",
+            author: { kind: "user" },
+            createdAt: "2026-07-10T01:00:00.000Z",
+          },
+        ],
+      },
     });
 
     expect(prompt).toContain("demo#7");
@@ -1666,6 +1788,14 @@ describe("buildTicketKickoffPrompt", () => {
     // Bounded mode: long descriptions are shortened with an explicit ellipsis.
     expect(prompt).toContain("…");
     expect(prompt).not.toContain("x".repeat(200));
+    expect(prompt).toContain("relationship-1 blocks other#4");
+    expect(prompt).toContain(
+      "cctl ticket relation get 'demo#7' 'relationship-1'",
+    );
+    expect(prompt).toContain("update-1 2026-07-10T01:00:00.000Z User");
+    expect(prompt).toContain(
+      "cctl ticket status-update get 'demo#7' 'update-1'",
+    );
   });
 
   it("states the absence of attachments instead of rendering an empty index", () => {
@@ -1674,7 +1804,15 @@ describe("buildTicketKickoffPrompt", () => {
       title: "Fix the flaky gate",
       description: "",
       attachments: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     });
     expect(prompt).toContain("no attachments");
+    expect(prompt).toContain(
+      "relationships: 0 total, 0 returned, truncated=no",
+    );
+    expect(prompt).toContain(
+      "status updates: 0 total, 0 returned, truncated=no",
+    );
   });
 });

@@ -7,10 +7,15 @@ import type {
   TicketAttachment,
   TicketDetail,
   TicketLinkSummary,
+  TicketRelationshipRole,
+  TicketRelationshipView,
   TicketSessionLink,
+  TicketStatusUpdate,
 } from "@/lib/tickets/schemas";
 import type { TicketSpecReadThrough } from "@/lib/specs/queries";
-import TicketDetailView from "@/features/tickets/components/TicketDetailView";
+import TicketDetailView, {
+  TicketDossier,
+} from "@/features/tickets/components/TicketDetailView";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
@@ -82,6 +87,117 @@ const ENDED_SESSIONS: TicketSessionLink[] = [
   },
 ];
 
+function makeRelationship(
+  id: string,
+  role: TicketRelationshipRole,
+  projectName: string,
+  number: number,
+  title: string,
+  description = "",
+): TicketRelationshipView {
+  return {
+    id,
+    role,
+    otherTicket: {
+      id: `${projectName}-${number}`,
+      projectName,
+      number,
+      title,
+      status: role === "blocks" ? "blocked" : "in_progress",
+    },
+    description,
+    createdAt: daysAgo(2),
+    updatedAt: minutesAgo(20),
+  };
+}
+
+function makeUserUpdate(
+  id: string,
+  bodyMarkdown: string,
+  ageMinutes: number,
+): TicketStatusUpdate {
+  return {
+    id,
+    ticketId: "t-cc-12",
+    bodyMarkdown,
+    author: { kind: "user" },
+    createdAt: minutesAgo(ageMinutes),
+  };
+}
+
+const AGENT_UPDATE: TicketStatusUpdate = {
+  id: "update-agent-review",
+  ticketId: "t-cc-12",
+  bodyMarkdown:
+    "Verified the cache fan-out and left the **deletion race** test green.",
+  author: {
+    kind: "agent",
+    scope: "session",
+    conversationId: "conversation-cache-review",
+    conversationName: "Ticket cache review",
+    projectName: "command-center",
+    sessionName: "csm/ticket-attachments",
+    backend: "codex",
+    redactedProfileSnapshot: {
+      tier: "project",
+      id: "cache-reviewer",
+      name: "Cache reviewer",
+      revision: 3,
+      sourceContentHash: `sha256:${"1".repeat(64)}`,
+      resolvedInstructionHash: `sha256:${"2".repeat(64)}`,
+    },
+  },
+  createdAt: minutesAgo(12),
+};
+
+const USER_UPDATE = makeUserUpdate(
+  "update-user-progress",
+  "Windowed rendering is implemented; keyboard verification remains.",
+  8,
+);
+
+const CROSS_PROJECT_RELATIONSHIPS: TicketRelationshipView[] = [
+  makeRelationship(
+    "relationship-depends",
+    "depends_on",
+    "platform",
+    8,
+    "Publish the cursor API",
+    "The dossier consumes the platform cursor contract before it can ship.",
+  ),
+  makeRelationship(
+    "relationship-blocks",
+    "blocks",
+    "dashboard",
+    19,
+    "Adopt the virtualized dossier",
+  ),
+];
+
+const HIERARCHY_RELATIONSHIPS: TicketRelationshipView[] = [
+  makeRelationship(
+    "relationship-parent",
+    "parent",
+    "command-center",
+    2,
+    "Ticket dossier performance epic",
+  ),
+  makeRelationship(
+    "relationship-child-a",
+    "child",
+    "command-center",
+    13,
+    "Keyboard navigation verification",
+  ),
+  makeRelationship(
+    "relationship-child-b",
+    "child",
+    "command-center",
+    14,
+    "Measure narrow-layout latency",
+  ),
+];
+
 function makeDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
   return {
     id: "t-cc-12",
@@ -104,6 +220,8 @@ function makeDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
       }),
     ],
     sessions: [ACTIVE_SESSION, ...ENDED_SESSIONS],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
     ...overrides,
   };
 }
@@ -129,6 +247,8 @@ interface MockDetailOptions {
     | Record<string, TicketLinkSummary>
     | ((fetchIndex: number) => Record<string, TicketLinkSummary>);
   linkedSpecs?: TicketSpecReadThrough["specs"];
+  fullStatusUpdates?: TicketStatusUpdate[];
+  statusEndpoint?: "success" | "pending" | "error";
 }
 
 function linkSummariesFromDetail(
@@ -157,6 +277,8 @@ function mockDetailFetch(
     start = "success",
     sessionLinks,
     linkedSpecs = [],
+    fullStatusUpdates,
+    statusEndpoint = "success",
   }: MockDetailOptions,
 ) {
   let served = detail;
@@ -172,6 +294,9 @@ function mockDetailFetch(
     );
     const startMatch = parsed.pathname.match(
       /^\/api\/projects\/([^/]+)\/tickets\/(\d+)\/start$/,
+    );
+    const statusUpdatesMatch = parsed.pathname.match(
+      /^\/api\/projects\/([^/]+)\/tickets\/(\d+)\/status-updates$/,
     );
 
     if (
@@ -192,6 +317,44 @@ function mockDetailFetch(
           : sessionLinks;
       sessionLinkFetches += 1;
       return Response.json(links ?? linkSummariesFromDetail(served));
+    }
+
+    if (statusUpdatesMatch && method === "GET") {
+      if (statusEndpoint === "pending") return new Promise(() => {});
+      if (statusEndpoint === "error") {
+        return Response.json(
+          { error: "Status updates are temporarily unavailable." },
+          { status: 503 },
+        );
+      }
+      const updates = fullStatusUpdates ?? served.statusUpdates.recent;
+      const offset = Number(parsed.searchParams.get("cursor") ?? "0");
+      const limit = Number(parsed.searchParams.get("limit") ?? "20");
+      const items = updates.slice(offset, offset + limit);
+      const nextOffset = offset + items.length;
+      return Response.json({
+        items,
+        total: updates.length,
+        nextCursor: nextOffset < updates.length ? String(nextOffset) : null,
+      });
+    }
+
+    if (statusUpdatesMatch && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as { bodyMarkdown: string };
+      const update = makeUserUpdate(
+        `update-${Date.now()}`,
+        body.bodyMarkdown,
+        0,
+      );
+      served = {
+        ...served,
+        updatedAt: new Date().toISOString(),
+        statusUpdates: {
+          total: served.statusUpdates.total + 1,
+          recent: [update, ...served.statusUpdates.recent].slice(0, 5),
+        },
+      };
+      return Response.json({ update, ticket: served });
     }
 
     if (startMatch && method === "POST") {
@@ -259,14 +422,20 @@ function DetailHarness({
   start = "success",
   sessionLinks,
   linkedSpecs,
+  fullStatusUpdates,
+  statusEndpoint,
+  layout = "page",
 }: {
   detail: TicketDetail;
+  layout?: "page" | "pane";
 } & MockDetailOptions): React.JSX.Element {
   const cleanup = mockDetailFetch(detail, {
     failPatches,
     start,
     sessionLinks,
     linkedSpecs,
+    fullStatusUpdates,
+    statusEndpoint,
   });
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", cleanup, { once: true });
@@ -276,12 +445,23 @@ function DetailHarness({
   });
   return (
     <QueryClientProvider client={queryClient}>
-      <TicketDetailView
-        projectName={detail.projectName}
-        number={detail.number}
-        defaultAgentBackend="claude"
-        backendDefaults={BACKEND_DEFAULTS}
-      />
+      {layout === "pane" ? (
+        <div className="mx-auto max-w-[720px] bg-bg-void">
+          <TicketDossier
+            detail={detail}
+            defaultAgentBackend="claude"
+            backendDefaults={BACKEND_DEFAULTS}
+            layout="pane"
+          />
+        </div>
+      ) : (
+        <TicketDetailView
+          projectName={detail.projectName}
+          number={detail.number}
+          defaultAgentBackend="claude"
+          backendDefaults={BACKEND_DEFAULTS}
+        />
+      )}
       <GenericToastSource />
     </QueryClientProvider>
   );
@@ -553,8 +733,102 @@ export const EmptyDossier: Story = {
   ),
 };
 
+/** Cross-project dependencies keep project-qualified identifiers and direction. */
+export const CrossProjectDependencies: Story = {
+  render: () => (
+    <DetailHarness
+      detail={makeDetail({ relationships: CROSS_PROJECT_RELATIONSHIPS })}
+    />
+  ),
+};
+
+/** One parent and multiple children show the project-local hierarchy groups. */
+export const TicketHierarchy: Story = {
+  render: () => (
+    <DetailHarness
+      detail={makeDetail({ relationships: HIERARCHY_RELATIONSHIPS })}
+    />
+  ),
+};
+
+/** Long Markdown rationale and a paginated 24-entry update history. */
+export const LongRationaleAndUpdateHistory: Story = {
+  render: () => {
+    const updates = Array.from({ length: 24 }, (_, index) =>
+      makeUserUpdate(
+        `update-history-${index + 1}`,
+        `### Checkpoint ${24 - index}\n\nValidated the window boundary against keyboard navigation, cache convergence, and narrow-layout overflow. The remaining work is recorded explicitly so older updates stay useful when loaded in place.`,
+        index + 1,
+      ),
+    );
+    const longRationale = makeRelationship(
+      "relationship-long-rationale",
+      "related",
+      "command-center",
+      21,
+      "Document the dossier performance contract",
+      "### Why this stays linked\n\nThis ticket carries the implementation while the linked ticket owns the measurement contract, regression thresholds, keyboard acceptance checks, narrow-layout verification, and the live-system evidence needed before rollout. Keeping both records connected prevents performance conclusions from drifting away from the implementation decisions that produced them.",
+    );
+    return (
+      <DetailHarness
+        detail={makeDetail({
+          relationships: [longRationale],
+          statusUpdates: { total: updates.length, recent: updates.slice(0, 5) },
+        })}
+        fullStatusUpdates={updates}
+      />
+    );
+  },
+};
+
+/** Agent provenance uses the durable profile name, backend, and conversation link. */
+export const AgentAttributedUpdate: Story = {
+  render: () => (
+    <DetailHarness
+      detail={makeDetail({
+        statusUpdates: { total: 2, recent: [USER_UPDATE, AGENT_UPDATE] },
+      })}
+      fullStatusUpdates={[USER_UPDATE, AGENT_UPDATE]}
+    />
+  ),
+};
+
+/** The composer remains usable while the initial update history is pending. */
+export const StatusUpdatesPending: Story = {
+  render: () => (
+    <DetailHarness detail={makeDetail()} statusEndpoint="pending" />
+  ),
+};
+
+/** An update-history failure stays local to the section and offers retry. */
+export const StatusUpdatesError: Story = {
+  render: () => <DetailHarness detail={makeDetail()} statusEndpoint="error" />,
+};
+
+/** The split-pane dossier stacks its rail below the collaboration sections. */
+export const SplitPaneDossier: Story = {
+  render: () => (
+    <DetailHarness
+      detail={makeDetail({
+        relationships: CROSS_PROJECT_RELATIONSHIPS,
+        statusUpdates: { total: 2, recent: [USER_UPDATE, AGENT_UPDATE] },
+      })}
+      fullStatusUpdates={[USER_UPDATE, AGENT_UPDATE]}
+      layout="pane"
+    />
+  ),
+};
+
 /** Stacked dossier header, main content, attachment index, and metadata rail. */
 export const MobileDossier: Story = {
-  render: () => <DetailHarness detail={makeDetail()} />,
+  render: () => (
+    <DetailHarness
+      detail={makeDetail({
+        relationships: HIERARCHY_RELATIONSHIPS,
+        statusUpdates: { total: 2, recent: [USER_UPDATE, AGENT_UPDATE] },
+      })}
+      fullStatusUpdates={[USER_UPDATE, AGENT_UPDATE]}
+    />
+  ),
   parameters: { viewport: { defaultViewport: "mobile1" } },
 };

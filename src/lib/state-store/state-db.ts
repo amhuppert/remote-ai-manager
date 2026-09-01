@@ -140,8 +140,14 @@ const DB_FILE_NAME = "command-center.db";
  * model tuple with one atomic selection and rebuilds context-artifact
  * provenance storage. Older writers could recreate tuple-shaped config,
  * workflow, snapshot, transcript, or provenance state that this build refuses.
+ *
+ * Version 13 is the ticket-relationship cutover: migration
+ * `0038-ticket-relationships-and-status-updates` moves legacy
+ * `related_ticket` attachment rows into first-class relationship storage.
+ * Canonical attachment readers no longer admit that discriminator, so an older
+ * build must not write legacy rows back after the migration stamps the database.
  */
-export const KNOWN_SCHEMA_VERSION = 12;
+export const KNOWN_SCHEMA_VERSION = 13;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -1816,6 +1822,57 @@ export const NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL = `
   );
 `;
 
+export const TICKET_RELATIONSHIPS_AND_STATUS_UPDATES_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS ticket_relationships (
+    id               TEXT PRIMARY KEY,
+    relation_type    TEXT NOT NULL CHECK (relation_type IN (
+      'related', 'depends_on', 'parent_child'
+    )),
+    source_ticket_id TEXT NOT NULL,
+    target_ticket_id TEXT NOT NULL,
+    description      TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    CHECK (source_ticket_id <> target_ticket_id),
+    CHECK (relation_type <> 'related' OR source_ticket_id < target_ticket_id),
+    UNIQUE (relation_type, source_ticket_id, target_ticket_id),
+    FOREIGN KEY (source_ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ticket_relationships_source_updated
+    ON ticket_relationships (source_ticket_id, updated_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_ticket_relationships_target_updated
+    ON ticket_relationships (target_ticket_id, updated_at DESC, id DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_ticket_relationships_parent_child_target
+    ON ticket_relationships (target_ticket_id)
+    WHERE relation_type = 'parent_child';
+
+  CREATE TABLE IF NOT EXISTS ticket_status_updates (
+    id            TEXT PRIMARY KEY,
+    ticket_id     TEXT NOT NULL,
+    body_markdown TEXT NOT NULL CHECK (length(trim(body_markdown)) > 0),
+    author_json   TEXT NOT NULL CHECK (json_valid(author_json)),
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ticket_status_updates_ticket_created
+    ON ticket_status_updates (ticket_id, created_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS ticket_relationship_legacy_aliases (
+    legacy_attachment_id TEXT PRIMARY KEY,
+    relationship_id      TEXT NOT NULL,
+    anchor_ticket_id     TEXT NOT NULL,
+    FOREIGN KEY (relationship_id)
+      REFERENCES ticket_relationships(id) ON DELETE CASCADE,
+    FOREIGN KEY (anchor_ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ticket_relationship_legacy_aliases_anchor_relationship
+    ON ticket_relationship_legacy_aliases (anchor_ticket_id, relationship_id);
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -2352,6 +2409,8 @@ const SCHEMA_DDL = `
     ON ticket_sessions (ticket_id, linked_at);
   CREATE INDEX IF NOT EXISTS idx_ticket_sessions_project_session
     ON ticket_sessions (project_path, session_name);
+
+  ${TICKET_RELATIONSHIPS_AND_STATUS_UPDATES_SCHEMA_DDL}
 
   ${VALIDATION_RUNS_SCHEMA_DDL}
 

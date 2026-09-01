@@ -694,6 +694,44 @@ describe("change events", () => {
     expect(event.listItem).toBeNull();
   });
 
+  it("publishes the deleted ticket before authoritative relationship events for surviving neighbors", async () => {
+    const target = await createTicket({ title: "Delete me" });
+    const survivor = await createTicket({ title: "Survivor" });
+    if (!target.ok || !survivor.ok) throw new Error("ticket setup failed");
+    await repo.addRelationship({
+      id: "relationship-before-delete",
+      anchorTicketId: target.value.id,
+      relationType: "depends_on",
+      sourceTicketId: target.value.id,
+      targetTicketId: survivor.value.id,
+      description: "Survivor is a prerequisite",
+      createdAt: "2026-07-10T00:00:02.500Z",
+    });
+    events.length = 0;
+
+    await service.delete({ projectName: PROJECT_NAME, number: 1 });
+
+    expect(events.map(ticketChanged)).toMatchObject([
+      {
+        change: "deleted",
+        projectName: PROJECT_NAME,
+        ticketNumber: 1,
+        listItem: null,
+      },
+      {
+        change: "relationships",
+        projectName: PROJECT_NAME,
+        ticketNumber: 2,
+        listItem: {
+          id: survivor.value.id,
+          number: 2,
+          updatedAt: "2026-07-10T00:00:03.000Z",
+        },
+      },
+    ]);
+    expect((await repo.find(PROJECT_PATH, 2))?.relationships).toEqual([]);
+  });
+
   it("publishes no event for failed mutations", async () => {
     await service.update({
       projectName: PROJECT_NAME,

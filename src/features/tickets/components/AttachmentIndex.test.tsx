@@ -43,6 +43,8 @@ const DETAIL: TicketDetail = {
     },
   ],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 function CacheBackedIndex(): React.JSX.Element | null {
@@ -76,6 +78,15 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   useToastStoreForTesting.setState({ toasts: [] });
+});
+
+describe("AttachmentIndex canonical kinds", () => {
+  it("keeps ticket relationships out of the context attachment index", async () => {
+    renderIndex();
+
+    expect(await screen.findByText("note")).toBeInTheDocument();
+    expect(screen.queryByText("related ticket")).toBeNull();
+  });
 });
 
 describe("AttachmentIndex mutation feedback", () => {

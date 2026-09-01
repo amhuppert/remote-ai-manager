@@ -21,6 +21,14 @@ import {
   renderAttachmentIndexLines,
 } from "./attachment-index";
 import { publishTicketChange } from "./events";
+import {
+  buildRelationshipIndex,
+  renderRelationshipIndexLines,
+} from "./relationship-index";
+import {
+  buildStatusUpdateIndex,
+  renderStatusUpdateIndexLines,
+} from "./status-update-index";
 import type {
   MaterializedTicketEntry,
   MaterializeTicketContextInput,
@@ -33,9 +41,11 @@ import {
   type TicketAttachment,
   type TicketDetail,
   type TicketError,
+  type TicketRelationshipView,
   type TicketResult,
   type TicketSessionLink,
   type TicketStartMode,
+  type TicketStatusUpdateSummary,
 } from "./schemas";
 import { formatTicketIdentifier } from "./references";
 import { toTicketValidationIssues } from "./service";
@@ -217,6 +227,8 @@ export function buildTicketKickoffPrompt(input: {
   title: string;
   description: string;
   attachments: TicketAttachment[];
+  relationships: TicketRelationshipView[];
+  statusUpdates: TicketStatusUpdateSummary;
 }): string {
   const entries = buildAttachmentIndex({
     identifier: input.identifier,
@@ -230,10 +242,30 @@ export function buildTicketKickoffPrompt(input: {
           "Attached context (retrieve any entry in full with its command):",
           ...renderAttachmentIndexLines(entries),
         ].join("\n");
+  const relationshipBlock = [
+    "Relationships (retrieve one rationale or list omitted rows with its command):",
+    ...renderRelationshipIndexLines(
+      buildRelationshipIndex({
+        identifier: input.identifier,
+        relationships: input.relationships,
+      }),
+    ),
+  ].join("\n");
+  const statusUpdateBlock = [
+    "Status updates (retrieve one body or list omitted rows with its command):",
+    ...renderStatusUpdateIndexLines(
+      buildStatusUpdateIndex({
+        identifier: input.identifier,
+        statusUpdates: input.statusUpdates,
+      }),
+    ),
+  ].join("\n");
   return [
     `You are starting work on ticket ${input.identifier}: ${input.title}`,
     ...(input.description === "" ? [] : [input.description]),
     indexBlock,
+    relationshipBlock,
+    statusUpdateBlock,
   ].join("\n\n");
 }
 
@@ -648,6 +680,8 @@ export function createTicketStartService(
         title: ticket.title,
         description: ticket.description,
         attachments: ticket.attachments,
+        relationships: ticket.relationships,
+        statusUpdates: ticket.statusUpdates,
       });
       try {
         initialPromptQueued = await deps.queueKickoff({

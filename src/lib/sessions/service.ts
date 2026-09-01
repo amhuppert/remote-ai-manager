@@ -1323,7 +1323,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     // Focused project-row delete: the FK cascade removes the project's sessions
     // (and their conversations/reference documents); archived/pinned membership
     // is derived from the project row, so it drops with the row.
-    await deleteProjectRow(projectPath);
+    await deleteProjectRow(
+      projectPath,
+      ticketDeletionSnapshot.externalNeighborTicketIds,
+      new Date().toISOString(),
+    );
 
     // Ticket snapshot blobs live outside the DB, so the committed row cascade
     // cannot reach them. The ids were captured while the ticket rows existed;

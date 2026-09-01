@@ -28,10 +28,13 @@ import {
 import { toTicketValidationIssues } from "./service";
 import {
   getTicketAttachmentService,
+  getLegacyRelatedTicketAdapter,
   getTicketService,
 } from "./service-factory";
 import type { TicketService } from "./service";
 import { readBodyBounded } from "@/lib/shared/bounded-body";
+import type { LegacyRelatedTicketAdapter } from "./legacy-related-ticket-adapter";
+import { legacyRelatedTicketAddBodySchema } from "./legacy-related-ticket-wire";
 
 const logger = createLogger("tickets.attachments.routes");
 
@@ -45,6 +48,7 @@ export interface TicketAttachmentRouteDeps {
   /** Lazy so importing this module (route shells do) never opens the DB. */
   getTicketService(): TicketService;
   getAttachmentService(): TicketAttachmentService;
+  getLegacyRelatedTicketAdapter(): LegacyRelatedTicketAdapter;
   auth: AgentAuth;
 }
 
@@ -84,10 +88,20 @@ const fileMetadataSchema = z.object({
   mediaType: z.string().min(1).optional(),
 });
 
-const editBodySchema = updateTicketAttachmentServiceInputSchema.pick({
-  description: true,
-  markdown: true,
-});
+const editBodySchema = updateTicketAttachmentServiceInputSchema
+  .pick({
+    markdown: true,
+  })
+  .extend({ description: z.string().optional() });
+
+function isRelatedTicketKindBody(body: Record<string, unknown>): boolean {
+  const payload = body["payload"];
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    (payload as { kind?: unknown }).kind === "related_ticket"
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Responses
@@ -283,6 +297,25 @@ export function createTicketAttachmentRouteHandlers(
             },
           ]);
         }
+        if (isRelatedTicketKindBody(body)) {
+          const legacy = legacyRelatedTicketAddBodySchema.safeParse(body);
+          if (!legacy.success) {
+            return validationFailedResponse(
+              toTicketValidationIssues(legacy.error),
+            );
+          }
+          return ticketResponse(
+            await deps.getLegacyRelatedTicketAdapter().add({
+              ...identity,
+              description: legacy.data.description,
+              target: {
+                projectName: legacy.data.payload.projectName,
+                number: legacy.data.payload.number,
+              },
+            }),
+            201,
+          );
+        }
         const parsed = jsonAddBodySchema.safeParse(body);
         if (!parsed.success) {
           return validationFailedResponse(
@@ -308,10 +341,13 @@ export function createTicketAttachmentRouteHandlers(
       const denied = await softGate(request);
       if (denied) return denied;
 
+      const identity = await attachmentIdentity(context);
+      const canonical = await deps.getAttachmentService().resolve(identity);
+      if (canonical.ok || canonical.error.code !== "attachment_not_found") {
+        return ticketResponse(canonical);
+      }
       return ticketResponse(
-        await deps
-          .getAttachmentService()
-          .resolve(await attachmentIdentity(context)),
+        await deps.getLegacyRelatedTicketAdapter().resolve(identity),
       );
     },
 
@@ -330,10 +366,50 @@ export function createTicketAttachmentRouteHandlers(
       if (!parsed.success) {
         return validationFailedResponse(toTicketValidationIssues(parsed.error));
       }
-      return ticketResponse(
-        await deps.getAttachmentService().update({
+
+      let canonical;
+      if (
+        parsed.data.description === "" &&
+        parsed.data.markdown === undefined
+      ) {
+        const resolved = await deps.getAttachmentService().resolve(identity);
+        canonical =
+          !resolved.ok && resolved.error.code === "attachment_not_found"
+            ? resolved
+            : await deps.getAttachmentService().update({
+                ...identity,
+                ...parsed.data,
+              });
+      } else {
+        canonical = await deps.getAttachmentService().update({
           ...identity,
           ...parsed.data,
+        });
+      }
+      if (canonical.ok || canonical.error.code !== "attachment_not_found") {
+        return ticketResponse(canonical);
+      }
+
+      if (
+        parsed.data.markdown !== undefined ||
+        parsed.data.description === undefined
+      ) {
+        const handle = await deps
+          .getLegacyRelatedTicketAdapter()
+          .isRelationshipHandle(identity);
+        if (!handle.ok) return ticketResponse(handle);
+        if (!handle.value) return ticketResponse(canonical);
+        return validationFailedResponse([
+          {
+            path: "description",
+            message: "relationships only support description edits",
+          },
+        ]);
+      }
+      return ticketResponse(
+        await deps.getLegacyRelatedTicketAdapter().update({
+          ...identity,
+          description: parsed.data.description,
         }),
       );
     },
@@ -350,8 +426,12 @@ export function createTicketAttachmentRouteHandlers(
           toTicketValidationIssues(identity.error),
         );
       }
+      const canonical = await deps.getAttachmentService().remove(identity.data);
+      if (canonical.ok || canonical.error.code !== "attachment_not_found") {
+        return ticketResponse(canonical);
+      }
       return ticketResponse(
-        await deps.getAttachmentService().remove(identity.data),
+        await deps.getLegacyRelatedTicketAdapter().remove(identity.data),
       );
     },
   };
@@ -361,6 +441,7 @@ function defaultDeps(): TicketAttachmentRouteDeps {
   return {
     getTicketService: () => getTicketService(),
     getAttachmentService: () => getTicketAttachmentService(),
+    getLegacyRelatedTicketAdapter: () => getLegacyRelatedTicketAdapter(),
     auth: createAgentAuth(),
   };
 }

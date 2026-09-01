@@ -418,6 +418,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0035-generalized-model-selection",
       "0036-add-notepad-comments",
       "0037-add-notepad-delivery-watermarks",
+      "0038-ticket-relationships-and-status-updates",
     ]);
   });
 

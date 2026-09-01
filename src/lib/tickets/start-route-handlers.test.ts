@@ -44,6 +44,8 @@ const sampleOutput: StartTicketOutput = {
         endReason: null,
       },
     ],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
   },
   sessionName: "ticket-12-fix-the-flaky-gate-1",
   conversationId: "11111111-1111-4111-8111-111111111111",

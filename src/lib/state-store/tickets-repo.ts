@@ -8,9 +8,13 @@ import {
   ticketAttachmentPayloadSchema,
   ticketAttachmentSchema,
   ticketSchema,
+  ticketRelationshipDescriptionSchema,
+  ticketRelationshipRoleSchema,
+  ticketRelationshipTypeSchema,
   ticketSessionEndReasonSchema,
   ticketSessionLinkSchema,
   ticketSessionStartModeSchema,
+  ticketStatusUpdateSchema,
   updateTicketFieldsSchema,
   type DeletedTicket,
   type Ticket,
@@ -19,10 +23,28 @@ import {
   type TicketLinkSummary,
   type TicketListItem,
   type TicketListQuery,
+  type TicketRelationshipPage,
+  type TicketRelationshipView,
   type TicketSessionLink,
+  type TicketStatusUpdate,
+  type TicketStatusUpdatePage,
 } from "@/lib/tickets/schemas";
+import {
+  decodeTicketKeysetCursor,
+  normalizeTicketPageLimit,
+} from "@/lib/tickets/ticket-keyset-cursor";
 import { PersistenceError } from "../shared/errors";
 import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
+import {
+  latestTicketTimestamp as latestTimestamp,
+  nextSharedTicketRevision,
+  nextTicketRevision,
+} from "./ticket-revision";
+import {
+  createTicketRelationshipsStore,
+  type AddTicketRelationshipInput,
+} from "./ticket-relationships-store";
+import { createTicketStatusUpdatesStore } from "./ticket-status-updates-store";
 import type { WriteQueue } from "./write-queue";
 
 type Db = InstanceType<typeof Database>;
@@ -145,6 +167,78 @@ export interface DeletedAttachmentResult {
   ticketUpdatedAt: string;
 }
 
+export const addTicketRelationshipInputSchema = z
+  .object({
+    id: z.string().min(1),
+    anchorTicketId: z.string().min(1),
+    relationType: ticketRelationshipTypeSchema,
+    sourceTicketId: z.string().min(1),
+    targetTicketId: z.string().min(1),
+    description: ticketRelationshipDescriptionSchema,
+    createdAt: z.string().min(1),
+  })
+  .strict();
+export type AddTicketRelationshipRepoInput = z.infer<
+  typeof addTicketRelationshipInputSchema
+>;
+
+export const updateTicketRelationshipInputSchema = z
+  .object({
+    anchorTicketId: z.string().min(1),
+    relationshipId: z.string().min(1),
+    description: ticketRelationshipDescriptionSchema,
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+export type UpdateTicketRelationshipRepoInput = z.infer<
+  typeof updateTicketRelationshipInputSchema
+>;
+
+export const removeTicketRelationshipInputSchema = z
+  .object({
+    anchorTicketId: z.string().min(1),
+    relationshipId: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+export type RemoveTicketRelationshipRepoInput = z.infer<
+  typeof removeTicketRelationshipInputSchema
+>;
+
+export interface TicketRelationshipMutationResult {
+  relationship: TicketRelationshipView;
+  tickets: TicketDetail[];
+  replacedRelationshipId: string | null;
+}
+
+export interface TicketRelationshipRemovalResult {
+  relationshipId: string;
+  tickets: TicketDetail[];
+}
+
+export interface TicketStatusUpdateMutationResult {
+  update: TicketStatusUpdate;
+  ticket: TicketDetail;
+}
+
+export interface DeleteTicketResult {
+  deleted: DeletedTicket;
+  survivingNeighbors: TicketListItem[];
+}
+
+export interface TicketRelationshipListInput {
+  ticketId: string;
+  role?: z.infer<typeof ticketRelationshipRoleSchema>;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TicketStatusUpdateListInput {
+  ticketId: string;
+  limit?: number;
+  cursor?: string;
+}
+
 export type TicketSessionNotLinkableReason =
   | "deleted"
   | "finished"
@@ -191,10 +285,45 @@ export interface TicketsRepo {
   ): Promise<TicketListItem | null>;
   find(projectPath: string, number: number): Promise<TicketDetail | null>;
   findById(ticketId: string): Promise<TicketDetail | null>;
+  listRelationships(
+    input: TicketRelationshipListInput,
+  ): Promise<TicketRelationshipPage>;
+  findRelationship(
+    ticketId: string,
+    relationshipId: string,
+  ): Promise<TicketRelationshipView | null>;
+  resolveLegacyRelationship(
+    ticketId: string,
+    legacyAttachmentId: string,
+  ): Promise<TicketRelationshipView | null>;
+  addRelationship(
+    input: AddTicketRelationshipRepoInput,
+  ): Promise<TicketRelationshipMutationResult>;
+  updateRelationship(
+    input: UpdateTicketRelationshipRepoInput,
+  ): Promise<TicketRelationshipMutationResult | null>;
+  removeRelationship(
+    input: RemoveTicketRelationshipRepoInput,
+  ): Promise<TicketRelationshipRemovalResult | null>;
+  listStatusUpdates(
+    input: TicketStatusUpdateListInput,
+  ): Promise<TicketStatusUpdatePage>;
+  findStatusUpdate(
+    ticketId: string,
+    updateId: string,
+  ): Promise<TicketStatusUpdate | null>;
+  addStatusUpdate(
+    update: TicketStatusUpdate,
+  ): Promise<TicketStatusUpdateMutationResult>;
   /** Ticket ids for a project — feeds ticket-content blob cleanup. */
   listTicketIds(projectPath: string): Promise<string[]>;
+  listExternalRelationshipNeighborIds(projectPath: string): Promise<string[]>;
   update(input: UpdateTicketInput): Promise<TicketDetail | null>;
-  delete(projectPath: string, number: number): Promise<DeletedTicket | null>;
+  delete(
+    projectPath: string,
+    number: number,
+    updatedAt: string,
+  ): Promise<DeleteTicketResult | null>;
   addAttachment(input: TicketAttachment): Promise<TicketAttachment>;
   updateAttachment(
     input: UpdateAttachmentInput,
@@ -378,47 +507,6 @@ function timed<T>(
   }
 }
 
-function timestampMillis(value: string, field: string): number {
-  const millis = Date.parse(value);
-  if (!Number.isFinite(millis)) {
-    throw new PersistenceError({
-      kind: "validation",
-      entity: "ticket_timestamp",
-      identifier: field,
-      issues: `${field} must be an ISO-8601 timestamp`,
-    });
-  }
-  return millis;
-}
-
-/** Every ticket mutation receives a revision strictly after its prior row. */
-function nextTicketRevision(current: string, requested: string): string {
-  const currentMillis = timestampMillis(current, "current");
-  const requestedMillis = timestampMillis(requested, "requested");
-  return new Date(Math.max(requestedMillis, currentMillis + 1)).toISOString();
-}
-
-function latestTimestamp(values: readonly string[]): string {
-  let latest = values[0];
-  if (latest === undefined) {
-    throw new PersistenceError({
-      kind: "validation",
-      entity: "ticket_timestamp",
-      identifier: "requested",
-      issues: "at least one requested timestamp is required",
-    });
-  }
-  let latestMillis = timestampMillis(latest, "requested");
-  for (const value of values.slice(1)) {
-    const millis = timestampMillis(value, "requested");
-    if (millis > latestMillis) {
-      latest = value;
-      latestMillis = millis;
-    }
-  }
-  return latest;
-}
-
 /**
  * The live-link subquery: the ticket's un-ended link joined against current
  * unfinished sessions with an exact persisted incarnation match, so logical
@@ -467,6 +555,8 @@ function rawRowToListItem(rawRow: unknown): TicketListItem {
 }
 
 export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
+  const relationshipsStore = createTicketRelationshipsStore(db);
+  const statusUpdatesStore = createTicketStatusUpdatesStore(db);
   const getCounterStmt = db.prepare(
     `INSERT INTO ticket_counters (project_path, last_number) VALUES (?, 1)
      ON CONFLICT(project_path) DO UPDATE SET last_number = last_number + 1
@@ -589,6 +679,12 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
     `SELECT ${LIST_ITEM_COLUMNS}
      FROM tickets t
      WHERE t.project_path = ? AND t.ticket_number = ?
+     LIMIT 1`,
+  );
+  const findListItemByIdStmt = db.prepare(
+    `SELECT ${LIST_ITEM_COLUMNS}
+     FROM tickets t
+     WHERE t.id = ?
      LIMIT 1`,
   );
   function attachmentBind(attachment: TicketAttachment) {
@@ -963,8 +1059,246 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
       sessions: (sessionsByTicketStmt.all(ticket.id) as unknown[]).map(
         rowToSessionLink,
       ),
+      relationships: relationshipsStore.listAllForTicket(ticket.id),
+      statusUpdates: statusUpdatesStore.getSummary(ticket.id),
     };
   }
+
+  function ticketById(ticketId: string): Ticket {
+    const rawTicket: unknown = findTicketByIdStmt.get(ticketId);
+    if (rawTicket === undefined) {
+      throw new PersistenceError({
+        kind: "not_found",
+        entity: "ticket",
+        identifier: ticketId,
+      });
+    }
+    return rowToTicket(rawTicket);
+  }
+
+  function advanceSharedTicketRevisions(
+    ticketIds: readonly string[],
+    requested: string,
+  ): string {
+    const uniqueIds = [...new Set(ticketIds)];
+    const tickets = uniqueIds.map(ticketById);
+    const revision = nextSharedTicketRevision(
+      tickets.map((ticket) => ticket.updatedAt),
+      requested,
+    );
+    for (const ticket of tickets) {
+      setTicketUpdatedAtStmt.run(revision, ticket.id);
+    }
+    return revision;
+  }
+
+  function detailsForTicketIds(ticketIds: readonly string[]): TicketDetail[] {
+    return [...new Set(ticketIds)].map((ticketId) => {
+      const detail = detailFromRawRow(findTicketByIdStmt.get(ticketId));
+      if (detail === null) {
+        throw new PersistenceError({
+          kind: "not_found",
+          entity: "ticket",
+          identifier: ticketId,
+        });
+      }
+      return detail;
+    });
+  }
+
+  const addRelationshipTx = db.transaction(
+    (
+      input: z.output<typeof addTicketRelationshipInputSchema>,
+    ): TicketRelationshipMutationResult => {
+      const added = relationshipsStore.add({
+        id: input.id,
+        relationType: input.relationType,
+        sourceTicketId: input.sourceTicketId,
+        targetTicketId: input.targetTicketId,
+        description: input.description,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      } satisfies AddTicketRelationshipInput);
+      const affectedTicketIds = [
+        input.sourceTicketId,
+        input.targetTicketId,
+        ...(added.replacedParent === null
+          ? []
+          : [
+              added.replacedParent.sourceTicketId,
+              added.replacedParent.targetTicketId,
+            ]),
+      ];
+      const revision = advanceSharedTicketRevisions(
+        affectedTicketIds,
+        input.createdAt,
+      );
+      const persisted = relationshipsStore.updateDescription(
+        added.relationship.id,
+        added.relationship.description,
+        revision,
+      );
+      if (persisted === null) {
+        throw new PersistenceError({
+          kind: "not_found",
+          entity: "ticket_relationship",
+          identifier: added.relationship.id,
+        });
+      }
+      const relationship = relationshipsStore.getForTicket(
+        input.anchorTicketId,
+        persisted.id,
+      );
+      if (relationship === null) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "ticket_relationship",
+          identifier: persisted.id,
+          issues: "anchor ticket must be one relationship endpoint",
+        });
+      }
+      return {
+        relationship,
+        tickets: detailsForTicketIds(affectedTicketIds),
+        replacedRelationshipId: added.replacedParent?.id ?? null,
+      };
+    },
+  );
+
+  const updateRelationshipTx = db.transaction(
+    (
+      input: z.output<typeof updateTicketRelationshipInputSchema>,
+    ): TicketRelationshipMutationResult | null => {
+      const existing = relationshipsStore.getForTicket(
+        input.anchorTicketId,
+        input.relationshipId,
+      );
+      if (existing === null) return null;
+      const affectedTicketIds = [input.anchorTicketId, existing.otherTicket.id];
+      const revision = advanceSharedTicketRevisions(
+        affectedTicketIds,
+        input.updatedAt,
+      );
+      const persisted = relationshipsStore.updateDescription(
+        input.relationshipId,
+        input.description,
+        revision,
+      );
+      if (persisted === null) return null;
+      const relationship = relationshipsStore.getForTicket(
+        input.anchorTicketId,
+        persisted.id,
+      );
+      if (relationship === null) return null;
+      return {
+        relationship,
+        tickets: detailsForTicketIds(affectedTicketIds),
+        replacedRelationshipId: null,
+      };
+    },
+  );
+
+  const removeRelationshipTx = db.transaction(
+    (
+      input: z.output<typeof removeTicketRelationshipInputSchema>,
+    ): TicketRelationshipRemovalResult | null => {
+      const existing = relationshipsStore.getForTicket(
+        input.anchorTicketId,
+        input.relationshipId,
+      );
+      if (existing === null) return null;
+      const affectedTicketIds = [input.anchorTicketId, existing.otherTicket.id];
+      const removed = relationshipsStore.remove(input.relationshipId);
+      if (removed === null) return null;
+      advanceSharedTicketRevisions(affectedTicketIds, input.updatedAt);
+      return {
+        relationshipId: removed.id,
+        tickets: detailsForTicketIds(affectedTicketIds),
+      };
+    },
+  );
+
+  const addStatusUpdateTx = db.transaction(
+    (update: TicketStatusUpdate): TicketStatusUpdateMutationResult => {
+      const revision = ticketRevisionFor(update.ticketId, update.createdAt);
+      const persisted = statusUpdatesStore.append({
+        ...update,
+        createdAt: revision,
+      });
+      setTicketUpdatedAtStmt.run(revision, update.ticketId);
+      const ticket = detailFromRawRow(findTicketByIdStmt.get(update.ticketId));
+      if (ticket === null) {
+        throw new PersistenceError({
+          kind: "not_found",
+          entity: "ticket",
+          identifier: update.ticketId,
+        });
+      }
+      return { update: persisted, ticket };
+    },
+  );
+
+  const deleteTicketTx = db.transaction(
+    (
+      projectPath: string,
+      number: number,
+      updatedAt: string,
+    ): DeleteTicketResult | null => {
+      const rawRow: unknown = findTicketStmt.get(projectPath, number);
+      if (rawRow === undefined) return null;
+      const ticket = rowToTicket(rawRow);
+      const neighborIds = relationshipsStore.listNeighborTicketIds(ticket.id);
+      if (neighborIds.length > 0) {
+        advanceSharedTicketRevisions(neighborIds, updatedAt);
+      }
+      deleteTicketStmt.run(projectPath, number);
+      const survivingNeighbors = neighborIds.map((ticketId) => {
+        const rawNeighbor: unknown = findListItemByIdStmt.get(ticketId);
+        if (rawNeighbor === undefined) {
+          throw new PersistenceError({
+            kind: "not_found",
+            entity: "ticket",
+            identifier: ticketId,
+          });
+        }
+        return rawRowToListItem(rawNeighbor);
+      });
+      return {
+        deleted: {
+          id: ticket.id,
+          projectPath: ticket.projectPath,
+          projectName: projectNameFromPath(ticket.projectPath),
+          number: ticket.number,
+        },
+        survivingNeighbors,
+      };
+    },
+  );
+
+  const readDetailTx = db.transaction(readDetail);
+  const readDetailByIdTx = db.transaction((ticketId: string) =>
+    detailFromRawRow(findTicketByIdStmt.get(ticketId)),
+  );
+
+  function readLinkedTicket(
+    projectPath: string,
+    sessionName: string,
+  ): LinkedTicketContext | null {
+    const rawRow: unknown = findActiveGuardedLinkStmt.get(
+      projectPath,
+      sessionName,
+    );
+    if (rawRow === undefined) return null;
+    const link = rowToSessionLink(rawRow);
+    const ticketRow: unknown = findTicketByIdStmt.get(link.ticketId);
+    if (ticketRow === undefined) return null;
+    const detail = detailFromRawRow(ticketRow);
+    if (detail === null) return null;
+    const { sessions: _sessions, ...context } = detail;
+    return context;
+  }
+
+  const readLinkedTicketTx = db.transaction(readLinkedTicket);
 
   return {
     async create(input) {
@@ -1056,13 +1390,160 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
 
     async find(projectPath, number) {
       return timed("find", { projectPath, number }, () =>
-        readDetail(projectPath, number),
+        readDetailTx.deferred(projectPath, number),
       );
     },
 
     async findById(ticketId) {
       return timed("findById", { ticketId }, () =>
-        detailFromRawRow(findTicketByIdStmt.get(ticketId)),
+        readDetailByIdTx.deferred(ticketId),
+      );
+    },
+
+    async listRelationships(input) {
+      const limit = normalizeTicketPageLimit(input.limit);
+      if (limit === null) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "ticket_relationship_page",
+          identifier: input.ticketId,
+          issues: "limit must be an integer from 1 through 100",
+        });
+      }
+      const cursor =
+        input.cursor === undefined
+          ? undefined
+          : decodeTicketKeysetCursor(input.cursor);
+      if (cursor === null) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "ticket_relationship_page",
+          identifier: input.ticketId,
+          issues: "cursor must be a valid ticket keyset cursor",
+        });
+      }
+      const role =
+        input.role === undefined
+          ? undefined
+          : ticketRelationshipRoleSchema.parse(input.role);
+      return timed(
+        "listRelationships",
+        {
+          ticketId: input.ticketId,
+          role,
+          limit,
+          hasCursor: cursor !== undefined,
+        },
+        () =>
+          relationshipsStore.listForTicket(input.ticketId, {
+            limit,
+            ...(role !== undefined ? { role } : {}),
+            ...(cursor !== undefined ? { cursor } : {}),
+          }),
+      );
+    },
+
+    async findRelationship(ticketId, relationshipId) {
+      return timed("findRelationship", { ticketId, relationshipId }, () =>
+        relationshipsStore.getForTicket(ticketId, relationshipId),
+      );
+    },
+
+    async resolveLegacyRelationship(ticketId, legacyAttachmentId) {
+      return timed(
+        "resolveLegacyRelationship",
+        { ticketId, legacyAttachmentId },
+        () =>
+          relationshipsStore.resolveLegacyAliasForTicket(
+            ticketId,
+            legacyAttachmentId,
+          ),
+      );
+    },
+
+    async addRelationship(input) {
+      const validated = addTicketRelationshipInputSchema.parse(input);
+      return writeQueue.withWriteQueueSync("tickets.addRelationship", () =>
+        timed(
+          "addRelationship",
+          {
+            relationshipId: validated.id,
+            relationType: validated.relationType,
+          },
+          () => addRelationshipTx.immediate(validated),
+        ),
+      );
+    },
+
+    async updateRelationship(input) {
+      const validated = updateTicketRelationshipInputSchema.parse(input);
+      return writeQueue.withWriteQueueSync("tickets.updateRelationship", () =>
+        timed(
+          "updateRelationship",
+          { relationshipId: validated.relationshipId },
+          () => updateRelationshipTx.immediate(validated),
+        ),
+      );
+    },
+
+    async removeRelationship(input) {
+      const validated = removeTicketRelationshipInputSchema.parse(input);
+      return writeQueue.withWriteQueueSync("tickets.removeRelationship", () =>
+        timed(
+          "removeRelationship",
+          { relationshipId: validated.relationshipId },
+          () => removeRelationshipTx.immediate(validated),
+        ),
+      );
+    },
+
+    async listStatusUpdates(input) {
+      const limit = normalizeTicketPageLimit(input.limit);
+      if (limit === null) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "ticket_status_update_page",
+          identifier: input.ticketId,
+          issues: "limit must be an integer from 1 through 100",
+        });
+      }
+      const cursor =
+        input.cursor === undefined
+          ? undefined
+          : decodeTicketKeysetCursor(input.cursor);
+      if (cursor === null) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "ticket_status_update_page",
+          identifier: input.ticketId,
+          issues: "cursor must be a valid ticket keyset cursor",
+        });
+      }
+      return timed(
+        "listStatusUpdates",
+        { ticketId: input.ticketId, limit, hasCursor: cursor !== undefined },
+        () =>
+          statusUpdatesStore.listForTicket(input.ticketId, {
+            limit,
+            ...(cursor !== undefined ? { cursor } : {}),
+          }),
+      );
+    },
+
+    async findStatusUpdate(ticketId, updateId) {
+      return timed("findStatusUpdate", { ticketId, updateId }, () =>
+        statusUpdatesStore.getForTicket(ticketId, updateId),
+      );
+    },
+
+    async addStatusUpdate(update) {
+      const validated = ticketStatusUpdateSchema.parse(update);
+      return writeQueue.withWriteQueueSync("tickets.addStatusUpdate", () =>
+        timed(
+          "addStatusUpdate",
+          { updateId: validated.id, ticketId: validated.ticketId },
+          () => addStatusUpdateTx.immediate(validated),
+        ),
       );
     },
 
@@ -1071,6 +1552,12 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
         (ticketIdsByProjectStmt.all(projectPath) as unknown[]).filter(
           (id): id is string => typeof id === "string",
         ),
+      );
+    },
+
+    async listExternalRelationshipNeighborIds(projectPath) {
+      return timed("listExternalRelationshipNeighborIds", { projectPath }, () =>
+        relationshipsStore.listExternalNeighborTicketIds(projectPath),
       );
     },
 
@@ -1126,22 +1613,13 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
       });
     },
 
-    async delete(projectPath, number) {
-      return writeQueue.withWriteQueue("tickets.delete", async () => {
-        return timed("delete", { projectPath, number }, () => {
-          const rawRow: unknown = findTicketStmt.get(projectPath, number);
-          if (rawRow === undefined) return null;
-          const ticket = rowToTicket(rawRow);
-          deleteTicketStmt.run(projectPath, number);
-          const deleted: DeletedTicket = {
-            id: ticket.id,
-            projectPath: ticket.projectPath,
-            projectName: projectNameFromPath(ticket.projectPath),
-            number: ticket.number,
-          };
-          return deleted;
-        });
-      });
+    async delete(projectPath, number, updatedAt) {
+      const requestedRevision = z.string().min(1).parse(updatedAt);
+      return writeQueue.withWriteQueueSync("tickets.delete", () =>
+        timed("delete", { projectPath, number }, () =>
+          deleteTicketTx.immediate(projectPath, number, requestedRevision),
+        ),
+      );
     },
 
     async addAttachment(input) {
@@ -1261,24 +1739,9 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
     },
 
     async findLinkedTicket(projectPath, sessionName) {
-      return timed("findLinkedTicket", { projectPath, sessionName }, () => {
-        const rawRow: unknown = findActiveGuardedLinkStmt.get(
-          projectPath,
-          sessionName,
-        );
-        if (rawRow === undefined) return null;
-        const link = rowToSessionLink(rawRow);
-        const ticketRow: unknown = findTicketByIdStmt.get(link.ticketId);
-        if (ticketRow === undefined) return null;
-        const ticket = rowToTicket(ticketRow);
-        return {
-          ...ticket,
-          projectName: projectNameFromPath(ticket.projectPath),
-          attachments: (
-            attachmentsByTicketStmt.all(ticket.id) as unknown[]
-          ).map(rowToAttachment),
-        };
-      });
+      return timed("findLinkedTicket", { projectPath, sessionName }, () =>
+        readLinkedTicketTx.deferred(projectPath, sessionName),
+      );
     },
 
     async listSessionLinks(projectPath) {

@@ -228,6 +228,8 @@ const BASE_DETAIL: TicketDetail = {
   updatedAt: "2026-07-11T10:00:00.000Z",
   attachments: [],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 const CREATED_ATTACHMENT: TicketAttachment = {
@@ -415,11 +417,6 @@ describe("AttachmentDialog", () => {
       await screen.findByRole("combobox", { name: "Session" }),
     ).toHaveAttribute("aria-required", "true");
 
-    await user.click(screen.getByRole("radio", { name: "Related ticket" }));
-    expect(
-      await screen.findByRole("combobox", { name: "Related ticket" }),
-    ).toHaveAttribute("aria-required", "true");
-
     await user.click(screen.getByRole("radio", { name: "Note" }));
     expect(await screen.findByLabelText("Markdown")).toBeRequired();
   });
@@ -569,26 +566,14 @@ describe("AttachmentDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("selects a related ticket by project, identifier, and title", async () => {
+  it("does not offer relationships as canonical context attachments", () => {
     installFetch();
     renderDialog();
-    const user = userEvent.setup();
 
-    await user.click(screen.getByRole("radio", { name: "Related ticket" }));
-
+    expect(screen.queryByRole("radio", { name: "Related ticket" })).toBeNull();
     expect(
-      await screen.findByRole("combobox", { name: "Related ticket" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("textbox", { name: "Ticket number" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("combobox", { name: "Related ticket" }));
-    expect(
-      await screen.findByRole("option", {
-        name: /command-center#9.*Reconnect ticket event stream/,
-      }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("radio").map((radio) => radio.textContent),
+    ).toEqual(["File", "Conversation", "Session", "Note"]);
   });
 
   it("keeps a reopened form fresh when an older attachment succeeds", async () => {

@@ -21,6 +21,8 @@ import { fetchHelpContext } from "./help-context";
 import {
   booleanFlagArgsForCommand,
   childEntriesOf,
+  emptyValueFlagArgsForCommand,
+  emptyValueFlagNames,
   helpEntryFor,
   helpJsonFor,
   isGroup,
@@ -218,7 +220,11 @@ export async function runCli(
   // never follow a flag, so ambiguous flag kinds cannot corrupt them); the
   // authoritative parse then lets that command's value flags override boolean
   // declarations elsewhere while retaining unknown booleans for checkFlags.
-  const probe = parseArgv(argv);
+  const probe = parseArgv(
+    argv,
+    undefined,
+    new Set(emptyValueFlagNames().map((name) => `--${name}`)),
+  );
   const parsed =
     probe.kind === "error"
       ? probe
@@ -226,6 +232,11 @@ export async function runCli(
           argv,
           new Set(
             booleanFlagArgsForCommand(
+              rewriteWorkflowLiveAlias(probe.positionals),
+            ),
+          ),
+          new Set(
+            emptyValueFlagArgsForCommand(
               rewriteWorkflowLiveAlias(probe.positionals),
             ),
           ),

@@ -5,6 +5,7 @@ import {
   failure,
   failureFromRequest,
   failureFromRequestNotFoundAsUsage,
+  parseArgv,
   render,
   resolveConversationContext,
   resolveLaneContext,
@@ -37,6 +38,32 @@ function flagsWith(overrides: Partial<GlobalFlags> = {}): GlobalFlags {
 }
 
 const STANDARD_USAGE_HINT = "run 'cctl --help'";
+
+describe("parseArgv — command-scoped empty value exceptions", () => {
+  const emptyDescription = new Set(["--description"]);
+
+  it.each([
+    ["spaced", ["--description", ""]],
+    ["attached", ["--description="]],
+  ])(
+    "preserves an explicitly empty description in the %s form",
+    (_name, argv) => {
+      const parsed = parseArgv(argv, new Set(), emptyDescription);
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        values: { description: "" },
+        lists: { description: [""] },
+      });
+    },
+  );
+
+  it("continues to reject empty values for every flag outside that exception", () => {
+    expect(parseArgv(["--role="], new Set(), emptyDescription)).toEqual({
+      kind: "error",
+      message: "flag --role requires a value",
+    });
+  });
+});
 
 /**
  * Every missing-identity failure from the context resolvers carries the standard
@@ -756,6 +783,42 @@ describe("resolveProseArg — one prose value from a flag or a file (doc 09 §7)
       false,
     );
     expect(resolved).toEqual({ ok: true, value: "wrote the parser" });
+  });
+
+  it("fails with exit 2 when inline UTF-8 prose exceeds the byte cap", async () => {
+    const oversized = "é".repeat(128 * 1024 + 1);
+    const resolved = await resolveProseArg(
+      { summary: oversized },
+      fakeHost(),
+      "summary",
+      false,
+    );
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.result.exitCode).toBe(2);
+    expect(resolved.result.stderr).toContain("--summary");
+    expect(resolved.result.stderr).toContain("262144");
+  });
+
+  it("accepts inline UTF-8 prose exactly at the byte cap", async () => {
+    const atCap = "é".repeat(128 * 1024);
+    const resolved = await resolveProseArg(
+      { summary: atCap },
+      fakeHost(),
+      "summary",
+      false,
+    );
+    expect(resolved).toEqual({ ok: true, value: atCap });
+  });
+
+  it("preserves an explicit empty inline value for command-specific validation", async () => {
+    const resolved = await resolveProseArg(
+      { summary: "" },
+      fakeHost(),
+      "summary",
+      false,
+    );
+    expect(resolved).toEqual({ ok: true, value: "" });
   });
 
   it("returns undefined when neither source is present, leaving the requirement to the command", async () => {

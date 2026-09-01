@@ -8,7 +8,6 @@ import {
 import {
   attachmentRefreshCommand,
   conversationReadCommands,
-  ticketFollowCommand,
 } from "./attachment-commands";
 import { TicketContentError, type TicketContentStore } from "./content-store";
 import { publishTicketChange } from "./events";
@@ -53,11 +52,6 @@ export const addTicketAttachmentPayloadInputSchema = z.discriminatedUnion(
       kind: z.literal("session"),
       projectName: z.string().min(1),
       sessionName: z.string().min(1),
-    }),
-    z.object({
-      kind: z.literal("related_ticket"),
-      projectName: z.string().min(1),
-      number: z.number().int().positive(),
     }),
     z.object({
       kind: z.literal("note"),
@@ -420,46 +414,6 @@ export function createTicketAttachmentService(
           },
         };
       }
-
-      case "related_ticket": {
-        const projectPath = await deps.resolveProjectPath(payload.projectName);
-        if (projectPath === null) {
-          return fail({
-            code: "ticket_not_found",
-            identifier: formatTicketIdentifier(
-              payload.projectName,
-              payload.number,
-            ),
-          });
-        }
-        const target = await deps.repo.find(projectPath, payload.number);
-        if (target === null) {
-          return fail({
-            code: "ticket_not_found",
-            identifier: formatTicketIdentifier(
-              payload.projectName,
-              payload.number,
-            ),
-          });
-        }
-        if (target.id === ticket.id) {
-          return validationFailed(
-            "payload.number",
-            "cannot attach a ticket to itself",
-          );
-        }
-        return {
-          ok: true,
-          value: {
-            kind: "related_ticket",
-            ticketId: target.id,
-            identifierSnapshot: formatTicketIdentifier(
-              payload.projectName,
-              payload.number,
-            ),
-          },
-        };
-      }
     }
   }
 
@@ -638,35 +592,6 @@ export function createTicketAttachmentService(
                 sessionName: payload.sessionName,
               }),
             ),
-          },
-        };
-      }
-
-      case "related_ticket": {
-        const target = await deps.repo.findById(payload.ticketId);
-        if (target === null) {
-          return {
-            ok: true,
-            value: {
-              kind: "related_ticket",
-              attachment,
-              available: false,
-              identifierSnapshot: payload.identifierSnapshot,
-            },
-          };
-        }
-        const identifier = formatTicketIdentifier(
-          target.projectName,
-          target.number,
-        );
-        return {
-          ok: true,
-          value: {
-            kind: "related_ticket",
-            attachment,
-            available: true,
-            ticket: target,
-            followCommand: ticketFollowCommand(identifier),
           },
         };
       }

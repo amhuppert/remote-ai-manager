@@ -257,6 +257,8 @@ describe("useArchiveProjectMutation", () => {
       updatedAt: "2026-07-01T00:00:00.000Z",
       attachments: [],
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     resolveCreate(jsonResponse({ ticket: created, warnings: [] }, 201));
     await expect(delayedCreate).resolves.toEqual({
@@ -286,6 +288,8 @@ describe("useArchiveProjectMutation", () => {
       updatedAt: original.updatedAt,
       attachments: [],
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     client.setQueryData(ticketListKey, [original]);
     client.setQueryData(ticketDetailKey, originalDetail);

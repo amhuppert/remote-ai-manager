@@ -31,6 +31,11 @@ export interface ValueFlagSpec extends FlagSpecBase {
    * argv-only prose field has no other escape hatch.
    */
   fileSource?: true;
+  /**
+   * Preserve an explicitly empty inline value for command-specific semantics.
+   * This is intentionally rare: most empty flag values are an argv mistake.
+   */
+  allowEmpty?: true;
 }
 
 export interface BooleanFlagSpec extends FlagSpecBase {

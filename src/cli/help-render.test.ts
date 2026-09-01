@@ -214,6 +214,21 @@ describe("renderGroupHelpText", () => {
     expect(text).not.toMatch(/^flags:/m);
     expect(text).not.toMatch(/^examples:/m);
   });
+
+  it("renders the group's domainContext under context:", () => {
+    const text = renderGroupHelpText(
+      {
+        ...group,
+        domainContext:
+          "Parent and child roles are relative to the ticket being read.",
+      },
+      children,
+    );
+    expect(text).toContain(
+      "context:\n  Parent and child roles are relative to the ticket being read.",
+    );
+    expect(text.indexOf("context:")).toBeGreaterThan(text.indexOf("commands:"));
+  });
 });
 
 describe("renderTopUsageText", () => {

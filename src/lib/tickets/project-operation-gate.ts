@@ -33,6 +33,11 @@ export interface TicketProjectOperationGate {
     projectPath: string,
     operation: (context: TicketProjectOperationContext) => Promise<T>,
   ): Promise<T>;
+  /** Deduplicates and acquires project paths lexicographically before work. */
+  runMultiProjectTicketOperation<T>(
+    projectPaths: readonly string[],
+    operation: (context: TicketProjectOperationContext) => Promise<T>,
+  ): Promise<T>;
   /** Project deletion waits for prior ticket work and excludes later work. */
   runProjectDeletion<T>(
     projectPath: string,
@@ -139,9 +144,59 @@ export function createTicketProjectOperationGate(): TicketProjectOperationGate {
     }
   }
 
+  async function runMultiProjectTicket<T>(
+    projectPaths: readonly string[],
+    operation: (context: TicketProjectOperationContext) => Promise<T>,
+  ): Promise<T> {
+    const orderedProjectPaths = [...new Set(projectPaths)].sort();
+    const acquisitions: Acquisition[] = [];
+    const queuedAt = performance.now();
+    let projectDeletionPrecededOperation = false;
+    let acquiredAt: number | null = null;
+
+    logger.debug("project_gate.multi_ticket_queued", {
+      projectPaths: orderedProjectPaths,
+      projectCount: orderedProjectPaths.length,
+    });
+
+    try {
+      for (const projectPath of orderedProjectPaths) {
+        const acquisition = await acquire(projectPath, "ticket");
+        acquisitions.push(acquisition);
+        projectDeletionPrecededOperation ||=
+          acquisition.projectDeletionPrecededOperation;
+      }
+
+      acquiredAt = performance.now();
+      logger.debug("project_gate.multi_ticket_acquired", {
+        projectPaths: orderedProjectPaths,
+        projectCount: orderedProjectPaths.length,
+        projectDeletionPrecededOperation,
+        waitMs: Math.round(acquiredAt - queuedAt),
+      });
+
+      return await operation({ projectDeletionPrecededOperation });
+    } finally {
+      for (let index = acquisitions.length - 1; index >= 0; index -= 1) {
+        acquisitions[index]?.release();
+      }
+
+      if (acquiredAt !== null) {
+        logger.debug("project_gate.multi_ticket_released", {
+          projectPaths: orderedProjectPaths,
+          projectCount: orderedProjectPaths.length,
+          durationMs: Math.round(performance.now() - acquiredAt),
+        });
+      }
+    }
+  }
+
   return {
     runTicketOperation(projectPath, operation) {
       return runTicket(projectPath, operation);
+    },
+    runMultiProjectTicketOperation(projectPaths, operation) {
+      return runMultiProjectTicket(projectPaths, operation);
     },
     async runProjectDeletion(projectPath, deletion) {
       const queuedAt = performance.now();

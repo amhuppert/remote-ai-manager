@@ -87,6 +87,8 @@ function seed({ links, listStatus, detailStatus }: SeedInput): QueryClient {
       updatedAt: "2026-07-31T00:00:00.000Z",
       attachments: [],
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     queryClient.setQueryData(ticketKeys.detail("proj", 37), detail);
   }

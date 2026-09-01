@@ -59,6 +59,8 @@ const CREATED_TICKET: TicketDetail = {
   updatedAt: "2026-07-19T12:00:00.000Z",
   attachments: [],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 const SCREENSHOT = {
@@ -1558,6 +1560,22 @@ describe("QuickTicketDialog pasted description images", () => {
 });
 
 describe("QuickTicketDialog queued context", () => {
+  it("does not queue ticket relationships before the ticket exists", async () => {
+    open("/projects/other-project");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    await screen.findByLabelText("Title");
+    expect(screen.queryByText(/related tickets/i)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add context" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Add context" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Related ticket" })).toBeNull();
+  });
+
   it("queues a note in the add-context dialog and attaches it after create", async () => {
     api.reply("POST", "/api/projects/other-project/tickets", {
       status: 201,

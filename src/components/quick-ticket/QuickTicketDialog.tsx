@@ -142,7 +142,6 @@ const QUEUED_KIND_LABELS: Record<QueuedTicketAttachment["kind"], string> = {
   file: "file",
   conversation: "conversation",
   session: "session",
-  related_ticket: "related ticket",
   note: "note",
 };
 
@@ -1358,8 +1357,8 @@ export default function QuickTicketDialog({
                 </div>
                 {queuedAttachments.length === 0 ? (
                   <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
-                    Files, conversations, sessions, related tickets, or notes —
-                    attached right after the ticket is created.
+                    Files, conversations, sessions, or notes — attached right
+                    after the ticket is created.
                   </p>
                 ) : (
                   <ul className="m-0 flex list-none flex-col gap-xs p-0">

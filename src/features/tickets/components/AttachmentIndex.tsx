@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import { ticketDetailHref } from "@/lib/tickets/hrefs";
 import {
   useAddTicketAttachmentMutation,
   useEditTicketAttachmentMutation,
@@ -22,10 +21,6 @@ import {
   useRemoveTicketAttachmentMutation,
 } from "@/lib/tickets/mutations";
 import { useResolveTicketAttachmentQuery } from "@/lib/tickets/queries";
-import {
-  formatTicketIdentifier,
-  parseTicketIdentifier,
-} from "@/lib/tickets/references";
 import type {
   ResolvedAttachment,
   TicketAttachment,
@@ -36,10 +31,6 @@ import { pushToast } from "@/stores/toast.store";
 import { cn } from "@/lib/ui/cn";
 import { formatRelativeTime } from "../format-relative-time";
 import AttachmentDialog from "./AttachmentDialog";
-import {
-  TICKET_STATUS_VISUALS,
-  TICKET_WORK_TYPE_LABELS,
-} from "@/lib/tickets/ticket-visuals";
 
 export interface AttachmentIndexProps {
   projectName: string;
@@ -59,10 +50,6 @@ const KIND_VISUALS: Record<
   file: { label: "file", tile: "bg-cyan-glow text-cyan" },
   conversation: { label: "conversation", tile: "bg-green-glow text-green" },
   session: { label: "session", tile: "bg-violet-glow text-violet" },
-  related_ticket: {
-    label: "related ticket",
-    tile: "bg-[var(--cc-cyan-a08)] text-cyan",
-  },
   note: { label: "note", tile: "bg-amber-glow text-amber" },
 };
 
@@ -516,11 +503,6 @@ function EntryMetadata({
     }
     case "session":
       return <span className={METADATA_CLASS}>{payload.sessionName}</span>;
-    case "related_ticket": {
-      return (
-        <span className={METADATA_CLASS}>{payload.identifierSnapshot}</span>
-      );
-    }
     case "note":
       return (
         <span className={METADATA_CLASS}>
@@ -565,22 +547,6 @@ function AttachmentLink({
           <ExternalLinkIcon />
         </Link>
       );
-    case "related_ticket": {
-      const parsed = parseTicketIdentifier(payload.identifierSnapshot);
-      if (parsed === null) return null;
-      return (
-        <Link
-          href={ticketDetailHref(parsed.projectName, parsed.ticketNumber)}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Open ticket"
-          className={ATTACHMENT_LINK_CLASS}
-        >
-          Open ticket
-          <ExternalLinkIcon />
-        </Link>
-      );
-    }
     case "file":
     case "note":
       return null;
@@ -700,40 +666,6 @@ function ResolvedContent({
             {resolved.finished ? "finished" : "active"} ·{" "}
             {resolved.conversationIds.length} conversation
             {resolved.conversationIds.length === 1 ? "" : "s"}
-          </span>
-        </div>
-      );
-    case "related_ticket":
-      if (!resolved.available) {
-        return (
-          <span className="font-mono text-[0.72rem] text-text-tertiary">
-            {resolved.identifierSnapshot} no longer exists — ticket numbers are
-            never reused.
-          </span>
-        );
-      }
-      return (
-        <div className="flex flex-col gap-[4px]">
-          <Link
-            href={ticketDetailHref(
-              resolved.ticket.projectName,
-              resolved.ticket.number,
-            )}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono text-[0.78rem] font-semibold text-text-primary! no-underline hover:text-cyan!"
-          >
-            {formatTicketIdentifier(
-              resolved.ticket.projectName,
-              resolved.ticket.number,
-            )}{" "}
-            — {resolved.ticket.title}
-          </Link>
-          <span className="font-mono text-[0.68rem] text-text-tertiary">
-            {TICKET_STATUS_VISUALS[resolved.ticket.status].label} ·{" "}
-            {TICKET_WORK_TYPE_LABELS[resolved.ticket.workType]} ·{" "}
-            {resolved.ticket.attachments.length} attachment
-            {resolved.ticket.attachments.length === 1 ? "" : "s"}
           </span>
         </div>
       );
@@ -1055,24 +987,6 @@ function KindIcon({ kind }: { kind: TicketAttachmentKind }): React.JSX.Element {
             strokeWidth="1.2"
             strokeLinejoin="round"
             strokeLinecap="round"
-          />
-        </svg>
-      );
-    case "related_ticket":
-      return (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M2 5 H14 V7 A1.5 1.5 0 0 0 14 10 V12 H2 V10 A1.5 1.5 0 0 0 2 7 Z M9.5 5 V12"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            strokeLinejoin="round"
-            strokeDasharray="0"
           />
         </svg>
       );

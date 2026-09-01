@@ -37,6 +37,21 @@ describe("ticketKeys", () => {
     ]);
     expect(ticketKeys.sessionLinksAll()).toEqual(["tickets", "session-links"]);
     expect(ticketKeys.lists()).toEqual(["tickets", "list"]);
+    expect(ticketKeys.statusUpdates("alpha", 7)).toEqual([
+      "tickets",
+      "detail",
+      "alpha",
+      7,
+      "status-updates",
+    ]);
+    expect(ticketKeys.relationships("alpha", 7, "depends_on")).toEqual([
+      "tickets",
+      "detail",
+      "alpha",
+      7,
+      "relationships",
+      { role: "depends_on" },
+    ]);
   });
 });
 

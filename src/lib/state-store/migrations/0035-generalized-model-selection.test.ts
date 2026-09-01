@@ -21,6 +21,13 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
+// Every case builds real on-disk SQLite and filesystem state, and the
+// atomicity cases serialize or rescan that state multiple times. That work can
+// exceed the 15s unit default under the full-suite worker pool even when the
+// migration remains responsive, so this integration suite uses the same
+// bounded budget as the other state-store cutover suites.
+vi.setConfig({ testTimeout: 60_000 });
+
 import type BetterSqlite3 from "better-sqlite3";
 import { schemaCompatibilityBarrierPath } from "../schema-compatibility";
 import { stableStringify } from "../serialization";

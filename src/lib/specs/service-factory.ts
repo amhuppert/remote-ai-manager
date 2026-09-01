@@ -532,7 +532,6 @@ async function ticketAttachmentContent(
         await getTicketContentStore().read(attachment.payload.snapshotKey),
       ).toString("utf8");
     case "session":
-    case "related_ticket":
       return JSON.stringify(attachment.payload);
   }
 }

@@ -31,6 +31,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 function makeHost(
   respond: (req: RecordedRequest) => Response,
   files: Record<string, Uint8Array<ArrayBuffer>> = {},
+  textFiles: Record<string, string> = {},
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
   return {
@@ -40,8 +41,8 @@ function makeHost(
       requests.push(req);
       return respond(req);
     },
-    async readTextFile() {
-      return null;
+    async readTextFile(filePath) {
+      return textFiles[filePath] ?? null;
     },
     async readFileBytes(filePath) {
       return files[filePath] ?? null;
@@ -65,6 +66,8 @@ const sampleDetail = {
   updatedAt: "2026-01-01T00:00:00Z",
   attachments: [],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 const sampleListItem = {
@@ -79,6 +82,38 @@ const sampleListItem = {
   activeSessionName: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
+};
+
+const sampleRelationship = {
+  id: "rel-1",
+  role: "depends_on",
+  otherTicket: {
+    id: "ticket-2",
+    projectName: "other",
+    number: 7,
+    title: "Ship the prerequisite",
+    status: "in_progress",
+  },
+  description: "API contract first",
+  createdAt: "2026-01-02T00:00:00Z",
+  updatedAt: "2026-01-03T00:00:00Z",
+};
+
+const sampleStatusUpdate = {
+  id: "update-1",
+  ticketId: "ticket-1",
+  bodyMarkdown: "Implemented the first slice.",
+  author: {
+    kind: "agent",
+    conversationId: "conversation-1",
+    conversationName: "Ticket work",
+    projectName: "cc",
+    scope: "session",
+    sessionName: "ticket-work",
+    backend: "codex",
+    redactedProfileSnapshot: null,
+  },
+  createdAt: "2026-01-04T00:00:00Z",
 };
 
 describe("cctl ticket dispatch", () => {
@@ -517,6 +552,711 @@ describe("cctl ticket get — identifier forms", () => {
   });
 });
 
+describe("cctl ticket relation", () => {
+  it("lists bounded outlines with a role filter and cursor continuation", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        items: [sampleRelationship],
+        total: 4,
+        nextCursor: "next_cursor",
+      }),
+    );
+    const cursor = Buffer.from(
+      JSON.stringify({ timestamp: "2026-01-03T00:00:00Z", id: "rel-9" }),
+      "utf8",
+    ).toString("base64url");
+    const result = await runCli(
+      [
+        "ticket",
+        "relation",
+        "list",
+        "12",
+        "--role",
+        "depends_on",
+        "--limit",
+        "1",
+        "--cursor",
+        cursor,
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const url = new URL(firstOf(host.requests, "request").url);
+    expect(url.pathname).toBe("/api/projects/cc/tickets/12/relationships");
+    expect(url.searchParams.get("role")).toBe("depends_on");
+    expect(url.searchParams.get("limit")).toBe("1");
+    expect(url.searchParams.get("cursor")).toBe(cursor);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      relationships: [
+        {
+          id: "rel-1",
+          descriptionPreview: "API contract first",
+          getCommand: "cctl ticket relation get 'cc#12' 'rel-1'",
+        },
+      ],
+      total: 4,
+      returned: 1,
+      truncated: true,
+      next: {
+        cursor: "next_cursor",
+        command:
+          "cctl ticket relation list 'cc#12' --role depends_on --limit 1 --cursor 'next_cursor'",
+      },
+    });
+  });
+
+  it.each(["related", "depends_on", "blocks", "parent", "child"] as const)(
+    "adds the relative %s role while resolving both ticket references independently",
+    async (role) => {
+      const responseRelationship = { ...sampleRelationship, role };
+      const host = makeHost(() =>
+        jsonResponse(
+          {
+            relationship: responseRelationship,
+            tickets: [
+              { ...sampleDetail, projectName: "host" },
+              { ...sampleDetail, id: "ticket-2", number: 7 },
+            ],
+          },
+          201,
+        ),
+      );
+      const result = await runCli(
+        [
+          "ticket",
+          "relation",
+          "add",
+          "host#12",
+          "7",
+          "--role",
+          role,
+          "--description",
+          "why",
+          "--json",
+        ],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const request = firstOf(host.requests, "request");
+      expect(new URL(request.url).pathname).toBe(
+        "/api/projects/host/tickets/12/relationships",
+      );
+      expect(JSON.parse(request.init.body ?? "{}")).toEqual({
+        target: { projectName: "cc", number: 7 },
+        role,
+        description: "why",
+      });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        relationship: { role },
+      });
+    },
+  );
+
+  it("reads add and update prose from the registry-derived file flags", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          relationship: sampleRelationship,
+          tickets: [sampleDetail],
+        }),
+      {},
+      {
+        ".cc/temp/add.md": " rationale from file \n",
+        ".cc/temp/update.md": " replacement rationale \n",
+      },
+    );
+
+    const added = await runCli(
+      [
+        "ticket",
+        "relation",
+        "add",
+        "12",
+        "other#7",
+        "--role",
+        "related",
+        "--description-file",
+        ".cc/temp/add.md",
+      ],
+      baseEnv,
+      host,
+    );
+    const updated = await runCli(
+      [
+        "ticket",
+        "relation",
+        "update",
+        "12",
+        "rel-1",
+        "--description-file",
+        ".cc/temp/update.md",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(added.exitCode).toBe(0);
+    expect(updated.exitCode).toBe(0);
+    expect(JSON.parse(host.requests[0]!.init.body ?? "{}").description).toBe(
+      "rationale from file",
+    );
+    expect(JSON.parse(host.requests[1]!.init.body ?? "{}").description).toBe(
+      "replacement rationale",
+    );
+  });
+
+  it("preserves both empty inline spellings so update can clear a rationale", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        relationship: { ...sampleRelationship, description: "" },
+        tickets: [sampleDetail],
+      }),
+    );
+
+    const spaced = await runCli(
+      ["ticket", "relation", "update", "12", "rel-1", "--description", ""],
+      baseEnv,
+      host,
+    );
+    const attached = await runCli(
+      ["ticket", "relation", "update", "12", "rel-1", "--description="],
+      baseEnv,
+      host,
+    );
+
+    expect(spaced.exitCode).toBe(0);
+    expect(attached.exitCode).toBe(0);
+    expect(host.requests).toHaveLength(2);
+    for (const request of host.requests) {
+      expect(JSON.parse(request.init.body ?? "{}")).toEqual({
+        description: "",
+      });
+    }
+  });
+
+  it("keeps empty values invalid for unrelated value flags", async () => {
+    const host = makeHost(() => jsonResponse({}));
+    const result = await runCli(
+      ["ticket", "relation", "add", "12", "other#7", "--role="],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--role");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("gets a full rationale and removes by stable relationship id", async () => {
+    const host = makeHost((request) =>
+      request.init.method === "DELETE"
+        ? jsonResponse({ relationshipId: "rel-1", tickets: [sampleDetail] })
+        : jsonResponse(sampleRelationship),
+    );
+    const got = await runCli(
+      ["ticket", "relation", "get", "12", "rel-1"],
+      baseEnv,
+      host,
+    );
+    const removed = await runCli(
+      ["ticket", "relation", "remove", "12", "rel-1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(got.exitCode).toBe(0);
+    expect(got.stdout).toContain("API contract first");
+    expect(removed.exitCode).toBe(0);
+    expect(JSON.parse(removed.stdout)).toMatchObject({
+      ok: true,
+      removed: { relationshipId: "rel-1" },
+    });
+    expect(host.requests[1]!.init.method).toBe("DELETE");
+  });
+
+  it("returns bounded add and update receipts instead of raw relationship Markdown", async () => {
+    const fullRationale = `${"sensitive rationale ".repeat(4_000)}RELATIONSHIP_TAIL`;
+    const host = makeHost(() =>
+      jsonResponse({
+        relationship: { ...sampleRelationship, description: fullRationale },
+        tickets: [sampleDetail],
+      }),
+    );
+
+    const added = await runCli(
+      [
+        "ticket",
+        "relation",
+        "add",
+        "12",
+        "other#7",
+        "--role",
+        "related",
+        "--description",
+        "requested rationale",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    const updated = await runCli(
+      [
+        "ticket",
+        "relation",
+        "update",
+        "12",
+        "rel-1",
+        "--description",
+        "replacement",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    const addedText = await runCli(
+      [
+        "ticket",
+        "relation",
+        "add",
+        "12",
+        "other#7",
+        "--role",
+        "related",
+        "--description",
+        "requested rationale",
+      ],
+      baseEnv,
+      host,
+    );
+    const updatedText = await runCli(
+      [
+        "ticket",
+        "relation",
+        "update",
+        "12",
+        "rel-1",
+        "--description",
+        "replacement",
+      ],
+      baseEnv,
+      host,
+    );
+
+    for (const result of [added, updated, addedText, updatedText]) {
+      expect(result.exitCode).toBe(0);
+      expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThan(60_000);
+      expect(result.stdout).not.toContain("RELATIONSHIP_TAIL");
+    }
+    for (const result of [added, updated]) {
+      expect(JSON.parse(result.stdout).relationship).toMatchObject({
+        id: "rel-1",
+        descriptionPreview: expect.any(String),
+        getCommand: "cctl ticket relation get 'cc#12' 'rel-1'",
+      });
+      expect(JSON.parse(result.stdout).relationship).not.toHaveProperty(
+        "description",
+      );
+    }
+    for (const result of [addedText, updatedText]) {
+      expect(result.stdout).toContain(
+        "get: cctl ticket relation get 'cc#12' 'rel-1'",
+      );
+    }
+  });
+
+  it.each([
+    ["--role", "sideways"],
+    ["--limit", "0"],
+    ["--limit", "101"],
+    ["--cursor", "not-a-cursor"],
+  ])("rejects invalid list %s locally", async (flag, value) => {
+    const host = makeHost(() => jsonResponse({}));
+    const result = await runCli(
+      ["ticket", "relation", "list", "12", flag, value],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("maps semantic HTTP 400 relationship refusals to exit 1 with structured detail", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          error: "A relationship must connect two distinct tickets.",
+          code: "relationship_self_link",
+          details: { ticketId: "ticket-1" },
+          rationale: "A relationship must connect two distinct tickets.",
+          issues: [{ path: "target", message: "matches the source" }],
+        },
+        400,
+      ),
+    );
+    const result = await runCli(
+      ["ticket", "relation", "add", "12", "12", "--role", "related", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "relationship_self_link",
+      details: { ticketId: "ticket-1" },
+      rationale: "A relationship must connect two distinct tickets.",
+      issues: [{ path: "target", message: "matches the source" }],
+    });
+  });
+});
+
+describe("cctl ticket status-update", () => {
+  const agentEnv = {
+    ...baseEnv,
+    CC_CONVERSATION_ID: "conversation-1",
+  };
+
+  it("posts Markdown with provenance only from CC_CONVERSATION_ID", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          update: sampleStatusUpdate,
+          ticket: {
+            ...sampleDetail,
+            statusUpdates: { total: 1, recent: [sampleStatusUpdate] },
+          },
+        },
+        201,
+      ),
+    );
+    const result = await runCli(
+      [
+        "ticket",
+        "status-update",
+        "add",
+        "12",
+        "--body",
+        "Implemented the first slice.",
+        "--json",
+      ],
+      agentEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const request = firstOf(host.requests, "request");
+    expect(request.init.method).toBe("POST");
+    expect(new URL(request.url).pathname).toBe(
+      "/api/projects/cc/tickets/12/status-updates",
+    );
+    expect(JSON.parse(request.init.body ?? "{}")).toEqual({
+      bodyMarkdown: "Implemented the first slice.",
+    });
+    expect(request.init.headers?.["x-cc-conversation-id"]).toBe(
+      "conversation-1",
+    );
+  });
+
+  it("trims ambient provenance and rejects whitespace-only identity locally", async () => {
+    const successHost = makeHost(() =>
+      jsonResponse({ update: sampleStatusUpdate, ticket: sampleDetail }, 201),
+    );
+    const trimmed = await runCli(
+      ["ticket", "status-update", "add", "12", "--body", "Progress"],
+      { ...baseEnv, CC_CONVERSATION_ID: "  conversation-1 \n" },
+      successHost,
+    );
+    expect(trimmed.exitCode).toBe(0);
+    expect(
+      successHost.requests[0]?.init.headers?.["x-cc-conversation-id"],
+    ).toBe("conversation-1");
+
+    const whitespaceHost = makeHost(() => jsonResponse({}));
+    const whitespace = await runCli(
+      ["ticket", "status-update", "add", "12", "--body", "Progress"],
+      { ...baseEnv, CC_CONVERSATION_ID: " \n\t " },
+      whitespaceHost,
+    );
+    expect(whitespace.exitCode).toBe(2);
+    expect(whitespace.stderr).toContain("CC_CONVERSATION_ID");
+    expect(whitespaceHost.requests).toHaveLength(0);
+  });
+
+  it("returns a bounded add receipt instead of raw status-update Markdown", async () => {
+    const fullBody = `${"sensitive update ".repeat(5_000)}STATUS_TAIL`;
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          update: { ...sampleStatusUpdate, bodyMarkdown: fullBody },
+          ticket: sampleDetail,
+        },
+        201,
+      ),
+    );
+    const result = await runCli(
+      [
+        "ticket",
+        "status-update",
+        "add",
+        "12",
+        "--body",
+        "requested update",
+        "--json",
+      ],
+      agentEnv,
+      host,
+    );
+    const textResult = await runCli(
+      ["ticket", "status-update", "add", "12", "--body", "requested update"],
+      agentEnv,
+      host,
+    );
+
+    for (const output of [result, textResult]) {
+      expect(output.exitCode).toBe(0);
+      expect(Buffer.byteLength(output.stdout, "utf8")).toBeLessThan(60_000);
+      expect(output.stdout).not.toContain("STATUS_TAIL");
+    }
+    expect(JSON.parse(result.stdout).update).toMatchObject({
+      id: "update-1",
+      bodyPreview: expect.any(String),
+      getCommand: "cctl ticket status-update get 'cc#12' 'update-1'",
+    });
+    expect(JSON.parse(result.stdout).update).not.toHaveProperty("bodyMarkdown");
+    expect(textResult.stdout).toContain(
+      "get: cctl ticket status-update get 'cc#12' 'update-1'",
+    );
+  });
+
+  it("refuses a global --conversation provenance override before the network", async () => {
+    const host = makeHost(() => jsonResponse({}));
+    const result = await runCli(
+      [
+        "ticket",
+        "status-update",
+        "add",
+        "12",
+        "--body",
+        "Update",
+        "--conversation",
+        "someone-else",
+      ],
+      agentEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("CC_CONVERSATION_ID");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("fails locally when an authenticated call has no ambient conversation", async () => {
+    const host = makeHost(() => jsonResponse({}));
+    const result = await runCli(
+      ["ticket", "status-update", "add", "12", "--body", "Update"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("CC_CONVERSATION_ID");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it.each(["", "   \n\t"])(
+    "rejects an empty or whitespace-only body locally",
+    async (body) => {
+      const host = makeHost(() => jsonResponse({}));
+      const result = await runCli(
+        ["ticket", "status-update", "add", "12", `--body=${body}`],
+        agentEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(2);
+      expect(host.requests).toHaveLength(0);
+    },
+  );
+
+  it("reads the body from --body-file", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          update: sampleStatusUpdate,
+          ticket: sampleDetail,
+        }),
+      {},
+      { ".cc/temp/update.md": " update from file \n" },
+    );
+    const result = await runCli(
+      [
+        "ticket",
+        "status-update",
+        "add",
+        "12",
+        "--body-file",
+        ".cc/temp/update.md",
+      ],
+      agentEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(host.requests[0]!.init.body ?? "{}")).toEqual({
+      bodyMarkdown: "update from file",
+    });
+  });
+
+  it("lists outlines and gets one full body with redacted provenance", async () => {
+    const host = makeHost((request) =>
+      new URL(request.url).pathname.endsWith("/update-1")
+        ? jsonResponse(sampleStatusUpdate)
+        : jsonResponse({
+            items: [sampleStatusUpdate],
+            total: 3,
+            nextCursor: "next_update",
+          }),
+    );
+    const listed = await runCli(
+      ["ticket", "status-update", "list", "12", "--limit", "1", "--json"],
+      agentEnv,
+      host,
+    );
+    const got = await runCli(
+      ["ticket", "status-update", "get", "12", "update-1"],
+      agentEnv,
+      host,
+    );
+
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout)).toMatchObject({
+      updates: [
+        {
+          id: "update-1",
+          authorKind: "agent",
+          backend: "codex",
+          conversationId: "conversation-1",
+          bodyPreview: "Implemented the first slice.",
+        },
+      ],
+      total: 3,
+      returned: 1,
+      truncated: true,
+    });
+    expect(got.exitCode).toBe(0);
+    expect(got.stdout).toContain("Implemented the first slice.");
+    expect(got.stdout).toContain("conversation-1");
+  });
+
+  it.each([
+    ["--limit", "0"],
+    ["--limit", "101"],
+    ["--cursor", "not-a-cursor"],
+  ])("rejects invalid list %s locally", async (flag, value) => {
+    const host = makeHost(() => jsonResponse({}));
+    const result = await runCli(
+      ["ticket", "status-update", "list", "12", flag, value],
+      agentEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it.each(["status_update_actor_required", "status_update_actor_not_found"])(
+    "maps semantic HTTP 400 %s to exit 1",
+    async (code) => {
+      const host = makeHost(() =>
+        jsonResponse(
+          {
+            error: "Agent provenance could not be resolved.",
+            code,
+            details: { conversationId: "conversation-1" },
+            rationale:
+              "Agent-authored updates require a resolvable conversation so source provenance remains durable.",
+          },
+          400,
+        ),
+      );
+      const result = await runCli(
+        ["ticket", "status-update", "add", "12", "--body", "Update", "--json"],
+        agentEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({ code });
+    },
+  );
+});
+
+describe("cctl ticket get — bounded relationship and update disclosure", () => {
+  it("replaces raw Markdown bodies with grouped outlines and exact drill-down commands", async () => {
+    const rationale = "relationship secret ".repeat(20);
+    const body = "status secret ".repeat(20);
+    const host = makeHost(() =>
+      jsonResponse({
+        ...sampleDetail,
+        relationships: [{ ...sampleRelationship, description: rationale }],
+        statusUpdates: {
+          total: 4,
+          recent: [{ ...sampleStatusUpdate, bodyMarkdown: body }],
+        },
+      }),
+    );
+    const result = await runCli(
+      ["ticket", "get", "12", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ticket.relationships).toMatchObject({
+      total: 1,
+      returned: 1,
+      truncated: false,
+      items: [{ id: "rel-1", getCommand: expect.stringContaining("rel-1") }],
+    });
+    expect(envelope.ticket.statusUpdates).toMatchObject({
+      total: 4,
+      returned: 1,
+      truncated: true,
+      items: [
+        { id: "update-1", getCommand: expect.stringContaining("update-1") },
+      ],
+    });
+    expect(result.stdout).not.toContain(rationale);
+    expect(result.stdout).not.toContain(body);
+  });
+
+  it("spills either selected serialization at the stdout budget", async () => {
+    const writes: string[] = [];
+    const base = makeHost(() =>
+      jsonResponse({ ...sampleDetail, description: "x".repeat(60_000) }),
+    );
+    const host: CliHost & { requests: RecordedRequest[] } = {
+      ...base,
+      async writeTextFile(_path, content) {
+        writes.push(content);
+      },
+    };
+    const result = await runCli(
+      ["ticket", "get", "12", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      storage: "artifact",
+      artifact: { reason: "stdout_budget_exceeded" },
+    });
+    expect(result.stdout).not.toContain("x".repeat(100));
+    expect(writes).toHaveLength(1);
+  });
+});
+
 describe("cctl ticket update", () => {
   it("PATCHes only the provided fields", async () => {
     const host = makeHost(() =>
@@ -621,6 +1361,55 @@ function sampleAttachment(
 const LONG_DESCRIPTION = "x".repeat(150);
 
 describe("cctl ticket attach", () => {
+  it("keeps attach ticket as a narrow compatibility projection over the relationship route", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        {
+          relationship: { ...sampleRelationship, role: "related" },
+          tickets: [sampleDetail],
+        },
+        201,
+      ),
+    );
+    const result = await runCli(
+      [
+        "ticket",
+        "attach",
+        "ticket",
+        "12",
+        "other#7",
+        "--description",
+        "same release",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const request = firstOf(host.requests, "request");
+    expect(new URL(request.url).pathname).toBe(
+      "/api/projects/cc/tickets/12/relationships",
+    );
+    expect(JSON.parse(request.init.body ?? "{}")).toEqual({
+      target: { projectName: "other", number: 7 },
+      role: "related",
+      description: "same release",
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      attachment: {
+        id: "rel-1",
+        ticketId: "ticket-1",
+        payload: {
+          kind: "related_ticket",
+          ticketId: "ticket-2",
+          identifierSnapshot: "other#7",
+        },
+      },
+    });
+  });
+
   it("exits 2 naming the offending kind and the registry's kinds", async () => {
     const host = makeHost(() => jsonResponse({}));
     const result = await runCli(
@@ -1144,6 +1933,70 @@ describe("cctl ticket attachment get — file content", () => {
 });
 
 describe("cctl ticket attachment", () => {
+  it("accepts the narrow legacy relationship projections from get, update, and remove", async () => {
+    const legacyAttachment = sampleAttachment(
+      "rel-1",
+      {
+        kind: "related_ticket",
+        ticketId: "ticket-2",
+        identifierSnapshot: "other#7",
+      },
+      "Related ticket",
+    );
+    const host = makeHost((request) => {
+      if (request.init.method === "PATCH") {
+        return jsonResponse({ ...legacyAttachment, description: "updated" });
+      }
+      if (request.init.method === "DELETE") {
+        return jsonResponse({
+          attachmentId: "rel-1",
+          ticketId: "ticket-1",
+          kind: "related_ticket",
+          ticketUpdatedAt: "2026-01-03T00:00:00Z",
+        });
+      }
+      return jsonResponse({
+        kind: "related_ticket",
+        attachment: legacyAttachment,
+        available: true,
+        ticket: { ...sampleDetail, projectName: "other", number: 7 },
+        followCommand: "cctl ticket get 'other#7'",
+      });
+    });
+
+    const got = await runCli(
+      ["ticket", "attachment", "get", "12", "rel-1"],
+      baseEnv,
+      host,
+    );
+    const updated = await runCli(
+      [
+        "ticket",
+        "attachment",
+        "update",
+        "12",
+        "rel-1",
+        "--description",
+        "updated",
+      ],
+      baseEnv,
+      host,
+    );
+    const removed = await runCli(
+      ["ticket", "attachment", "remove", "12", "rel-1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(got.exitCode).toBe(0);
+    expect(got.stdout).toContain("related ticket: other#7");
+    expect(updated.exitCode).toBe(0);
+    expect(removed.exitCode).toBe(0);
+    expect(JSON.parse(removed.stdout)).toMatchObject({
+      removed: { kind: "related_ticket", attachmentId: "rel-1" },
+    });
+  });
+
   it.each([
     {
       state: "pending" as const,

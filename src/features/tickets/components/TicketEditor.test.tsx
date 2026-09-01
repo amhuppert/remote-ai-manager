@@ -25,6 +25,8 @@ const DETAIL: TicketDetail = {
   updatedAt: "2026-07-01T00:00:00.000Z",
   attachments: [],
   sessions: [],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 // Tiptap needs DOM measurement APIs jsdom does not implement.

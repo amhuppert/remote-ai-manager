@@ -371,13 +371,14 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
         return ticketNotFound(projectName, number);
       }
       return deps.runProjectTicketOperation(projectPath, async () => {
-        const deleted = await deps.runTicketOperation(
+        const deletion = await deps.runTicketOperation(
           ticketOperationKey(projectPath, number),
-          () => deps.repo.delete(projectPath, number),
+          () => deps.repo.delete(projectPath, number, deps.now()),
         );
-        if (deleted === null) {
+        if (deletion === null) {
           return ticketNotFound(projectName, number);
         }
+        const { deleted, survivingNeighbors } = deletion;
         try {
           await deps.deleteTicketContent(deleted.id);
         } catch (error) {
@@ -388,8 +389,20 @@ export function createTicketService(deps: TicketServiceDeps): TicketService {
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        logger.info("tickets.service.deleted", { projectName, number });
+        logger.info("tickets.service.deleted", {
+          projectName,
+          number,
+          survivingNeighborCount: survivingNeighbors.length,
+        });
         publishChange("deleted", projectName, number, null);
+        for (const neighbor of survivingNeighbors) {
+          publishChange(
+            "relationships",
+            neighbor.projectName,
+            neighbor.number,
+            neighbor,
+          );
+        }
         return { ok: true, value: deleted };
       });
     },

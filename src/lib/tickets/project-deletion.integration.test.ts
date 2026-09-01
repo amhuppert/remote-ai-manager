@@ -15,6 +15,7 @@ vi.mock("@/lib/logging", () => ({
 import type Database from "better-sqlite3";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import { _createTestDb } from "@/lib/state-store/state-db";
+import { createStateStore } from "@/lib/state-store/store";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { createTicketAttachmentService } from "./attachment-service";
@@ -165,7 +166,7 @@ describe("ticket operations racing project deletion", () => {
       const snapshot = await lifecycle.captureProjectDeletion(PROJECT_PATH);
       await contentStore.deleteProject(PROJECT_PATH);
       db.prepare("DELETE FROM projects WHERE root_path = ?").run(PROJECT_PATH);
-      lifecycle.publishProjectDeletion(snapshot);
+      await lifecycle.publishProjectDeletion(snapshot);
     });
     const lateCreate = ticketService.create({
       projectName: PROJECT_NAME,
@@ -211,6 +212,88 @@ describe("ticket operations racing project deletion", () => {
         change: "deleted",
         ticketNumber: created.value.number,
         listItem: null,
+      }),
+    ]);
+  });
+
+  it("removes cross-project relationships and publishes the bumped external survivor after deletion", async () => {
+    const externalProjectPath = "/repos/external";
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
+      externalProjectPath,
+    );
+    const queue = createWriteQueue();
+    const repo = createTicketsRepo(db, queue);
+    const stateStore = createStateStore({ db, writeQueue: queue });
+    const deletedTicket = await repo.create({
+      id: "deleted-ticket",
+      projectPath: PROJECT_PATH,
+      title: "Deleted with project",
+      description: "",
+      workType: "feature",
+      status: "not_started",
+      createdAt: "2026-07-10T00:00:00.000Z",
+      updatedAt: "2026-07-10T00:00:00.000Z",
+    });
+    const externalTicket = await repo.create({
+      id: "external-ticket",
+      projectPath: externalProjectPath,
+      title: "Surviving prerequisite",
+      description: "",
+      workType: "feature",
+      status: "not_started",
+      createdAt: "2026-07-10T00:00:00.000Z",
+      updatedAt: "2026-07-10T00:00:00.000Z",
+    });
+    await repo.addRelationship({
+      id: "cross-project-dependency",
+      anchorTicketId: deletedTicket.id,
+      relationType: "depends_on",
+      sourceTicketId: deletedTicket.id,
+      targetTicketId: externalTicket.id,
+      description: "External ticket blocks deletion target",
+      createdAt: "2026-07-10T00:00:01.000Z",
+    });
+    const events: SSEEvent[] = [];
+    const lifecycle = createTicketLifecycleObserver({
+      repo,
+      publish(event) {
+        events.push(event);
+        return { delivered: true };
+      },
+      now: () => "2026-07-10T00:00:02.000Z",
+    });
+    const snapshot = await lifecycle.captureProjectDeletion(PROJECT_PATH);
+
+    await stateStore.deleteProjectRow(
+      PROJECT_PATH,
+      snapshot.externalNeighborTicketIds,
+      "2026-07-10T00:00:02.000Z",
+    );
+    await lifecycle.publishProjectDeletion(snapshot);
+
+    expect(await repo.find(PROJECT_PATH, deletedTicket.number)).toBeNull();
+    expect(
+      await repo.find(externalProjectPath, externalTicket.number),
+    ).toMatchObject({
+      id: externalTicket.id,
+      updatedAt: "2026-07-10T00:00:02.000Z",
+      relationships: [],
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        change: "deleted",
+        projectName: PROJECT_NAME,
+        ticketNumber: deletedTicket.number,
+        listItem: null,
+      }),
+      expect.objectContaining({
+        change: "relationships",
+        projectName: "external",
+        ticketNumber: externalTicket.number,
+        listItem: expect.objectContaining({
+          id: externalTicket.id,
+          updatedAt: "2026-07-10T00:00:02.000Z",
+        }),
       }),
     ]);
   });

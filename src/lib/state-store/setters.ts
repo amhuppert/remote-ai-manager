@@ -36,6 +36,7 @@ import {
   type LeaseAdmissionDecision,
 } from "@/lib/workflow-graph/lifecycle-classifier";
 import { nextStructuralRevision } from "@/lib/workflow-graph/structural-revision";
+import { nextSharedTicketRevision } from "./ticket-revision";
 
 import type { GraphWorkflowArchivedExecutionRow } from "./graph-workflow-archived-executions-repo";
 import type { GraphWorkflowEventRecord } from "./graph-workflow-events-repo";
@@ -723,6 +724,13 @@ export function createSetters(
     );
   }
 
+  const findTicketRevisionForProjectDeleteStmt = db.prepare(
+    "SELECT id, updated_at FROM tickets WHERE id = ?",
+  );
+  const updateTicketRevisionForProjectDeleteStmt = db.prepare(
+    "UPDATE tickets SET updated_at = ? WHERE id = ?",
+  );
+
   /**
    * Focused project delete: remove the project row; the FK `ON DELETE CASCADE`
    * removes its sessions (and their conversations, graph-workflow executions, and
@@ -732,14 +740,56 @@ export function createSetters(
    * and the cascaded child rows bypass their repos' own `delete`, so every
    * affected child cache is invalidated explicitly. Synchronous callback.
    */
-  async function deleteProjectRow(projectPath: string): Promise<void> {
+  async function deleteProjectRow(
+    projectPath: string,
+    externalNeighborTicketIds: readonly string[],
+    updatedAt: string,
+  ): Promise<void> {
+    const uniqueExternalNeighborIds = [...new Set(externalNeighborTicketIds)];
     return writeQueue.withWriteQueueSync("deleteProject", () =>
       timedSync(
         logger,
         "state.mutate",
-        { label: "deleteProject", projectPath },
+        {
+          label: "deleteProject",
+          projectPath,
+          externalNeighborCount: uniqueExternalNeighborIds.length,
+        },
         () => {
-          repos.projects.delete(projectPath);
+          const transaction = db.transaction(() => {
+            const survivingExternalNeighbors = uniqueExternalNeighborIds
+              .map((ticketId) =>
+                findTicketRevisionForProjectDeleteStmt.get(ticketId),
+              )
+              .filter(
+                (
+                  row,
+                ): row is {
+                  id: string;
+                  updated_at: string;
+                } =>
+                  typeof row === "object" &&
+                  row !== null &&
+                  "id" in row &&
+                  typeof row.id === "string" &&
+                  "updated_at" in row &&
+                  typeof row.updated_at === "string",
+              );
+            if (survivingExternalNeighbors.length > 0) {
+              const revision = nextSharedTicketRevision(
+                survivingExternalNeighbors.map((row) => row.updated_at),
+                updatedAt,
+              );
+              for (const neighbor of survivingExternalNeighbors) {
+                updateTicketRevisionForProjectDeleteStmt.run(
+                  revision,
+                  neighbor.id,
+                );
+              }
+            }
+            repos.projects.delete(projectPath);
+          });
+          transaction.immediate();
           repos.sessions.invalidateCache();
           repos.conversations.invalidateCache();
           repos.projectConversations.invalidateCache();

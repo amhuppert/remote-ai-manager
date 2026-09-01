@@ -2,6 +2,7 @@ import {
   ticketListFiltersSchema,
   type TicketListFilters,
 } from "./list-filters";
+import type { TicketRelationshipRole } from "./schemas";
 
 export const ticketKeys = {
   all: ["tickets"] as const,
@@ -11,6 +12,18 @@ export const ticketKeys = {
   details: () => [...ticketKeys.all, "detail"] as const,
   detail: (projectName: string, number: number) =>
     [...ticketKeys.details(), projectName, number] as const,
+  relationships: (
+    projectName: string,
+    number: number,
+    role: TicketRelationshipRole | null = null,
+  ) =>
+    [
+      ...ticketKeys.detail(projectName, number),
+      "relationships",
+      { role },
+    ] as const,
+  statusUpdates: (projectName: string, number: number) =>
+    [...ticketKeys.detail(projectName, number), "status-updates"] as const,
   // Nested under the detail key so attachment-change invalidation of the
   // detail prefix also refreshes any open resolved previews.
   attachmentResolve: (

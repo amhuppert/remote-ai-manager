@@ -164,6 +164,8 @@ describe("createCreateAttachmentPlanner", () => {
       updatedAt: "2026-07-19T12:00:00.000Z",
       attachments: plan.attachments,
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     plan.afterCommit(ticket);
 
@@ -219,6 +221,8 @@ describe("createCreateAttachmentPlanner", () => {
       updatedAt: "2026-07-19T12:00:00.000Z",
       attachments: plan.attachments,
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     plan.afterCommit(ticket);
 
@@ -343,6 +347,8 @@ describe("createCreateAttachmentPlanner", () => {
       updatedAt: "2026-07-19T12:00:00.000Z",
       attachments: plan.attachments,
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     };
     plan.afterCommit(ticket);
 
@@ -387,6 +393,8 @@ describe("createCreateAttachmentPlanner", () => {
       updatedAt: "2026-07-19T12:00:00.000Z",
       attachments: plan.attachments,
       sessions: [],
+      relationships: [],
+      statusUpdates: { total: 0, recent: [] },
     });
 
     expect(scheduleEnrichment).not.toHaveBeenCalled();

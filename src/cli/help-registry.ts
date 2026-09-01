@@ -155,6 +155,33 @@ export function booleanFlagNamesFrom(
   return [...names];
 }
 
+/** The union of the rare value flags that intentionally accept an empty value. */
+export function emptyValueFlagNamesFrom(
+  registry: Map<string, CommandHelpEntry>,
+): string[] {
+  const names = new Set<string>();
+  for (const entry of registry.values()) {
+    for (const flag of entry.flags) {
+      if (flag.kind === "value" && flag.allowEmpty === true) {
+        names.add(flag.name);
+      }
+    }
+  }
+  return [...names];
+}
+
+/** Empty-capable value args for the command `path` resolves to. */
+export function emptyValueFlagArgsFrom(
+  registry: Map<string, CommandHelpEntry>,
+  path: string[],
+): string[] {
+  const entry = resolveHelpEntry(registry, path);
+  if (!entry) return [];
+  return entry.flags
+    .filter((flag) => flag.kind === "value" && flag.allowEmpty === true)
+    .map((flag) => `--${flag.name}`);
+}
+
 /**
  * The boolean-flag arg forms (`--name`) for the command `path` resolves to
  * (longest-prefix). A value flag declared by that command wins over the same
@@ -240,6 +267,14 @@ export function booleanFlagNames(): string[] {
 
 export function booleanFlagArgsForCommand(path: string[]): string[] {
   return booleanFlagArgsFrom(REGISTRY, path);
+}
+
+export function emptyValueFlagNames(): string[] {
+  return emptyValueFlagNamesFrom(REGISTRY);
+}
+
+export function emptyValueFlagArgsForCommand(path: string[]): string[] {
+  return emptyValueFlagArgsFrom(REGISTRY, path);
 }
 
 export function renderTopUsage(): string {

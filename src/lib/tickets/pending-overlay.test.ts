@@ -181,4 +181,26 @@ describe("applyOverlayToTicketChangedEvent", () => {
       }),
     ).toBe(event);
   });
+
+  it.each(["relationships", "status_updates"] as const)(
+    "preserves a pending lean-field patch across %s events",
+    (change) => {
+      const event: TicketChangedEvent = {
+        ...updatedEvent(item({ status: "not_started" })),
+        change,
+      };
+
+      const effective = applyOverlayToTicketChangedEvent(event, {
+        kind: "patch",
+        fields: {
+          status: "in_progress",
+          updatedAt: "2026-08-20T00:00:00.000Z",
+        },
+      });
+
+      expect(effective.change).toBe(change);
+      expect(effective.listItem?.status).toBe("in_progress");
+      expect(effective.listItem?.updatedAt).toBe("2026-08-20T00:00:00.000Z");
+    },
+  );
 });

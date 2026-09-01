@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
+  TicketSessionEndReason,
   TicketDetail,
   TicketListItem,
   TicketSessionLink,
 } from "./schemas";
+import { ticketChangedEventSchema } from "./schemas";
 import { createTicketLifecycleObserver } from "./lifecycle";
 
 const listItem: TicketListItem = {
@@ -47,22 +49,45 @@ const detail: TicketDetail = {
   updatedAt: listItem.updatedAt,
   attachments: [],
   sessions: [openLink],
+  relationships: [],
+  statusUpdates: { total: 0, recent: [] },
 };
 
 function makeDeps() {
   const events: SSEEvent[] = [];
   const repo = {
-    findOpenSessionLink: vi.fn<() => Promise<TicketSessionLink | null>>(
-      async () => openLink,
+    findOpenSessionLink: vi.fn<
+      (
+        projectPath: string,
+        sessionName: string,
+      ) => Promise<TicketSessionLink | null>
+    >(async () => openLink),
+    findById: vi.fn<(ticketId: string) => Promise<TicketDetail | null>>(
+      async () => detail,
     ),
-    findById: vi.fn<() => Promise<TicketDetail | null>>(async () => detail),
-    endSessionLink: vi.fn(async ({ endedAt, endReason }) => ({
+    endSessionLink: vi.fn<
+      (input: {
+        linkId: string;
+        endedAt: string;
+        endReason: TicketSessionEndReason;
+      }) => Promise<TicketSessionLink | null>
+    >(async ({ endedAt, endReason }) => ({
       ...openLink,
       endedAt,
       endReason,
     })),
-    findListItem: vi.fn(async () => listItem),
-    list: vi.fn(async () => [listItem]),
+    findListItem: vi.fn<
+      (projectPath: string, number: number) => Promise<TicketListItem | null>
+    >(async () => listItem),
+    list: vi.fn<
+      (input: {
+        projectPath: string;
+        sort: "updated";
+      }) => Promise<TicketListItem[]>
+    >(async () => [listItem]),
+    listExternalRelationshipNeighborIds: vi.fn<
+      (projectPath: string) => Promise<string[]>
+    >(async () => []),
   };
   return {
     events,
@@ -127,20 +152,55 @@ describe("ticket session lifecycle observation", () => {
 });
 
 describe("ticket project deletion observation", () => {
-  it("captures ticket identities before the cascade and publishes a deletion delta for each afterward", async () => {
+  it("captures ticket and external-neighbor identities before the cascade, then publishes deletions before survivor refreshes", async () => {
     const { observer, repo, events } = makeDeps();
     repo.list.mockResolvedValue([
       listItem,
       { ...listItem, id: "ticket-8", number: 8 },
     ]);
+    const externalListItem: TicketListItem = {
+      ...listItem,
+      id: "ticket-external",
+      projectPath: "/projects/beta",
+      projectName: "beta",
+      number: 3,
+      title: "External survivor",
+      updatedAt: "2026-07-04T00:00:00.000Z",
+    };
+    repo.listExternalRelationshipNeighborIds.mockResolvedValue([
+      externalListItem.id,
+    ]);
+    repo.findById.mockImplementation(async (ticketId) =>
+      ticketId === externalListItem.id
+        ? {
+            ...detail,
+            ...externalListItem,
+            description: "",
+            attachments: [],
+            sessions: [],
+            relationships: [],
+            statusUpdates: { total: 0, recent: [] },
+          }
+        : detail,
+    );
+    repo.findListItem.mockImplementation(async (projectPath, number) =>
+      projectPath === externalListItem.projectPath &&
+      number === externalListItem.number
+        ? externalListItem
+        : listItem,
+    );
 
     const snapshot = await observer.captureProjectDeletion("/projects/alpha");
-    observer.publishProjectDeletion(snapshot);
+    await observer.publishProjectDeletion(snapshot);
 
     expect(repo.list).toHaveBeenCalledWith({
       projectPath: "/projects/alpha",
       sort: "updated",
     });
+    expect(repo.listExternalRelationshipNeighborIds).toHaveBeenCalledWith(
+      "/projects/alpha",
+    );
+    expect(snapshot.externalNeighborTicketIds).toEqual([externalListItem.id]);
     expect(events).toEqual([
       {
         type: "ticket-changed",
@@ -158,6 +218,27 @@ describe("ticket project deletion observation", () => {
         listItem: null,
         attachmentIndexChanged: false,
       },
+      {
+        type: "ticket-changed",
+        change: "relationships",
+        projectName: "beta",
+        ticketNumber: 3,
+        listItem: externalListItem,
+        attachmentIndexChanged: false,
+      },
     ]);
+  });
+
+  it("skips an external neighbor that was deleted before publication", async () => {
+    const { observer, repo, events } = makeDeps();
+    repo.listExternalRelationshipNeighborIds.mockResolvedValue(["vanished"]);
+    const snapshot = await observer.captureProjectDeletion("/projects/alpha");
+    repo.findById.mockResolvedValue(null);
+
+    await observer.publishProjectDeletion(snapshot);
+
+    expect(
+      events.map((event) => ticketChangedEventSchema.parse(event).change),
+    ).toEqual(["deleted"]);
   });
 });
