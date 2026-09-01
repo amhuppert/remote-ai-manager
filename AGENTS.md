@@ -4,30 +4,24 @@ Command Center is a Next.js control plane for running Claude and Codex agent ses
 
 Address the user as Alex. Be direct about uncertainty or technical disagreement, and ask before making a consequential choice that the request does not settle.
 
-Command Center vision: ./docs/VISION.md - read when designing new features to ensure alignment.
-
 ## Commands
 
 Run commands from the assigned session worktree root.
 
 ```bash
 bun install
-bun run dev
 cctl validate list
 cctl validate run test --queue-if-busy
 cctl validate run test --queue-if-busy -- src/cli/commands/validate.test.ts
 cctl validate run test --scope full --queue-if-busy
 cctl validate run typecheck --queue-if-busy
 cctl validate run seams --queue-if-busy
-cctl validate run build --queue-if-busy
 cctl validate run lint --queue-if-busy
 ```
 
-`test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch; pass `--scope full` when the claim is that the whole branch passes. A changed-scope run passes when zero files match, so a mistyped path after `--` still exits 0 — read the verdict line, which names the matched-file count and says `0 files matched — vacuous pass` when there were none, or pass `--require-match` to make it exit 1.
+`test` defaults to `--scope changed`, narrowing to the diff against the target branch, so a green run speaks for the changed files rather than the branch.
 
-`typecheck` runs the full-project `tsc` check only — it is the fast in-loop check during implementation. The architecture seam ratchet is the `seams` command and the production build (Next.js + CLI bundle) is the `build` command. Merge gates (`preMerge`, `laneMerge`) run `typecheck`, `seams`, and `test` but not `build`; the client bundle can break on changes `tsc` accepts, so run `build` at checkpoints and before claiming a branch is merge-ready, not every iteration.
-
-Registered command names are project configuration; use `cctl validate list` when a name above is absent. Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, builds, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
+Registered command names are project configuration; use `cctl validate list` when a name above is absent. Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
 
 These package-script forms remain available only for that compelling-reason diagnostic bypass, never as the default validation path:
 
@@ -35,7 +29,6 @@ These package-script forms remain available only for that compelling-reason diag
 bun run test <specific test file paths> --bail=0
 bun run lint
 bun run typecheck
-bun run build
 ```
 
 `bun run lint` also runs the architecture seam ratchet; the registered `lint` command does not, because `seams` owns it. Database migrations run during server startup; before changing persistence, follow `.kiro/steering/tech.md` and `src/lib/state-store/migrations/README.md`.
@@ -81,16 +74,12 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 - If correctness depends on SQLite serialization, use `createPersistenceFixture()` from `src/lib/shared/testing/persistence-fixture.ts`, reload through the repository, and assert on the reloaded state. JS-object fakes cannot prove durability.
 - Every state-store repository has a `*.contract.test.ts` maximal round-trip backstop using `assertRoundTripDurability`. Extend it for every persisted field or table and declare intentionally derived/non-persisted fields in its policy.
 - Avoid tests that only prove one fake called another fake. Exercise production logic or extract a pure decision function.
+- Do not write tests that assert styles or CSS classes.
 
 ## Logging and comments
 
 - Before adding or changing logging, read `.kiro/steering/logs.md`. Use `createLogger` from `@/lib/logging`, stable event names, and structured fields; never log secrets, tokens, or full prompt contents.
 - Comments explain constraints, business reasons, or non-obvious edge cases. Do not narrate visible code, describe prior versions, or add temporal claims. Preserve existing comments unless they are demonstrably false.
-
-## Validation commands
-
-- Register project validation scripts under `validation.commands` in `CommandCenter.json`; `validation.preMerge` and `validation.laneMerge` select ordered command names for merge workflows.
-- Feature and workflow modules submit registered commands through `getValidationService()`. They must not execute validation scripts or import the low-level validation process runner directly.
 
 ## Read on demand
 
@@ -106,7 +95,14 @@ In Command Center sessions, run `cctl dev ensure` before browser, Playwright, St
 - `.kiro/steering/notifications.md` — jobs, notifications, and their publication flow
 - `.kiro/steering/project-configuration.md` — `CommandCenter.json` and dev-server behavior
 
-When a command, path, or canonical boundary changes, update this file and the owning steering document in the same change. Add a root-level gotcha only after it prevents or explains a real recurring failure.
+Read only the task-relevant steering documents listed in `AGENTS.md`; do not load the whole steering directory into every turn.
+
+## Skill Routing
+
+- For browser-driven UI verification, run `cctl dev ensure`, then use the `playwright-cli` skill. Use the `nextjs-mcp` skill for Next.js runtime/build diagnostics or Chrome DevTools-only profiling.
+- Use `ui-design` for feature UI and `ui-primitive` for reusable primitives. Both are design-first; obtain approval for the proposed interaction/API before implementation.
+- UI work follows `cc-design-system` and `docs/tailwind-conventions.md`.
+
 
 <!-- BEGIN:nextjs-agent-rules -->
 
