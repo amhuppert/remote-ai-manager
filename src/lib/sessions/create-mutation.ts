@@ -16,6 +16,7 @@ const createdSessionSchema = z.object({
     )
     .default([]),
 });
+export type CreatedSession = z.infer<typeof createdSessionSchema>;
 
 export function useCreateSessionMutation(projectName: string) {
   const queryClient = useQueryClient();

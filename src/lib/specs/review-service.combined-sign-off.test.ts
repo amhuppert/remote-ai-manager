@@ -103,41 +103,33 @@ async function proposedSpec(preset: SpecGatePreset, slug = `spec-${preset}`) {
     },
     actor: AGENT,
   });
-  for (const element of [
-    {
-      elementId: `${slug}-criterion-1`,
-      kind: "criterion" as const,
-      parentElementId: `${slug}-requirement-1`,
-      position: 1,
-      payload: {
-        kind: "criterion" as const,
-        text: "A faulted write leaves nothing applied.",
-        validationStrategy: { kinds: ["test_run" as const] },
-      },
+  await authoring.upsertDraftElement({
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    elementId: `${slug}-criterion-1`,
+    kind: "criterion",
+    parentElementId: `${slug}-requirement-1`,
+    position: 1,
+    payload: {
+      kind: "criterion",
+      text: "A faulted write leaves nothing applied.",
+      validationStrategy: { kinds: ["test_run"] },
     },
-    {
-      elementId: `${slug}-decision-1`,
-      kind: "decision" as const,
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "decision" as const,
-        title: "One transactional act",
-        chosenApproach: "The server writes approvals and sign-off together.",
-        rejectedAlternatives: [],
-        reason: "Two round trips can half-apply.",
-        tracedRequirementElementIds: [`${slug}-requirement-1`],
-      },
-    },
-  ]) {
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      ...element,
-      baseElementVersion: null,
-      actor: AGENT,
-    });
-  }
+    baseElementVersion: null,
+    actor: AGENT,
+  });
+  await specs.proposeRevision({
+    revisionId: created.draft.id,
+    proposedAt: "2026-08-08T08:58:00.000Z",
+  });
+  await specs.approveRevision({
+    revisionId: created.draft.id,
+    approvedAt: "2026-08-08T08:58:01.000Z",
+  });
+  const design = await authoring.openAmendment({
+    specId: created.spec.id,
+    actor: AGENT,
+  });
   if (preset !== "fast-path") {
     await specs.updateGatePolicy({
       specId: created.spec.id,
@@ -145,13 +137,33 @@ async function proposedSpec(preset: SpecGatePreset, slug = `spec-${preset}`) {
       updatedAt: "2026-08-08T08:59:59.000Z",
     });
   }
+  for (const index of [1, 2]) {
+    await authoring.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: design.revision.id,
+      elementId: `${slug}-decision-${index}`,
+      kind: "decision",
+      parentElementId: null,
+      position: index + 1,
+      payload: {
+        kind: "decision",
+        title: `Transactional act ${index}`,
+        chosenApproach: "The server writes approvals and sign-off together.",
+        rejectedAlternatives: [],
+        reason: "Two round trips can half-apply.",
+        tracedRequirementElementIds: [`${slug}-requirement-1`],
+      },
+      baseElementVersion: null,
+      actor: AGENT,
+    });
+  }
   const proposed = await authoring.proposeRevision({
     specId: created.spec.id,
-    revisionId: created.draft.id,
+    revisionId: design.revision.id,
     actor: AGENT,
   });
   if (!proposed.ok) throw new Error("the fixture propose was refused");
-  return { specId: created.spec.id, revisionId: created.draft.id, slug };
+  return { specId: created.spec.id, revisionId: design.revision.id, slug };
 }
 
 function subjectRows(specId: string) {
@@ -211,14 +223,14 @@ describe("approveRemainingAndSignOff", () => {
         element_id: "spec-contract-bearing-decision-1",
       },
       {
-        subject_kind: "requirement",
-        element_id: "spec-contract-bearing-requirement-1",
+        subject_kind: "decision",
+        element_id: "spec-contract-bearing-decision-2",
       },
       { subject_kind: "revision", element_id: null },
     ]);
     expect(
       result.value.subjectApprovals.map((row) => row.subject_kind).sort(),
-    ).toEqual(["decision", "requirement"]);
+    ).toEqual(["decision", "decision"]);
   });
 
   it("leaves nothing applied when a write faults between the subject approvals", async () => {
@@ -292,6 +304,10 @@ describe("approveRemainingAndSignOff", () => {
     const afterFirst = subjectRows(specId);
     expect(afterFirst).toEqual([
       { subject_kind: "decision", element_id: "spec-fast-path-decision-1" },
+      {
+        subject_kind: "decision",
+        element_id: "spec-fast-path-decision-2",
+      },
       {
         subject_kind: "requirement",
         element_id: "spec-fast-path-requirement-1",

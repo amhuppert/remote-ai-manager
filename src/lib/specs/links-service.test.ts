@@ -278,9 +278,6 @@ async function createApprovedTaskSpec() {
     gatePolicy: { preset: "exploratory" },
     updatedAt: "2026-07-18T17:00:00.500Z",
   });
-  db.prepare(
-    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
-  ).run(created.draft.id);
   for (const element of [
     {
       elementId: "criterion-1",
@@ -309,6 +306,9 @@ async function createApprovedTaskSpec() {
       },
     },
   ]) {
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = ? WHERE id = ?",
+    ).run(element.kind === "task" ? "plan" : "requirements", created.draft.id);
     await authoring.upsertDraftElement({
       specId: created.spec.id,
       revisionId: created.draft.id,

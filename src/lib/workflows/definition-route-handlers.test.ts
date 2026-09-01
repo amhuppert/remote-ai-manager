@@ -20,6 +20,8 @@ import {
   createRootIndependentWarningDefinition,
 } from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { StaleWorkflowDefinitionError } from "@/lib/workflow-graph/storage";
+import type { NativeSddWorkflowManagementDetail } from "@/lib/workflow-graph/managed-definition";
 
 // The POST bodies below are authored plans: create refuses the legacy source
 // shapes makeTestCharter still carries (prose appliesTo, retired accessPolicy),
@@ -99,6 +101,57 @@ const OVERSIZED_REPO_CONFIG: PerRepoConfig = {
     preMerge: ["test"],
   },
 };
+
+function managedProjection(
+  overrides: Partial<NativeSddWorkflowManagementDetail> = {},
+): NativeSddWorkflowManagementDetail {
+  return {
+    kind: "native_sdd_delivery",
+    specId: "spec-1",
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    attemptId: "attempt-1",
+    pinnedRevisionId: "revision-1",
+    pinnedRevisionNumber: 1,
+    lifecycle: "draft",
+    editable: true,
+    isCurrentDefinition: true,
+    specHref: "/projects/repo/specs/native-sdd",
+    builderHref: "/projects/repo/workflows?definition=workflow-1",
+    executionHref: null,
+    deltaBasisExecutionId: null,
+    bindingRevision: 1,
+    binding: { dispositions: [], claims: [] },
+    dispositionCounts: {},
+    unresolvedItems: [],
+    criterionRows: [],
+    claims: [],
+    comments: [],
+    nextAct: "propose",
+    currentCandidate: null,
+    currentCandidateHash: null,
+    currentApproval: null,
+    approvedBaseline: null,
+    changes: {
+      workflowSettings: false,
+      contexts: false,
+      tasks: false,
+      edges: false,
+      layout: false,
+      dispositions: false,
+      claims: false,
+    },
+    capabilities: {
+      canPropose: true,
+      canSignOff: false,
+      canReopen: false,
+      canAbandon: true,
+      canLaunch: false,
+      refusals: {},
+    },
+    ...overrides,
+  };
+}
 
 describe("workflow definition route handlers", () => {
   const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();
@@ -217,6 +270,7 @@ describe("workflow definition route handlers", () => {
 
     const putResponse = await handlers.UPDATE(
       makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+        expectedRevision: 1,
         name: "Updated Workflow",
         description: "Updated",
         definition: createWorkflowDefinitionRecord().definition,
@@ -238,6 +292,112 @@ describe("workflow definition route handlers", () => {
     );
     expect(deleteResponse.status).toBe(200);
     await expect(deleteResponse.json()).resolves.toEqual({ ok: true });
+  });
+
+  it("returns a typed conflict when a replace loses the definition revision race", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    updateDefinition.mockRejectedValue(
+      new StaleWorkflowDefinitionError("workflow-1", 4, 5),
+    );
+
+    const response = await handlers.UPDATE(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+        expectedRevision: 4,
+        name: "Stale Workflow",
+        description: "A concurrently edited workflow",
+        definition: createWorkflowDefinitionRecord().definition,
+        layout: createWorkflowDefinitionRecord().layout,
+      }),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stale_workflow_definition",
+      workflowId: "workflow-1",
+      expectedRevision: 4,
+      currentRevision: 5,
+      instruction: expect.stringContaining("Re-read"),
+    });
+  });
+
+  it("projects managed ownership and refuses lifecycle-frozen mutations", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    const record = createWorkflowDefinitionRecord();
+    getDefinition.mockResolvedValue(record);
+    listDefinitions.mockResolvedValue([record]);
+    const projection = managedProjection({
+      lifecycle: "in_review",
+      editable: false,
+      capabilities: {
+        canPropose: false,
+        canSignOff: true,
+        canReopen: true,
+        canAbandon: true,
+        canLaunch: false,
+        refusals: {},
+      },
+    });
+    const managedDefinitions = {
+      list: async () => new Map([[record.id, projection]]),
+      get: async () => projection,
+    };
+    const managedHandlers = createWorkflowDefinitionRouteHandlers({
+      resolveProjectPath,
+      readConfig,
+      readRepoConfig,
+      listDefinitions,
+      getDefinition,
+      createDefinition,
+      updateDefinition,
+      deleteDefinition,
+      planReviews: unreviewedPlanReviewLookup,
+      managedDefinitions,
+    });
+
+    const listResponse = await managedHandlers.LIST(
+      makeRequest("/api/projects/repo/workflows", "GET"),
+      makeContext({ name: "repo" }),
+    );
+    expect(await listResponse.json()).toMatchObject({
+      items: [{ management: { lifecycle: "in_review", editable: false } }],
+    });
+
+    const updateResponse = await managedHandlers.UPDATE(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+        expectedRevision: 1,
+        name: record.name,
+        description: record.description,
+        definition: record.definition,
+        layout: record.layout,
+      }),
+      makeContext({ name: "repo", workflowId: record.id }),
+    );
+    const editResponse = await managedHandlers.EDIT(
+      makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
+        expectedRevision: 1,
+        operations: [{ type: "update-workflow", name: "Blocked" }],
+      }),
+      makeContext({ name: "repo", workflowId: record.id }),
+    );
+    const deleteResponse = await managedHandlers.DELETE(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "DELETE"),
+      makeContext({ name: "repo", workflowId: record.id }),
+    );
+
+    await expect(updateResponse.json()).resolves.toMatchObject({
+      code: "managed_workflow_definition_read_only",
+      instruction: expect.stringContaining("Reopen"),
+    });
+    await expect(editResponse.json()).resolves.toMatchObject({
+      code: "managed_workflow_definition_read_only",
+    });
+    await expect(deleteResponse.json()).resolves.toMatchObject({
+      code: "managed_workflow_definition",
+      instruction: expect.stringContaining("Abandon"),
+    });
+    expect(updateDefinition).not.toHaveBeenCalled();
+    expect(deleteDefinition).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the project cannot be resolved", async () => {
@@ -285,6 +445,7 @@ describe("workflow definition route handlers", () => {
 
     const response = await handlers.UPDATE(
       makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+        expectedRevision: 1,
         name: "",
       }),
       makeContext({ name: "repo", workflowId: "workflow-1" }),
@@ -322,7 +483,10 @@ describe("workflow definition route handlers", () => {
       makeContext({ name: "repo" }),
     );
     const updateResponse = await handlers.UPDATE(
-      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", body),
+      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+        ...body,
+        expectedRevision: 1,
+      }),
       makeContext({ name: "repo", workflowId: "workflow-1" }),
     );
 
@@ -357,7 +521,7 @@ describe("workflow definition route handlers", () => {
 
     const response = await handlers.EDIT(
       makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           {
             type: "update-workflow-config",
@@ -398,7 +562,7 @@ describe("workflow definition route handlers", () => {
 
     const response = await handlers.EDIT(
       makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           {
             type: "update-workflow-config",
@@ -446,7 +610,7 @@ describe("workflow definition route handlers", () => {
 
     const response = await handlers.EDIT(
       makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           {
             type: "update-workflow-config",
@@ -505,12 +669,15 @@ describe("workflow definition route handlers", () => {
         makeContext({ name: "repo" }),
       ),
       await handlers.UPDATE(
-        makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", plan),
+        makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {
+          ...plan,
+          expectedRevision: 1,
+        }),
         makeContext({ name: "repo", workflowId: "workflow-1" }),
       ),
       await handlers.EDIT(
         makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
-          baseRevision: 3,
+          expectedRevision: 3,
           operations: [
             { type: "update-workflow", name: "Edited warning plan" },
           ],
@@ -781,6 +948,7 @@ describe("create/replace review advisory", () => {
 
   const record = createWorkflowDefinitionRecord();
   const planBody = {
+    expectedRevision: 1,
     name: "Workflow Graph",
     description: "Create workflow",
     definition: record.definition,

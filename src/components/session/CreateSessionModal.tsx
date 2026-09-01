@@ -6,7 +6,10 @@ import {
   RichPromptInput,
   type RichPromptInputHandle,
 } from "@/components/rich-prompt/RichPromptInput";
-import { useCreateSessionMutation } from "@/lib/sessions/create-mutation";
+import {
+  useCreateSessionMutation,
+  type CreatedSession,
+} from "@/lib/sessions/create-mutation";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import {
   useBranchPrefixQuery,
@@ -64,12 +67,14 @@ interface CreateSessionModalProps {
   projectName: string;
   open: boolean;
   onClose: () => void;
+  onCreated?: (session: CreatedSession) => void;
 }
 
 export default function CreateSessionModal({
   projectName,
   open,
   onClose,
+  onCreated,
 }: CreateSessionModalProps): React.JSX.Element {
   const router = useRouter();
   const branchFromParent = useBranchFromParent();
@@ -154,6 +159,10 @@ export default function CreateSessionModal({
   const submitRequest = (params: CreateSessionRequest, optimistic: boolean) => {
     createMutation.mutate(params, {
       onSuccess: (session) => {
+        if (onCreated) {
+          onCreated(session);
+          return;
+        }
         onClose();
 
         if (optimistic) return;

@@ -161,6 +161,20 @@ export function liveProposalsFixture(
           entry.revision.basedOnRevisionId === null
             ? null
             : (byRevisionId.get(entry.revision.basedOnRevisionId) ?? null),
+        governanceBaseSnapshot: (() => {
+          let revisionId = entry.revision.basedOnRevisionId;
+          while (revisionId !== null) {
+            const candidate = revisions.find(
+              (revision) => revision.id === revisionId,
+            );
+            if (candidate === undefined) return null;
+            if (candidate.state === "approved") {
+              return byRevisionId.get(candidate.id) ?? null;
+            }
+            revisionId = candidate.basedOnRevisionId;
+          }
+          return null;
+        })(),
         notes: notesByRevisionId[entry.revision.id] ?? null,
       },
     ];
@@ -185,6 +199,7 @@ export function strandedProposalDetailFixture(): SpecDetailView {
     id: "revision-2",
     number: 2,
     state: "proposed",
+    authoringStage: "requirements",
     basedOnRevisionId: approved.id,
     approvedAt: null,
   };

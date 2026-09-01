@@ -105,7 +105,7 @@ function task(
   };
 }
 
-/** Fast-path collapses active evergreen authoring into the design stage. */
+/** Create a spec through the same first-save surface used by the CLI. */
 function createSpec(
   initialElement: Parameters<
     AuthoringService["createSpec"]
@@ -146,18 +146,21 @@ async function seedPlanDraft() {
     position: 0,
     payload: requirement("Discovered work stays traceable."),
   });
+  await service.upsertDraftElement({
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    elementId: "criterion-1",
+    kind: "criterion",
+    parentElementId: "requirement-1",
+    payload: criterion("Every reference resolves."),
+    baseElementVersion: null,
+    actor: ACTOR,
+  });
   markLegacyPlanDraft(created.draft.id);
   const batch = await service.upsertDraftElements({
     specId: created.spec.id,
     revisionId: created.draft.id,
     elements: [
-      {
-        elementId: "criterion-1",
-        kind: "criterion",
-        parentElementId: "requirement-1",
-        payload: criterion("Every reference resolves."),
-        baseElementVersion: null,
-      },
       {
         elementId: "task-1",
         kind: "task",
@@ -208,8 +211,29 @@ describe("createSpec reference guard", () => {
     ).toEqual({ count: 0 });
   });
 
-  it("keeps empty id arrays legal on the first save", async () => {
+  it("keeps empty id arrays legal on a stage-admitted write", async () => {
     const created = await createSpec({
+      elementId: "requirement-1",
+      kind: "requirement",
+      parentElementId: null,
+      position: 0,
+      payload: requirement("A decision may remain independent."),
+    });
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T12:00:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T12:00:01.000Z",
+    });
+    const design = await service.openAmendment({
+      specId: created.spec.id,
+      actor: ACTOR,
+    });
+    const written = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: design.revision.id,
       elementId: "decision-1",
       kind: "decision",
       parentElementId: null,
@@ -222,9 +246,11 @@ describe("createSpec reference guard", () => {
         reason: "No requirement trace is needed.",
         tracedRequirementElementIds: [],
       },
+      baseElementVersion: null,
+      actor: ACTOR,
     });
 
-    expect(created.element.id).toBe("decision-1");
+    expect(written.element.id).toBe("decision-1");
   });
 });
 
@@ -316,6 +342,9 @@ describe("upsertDraftElement reference guard", () => {
 describe("removeDraftElement reference guard", () => {
   it("refuses a removal a surviving task still traces and names what to rewrite", async () => {
     const created = await seedPlanDraft();
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+    ).run(created.draft.id);
 
     const refusal = await refusalOf(
       service.removeDraftElement({
@@ -350,6 +379,9 @@ describe("removeDraftElement reference guard", () => {
       baseElementVersion: 1,
       actor: ACTOR,
     });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+    ).run(created.draft.id);
 
     const refusal = await refusalOf(
       service.removeDraftElement({
@@ -389,6 +421,9 @@ describe("removeDraftElement reference guard", () => {
       baseElementVersion: 1,
       actor: ACTOR,
     });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+    ).run(created.draft.id);
 
     await service.removeDraftElement({
       specId: created.spec.id,
@@ -425,19 +460,19 @@ describe("upsertDraftElements reference guard", () => {
       markLegacyPlanDraft(created.draft.id);
       const elements = [
         {
-          elementId: `${slug}-task`,
+          elementId: `${slug}-task-dependent`,
           kind: "task" as const,
           parentElementId: null,
-          payload: task("Cover the criterion", {
-            coveredCriterionElementIds: [`${slug}-criterion`],
+          payload: task("Depend on the forward task", {
+            dependsOnTaskElementIds: [`${slug}-task-target`],
           }),
           baseElementVersion: null,
         },
         {
-          elementId: `${slug}-criterion`,
-          kind: "criterion" as const,
-          parentElementId: `${slug}-requirement`,
-          payload: criterion("The batch order does not matter."),
+          elementId: `${slug}-task-target`,
+          kind: "task" as const,
+          parentElementId: null,
+          payload: task("The batch order does not matter."),
           baseElementVersion: null,
         },
       ];
@@ -514,6 +549,9 @@ describe("upsertDraftElements reference guard", () => {
 
   it("names the dangling reference by handle when a batch removal would strand it", async () => {
     const created = await seedPlanDraft();
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+    ).run(created.draft.id);
 
     const result = await service.upsertDraftElements({
       specId: created.spec.id,
@@ -609,6 +647,28 @@ describe("upsertDraftElements reference guard", () => {
 
   it("removes an element while the same batch rewrites the source that referenced it", async () => {
     const created = await seedPlanDraft();
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "task-2",
+      kind: "task",
+      parentElementId: null,
+      payload: task("Temporary dependency target"),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "task-1",
+      kind: "task",
+      parentElementId: null,
+      payload: task("Route the write", {
+        dependsOnTaskElementIds: ["task-2"],
+      }),
+      baseElementVersion: 1,
+      actor: ACTOR,
+    });
 
     const result = await service.upsertDraftElements({
       specId: created.spec.id,
@@ -618,13 +678,11 @@ describe("upsertDraftElements reference guard", () => {
           elementId: "task-1",
           kind: "task",
           parentElementId: null,
-          payload: task("Route the write", {
-            tracedRequirementElementIds: ["requirement-1"],
-          }),
-          baseElementVersion: 1,
+          payload: task("Route the write"),
+          baseElementVersion: 2,
         },
       ],
-      removals: [{ elementId: "criterion-1", baseElementVersion: 1 }],
+      removals: [{ elementId: "task-2", baseElementVersion: 1 }],
       actor: ACTOR,
     });
 
@@ -632,6 +690,7 @@ describe("upsertDraftElements reference guard", () => {
     const snapshot = await service.getRevisionSnapshot(created.draft.id);
     expect(snapshot?.elements.map(({ element }) => element.id)).toEqual([
       "requirement-1",
+      "criterion-1",
       "task-1",
     ]);
   });

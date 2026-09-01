@@ -419,6 +419,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0036-add-notepad-comments",
       "0037-add-notepad-delivery-watermarks",
       "0038-ticket-relationships-and-status-updates",
+      "0039-native-sdd-managed-workflow-definitions",
     ]);
   });
 

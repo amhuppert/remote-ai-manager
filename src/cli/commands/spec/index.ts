@@ -47,6 +47,7 @@ import {
   runSpecRename,
   runSpecReply,
   runSpecRequestApproval,
+  runSpecReturnToRequirements,
   runSpecStart,
   runSpecWithdrawProposal,
 } from "./write";
@@ -98,6 +99,8 @@ export async function runSpec(
       "dismiss-superseded": (next) =>
         runSpecDismissSuperseded(next, flags, values, env, host),
       advance: (next) => runSpecAdvance(next, flags, values, env, host),
+      "return-to-requirements": (next) =>
+        runSpecReturnToRequirements(next, flags, values, env, host),
       question: (next) => runSpecQuestion(next, flags, values, env, host),
       answer: (next) => runSpecAnswer(next, flags, values, env, host),
       reply: (next) => runSpecReply(next, flags, values, env, host),

@@ -62,7 +62,7 @@ describe("0026-delivery-plan-launch-cutover", () => {
           ON DELETE CASCADE
       );
     `);
-    const { launch: _launch, ...legacyDocument } = maximalPlanDocument();
+    const legacyDocument = { binding: maximalPlanDocument().binding };
     const contentJson = JSON.stringify(legacyDocument);
     fixture.db
       .prepare(

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
-import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
+import {
+  getProjectDisplayName,
+  resolveProjectPath as defaultResolveProjectPath,
+} from "@/lib/projects/resolver";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import type { ApiError } from "@/lib/api/errors";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
@@ -10,6 +14,7 @@ import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import {
   createWorkflowStorageService,
+  StaleWorkflowDefinitionError,
   type WorkflowDefinitionDraft,
   type WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
@@ -37,10 +42,29 @@ import {
   type PlanReviewAcknowledgementRefusal,
   type PlanReviewAdvisory,
 } from "./plan-review/status-schemas";
+import { staleWorkflowDefinitionResponse } from "@/lib/workflow-graph/stale-workflow-definition";
+import {
+  managedWorkflowReadOnlyInstruction,
+  type ManagedWorkflowDefinitionPolicy,
+  type NativeSddWorkflowManagementCompact,
+} from "@/lib/workflow-graph/managed-definition";
+import {
+  definitionMutationCoordinator,
+  type DefinitionMutationCoordinator,
+} from "@/lib/workflow-graph/definition-mutation-coordinator";
+import {
+  findChangedLockedRegion,
+  regionLockedInstruction,
+} from "@/lib/workflow-graph/locked-regions";
+import { getStateDb } from "@/lib/state-store/store";
+import { createNativeSddManagedWorkflowDefinitionPolicy } from "@/lib/specs/managed-workflow-definition-policy";
 
 const logger = createLogger("workflow-graph");
 
 const UNREVIEWED: PlanReviewAdvisory = { state: "unreviewed" };
+const workflowDefinitionReplaceRevisionSchema = z.object({
+  expectedRevision: z.number().int().min(1),
+});
 
 /**
  * What the admitted revision's review means for this request (#69 change 5):
@@ -194,12 +218,13 @@ export interface WorkflowDefinitionRouteDeps {
   createDefinition(
     projectPath: string,
     draft: WorkflowDefinitionDraft,
-  ): Promise<unknown>;
+  ): Promise<WorkflowDefinitionRecord>;
   updateDefinition(
     projectPath: string,
     workflowId: string,
+    expectedRevision: number,
     draft: WorkflowDefinitionDraft,
-  ): Promise<unknown>;
+  ): Promise<WorkflowDefinitionRecord>;
   deleteDefinition(projectPath: string, workflowId: string): Promise<boolean>;
   assignmentReferences?: AssignmentReferenceChecker;
   /**
@@ -210,9 +235,32 @@ export interface WorkflowDefinitionRouteDeps {
    * refuse nothing else, and a lookup that throws refuses nothing at all.
    */
   planReviews: PlanReviewLookup;
+  managedDefinitions?: ManagedWorkflowDefinitionPolicy;
+  mutationCoordinator?: DefinitionMutationCoordinator;
 }
 
 const defaultStorage = createWorkflowStorageService();
+const defaultManagedDefinitions: ManagedWorkflowDefinitionPolicy = {
+  list(projectPath, workflowIds) {
+    return createNativeSddManagedWorkflowDefinitionPolicy({
+      db: getStateDb(),
+      resolveProjectName: getProjectDisplayName,
+      getWorkflowDefinition: (path, workflowId) =>
+        defaultStorage.get({ kind: "project", projectPath: path }, workflowId),
+    }).list(projectPath, workflowIds);
+  },
+  get(projectPath, workflowId) {
+    return createNativeSddManagedWorkflowDefinitionPolicy({
+      db: getStateDb(),
+      resolveProjectName: getProjectDisplayName,
+      getWorkflowDefinition: (path, definitionId) =>
+        defaultStorage.get(
+          { kind: "project", projectPath: path },
+          definitionId,
+        ),
+    }).get(projectPath, workflowId);
+  },
+};
 
 const defaultDeps: WorkflowDefinitionRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
@@ -224,8 +272,13 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
     defaultStorage.get({ kind: "project", projectPath }, workflowId),
   createDefinition: (projectPath, draft) =>
     defaultStorage.create({ kind: "project", projectPath }, draft),
-  updateDefinition: (projectPath, workflowId, draft) =>
-    defaultStorage.update({ kind: "project", projectPath }, workflowId, draft),
+  updateDefinition: (projectPath, workflowId, expectedRevision, draft) =>
+    defaultStorage.update(
+      { kind: "project", projectPath },
+      workflowId,
+      expectedRevision,
+      draft,
+    ),
   deleteDefinition: (projectPath, workflowId) =>
     defaultStorage.delete({ kind: "project", projectPath }, workflowId),
   planReviews: {
@@ -234,6 +287,7 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
     findLatestTerminalReview: (definitionHash) =>
       defaultPlanReviewService().findLatestTerminalReview(definitionHash),
   },
+  managedDefinitions: defaultManagedDefinitions,
 };
 
 function admissionRefusalResponse(validation: {
@@ -251,10 +305,45 @@ function admissionRefusalResponse(validation: {
   return NextResponse.json(body, { status: 400 });
 }
 
+function managedMutationRefusal(
+  workflowId: string,
+  management: NativeSddWorkflowManagementCompact,
+  operation: "update" | "edit" | "delete",
+): Response {
+  const code =
+    operation === "delete"
+      ? "managed_workflow_definition"
+      : "managed_workflow_definition_read_only";
+  const instruction =
+    operation === "delete"
+      ? "Abandon the delivery plan from its managed header; candidate definition files are retained as history."
+      : managedWorkflowReadOnlyInstruction(management);
+  logger.warn("workflow-graph.definition-mutation.managed-refused", {
+    workflowId,
+    attemptId: management.attemptId,
+    lifecycle: management.lifecycle,
+    operation,
+    code,
+  });
+  return NextResponse.json(
+    {
+      error:
+        operation === "delete"
+          ? "Managed delivery workflow definitions cannot be deleted directly."
+          : "This managed delivery workflow definition is read-only.",
+      code,
+      lifecycle: management.lifecycle,
+      instruction,
+    },
+    { status: 409 },
+  );
+}
+
 export function createWorkflowDefinitionRouteHandlers(
   deps: WorkflowDefinitionRouteDeps = defaultDeps,
 ) {
   const assignmentReferences = deps.assignmentReferences;
+  const coordinator = deps.mutationCoordinator ?? definitionMutationCoordinator;
   async function LIST(
     _request: Request,
     context: RouteContext,
@@ -265,7 +354,18 @@ export function createWorkflowDefinitionRouteHandlers(
     const projectPath = project.value;
 
     const items = await deps.listDefinitions(projectPath);
-    return NextResponse.json({ items });
+    const management = deps.managedDefinitions
+      ? await deps.managedDefinitions.list(
+          projectPath,
+          items.map((item) => item.id),
+        )
+      : new Map();
+    return NextResponse.json({
+      items: items.map((item) => {
+        const projection = management.get(item.id);
+        return projection ? { ...item, management: projection } : item;
+      }),
+    });
   }
 
   async function CREATE(
@@ -359,7 +459,14 @@ export function createWorkflowDefinitionRouteHandlers(
     const globalConfig = await deps.readConfig();
     const resolved = resolveWorkflowDefinition(globalConfig, item.definition);
 
-    return NextResponse.json({ item, resolved });
+    const management = await deps.managedDefinitions?.get(
+      projectPath,
+      workflowId,
+    );
+    return NextResponse.json({
+      item: management ? { ...item, management } : item,
+      resolved,
+    });
   }
 
   async function UPDATE(
@@ -379,6 +486,20 @@ export function createWorkflowDefinitionRouteHandlers(
         {
           error: "Invalid request: name, definition, and layout are required",
         } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const revision = workflowDefinitionReplaceRevisionSchema.safeParse(rawBody);
+    if (!revision.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid workflow definition revision",
+          issues: revision.error.issues.map((issue) => ({
+            path: issue.path.join(".") || "expectedRevision",
+            message: issue.message,
+          })),
+        },
         { status: 400 },
       );
     }
@@ -422,21 +543,69 @@ export function createWorkflowDefinitionRouteHandlers(
     }
 
     try {
-      const item = await deps.updateDefinition(
-        projectPath,
-        workflowId,
-        validation.launch,
+      return await coordinator.run(
+        `${projectPath}\0${workflowId}`,
+        async () => {
+          const management = await deps.managedDefinitions?.get(
+            projectPath,
+            workflowId,
+          );
+          if (management && !management.editable) {
+            return managedMutationRefusal(workflowId, management, "update");
+          }
+          if (management) {
+            const existing = await deps.getDefinition(projectPath, workflowId);
+            if (!existing) return notFound("Workflow not found");
+            const locked = findChangedLockedRegion(
+              existing.definition,
+              validation.launch.definition,
+            );
+            if (locked) {
+              return NextResponse.json(
+                {
+                  error:
+                    "Managed delivery workflow locked regions cannot be edited.",
+                  code: "region_locked",
+                  lockedPath: locked.lockedPath,
+                  sourceUri: locked.sourceUri,
+                  instruction: regionLockedInstruction(locked),
+                },
+                { status: 409 },
+              );
+            }
+          }
+
+          const item = await deps.updateDefinition(
+            projectPath,
+            workflowId,
+            revision.data.expectedRevision,
+            validation.launch,
+          );
+          const nextManagement = await deps.managedDefinitions?.get(
+            projectPath,
+            workflowId,
+          );
+          return NextResponse.json({
+            item: nextManagement
+              ? { ...item, management: nextManagement }
+              : item,
+            ...saveAdvisoryFields(review, validation.warnings),
+          });
+        },
       );
-      return NextResponse.json({
-        item,
-        ...saveAdvisoryFields(review, validation.warnings),
-      });
     } catch (error) {
       // Ordered before the 404 fallback on purpose: an unresolvable assignment
       // reference is a refusal of the SUBMITTED document, not a missing id, and
       // reporting it as "not found" hid its located issues entirely.
       const refusal = assignmentReferenceRefusal(error);
       if (refusal) return refusal;
+      if (error instanceof StaleWorkflowDefinitionError) {
+        return staleWorkflowDefinitionResponse(
+          error.workflowId,
+          error.expectedRevision,
+          error.currentRevision,
+        );
+      }
       const message =
         error instanceof Error ? error.message : "Failed to update workflow";
       return notFound(message);
@@ -453,26 +622,41 @@ export function createWorkflowDefinitionRouteHandlers(
     const projectPath = project.value;
 
     const rawBody = await request.json().catch(() => undefined);
-    return runDefinitionEditRequest({
-      rawBody,
-      notFoundError: "Workflow not found",
-      loadRecord: () => deps.getDefinition(projectPath, workflowId),
-      admitLaunch: async (launch) => {
-        const [repoConfig, globalConfig] = await Promise.all([
-          deps.readRepoConfig(projectPath),
-          deps.readConfig(),
-        ]);
-        return admitAuthoredWorkflowLaunch(launch, {
-          caller: "project-edit",
-          documentScope: { kind: "project", projectPath },
-          projectValidation: repoConfig?.validation ?? null,
-          globalValidation: globalConfig.validation,
-          workflowDefaults: globalConfig.workflowDefaults,
-          agentBackends: globalConfig.agentBackends,
-          assignmentReferences,
-        });
-      },
-      persist: (draft) => deps.updateDefinition(projectPath, workflowId, draft),
+    return coordinator.run(`${projectPath}\0${workflowId}`, async () => {
+      const management = await deps.managedDefinitions?.get(
+        projectPath,
+        workflowId,
+      );
+      if (management && !management.editable) {
+        return managedMutationRefusal(workflowId, management, "edit");
+      }
+      return runDefinitionEditRequest({
+        rawBody,
+        notFoundError: "Workflow not found",
+        loadRecord: () => deps.getDefinition(projectPath, workflowId),
+        admitLaunch: async (launch) => {
+          const [repoConfig, globalConfig] = await Promise.all([
+            deps.readRepoConfig(projectPath),
+            deps.readConfig(),
+          ]);
+          return admitAuthoredWorkflowLaunch(launch, {
+            caller: "project-edit",
+            documentScope: { kind: "project", projectPath },
+            projectValidation: repoConfig?.validation ?? null,
+            globalValidation: globalConfig.validation,
+            workflowDefaults: globalConfig.workflowDefaults,
+            agentBackends: globalConfig.agentBackends,
+            assignmentReferences,
+          });
+        },
+        persist: (draft, expectedRevision) =>
+          deps.updateDefinition(
+            projectPath,
+            workflowId,
+            expectedRevision,
+            draft,
+          ),
+      });
     });
   }
 
@@ -485,12 +669,19 @@ export function createWorkflowDefinitionRouteHandlers(
     if (!project.ok) return project.response;
     const projectPath = project.value;
 
-    const deleted = await deps.deleteDefinition(projectPath, workflowId);
-    if (!deleted) {
-      return notFound("Workflow not found");
-    }
+    return coordinator.run(`${projectPath}\0${workflowId}`, async () => {
+      const management = await deps.managedDefinitions?.get(
+        projectPath,
+        workflowId,
+      );
+      if (management) {
+        return managedMutationRefusal(workflowId, management, "delete");
+      }
 
-    return NextResponse.json({ ok: true });
+      const deleted = await deps.deleteDefinition(projectPath, workflowId);
+      if (!deleted) return notFound("Workflow not found");
+      return NextResponse.json({ ok: true });
+    });
   }
 
   return { LIST, CREATE, GET, UPDATE, EDIT, DELETE };

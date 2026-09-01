@@ -28,7 +28,6 @@ import {
   specStartExecutionReceiptSchema,
   type DeliveryPlanMutationView,
 } from "@/lib/specs/delivery-plan-views";
-import { graphWorkflowLaunchLabel } from "@/lib/workflow-graph/launch-presentation";
 import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
 import { projectSpecComment } from "@/lib/specs/comment-projection";
 import { flattenDiagnosticText } from "@/lib/shared/diagnostic-text";
@@ -231,6 +230,12 @@ const dismissSupersededResponseSchema = z
 const advanceStageSchema = z.literal("requirements");
 const advanceResponseSchema = z
   .object({ revision: specRevisionSchema })
+  .strict();
+const returnToRequirementsResponseSchema = z
+  .object({
+    revision: specRevisionSchema,
+    withdrawnRevision: specRevisionSchema,
+  })
   .strict();
 const startResponseSchema = specStartExecutionReceiptSchema;
 // The discovered-task file is the server's own capture payload shape (minus
@@ -2244,6 +2249,77 @@ export async function runSpecAdvance(
   );
 }
 
+export async function runSpecReturnToRequirements(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, "spec return-to-requirements", json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "return-to-requirements", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "return-to-requirements", json);
+  if (!slug.ok) return slug.result;
+  const reason = values["reason"]?.trim();
+  if (!reason) {
+    return usageFailure(
+      "spec return-to-requirements requires --reason <why> — the reason is recorded with the withdrawn Design revision",
+      json,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const editContext = await readEditContext(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "return-to-requirements",
+    json,
+  );
+  if (!editContext.ok) return editContext.result;
+  const revisionId = currentRevisionId(
+    editContext.value,
+    "return-to-requirements",
+    json,
+  );
+  if (!revisionId.ok) return revisionId.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "return-to-requirements"),
+      body: { expectedRevisionId: revisionId.value, reason },
+      schema: returnToRequirementsResponseSchema,
+      command: "return-to-requirements",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  return mutationResult(
+    json,
+    {
+      changed: `withdrew Design revision ${response.value.withdrawnRevision.number} and returned to Requirements revision ${response.value.revision.number}`,
+      state: `draft revision ${response.value.revision.number} at requirements stage`,
+      tokens: {
+        revision: response.value.revision.id,
+        withdrawnRevision: response.value.withdrawnRevision.id,
+      },
+      actsNext: "agent",
+      blocked: null,
+      next: draftNextCommand(slug.value),
+    },
+    "revision",
+    response.value.revision,
+    { withdrawnRevision: response.value.withdrawnRevision },
+  );
+}
+
 export async function runSpecReply(
   rest: string[],
   flags: GlobalFlags,
@@ -3400,12 +3476,12 @@ export async function runSpecStart(
     );
   }
   const { deliveryPlan, execution } = response.value;
-  const workflowLaunch = graphWorkflowLaunchLabel(response.value.launch);
+  const workflowLaunch = `${response.value.workflowDefinition.id}@r${response.value.workflowDefinition.revision}`;
   return mutationResult(
     json,
     {
       changed: `launched execution ${execution.id} from plan attempt ${deliveryPlan.attemptId} — the approved candidate ${deliveryPlan.candidateId} ran unchanged`,
-      state: `execution ${execution.state}, one-off workflow launch ${workflowLaunch} at candidate hash ${deliveryPlan.candidateHash}`,
+      state: `execution ${execution.state}, managed workflow definition ${workflowLaunch} at candidate hash ${deliveryPlan.candidateHash}`,
       tokens: {
         execution: execution.id,
         workflowExecution: deliveryPlan.workflowExecutionId,
@@ -3523,7 +3599,7 @@ export async function runSpecCapture(
         },
         actsNext: "agent",
         blocked: null,
-        next: `cctl spec plan open ${slug.value} --seed-from last`,
+        next: `cctl spec plan open ${slug.value}`,
         instruction: nonBlockingGuidance,
       },
       "captured",
@@ -3860,13 +3936,6 @@ export async function runSpecPlanOpen(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "plan open", json);
   if (!slug.ok) return slug.result;
-  const seedFrom = values["seed-from"];
-  if (seedFrom !== undefined && seedFrom !== "last") {
-    return usageFailure(
-      `spec plan open: --seed-from takes "last" (the previous delivery), not ${JSON.stringify(seedFrom)}. Omit it to author from an empty plan.`,
-      json,
-    );
-  }
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
 
@@ -3876,7 +3945,7 @@ export async function runSpecPlanOpen(
     env,
     slug.value,
     "plan-open",
-    { seedFromLast: seedFrom === "last" },
+    {},
     "plan open",
     json,
   );
@@ -3885,7 +3954,7 @@ export async function runSpecPlanOpen(
   return planMutationResult(
     json,
     slug.value,
-    `opened an empty graph-launch attempt ${view.attempt.id} against ${view.attempt.pinnedRevisionId}`,
+    `opened delta-seeded attempt ${view.attempt.id} against ${view.attempt.pinnedRevisionId}`,
     view,
   );
 }

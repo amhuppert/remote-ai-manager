@@ -30,15 +30,12 @@ import {
   type SpecMentionAttrs,
   type SpecReferenceType,
 } from "@/lib/prompt-editor/spec-reference-contract";
-import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import { assembleSpecCommentThreads } from "@/lib/specs/comment-threads";
 import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import { parseElementHandle, toDeepLinkElementId } from "@/lib/specs/handles";
-import type { LintFinding } from "@/lib/specs/lint";
 import {
   useSpecDetailQuery,
-  useSpecLintQuery,
   useSpecPlanReviewQuery,
   type SpecDetailView,
 } from "@/lib/specs/queries";
@@ -65,7 +62,7 @@ import SpecDetailViews, {
   type DetailView,
 } from "./SpecDetailViews";
 import SpecPhaseFacets from "./SpecPhaseFacets";
-import SpecPhaseStepper from "./SpecPhaseStepper";
+import SpecLifecycleLanes from "./SpecLifecycleLanes";
 import {
   partitionSpecCommentThreads,
   type PlacedSpecCommentThread,
@@ -333,8 +330,13 @@ export function SpecDetailContent({
     ),
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
-  const gateHref = `${detailHref}?view=gate`;
-  const reviewHref = `${detailHref}?view=review`;
+  const gateHref = `${detailHref}#gate-policy`;
+  const reviewHref = `${detailHref}?view=${
+    (detail.currentRevision ?? detail.currentApprovedRevision)?.revision
+      .authoringStage === "design"
+      ? "design"
+      : "requirements"
+  }`;
   // A proposal an approved revision forked past owes a human act nothing else
   // on this page offers, and the phase it projects into ("approved", say) has
   // a CTA that points somewhere else entirely. It takes the primary action for
@@ -348,11 +350,7 @@ export function SpecDetailContent({
   const stateActionHref =
     statePresentation.view === null
       ? null
-      : statePresentation.el !== undefined
-        ? `${detailHref}?el=${statePresentation.el}`
-        : statePresentation.view === "review"
-          ? reviewHref
-          : `${detailHref}?view=${statePresentation.view}`;
+      : `${detailHref}?view=${statePresentation.view}`;
   const primaryActionHref = strandedActionHref ?? stateActionHref;
   const primaryActionLabel =
     strandedProposal === null
@@ -364,9 +362,9 @@ export function SpecDetailContent({
   // an `in_review` authoring facet, so the state-driven primary action points at
   // evidence and would otherwise leave review mode with no entry point at all.
   const showSecondaryReviewLink =
-    statePresentation.view !== "review" &&
+    statePresentation.view !== "requirements" &&
+    statePresentation.view !== "design" &&
     detail.status.phase.authoringFacet === "in_review";
-  const lintQuery = useSpecLintQuery(projectName, detail.spec.slug);
   const specReferenceAttrs: SpecMentionAttrs = {
     projectName,
     slug: detail.spec.slug,
@@ -377,7 +375,7 @@ export function SpecDetailContent({
 
   return (
     <>
-      <SpecPhaseStepper detail={detail} deliveryPlan={planReviewQuery.data} />
+      <SpecLifecycleLanes detail={detail} deliveryPlan={planReviewQuery.data} />
       <div className="px-xl pt-sm pb-3xl max-768:px-md">
         <SpecDetailViews
           detail={detail}
@@ -406,7 +404,7 @@ export function SpecDetailContent({
                     />
                     <SpecPhaseFacets status={detail.status} />
                     <Link
-                      href={`${gateHref}#gate-policy`}
+                      href={gateHref}
                       aria-label="Open gate policy from preset"
                       title="Gate preset — open gate policy"
                       className="inline-flex items-center rounded-full border border-solid border-border-default px-sm py-2xs font-mono text-[0.64rem] font-semibold tracking-[0.06em] text-text-secondary uppercase no-underline hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
@@ -432,13 +430,6 @@ export function SpecDetailContent({
                   >
                     Export
                   </a>
-                  <Link
-                    href={`${detailHref}?view=integrity`}
-                    title="Verify approved revision integrity"
-                    className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                  >
-                    Verify
-                  </Link>
                   {showSecondaryReviewLink && (
                     <Link
                       href={reviewHref}
@@ -448,12 +439,6 @@ export function SpecDetailContent({
                       Review revision
                     </Link>
                   )}
-                  <Link
-                    href={`${gateHref}#gate-policy`}
-                    className="inline-flex h-[28px] items-center rounded-sm border border-solid border-border-default bg-bg-raised px-md font-mono text-[0.72rem] font-medium text-text-secondary no-underline transition-colors hover:border-border-strong hover:bg-bg-elevated hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                  >
-                    Gate policy
-                  </Link>
                   {primaryActionHref !== null &&
                     primaryActionLabel !== null && (
                       <Link
@@ -555,16 +540,6 @@ export function SpecDetailContent({
                       </div>
                     </section>
                   )}
-                <SpecInlineLint
-                  findings={lintQuery.data?.findings ?? []}
-                  isPending={lintQuery.isPending || lintQuery.isFetching}
-                  error={
-                    lintQuery.error instanceof Error
-                      ? lintQuery.error.message
-                      : null
-                  }
-                  detailHref={detailHref}
-                />
                 <SpecLinkedContext detail={detail} />
               </section>
               <SpecStructureRail
@@ -586,13 +561,7 @@ export interface DetailStatePresentation {
   banner: string;
   description: string;
   action: string | null;
-  view: "review" | "plan" | "evidence" | "execution" | "gate" | null;
-  /**
-   * Focused deep-link target. When present the CTA navigates with `?el=` —
-   * the retrying contract that lands on the focused control after the page
-   * loads — instead of the bare `?view=` top of the surface.
-   */
-  el?: "delivery" | "launch";
+  view: DetailView | null;
 }
 
 const bannerLineClass = {
@@ -638,15 +607,16 @@ function BannerApprovalsSummary({
         href={`${detailHref}?el=delivery`}
         className={bannerApprovalsLinkClass}
       >
-        Delivery approval pending — open Execution
+        Delivery approval pending — open Delivery
       </Link>
     );
   }
   if (pendingApprovals.length > 0) {
-    const target =
-      pendingApprovals[0]?.gate === "execution_start"
-        ? `${detailHref}?view=execution`
-        : `${detailHref}?view=review`;
+    const target = pendingApprovals.some(
+      (pending) => pending.gate === "execution_start",
+    )
+      ? `${detailHref}?view=delivery`
+      : `${detailHref}?view=requirements`;
     return (
       <Link href={target} className={bannerApprovalsLinkClass}>
         {pendingApprovals.length} pending approval
@@ -729,106 +699,6 @@ function NarrativeSectionHeading({
       </h2>
       <span aria-hidden="true" className="h-px flex-1 bg-border-dim" />
     </div>
-  );
-}
-
-const lintDotClass: Record<LintFinding["severity"], string> = {
-  blocks_propose: "bg-red",
-  blocks_signoff: "bg-red",
-  advisory: "bg-amber",
-};
-
-const lintSeverityClass: Record<LintFinding["severity"], string> = {
-  blocks_propose: "text-red",
-  blocks_signoff: "text-red",
-  advisory: "text-amber",
-};
-
-function SpecInlineLint({
-  findings,
-  isPending,
-  error,
-  detailHref,
-}: {
-  findings: LintFinding[];
-  isPending: boolean;
-  error: string | null;
-  detailHref: string;
-}): React.JSX.Element {
-  // The same projection the lint tab, `cctl spec lint`, the status tier, and
-  // the propose refusal read. Counting every non-advisory finding as blocking
-  // overstated it: only blocks_propose refuses the transition this strip is
-  // read to decide, and sign-off findings are not that.
-  const health = draftHealth(findings);
-  const meta = isPending
-    ? "checking"
-    : error !== null
-      ? "unavailable"
-      : health.total === 0
-        ? "clean"
-        : `${health.blocking} blocking · ${health.total} total`;
-
-  return (
-    <section className="border-x-0 border-t border-b-0 border-solid border-border-dim py-lg">
-      <div className="flex items-center gap-sm">
-        <h2 className="m-0 shrink-0 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-primary uppercase">
-          Lint
-        </h2>
-        <span className="truncate font-mono text-[0.68rem] text-text-tertiary">
-          {meta}
-        </span>
-        <span aria-hidden="true" className="h-px flex-1 bg-border-dim" />
-      </div>
-      {error !== null ? (
-        <p className="mt-sm mb-0 font-mono text-[0.72rem] text-red">{error}</p>
-      ) : health.total === 0 ? (
-        <p className="mt-sm mb-0 font-mono text-[0.72rem] text-text-tertiary">
-          {isPending
-            ? "Checking the current revision…"
-            : "No findings — the relationship graph is clean."}
-        </p>
-      ) : (
-        <div className="mt-sm grid">
-          {health.ordered.map((finding) => {
-            const href = finding.elementHandle
-              ? `${detailHref}?${new URLSearchParams({ el: finding.elementHandle }).toString()}`
-              : `${detailHref}?view=lint`;
-            return (
-              <Link
-                key={`${finding.ruleId}:${finding.elementHandle}`}
-                href={href}
-                className="flex items-baseline gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-2xs py-sm font-mono text-inherit no-underline last:border-b-0 hover:bg-bg-surface focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-[6px] w-[6px] shrink-0 self-center rounded-full",
-                    lintDotClass[finding.severity],
-                  )}
-                />
-                <span
-                  className={cn(
-                    "shrink-0 text-[0.64rem] font-bold tracking-[0.06em] uppercase",
-                    lintSeverityClass[finding.severity],
-                  )}
-                >
-                  {LINT_SEVERITY_LABEL[finding.severity]}
-                </span>
-                <span className="min-w-0 flex-1 text-[0.74rem] leading-relaxed text-text-secondary">
-                  {finding.message}
-                </span>
-                {finding.elementHandle && (
-                  <span className="inline-flex shrink-0 items-center gap-xs text-[0.7rem] text-cyan-dim">
-                    {finding.elementHandle}
-                    <ForwardIcon />
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -986,26 +856,6 @@ function CheckIcon(): React.JSX.Element {
   );
 }
 
-function ForwardIcon(): React.JSX.Element {
-  return (
-    <svg
-      aria-hidden="true"
-      width="11"
-      height="11"
-      viewBox="0 0 16 16"
-      fill="none"
-    >
-      <path
-        d="M3 8h10m-3.5-3.5L13 8l-3.5 3.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="square"
-        strokeLinejoin="miter"
-      />
-    </svg>
-  );
-}
-
 export function revisionLine(detail: SpecDetailView, revision: number): string {
   const snapshot = detail.currentRevision;
   if (snapshot === null) return `rev ${revision} unavailable`;
@@ -1068,7 +918,7 @@ export function detailStatePresentation(
         banner: "Draft contract",
         description: "Resolve lint and human decisions before proposal.",
         action: "Open gate policy",
-        view: "gate",
+        view: "overview",
       };
     case "in_review":
       return {
@@ -1077,7 +927,7 @@ export function detailStatePresentation(
         description:
           "Review semantic changes and satisfy sign-off preconditions.",
         action: "Review revision",
-        view: "review",
+        view: authoringStage === "design" ? "design" : "requirements",
       };
     case "approved":
       if (authoringStage === "requirements") {
@@ -1120,7 +970,7 @@ export function detailStatePresentation(
               ? "The legacy Plan revision remains readable as history. Open a delivery plan attempt to author the executable graph."
               : "The design is frozen. Open a delivery plan attempt to author the executable graph.",
           action: "Open delivery plan",
-          view: "plan",
+          view: "delivery",
         };
       }
       if (
@@ -1136,9 +986,8 @@ export function detailStatePresentation(
           banner: "Ready to execute",
           description:
             "The approved delivery-plan candidate is the exact graph execution will launch.",
-          action: "Start execution",
-          view: "plan",
-          el: "launch",
+          action: "Open delivery",
+          view: "delivery",
         };
       }
       if (deliveryPlan.attempt.status === "draft") {
@@ -1146,9 +995,9 @@ export function detailStatePresentation(
           tone: "amber",
           banner: "Delivery plan in draft",
           description:
-            "Review the authored graph and resolve its blocking findings before proposal.",
-          action: "Review delivery plan",
-          view: "plan",
+            "Configure the managed definition and resolve its blocking findings in Workflow Builder.",
+          action: "Open delivery",
+          view: "delivery",
         };
       }
       if (
@@ -1160,9 +1009,9 @@ export function detailStatePresentation(
           tone: "amber",
           banner: "Delivery plan awaits approval",
           description:
-            "Review and approve the exact finalized candidate before execution.",
-          action: "Review delivery plan",
-          view: "plan",
+            "Review and approve the exact finalized candidate in Workflow Builder.",
+          action: "Open delivery",
+          view: "delivery",
         };
       }
       if (deliveryPlan.attempt.status === "launched") {
@@ -1172,7 +1021,7 @@ export function detailStatePresentation(
           description:
             "The approved candidate has launched; open execution for its current state.",
           action: "Open execution",
-          view: "execution",
+          view: "delivery",
         };
       }
       return {
@@ -1181,7 +1030,7 @@ export function detailStatePresentation(
         description:
           "Open a replacement attempt to continue delivery planning.",
         action: "Open delivery plan",
-        view: "plan",
+        view: "delivery",
       };
     case "executing":
       // A run parked on the delivery gate needs its human, not its evidence:
@@ -1192,17 +1041,16 @@ export function detailStatePresentation(
           banner: "Execution active — approval needed",
           description:
             "The delivery gate is waiting on a human approval; proof continues against the pinned revision.",
-          action: "Approve delivery",
-          view: "execution",
-          el: "delivery",
+          action: "Open delivery",
+          view: "delivery",
         };
       }
       return {
         tone: "cyan",
         banner: "Execution active",
         description: "Delivery proof is evaluated against the pinned revision.",
-        action: "Open evidence",
-        view: "evidence",
+        action: "Open requirements",
+        view: "requirements",
       };
     case "delivered": {
       // `delivered` is reached either by proof taken here or by an import's
@@ -1245,30 +1093,23 @@ export function detailStatePresentation(
   }
 }
 
-function resolveRequestedDetailView(
+export function resolveRequestedDetailView(
   rawView: string | null,
   rawHandle: string | null,
   slug: string,
 ): DetailView {
   if (
     rawView === "overview" ||
-    rawView === "traceability" ||
-    rawView === "history" ||
-    rawView === "evidence" ||
-    rawView === "lint" ||
-    rawView === "questions" ||
-    rawView === "integrity" ||
-    rawView === "review" ||
-    rawView === "plan" ||
-    rawView === "execution" ||
-    rawView === "gate" ||
     rawView === "requirements" ||
-    rawView === "decisions" ||
-    rawView === "tasks"
+    rawView === "design" ||
+    rawView === "delivery" ||
+    rawView === "history"
   ) {
     return rawView;
   }
-  return initialDetailViewForDeepLink(rawHandle, slug);
+  return rawView === null
+    ? initialDetailViewForDeepLink(rawHandle, slug)
+    : "overview";
 }
 
 function gatePresetLabel(
@@ -2096,7 +1937,9 @@ function latestRevisionNumber(detail: SpecDetailView): number {
 }
 
 function railGroupView(group: RailGroup["id"]): DetailView {
-  return group === "questions" ? "questions" : group;
+  if (group === "decisions") return "design";
+  if (group === "tasks") return "history";
+  return "requirements";
 }
 
 function referenceType(

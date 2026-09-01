@@ -36,6 +36,7 @@ import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { launchSpecDeliveryGraphWorkflowExecution } from "@/lib/workflow-graph/execution-route-handlers";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
 import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
+import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 
 import { createAuthoringService } from "./authoring-service";
 import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
@@ -57,6 +58,7 @@ import { createLinksService } from "./links-service";
 import { createReviewService } from "./review-service";
 import type { SpecExecutionRow } from "./schemas";
 import type { SpecMutationServices } from "./route-handlers";
+import { createManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
 
 const logger = createLogger("specs.service-factory");
 const servicesByProject = new Map<string, SpecMutationServices>();
@@ -235,7 +237,8 @@ export async function createProductionSpecRouteServices(
           projectPath,
           projectName: input.projectName,
           sessionName: input.sessionName,
-          plan: input.plan,
+          definitionId: input.definitionId,
+          expectedDefinitionRevision: input.definitionRevision,
           specSlug: input.specSlug,
           candidateId: input.candidateId,
           ownerConversationId: input.ownerConversationId,
@@ -318,7 +321,6 @@ export async function createProductionSpecRouteServices(
       async openSeededReplacement(replacementInput) {
         const opened = await deliveryPlan.open({
           spec: replacementInput.spec,
-          seedFromLast: true,
           actor: replacementInput.actor,
         });
         return opened.ok
@@ -368,11 +370,16 @@ export async function createProductionSpecRouteServices(
     },
   });
 
+  const managedDefinitions = createManagedWorkflowDefinitionService({
+    storage: createWorkflowStorageService(),
+  });
   const deliveryPlan = createDeliveryPlanService({
     plans: deliveryPlanRepo,
+    managedDefinitions,
     reviewRepo,
     events,
     policyNotifier: notifier,
+    projectName: getProjectDisplayName,
     runInTransaction<T>(operation: () => T): T {
       return db.transaction(operation).immediate();
     },
@@ -382,11 +389,45 @@ export async function createProductionSpecRouteServices(
       // approved revision rather than its editable head. Read once, at open.
       const revisions = await specs.listRevisions(specId);
       const approved = revisions
-        .filter((revision) => revision.state === "approved")
+        .filter(
+          (revision) =>
+            revision.state === "approved" &&
+            (revision.authoringStage === "design" ||
+              revision.authoringStage === "plan"),
+        )
         .sort((left, right) => right.number - left.number)[0];
       return approved === undefined
         ? null
         : specs.getRevisionSnapshot(approved.id);
+    },
+    async activeAuthoringBlocker({ specId, pinnedRevisionId }) {
+      const revisions = await specs.listRevisions(specId);
+      const pinned = revisions.find(
+        (revision) => revision.id === pinnedRevisionId,
+      );
+      const blocker = revisions
+        .filter(
+          (revision) =>
+            revision.number > (pinned?.number ?? 0) &&
+            (revision.state === "draft" ||
+              revision.state === "proposed" ||
+              (revision.state === "approved" &&
+                revision.authoringStage === "requirements")),
+        )
+        .sort((left, right) => right.number - left.number)[0];
+      if (
+        !blocker ||
+        blocker.authoringStage === "plan" ||
+        blocker.state === "withdrawn"
+      ) {
+        return null;
+      }
+      return {
+        revisionId: blocker.id,
+        revisionNumber: blocker.number,
+        stage: blocker.authoringStage,
+        state: blocker.state,
+      };
     },
     revisionSnapshot(revisionId) {
       return specs.getRevisionSnapshot(revisionId);

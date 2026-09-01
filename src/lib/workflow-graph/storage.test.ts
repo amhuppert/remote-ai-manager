@@ -115,7 +115,7 @@ describe("workflow-graph storage", () => {
     replacement.tasks[0]!.instructions = "Weakened downstream instructions";
 
     await expect(
-      storage.update(REPO_SCOPE, created.id, {
+      storage.update(REPO_SCOPE, created.id, created.revision, {
         name: created.name,
         description: created.description,
         definition: replacement,
@@ -173,7 +173,7 @@ describe("workflow-graph storage", () => {
     replacement.tasks[0]!.instructions = "Weakened downstream instructions";
 
     await expect(
-      storage.update(REPO_SCOPE, created.id, {
+      storage.update(REPO_SCOPE, created.id, created.revision, {
         name: created.name,
         description: created.description,
         definition: replacement,
@@ -212,17 +212,61 @@ describe("workflow-graph storage", () => {
     const loaded = await storage.get(REPO_SCOPE, created.id);
     expect(loaded?.name).toBe("My Workflow");
 
-    const updated = await storage.update(REPO_SCOPE, created.id, {
-      name: "Updated Workflow",
-      description: "Updated description",
-      definition: createWorkflowDefinition(),
-      layout: createWorkflowDefinitionRecord().layout,
-    });
+    const updated = await storage.update(
+      REPO_SCOPE,
+      created.id,
+      created.revision,
+      {
+        name: "Updated Workflow",
+        description: "Updated description",
+        definition: createWorkflowDefinition(),
+        layout: createWorkflowDefinitionRecord().layout,
+      },
+    );
     expect(updated.revision).toBe(2);
     expect(updated.name).toBe("Updated Workflow");
 
     expect(await storage.delete(REPO_SCOPE, created.id)).toBe(true);
     expect(await storage.get(REPO_SCOPE, created.id)).toBeNull();
+  });
+
+  it("updates once at the expected revision and leaves stale writes unchanged", async () => {
+    const { storage } = createServices();
+    const created = await storage.create(REPO_SCOPE, {
+      name: "Original workflow",
+      description: null,
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowDefinitionRecord().layout,
+    });
+    const draft = {
+      name: "Winning workflow",
+      description: null,
+      definition: createWorkflowDefinition(),
+      layout: created.layout,
+    };
+
+    const updated = await storage.update(
+      REPO_SCOPE,
+      created.id,
+      created.revision,
+      draft,
+    );
+    await expect(
+      storage.update(REPO_SCOPE, created.id, created.revision, {
+        ...draft,
+        name: "Stale workflow",
+      }),
+    ).rejects.toMatchObject({
+      code: "stale_workflow_definition",
+      expectedRevision: 1,
+      currentRevision: 2,
+    });
+
+    expect(updated.revision).toBe(2);
+    expect(await storage.get(REPO_SCOPE, created.id)).toMatchObject({
+      revision: 2,
+      name: "Winning workflow",
+    });
   });
 
   it("rejects invalid definitions before persisting", async () => {
@@ -286,7 +330,7 @@ describe("workflow-graph storage", () => {
     });
 
     await expect(
-      storage.update(REPO_SCOPE, created.id, {
+      storage.update(REPO_SCOPE, created.id, created.revision, {
         name: created.name,
         description: created.description,
         definition: guarded,
@@ -357,7 +401,7 @@ describe("workflow-graph storage", () => {
     });
 
     await expect(
-      storage.update(REPO_SCOPE, created.id, {
+      storage.update(REPO_SCOPE, created.id, created.revision, {
         name: "Now Broken",
         description: null,
         definition: createWorkflowDefinition({

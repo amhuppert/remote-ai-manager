@@ -256,8 +256,8 @@ export interface GraphWorkflowRunInput {
 export interface GraphWorkflowSpecDeliveryInput {
   projectPath: string;
   sessionName: string;
-  /** As {@link GraphWorkflowRunInput.plan}. */
-  plan: WorkflowDefinitionDraft;
+  definitionId: string;
+  expectedDefinitionRevision: number;
   specSlug: string;
   candidateId: string;
   /** As {@link GraphWorkflowRunInput.inputs}. */
@@ -286,7 +286,8 @@ export type WorkflowLaunchSourceRequest =
   | { kind: "one_off"; plan: WorkflowDefinitionDraft }
   | {
       kind: "spec_delivery";
-      plan: WorkflowDefinitionDraft;
+      definitionId: string;
+      expectedRevision: number;
       specSlug: string;
       candidateId: string;
     };
@@ -1432,23 +1433,39 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       };
     }
 
-    // A spec delivery resolves like a one-off — the caller already holds the
-    // signed candidate's launch document — but records its spec provenance.
-    // The authoritative spec linkage is the typed spec-execution link written
-    // by the launch bridge, never this origin.
     if (request.kind === "spec_delivery") {
+      const definition = await deps.loadDefinition(
+        context.projectPath,
+        request.definitionId,
+        "project",
+      );
+      if (!definition) {
+        throw new WorkflowDefinitionNotFoundError(
+          request.definitionId,
+          "project",
+        );
+      }
+      if (definition.revision !== request.expectedRevision) {
+        throw new WorkflowDefinitionRevisionMismatchError(
+          request.definitionId,
+          request.expectedRevision,
+          definition.revision,
+        );
+      }
       return {
         source: {
           kind: "spec_delivery",
           specSlug: request.specSlug,
           candidateId: request.candidateId,
+          definitionId: definition.id,
+          definitionRevision: definition.revision,
         },
-        definition: request.plan.definition,
+        definition: definition.definition,
         launchDocument: {
-          name: request.plan.name,
-          description: request.plan.description,
-          definition: request.plan.definition,
-          layout: request.plan.layout,
+          name: definition.name,
+          description: definition.description,
+          definition: definition.definition,
+          layout: definition.layout,
         },
       };
     }
@@ -1939,7 +1956,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       sessionName: input.sessionName,
       source: {
         kind: "spec_delivery",
-        plan: input.plan,
+        definitionId: input.definitionId,
+        expectedRevision: input.expectedDefinitionRevision,
         specSlug: input.specSlug,
         candidateId: input.candidateId,
       },

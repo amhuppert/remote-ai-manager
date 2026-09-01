@@ -348,7 +348,6 @@ describe("transition predicates", () => {
       ["design", "decision", undefined],
       ["design", "section", "design_narrative"],
       ["plan", "task", undefined],
-      ["plan", "requirement", undefined],
     ] as const)(
       "admits %s-stage writes of %s",
       (stage, elementKind, sectionRole) => {
@@ -361,6 +360,27 @@ describe("transition predicates", () => {
         ).toEqual({ ok: true });
       },
     );
+
+    it("freezes requirements content after the draft advances to design", () => {
+      expect(
+        admitDraftWrite("design", "requirement", undefined, {
+          requirements: "gate",
+          design: "gate",
+          plan: "gate",
+        }),
+      ).toEqual({
+        ok: false,
+        refusal: {
+          code: "stage_blocked",
+          unmetConditions: [
+            "A requirement cannot be authored during the design stage.",
+          ],
+          rationale: LATER_STAGE_RATIONALE,
+          instruction:
+            "Return to the requirements stage before authoring requirement content.",
+        },
+      });
+    });
 
     it("refuses a downstream write and phrases the next step from the current dial", () => {
       expect(
@@ -433,7 +453,7 @@ describe("transition predicates", () => {
         openDraftAuthoringStage({ policy: { preset: "contract-bearing" } }),
       ).toBe("requirements");
       expect(openDraftAuthoringStage({ policy: { preset: "fast-path" } })).toBe(
-        "design",
+        "requirements",
       );
       expect(
         openDraftAuthoringStage({
@@ -442,7 +462,7 @@ describe("transition predicates", () => {
             overrides: { plan: "notify" },
           },
         }),
-      ).toBe("design");
+      ).toBe("requirements");
       expect(
         openDraftAuthoringStage({
           policy: {
@@ -462,7 +482,7 @@ describe("transition predicates", () => {
           policy: contractPolicy,
           baseRevision: { state: "approved", authoringStage: "design" },
         }),
-      ).toBe("design");
+      ).toBe("requirements");
       expect(
         openDraftAuthoringStage({
           policy: contractPolicy,

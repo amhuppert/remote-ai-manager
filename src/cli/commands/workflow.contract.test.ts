@@ -260,12 +260,18 @@ function routeHost(
       workflowId === "wf-1"
         ? createWorkflowDefinitionRecord({ id: "wf-1", revision: 3 })
         : null,
-    // Echo a summary so the CLI parses the real 201 `{ item }` shape (id/name
-    // for the start hint); the create-path Zod + structural validation the
-    // handler runs before this is exercised for real by the invalid-plan case.
-    createDefinition: async () => summary({ id: "wf-new", name: "Auth Setup" }),
+    createDefinition: async () =>
+      createWorkflowDefinitionRecord({
+        id: "wf-new",
+        name: "Auth Setup",
+        revision: 1,
+      }),
     updateDefinition: async (_projectPath, workflowId) =>
-      summary({ id: workflowId, name: "Auth Setup", revision: 4 }),
+      createWorkflowDefinitionRecord({
+        id: workflowId,
+        name: "Auth Setup",
+        revision: 4,
+      }),
     deleteDefinition: async (_projectPath, workflowId) => workflowId === "wf-1",
     ...overrides.definitions,
   });
@@ -1149,7 +1155,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
       env,
       routeHost(null, {
         [ops]: JSON.stringify({
-          baseRevision: 3,
+          expectedRevision: 3,
           operations: [
             {
               type: "update-task",
@@ -1165,21 +1171,21 @@ describe("cctl workflow against the real workflow route handlers", () => {
     expect(result.stdout).toContain("revision 4");
   });
 
-  it("edit exits 1 with revision_conflict on a stale baseRevision", async () => {
+  it("edit exits 1 with stale_workflow_definition on a stale expectedRevision", async () => {
     const ops = "/tmp/ops.json";
     const result = await runCli(
       ["workflow", "edit", "wf-1", "--file", ops, "--json"],
       env,
       routeHost(null, {
         [ops]: JSON.stringify({
-          baseRevision: 2,
+          expectedRevision: 2,
           operations: [{ type: "update-workflow", name: "x" }],
         }),
       }),
     );
     expect(result.exitCode).toBe(1);
     const envelope = JSON.parse(result.stdout);
-    expect(envelope.code).toBe("revision_conflict");
+    expect(envelope.code).toBe("stale_workflow_definition");
   });
 
   it("edit exits 1 with a locator issue for a semantic rejection", async () => {
@@ -1189,7 +1195,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
       env,
       routeHost(null, {
         [ops]: JSON.stringify({
-          baseRevision: 3,
+          expectedRevision: 3,
           operations: [{ type: "update-task", taskId: "missing", title: "x" }],
         }),
       }),
@@ -1207,7 +1213,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
       env,
       routeHost(null, {
         [ops]: JSON.stringify({
-          baseRevision: 3,
+          expectedRevision: 3,
           operations: [
             {
               type: "update-task",
@@ -1226,8 +1232,9 @@ describe("cctl workflow against the real workflow route handlers", () => {
 describe("cctl workflow author flow against the real create-path validation", () => {
   const PLAN = "/tmp/plan.json";
 
-  function validPlan(): string {
+  function validPlan(expectedRevision?: number): string {
     return JSON.stringify({
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
       name: "Auth Setup",
       description: "OAuth2 workflow",
       definition: createWorkflowDefinition(),
@@ -1339,7 +1346,7 @@ describe("cctl workflow author flow against the real create-path validation", ()
     const result = await runCli(
       ["workflow", "replace", "wf-1", "--file", PLAN],
       env,
-      routeHost(null, { [PLAN]: validPlan() }),
+      routeHost(null, { [PLAN]: validPlan(3) }),
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("revision: 4");
@@ -1732,17 +1739,18 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
         getDefinition: (_projectPath, workflowId) =>
           storage.get(scope, workflowId),
         createDefinition: (_projectPath, draft) => storage.create(scope, draft),
-        updateDefinition: (_projectPath, workflowId, draft) =>
-          storage.update(scope, workflowId, draft),
+        updateDefinition: (_projectPath, workflowId, expectedRevision, draft) =>
+          storage.update(scope, workflowId, expectedRevision, draft),
       },
     });
   }
 
   const DANGLING = { tier: "global", id: "missing-reviewer" };
 
-  function planJson(assignments: unknown[]): string {
+  function planJson(assignments: unknown[], expectedRevision?: number): string {
     const definition = createWorkflowDefinition();
     return JSON.stringify({
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
       name: "Auth Setup",
       definition: {
         ...definition,
@@ -1812,11 +1820,12 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
     expect(created.exitCode).toBe(0);
     const saved = await storage.list(scope);
     const workflowId = saved[0]?.id ?? "";
+    const revision = saved[0]?.revision ?? 1;
 
     const result = await runCli(
       ["workflow", "replace", workflowId, "--file", PLAN],
       env,
-      acceptanceHost({ [PLAN]: planJson([reviewer(DANGLING)]) }),
+      acceptanceHost({ [PLAN]: planJson([reviewer(DANGLING)], revision) }),
     );
 
     expect(result.exitCode).toBe(2);
@@ -1840,7 +1849,7 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
     const record = await storage.get(scope, workflowId);
 
     const edit = JSON.stringify({
-      baseRevision: record?.revision,
+      expectedRevision: record?.revision,
       operations: [
         {
           type: "update-context",

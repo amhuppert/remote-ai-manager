@@ -10,7 +10,6 @@ import {
   specGatePolicySchema,
   type ActorProvenance,
   type Spec,
-  type SpecAuthoringStage,
   type SpecElementKind,
   type SpecElementPayload,
   type SpecElementVersion,
@@ -70,7 +69,10 @@ import {
   proposalAlreadyLiveRefusal,
 } from "./proposal-integrity";
 import { oversizedProposalNotesRefusal } from "./proposal-notes";
-import { PARENT_IMMUTABLE_RATIONALE } from "./refusal-rationale";
+import {
+  LATER_STAGE_RATIONALE,
+  PARENT_IMMUTABLE_RATIONALE,
+} from "./refusal-rationale";
 import { diffRevisions, type RevisionDiffResult } from "./revision-diff";
 import {
   elementHandleInSnapshot,
@@ -364,6 +366,18 @@ export const openAmendmentInputSchema = z
   .strict();
 export type OpenAmendmentInput = z.infer<typeof openAmendmentInputSchema>;
 
+export const returnToRequirementsInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    expectedRevisionId: z.string().min(1),
+    reason: z.string().trim().min(1),
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type ReturnToRequirementsInput = z.infer<
+  typeof returnToRequirementsInputSchema
+>;
+
 /**
  * An amendment answers with what it opened and what it could not carry: a
  * revision withdrawn above the approved base is terminal, so its content is
@@ -373,6 +387,11 @@ export type OpenAmendmentInput = z.infer<typeof openAmendmentInputSchema>;
 export interface OpenAmendmentResult {
   readonly revision: SpecRevision;
   readonly skippedWithdrawnRevisions: readonly SpecRevision[];
+}
+
+export interface ReturnToRequirementsResult {
+  readonly revision: SpecRevision;
+  readonly withdrawnRevision: SpecRevision;
 }
 
 export const renameAuthoringSpecInputSchema = z
@@ -437,6 +456,9 @@ export interface AuthoringService {
   ): Promise<SpecElementVersion>;
   removeDraftElement(input: RemoveDraftElementInput): Promise<void>;
   openAmendment(input: OpenAmendmentInput): Promise<OpenAmendmentResult>;
+  returnToRequirements(
+    input: ReturnToRequirementsInput,
+  ): Promise<ReturnToRequirementsResult>;
   advanceAuthoringStage(
     input: AdvanceAuthoringStageInput,
   ): Promise<AdvanceAuthoringStageResult>;
@@ -1339,6 +1361,15 @@ export function createAuthoringService(
     );
   }
 
+  function requireDraftRevision(revision: SpecRevision): void {
+    if (revision.state === "draft") return;
+    throw new SpecRevisionImmutableError(
+      revision.id,
+      revision.number,
+      revision.state,
+    );
+  }
+
   function appendWriteIntervention(
     specId: string,
     revisionId: string,
@@ -1360,12 +1391,6 @@ export function createAuthoringService(
       },
     });
   }
-
-  const authoringStageOrder: Record<SpecAuthoringStage, number> = {
-    requirements: 0,
-    design: 1,
-    plan: 2,
-  };
 
   return {
     async createSpec(input) {
@@ -2054,6 +2079,7 @@ export function createAuthoringService(
             parsed.specId,
             parsed.revisionId,
           );
+          requireDraftRevision(revision);
           const decision = writeDecision(
             spec,
             revision,
@@ -2255,6 +2281,21 @@ export function createAuthoringService(
               parsed.specId,
               parsed.revisionId,
             );
+            if (revision.state !== "draft") {
+              const immutable = new SpecRevisionImmutableError(
+                revision.id,
+                revision.number,
+                revision.state,
+              );
+              throw new BatchRefusedError([
+                ...parsed.elements.map((item, index) =>
+                  batchRefusalFor("element", index, item.elementId, immutable),
+                ),
+                ...(parsed.removals ?? []).map((item, index) =>
+                  batchRefusalFor("removal", index, item.elementId, immutable),
+                ),
+              ]);
+            }
             const before = repo.getRevisionSnapshot(revision.id);
             if (parsed.expectedRevisionToken !== undefined) {
               const actual = before === null ? null : revisionToken(before);
@@ -2567,11 +2608,13 @@ export function createAuthoringService(
           const spec = requireSpec(repo, parsed.specId);
           const targetStage = nextAuthoringStage(parsed.expectedStage);
           const current = repo.findDraft(spec.id);
+          const requested = repo.findRevision(parsed.revisionId);
           if (
             targetStage !== null &&
-            current?.id === parsed.revisionId &&
-            authoringStageOrder[current.authoringStage] >=
-              authoringStageOrder[targetStage]
+            current?.authoringStage === targetStage &&
+            current.basedOnRevisionId === parsed.revisionId &&
+            requested?.state === "approved" &&
+            requested.authoringStage === parsed.expectedStage
           ) {
             return {
               result: {
@@ -2587,20 +2630,12 @@ export function createAuthoringService(
             current.id !== parsed.revisionId ||
             current.authoringStage !== parsed.expectedStage
           ) {
-            if (targetStage === null) {
-              throw new StaleStageConflictError(
-                parsed.specId,
-                parsed.revisionId,
-                parsed.expectedStage,
-                current,
-              );
-            }
-            repo.advanceDraftAuthoringStage({
-              specId: parsed.specId,
-              revisionId: parsed.revisionId,
-              expectedStage: parsed.expectedStage,
-              targetStage,
-            });
+            throw new StaleStageConflictError(
+              parsed.specId,
+              parsed.revisionId,
+              parsed.expectedStage,
+              current,
+            );
           }
 
           const decision = evaluateAdvanceAuthoringStage(
@@ -2640,11 +2675,9 @@ export function createAuthoringService(
             };
           }
 
-          const revision = repo.advanceDraftAuthoringStage({
-            specId: parsed.specId,
-            revisionId: parsed.revisionId,
-            expectedStage: parsed.expectedStage,
-            targetStage,
+          const checkpoint = repo.proposeRevision({
+            revisionId: current.id,
+            proposedAt: occurredAt,
           });
           const dial = resolveDial(spec.gatePolicy, parsed.expectedStage);
           const basis =
@@ -2658,17 +2691,29 @@ export function createAuthoringService(
             gate: parsed.expectedStage,
             basis,
             approval_id: null,
-            revision_id: revision.id,
+            revision_id: checkpoint.id,
             execution_id: null,
             actor_json: stableStringify(parsed.actor),
             created_at: occurredAt,
           });
+          repo.approveRevision({
+            revisionId: checkpoint.id,
+            approvedAt: occurredAt,
+          });
+          const revision = repo.createDraftFromBase({
+            id: newId("revision"),
+            specId: spec.id,
+            baseRevisionId: checkpoint.id,
+            authoringStage: targetStage,
+            createdAt: occurredAt,
+          });
           const prepared = deps.events.appendInTransaction({
             actor: parsed.actor,
-            durableEventType: "spec-revision-changed",
+            durableEventType: "spec-authoring-returned-to-requirements",
             durablePayload: {
               kind: "authoring-stage-advanced",
               revisionId: revision.id,
+              checkpointRevisionId: checkpoint.id,
               fromStage: parsed.expectedStage,
               toStage: targetStage,
               admissionId,
@@ -2736,6 +2781,7 @@ export function createAuthoringService(
             parsed.specId,
             parsed.revisionId,
           );
+          requireDraftRevision(revision);
           const target = repo
             .getRevisionSnapshot(revision.id)
             ?.elements.find(({ element }) => element.id === parsed.elementId);
@@ -2803,6 +2849,7 @@ export function createAuthoringService(
             parsed.specId,
             parsed.revisionId,
           );
+          requireDraftRevision(revision);
           const target = repo
             .getRevisionSnapshot(revision.id)
             ?.elements.find(({ element }) => element.id === parsed.elementId);
@@ -2978,6 +3025,96 @@ export function createAuthoringService(
       return {
         revision: result.revision,
         skippedWithdrawnRevisions: result.skippedWithdrawnRevisions,
+      };
+    },
+
+    async returnToRequirements(input) {
+      const parsed = returnToRequirementsInputSchema.parse(input);
+      const occurredAt = now();
+      const result = await deps.specs.transaction(
+        "specs.authoring.return-to-requirements",
+        (repo) => {
+          const spec = requireSpec(repo, parsed.specId);
+          const target = repo.findRevision(parsed.expectedRevisionId);
+          const currentDraft = repo.findDraft(spec.id);
+          if (
+            target === null ||
+            target.specId !== spec.id ||
+            target.authoringStage !== "design" ||
+            (target.state !== "draft" && target.state !== "proposed") ||
+            (target.state === "draft" && currentDraft?.id !== target.id) ||
+            (target.state === "proposed" && currentDraft !== null)
+          ) {
+            throw new StaleStageConflictError(
+              spec.id,
+              parsed.expectedRevisionId,
+              "design",
+              currentDraft,
+            );
+          }
+          const requirementsCheckpoint = repo
+            .listRevisions(spec.id)
+            .filter(
+              (revision) =>
+                revision.state === "approved" &&
+                revision.authoringStage === "requirements",
+            )
+            .at(-1);
+          if (requirementsCheckpoint === undefined) {
+            throw new StageBlockedWriteError({
+              code: "stage_blocked",
+              unmetConditions: [
+                "The spec has no approved Requirements checkpoint to return to.",
+              ],
+              rationale: LATER_STAGE_RATIONALE,
+              instruction:
+                "Withdraw the Design attempt, then open a Requirements draft with an approved Requirements baseline.",
+            });
+          }
+          const withdrawnRevision = repo.withdrawAuthoringRevision({
+            revisionId: target.id,
+          });
+          const revision = repo.createDraftFromBase({
+            id: newId("revision"),
+            specId: spec.id,
+            baseRevisionId: requirementsCheckpoint.id,
+            authoringStage: "requirements",
+            createdAt: occurredAt,
+          });
+          const prepared = deps.events.appendInTransaction({
+            actor: parsed.actor,
+            durableEventType: "spec-revision-changed",
+            durablePayload: {
+              kind: "returned-to-requirements",
+              withdrawnRevisionId: withdrawnRevision.id,
+              requirementsCheckpointRevisionId: requirementsCheckpoint.id,
+              revisionId: revision.id,
+              reason: parsed.reason,
+            },
+            sseEvent: {
+              type: "spec-revision-changed",
+              kind: "returned-to-requirements",
+              projectPath: spec.projectPath,
+              specId: spec.id,
+              specSlug: spec.slug,
+              occurredAt,
+              revisionId: revision.id,
+            },
+          });
+          return { revision, withdrawnRevision, prepared };
+        },
+      );
+      publish(result.prepared);
+      logger.info("specs.authoring.returned-to-requirements", {
+        specId: parsed.specId,
+        withdrawnRevisionId: result.withdrawnRevision.id,
+        revisionId: result.revision.id,
+        actorKind: parsed.actor.kind,
+        reasonLength: parsed.reason.length,
+      });
+      return {
+        revision: result.revision,
+        withdrawnRevision: result.withdrawnRevision,
       };
     },
   };

@@ -9,6 +9,7 @@ import { runRegisteredMergeJob } from "@/lib/jobs/queue";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
+import { createManagedDefinitionTestService } from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { createMergeAssociationResolver } from "./merge-association";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
@@ -716,7 +717,6 @@ export function createSpecSpineWorld(
       async openSeededReplacement(replacementInput) {
         const opened = await deliveryPlan.open({
           spec: replacementInput.spec,
-          seedFromLast: true,
           actor: replacementInput.actor,
         });
         return opened.ok
@@ -799,6 +799,7 @@ export function createSpecSpineWorld(
   // and a plan surface that throws would hide a break in that walk.
   const deliveryPlan = createDeliveryPlanService({
     plans,
+    managedDefinitions: createManagedDefinitionTestService(),
     reviewRepo: review,
     events,
     policyNotifier,
@@ -1452,7 +1453,8 @@ export function createSpecSpineWorld(
         projectPath: SPINE_PROJECT_PATH,
         projectName: input.projectName,
         sessionName: input.sessionName,
-        plan: input.plan,
+        definitionId: input.definitionId,
+        expectedDefinitionRevision: input.definitionRevision,
         specSlug: input.specSlug,
         candidateId: input.candidateId,
         ownerConversationId: input.ownerConversationId,

@@ -661,6 +661,32 @@ describe("canonical spec export and verification", () => {
     });
   });
 
+  it("exports a frozen withdrawn authoring draft without pretending it was proposed", async () => {
+    const exportState = await loadSpecExportState(exportDeps, specId);
+    const snapshot = exportState.revisions[0]!.snapshot;
+    const bundle = renderCanonicalBundle({
+      ...exportState,
+      revisions: [
+        {
+          snapshot: {
+            ...snapshot,
+            revision: {
+              ...snapshot.revision,
+              state: "withdrawn",
+              proposedAt: null,
+              approvedAt: null,
+            },
+          },
+        },
+      ],
+    });
+
+    expect(decodeCanonicalSpecBundle(bundle)).toEqual({
+      ok: true,
+      value: bundle,
+    });
+  });
+
   it.each([
     {
       state: "draft" as const,
@@ -685,10 +711,10 @@ describe("canonical spec export and verification", () => {
     },
     {
       state: "withdrawn" as const,
-      contentHash: "valid" as const,
-      proposedAt: null,
+      contentHash: null,
+      proposedAt: CREATED_AT,
       approvedAt: null,
-      expectedPath: "proposedAt",
+      expectedPath: "contentHash",
     },
   ])(
     "rejects an impossible $state revision lifecycle",

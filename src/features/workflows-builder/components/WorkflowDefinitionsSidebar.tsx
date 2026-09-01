@@ -11,6 +11,8 @@ import {
 } from "@/components/workflow-graph/RailOverlay";
 import { useWorkflowRailCollapse } from "@/components/workflow-graph/useWorkflowRailCollapse";
 import { cn } from "@/lib/ui/cn";
+import type { NativeSddWorkflowManagementCompact } from "@/lib/workflow-graph/managed-definition";
+import { useState } from "react";
 
 const WB_BTN_BASE =
   "inline-flex items-center justify-center gap-[6px] whitespace-nowrap cursor-pointer rounded-sm border border-solid border-border-default font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]";
@@ -41,6 +43,8 @@ interface WorkflowDefinitionSummary {
    * alone rather than guessing a count.
    */
   contextCount?: number | null;
+  updatedAt?: string;
+  management?: NativeSddWorkflowManagementCompact;
 }
 
 interface WorkflowDefinitionsSidebarProps {
@@ -76,6 +80,71 @@ function metaLine(
   return parts.join(" · ");
 }
 
+const MANAGED_LIFECYCLE_LABEL = {
+  draft: "Draft",
+  in_review: "In review",
+  approved: "Approved",
+  launched: "Launched",
+  superseded: "Superseded",
+  abandoned: "Abandoned",
+} as const;
+
+function managedMetaLine(
+  definition: WorkflowDefinitionSummary,
+  unsaved: boolean,
+): string {
+  const management = definition.management;
+  if (!management) return metaLine(definition, unsaved);
+  const parts = [
+    MANAGED_LIFECYCLE_LABEL[management.lifecycle],
+    `spec r${management.pinnedRevisionNumber}`,
+    metaLine(definition, unsaved),
+  ];
+  return parts.join(" · ");
+}
+
+interface ManagedDefinitionGroup {
+  specId: string;
+  specName: string;
+  live: WorkflowDefinitionSummary[];
+  past: WorkflowDefinitionSummary[];
+}
+
+function managedGroups(
+  definitions: readonly WorkflowDefinitionSummary[],
+): ManagedDefinitionGroup[] {
+  const bySpec = new Map<string, WorkflowDefinitionSummary[]>();
+  for (const definition of definitions) {
+    const management = definition.management;
+    if (!management) continue;
+    const group = bySpec.get(management.specId) ?? [];
+    group.push(definition);
+    bySpec.set(management.specId, group);
+  }
+
+  return [...bySpec.entries()].map(([specId, candidates]) => {
+    const current = candidates.find(
+      ({ management }) => management?.isCurrentDefinition,
+    );
+    const latestLaunched = candidates
+      .filter(({ management }) => management?.lifecycle === "launched")
+      .sort((left, right) =>
+        (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""),
+      )[0];
+    const liveIds = new Set(
+      [current?.id, latestLaunched?.id].filter(
+        (id): id is string => id !== undefined,
+      ),
+    );
+    return {
+      specId,
+      specName: candidates[0]?.management?.specName ?? specId,
+      live: candidates.filter(({ id }) => liveIds.has(id)),
+      past: candidates.filter(({ id }) => !liveIds.has(id)),
+    };
+  });
+}
+
 /** The strip's per-definition target: the name's first character, drawn large. */
 function initialOf(name: string): string {
   return (name.trim()[0] ?? "?").toUpperCase();
@@ -93,6 +162,13 @@ export default function WorkflowDefinitionsSidebar({
   title = "Definitions",
 }: WorkflowDefinitionsSidebarProps) {
   const { collapsed, setCollapsed, overlay } = useWorkflowRailCollapse();
+  const [expandedPastSpecs, setExpandedPastSpecs] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const ordinaryDefinitions = definitions.filter(
+    ({ management }) => management === undefined,
+  );
+  const specDeliveryGroups = managedGroups(definitions);
 
   const unsavedDot = (
     <span
@@ -210,34 +286,120 @@ export default function WorkflowDefinitionsSidebar({
               No workflows yet
             </div>
           ) : (
-            definitions.map((definition) => {
-              const active = definition.id === selectedId;
-              const unsaved = active && activeDraftDirty;
-              return (
-                <button
-                  key={definition.id}
-                  type="button"
-                  onClick={() => onSelect(definition.id)}
-                  {...(active ? { "aria-current": "true" as const } : {})}
-                  className={cn(ROW_BASE, active ? ROW_ACTIVE : ROW_IDLE)}
-                >
-                  <span className="flex w-full items-center gap-sm">
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 overflow-hidden text-[0.76rem] font-semibold text-ellipsis whitespace-nowrap",
-                        active ? "text-text-primary" : "text-text-secondary",
-                      )}
-                    >
-                      {definition.name}
+            <>
+              {ordinaryDefinitions.map((definition) => {
+                const active = definition.id === selectedId;
+                const unsaved = active && activeDraftDirty;
+                return (
+                  <button
+                    key={definition.id}
+                    type="button"
+                    onClick={() => onSelect(definition.id)}
+                    {...(active ? { "aria-current": "true" as const } : {})}
+                    className={cn(ROW_BASE, active ? ROW_ACTIVE : ROW_IDLE)}
+                  >
+                    <span className="flex w-full items-center gap-sm">
+                      <span
+                        className={cn(
+                          "min-w-0 flex-1 overflow-hidden text-[0.76rem] font-semibold text-ellipsis whitespace-nowrap",
+                          active ? "text-text-primary" : "text-text-secondary",
+                        )}
+                      >
+                        {definition.name}
+                      </span>
+                      {unsaved && unsavedDot}
                     </span>
-                    {unsaved && unsavedDot}
-                  </span>
-                  <span className="text-[0.7rem] font-normal text-text-tertiary">
-                    {metaLine(definition, unsaved)}
-                  </span>
-                </button>
-              );
-            })
+                    <span className="text-[0.7rem] font-normal text-text-tertiary">
+                      {metaLine(definition, unsaved)}
+                    </span>
+                  </button>
+                );
+              })}
+              {specDeliveryGroups.length > 0 && (
+                <h3 className="mt-sm mb-0 text-[0.65rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                  Spec delivery
+                </h3>
+              )}
+              {specDeliveryGroups.map((group) => {
+                const selectedPast = group.past.some(
+                  ({ id }) => id === selectedId,
+                );
+                const pastExpanded =
+                  selectedPast || expandedPastSpecs.has(group.specId);
+                const visible = pastExpanded
+                  ? [...group.live, ...group.past]
+                  : group.live;
+                return (
+                  <section
+                    key={group.specId}
+                    aria-label={`${group.specName} delivery candidates`}
+                    className="flex flex-col gap-[7px]"
+                  >
+                    <h4 className="m-0 text-[0.72rem] font-semibold text-text-primary">
+                      {group.specName}
+                    </h4>
+                    {visible.map((definition) => {
+                      const active = definition.id === selectedId;
+                      const unsaved =
+                        active &&
+                        activeDraftDirty &&
+                        definition.management?.editable === true;
+                      const meta = managedMetaLine(definition, unsaved);
+                      return (
+                        <button
+                          key={definition.id}
+                          type="button"
+                          onClick={() => onSelect(definition.id)}
+                          {...(active
+                            ? { "aria-current": "true" as const }
+                            : {})}
+                          aria-label={`${definition.name} — ${meta}`}
+                          className={cn(
+                            ROW_BASE,
+                            active ? ROW_ACTIVE : ROW_IDLE,
+                          )}
+                        >
+                          <span className="flex w-full items-center gap-sm">
+                            <span
+                              className={cn(
+                                "min-w-0 flex-1 overflow-hidden text-[0.76rem] font-semibold text-ellipsis whitespace-nowrap",
+                                active
+                                  ? "text-text-primary"
+                                  : "text-text-secondary",
+                              )}
+                            >
+                              {definition.name}
+                            </span>
+                            {unsaved && unsavedDot}
+                          </span>
+                          <span className="text-[0.7rem] font-normal text-text-tertiary">
+                            {meta}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {group.past.length > 0 && (
+                      <button
+                        type="button"
+                        className="cursor-pointer border-0 bg-transparent px-xs py-[4px] text-left text-[0.7rem] font-medium text-text-tertiary hover:text-text-primary"
+                        aria-expanded={pastExpanded}
+                        onClick={() => {
+                          setExpandedPastSpecs((current) => {
+                            const next = new Set(current);
+                            if (next.has(group.specId))
+                              next.delete(group.specId);
+                            else next.add(group.specId);
+                            return next;
+                          });
+                        }}
+                      >
+                        Past candidates ({group.past.length})
+                      </button>
+                    )}
+                  </section>
+                );
+              })}
+            </>
           )}
         </div>
         {footer && (

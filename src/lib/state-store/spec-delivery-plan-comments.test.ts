@@ -63,6 +63,7 @@ function openAttempt(id: string): SpecDeliveryPlanAttemptRow {
       approval_json: null,
       prelaunch_json: null,
       launched_execution_id: null,
+      workflow_definition_id: null,
       created_at: "2026-08-08T09:00:00.000Z",
       updated_at: "2026-08-08T09:00:00.000Z",
     }),

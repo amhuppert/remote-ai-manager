@@ -58,6 +58,7 @@ import {
   proposeAuthoringRevisionInputSchema,
   removeDraftElementInputSchema,
   reorderDraftElementInputSchema,
+  returnToRequirementsInputSchema,
   type AuthoringService,
 } from "./authoring-service";
 import { isEarlierMergedDelivery } from "./delivery-history";
@@ -70,7 +71,7 @@ import {
   deliveryPlanAbandonRequestSchema,
   deliveryPlanReopenRequestSchema,
   deliveryPlanCommentRequestSchema,
-  deliveryPlanReaffirmRequestSchema,
+  deliveryPlanReaffirmBatchRequestSchema,
   deliveryPlanSignOffRequestSchema,
 } from "./delivery-plan-views";
 import { DRAFT_HEALTH_TOP_FINDINGS, draftHealth } from "./draft-health";
@@ -2214,12 +2215,19 @@ async function buildLiveProposals(
         return null;
       }
       const baseSnapshot = await read(entry.revision.basedOnRevisionId);
+      const governanceBaseSnapshot = await read(
+        governanceBaseRevisionId(revisions, entry.revision),
+      );
       return {
         revision: entry.revision,
         supersededBy: entry.supersededBy,
         snapshot: toSnapshotView(snapshot),
         baseSnapshot:
           baseSnapshot === null ? null : toSnapshotView(baseSnapshot),
+        governanceBaseSnapshot:
+          governanceBaseSnapshot === null
+            ? null
+            : toSnapshotView(governanceBaseSnapshot),
         notes: proposalNotes(events, entry.revision.id),
       };
     }),
@@ -3517,6 +3525,7 @@ export interface SpecMutationServices {
     | "reorderDraftElement"
     | "removeDraftElement"
     | "openAmendment"
+    | "returnToRequirements"
     | "renameSpec"
     | "proposeRevision"
     | "advanceAuthoringStage"
@@ -3596,6 +3605,10 @@ const removeDraftElementBodySchema = removeDraftElementInputSchema.omit({
   actor: true,
 });
 const openAmendmentBodySchema = openAmendmentInputSchema.omit({
+  specId: true,
+  actor: true,
+});
+const returnToRequirementsBodySchema = returnToRequirementsInputSchema.omit({
   specId: true,
   actor: true,
 });
@@ -3788,7 +3801,6 @@ const planReopenBodySchema = deliveryPlanReopenRequestSchema;
 const planAbandonBodySchema = deliveryPlanAbandonRequestSchema;
 const planSignOffBodySchema = deliveryPlanSignOffRequestSchema;
 const planCommentBodySchema = deliveryPlanCommentRequestSchema;
-const planReaffirmBodySchema = deliveryPlanReaffirmRequestSchema;
 
 type TransportResolution = RouteResolution<ActorProvenance>;
 
@@ -4326,6 +4338,15 @@ export function createSpecWriteRouteHandlers(
           return invokeAction(request, openAmendmentBodySchema, (input) =>
             services.authoring.openAmendment(withReviewIdentity(input)),
           );
+        case "return-to-requirements":
+          return invokeAction(
+            request,
+            returnToRequirementsBodySchema,
+            (input) =>
+              services.authoring.returnToRequirements(
+                withReviewIdentity(input),
+              ),
+          );
         case "rename":
           return invokeAction(request, renameSpecBodySchema, (input) =>
             services.authoring.renameSpec(withReviewIdentity(input)),
@@ -4606,7 +4627,7 @@ export function createSpecWriteRouteHandlers(
                   result.execution,
                   result.revisionNumber,
                 ),
-                launch: result.launch,
+                workflowDefinition: result.workflowDefinition,
                 deliveryPlan: result.deliveryPlan,
               };
             },
@@ -4661,10 +4682,9 @@ export function createSpecWriteRouteHandlers(
             value: await services.verify(specId),
           }));
         case "plan-open":
-          return invokeAction(request, planOpenBodySchema, (input) =>
+          return invokeAction(request, planOpenBodySchema, () =>
             services.deliveryPlan.open({
               spec: resolved.value.spec,
-              seedFromLast: input.seedFromLast,
               actor: actor.value,
             }),
           );
@@ -4673,7 +4693,7 @@ export function createSpecWriteRouteHandlers(
             services.deliveryPlan.edit({
               spec: resolved.value.spec,
               expectedDraftRevision: input.expectedDraftRevision,
-              document: input.document,
+              binding: input.binding,
               actor: actor.value,
             }),
           );
@@ -4716,16 +4736,16 @@ export function createSpecWriteRouteHandlers(
               approver: actor.value.kind === "human" ? "operator" : "agent",
             }),
           );
-        // The audited human reaffirmation of one soft-stale criterion. Human
-        // attribution rides the transport actor, so an agent's call is refused
-        // by the service rather than by a client-side guard.
-        case "plan-reaffirm":
-          return invokeAction(request, planReaffirmBodySchema, (input) =>
-            services.deliveryPlan.reaffirm({
-              spec: resolved.value.spec,
-              ...input,
-              actor: actor.value,
-            }),
+        case "plan-reaffirm-batch":
+          return invokeAction(
+            request,
+            deliveryPlanReaffirmBatchRequestSchema,
+            (input) =>
+              services.deliveryPlan.reaffirmBatch({
+                spec: resolved.value.spec,
+                ...input,
+                actor: actor.value,
+              }),
           );
         // A review note anchored to one context of the live attempt. The
         // transport actor is the author, so the comment carries the same

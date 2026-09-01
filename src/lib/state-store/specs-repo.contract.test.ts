@@ -638,6 +638,28 @@ describe("maximal persistence contracts", () => {
 });
 
 describe("revision snapshots and aliases", () => {
+  it("withdraws an open authoring draft without erasing its snapshot", async () => {
+    const created = await createSpec();
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+
+    const withdrawn = await repo.withdrawAuthoringRevision({
+      revisionId: created.revision.id,
+    });
+
+    expect(withdrawn.state).toBe("withdrawn");
+    expect(withdrawn.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(withdrawn.proposedAt).toBeNull();
+    expect(await repo.findDraft(created.spec.id)).toBeNull();
+    expect(
+      (await repo.getRevisionSnapshot(withdrawn.id))?.elements.map(
+        ({ element }) => element.id,
+      ),
+    ).toEqual([requirement.element.id]);
+  });
+
   it("advances the identified draft stage conditionally and is idempotent", async () => {
     const created = await createSpec();
 

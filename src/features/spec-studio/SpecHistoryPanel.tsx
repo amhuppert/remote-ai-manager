@@ -523,7 +523,12 @@ export function buildSpecHistory(
         href: detail.liveProposals.some(
           (entry) => entry.revision.id === revision.id,
         )
-          ? reviewHref(projectName, detail.spec.slug, revision.id)
+          ? reviewHref(
+              projectName,
+              detail.spec.slug,
+              revision.id,
+              revision.authoringStage,
+            )
           : null,
         priority: 20,
       });
@@ -702,7 +707,12 @@ function attentionHistoryEvent(
     occurredAt: event.occurredAt,
     href:
       changedHandles[0] === undefined
-        ? reviewHref(projectName, detail.spec.slug, event.payload.revisionId)
+        ? reviewHref(
+            projectName,
+            detail.spec.slug,
+            event.payload.revisionId,
+            revision?.authoringStage,
+          )
         : attentionHref(projectName, detail.spec.slug, changedHandles[0]),
     priority: 54,
     audit: {
@@ -965,7 +975,7 @@ function attentionHref(
   slug: string,
   handle: string,
 ): string {
-  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=questions&el=${encodeURIComponent(handle)}`;
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=requirements&el=${encodeURIComponent(handle)}`;
 }
 
 /**
@@ -1107,8 +1117,12 @@ function reviewHref(
   projectName: string,
   slug: string,
   revisionId: string,
-): string {
-  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=review&revision=${encodeURIComponent(revisionId)}`;
+  authoringStage:
+    | SpecDetailView["revisions"][number]["authoringStage"]
+    | undefined,
+): string | null {
+  if (authoringStage === undefined || authoringStage === "plan") return null;
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=${authoringStage}&revision=${encodeURIComponent(revisionId)}`;
 }
 
 function elementHref(

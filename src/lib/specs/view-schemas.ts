@@ -944,6 +944,8 @@ export const liveProposalViewSchema = z
     snapshot: specRevisionSnapshotViewSchema,
     /** Its lineage parent — the content its diff is read against. */
     baseSnapshot: specRevisionSnapshotViewSchema.nullable(),
+    /** The nearest approved ancestor used as the default review baseline. */
+    governanceBaseSnapshot: specRevisionSnapshotViewSchema.nullable(),
     /**
      * The author's disposition document, read-only, as it was recorded on this
      * proposal's own propose event. It rides the projection entry so a

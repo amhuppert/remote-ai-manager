@@ -299,30 +299,28 @@ describe("AuthoringService create and draft writes", () => {
     ).rejects.toThrow();
   });
 
-  it("keeps fast-path evergreen authoring at the design stage", async () => {
+  it("starts fast-path authoring at the Requirements checkpoint", async () => {
     const created = await service.createSpec({
       projectPath: PROJECT_PATH,
       slug: "fast-path-spec",
       name: "Fast-path spec",
       gatePolicy: { preset: "fast-path" },
       initialElement: {
-        elementId: "decision-fast",
-        kind: "decision",
+        elementId: "requirement-fast",
+        kind: "requirement",
         parentElementId: null,
         position: 0,
         payload: {
-          kind: "decision",
-          title: "Single-pass design",
-          chosenApproach: "Author the design in one evergreen pass.",
-          rejectedAlternatives: [],
-          reason: "The delivery graph belongs to a delivery plan attempt.",
-          tracedRequirementElementIds: [],
+          kind: "requirement",
+          statement: "Requirements settle before design under every preset.",
+          priority: "must",
+          risk: "high",
         },
       },
       actor: ACTOR,
     });
 
-    expect(created.draft.authoringStage).toBe("design");
+    expect(created.draft.authoringStage).toBe("requirements");
   });
 
   it("records a durable intervention and checks stage before element CAS", async () => {
@@ -367,7 +365,7 @@ describe("AuthoringService create and draft writes", () => {
     expect(published).toHaveLength(1);
   });
 
-  it("advances a Notify-governed stage with one admission and event", async () => {
+  it("approves a Notify-governed Requirements checkpoint and opens a Design draft", async () => {
     const created = await service.createSpec({
       projectPath: PROJECT_PATH,
       slug: "exploratory-spec",
@@ -392,9 +390,17 @@ describe("AuthoringService create and draft writes", () => {
 
     expect(advanced).toMatchObject({
       ok: true,
-      revision: { authoringStage: "design" },
+      revision: {
+        authoringStage: "design",
+        basedOnRevisionId: created.draft.id,
+      },
     });
+    expect(advanced.ok && advanced.revision.id).not.toBe(created.draft.id);
     expect(replay).toEqual(advanced);
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "approved",
+      authoringStage: "requirements",
+    });
     expect(
       db
         .prepare(
@@ -430,6 +436,74 @@ describe("AuthoringService create and draft writes", () => {
     });
   });
 
+  it("returns a Design draft to the latest approved Requirements checkpoint", async () => {
+    const created = await createDraft();
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T12:10:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T12:11:00.000Z",
+    });
+    const { revision: design } = await service.openAmendment({
+      specId: created.spec.id,
+      actor: ACTOR,
+    });
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: design.id,
+      elementId: "decision-1",
+      kind: "decision",
+      parentElementId: null,
+      position: 1,
+      payload: {
+        kind: "decision",
+        title: "Premature design",
+        chosenApproach: "Shape the contract around the implementation.",
+        rejectedAlternatives: [],
+        reason: "This content must not cross the stage boundary.",
+        tracedRequirementElementIds: ["requirement-1"],
+      },
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+
+    const returned = await service.returnToRequirements({
+      specId: created.spec.id,
+      expectedRevisionId: design.id,
+      reason: "The requirements need another pass.",
+      actor: ACTOR,
+    });
+
+    expect(returned.revision).toMatchObject({
+      authoringStage: "requirements",
+      basedOnRevisionId: created.draft.id,
+    });
+    expect(await specs.findRevision(design.id)).toMatchObject({
+      state: "withdrawn",
+      authoringStage: "design",
+    });
+    expect(
+      (await service.getRevisionSnapshot(returned.revision.id))?.elements.some(
+        ({ element }) => element.id === "decision-1",
+      ),
+    ).toBe(false);
+    expect(
+      db
+        .prepare(
+          "SELECT payload_json FROM spec_events WHERE spec_id = ? ORDER BY occurred_at DESC LIMIT 1",
+        )
+        .get(created.spec.id),
+    ).toEqual(
+      expect.objectContaining({
+        payload_json: expect.stringContaining(
+          "The requirements need another pass.",
+        ),
+      }),
+    );
+  });
+
   it("refuses a create for a slug that already has an editable draft, writing nothing", async () => {
     const created = await createDraft();
 
@@ -462,6 +536,21 @@ describe("AuthoringService create and draft writes", () => {
       revisionId: created.draft.id,
       approvedAt: "2026-07-18T12:11:00.000Z",
     });
+    const approvedDesign = await specs.createDraftFromBase({
+      id: "approved-design-revision",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "design",
+      createdAt: "2026-07-18T12:12:00.000Z",
+    });
+    await specs.proposeRevision({
+      revisionId: approvedDesign.id,
+      proposedAt: "2026-07-18T12:13:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: approvedDesign.id,
+      approvedAt: "2026-07-18T12:14:00.000Z",
+    });
 
     const amended = await createDraft(
       firstElement("Amendment requirement.", "requirement-2"),
@@ -470,8 +559,8 @@ describe("AuthoringService create and draft writes", () => {
 
     expect(amended.spec.id).toBe(created.spec.id);
     expect(amended.draft.id).not.toBe(created.draft.id);
-    expect(amended.draft.basedOnRevisionId).toBe(created.draft.id);
-    expect(amended.draft.authoringStage).toBe("design");
+    expect(amended.draft.basedOnRevisionId).toBe(approvedDesign.id);
+    expect(amended.draft.authoringStage).toBe("requirements");
     expect(snapshot?.elements.map(({ element }) => element.id).sort()).toEqual([
       "requirement-1",
       "requirement-2",
@@ -735,11 +824,18 @@ describe("AuthoringService amendment while a revision is under review", () => {
     await service.upsertDraftElement({
       specId: created.spec.id,
       revisionId: amendment.id,
-      elementId: "requirement-2",
-      kind: "requirement",
+      elementId: "decision-1",
+      kind: "decision",
       parentElementId: null,
       position: 1,
-      payload: requirement("Amended requirement."),
+      payload: {
+        kind: "decision",
+        title: "Amended design",
+        chosenApproach: "Continue the approved requirements.",
+        rejectedAlternatives: [],
+        reason: "The proposal needs review coverage.",
+        tracedRequirementElementIds: ["requirement-1"],
+      },
       baseElementVersion: null,
       actor: ACTOR,
     });

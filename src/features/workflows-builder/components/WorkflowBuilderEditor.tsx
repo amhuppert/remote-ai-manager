@@ -12,6 +12,8 @@ import type {
   WorkflowGraphValidationError,
 } from "@/lib/workflow-graph/definition-schemas";
 import { cn } from "@/lib/ui/cn";
+import type { NativeSddWorkflowManagementDetail } from "@/lib/workflow-graph/managed-definition";
+import type { ReactNode } from "react";
 import {
   addExecutionContext,
   deleteExecutionContext,
@@ -32,6 +34,7 @@ import BuilderConfigPanel, {
 import { useOutputSchemaBlocks } from "./output-schema-drafts";
 import WorkflowBuilderCanvas from "./WorkflowBuilderCanvas";
 import WorkflowToolbar from "./WorkflowToolbar";
+import WorkflowBuilderInspectorRail from "./native-sdd/WorkflowBuilderInspectorRail";
 import {
   OUTPUT_SCHEMA_SCREEN_PATH,
   routeValidationError,
@@ -88,6 +91,17 @@ interface WorkflowBuilderEditorProps {
   projectName?: string | null;
   /** Scopes the agent-profile listing the assignment pickers offer. */
   libraryProjectName?: string | null;
+  readOnly?: boolean;
+  management?: NativeSddWorkflowManagementDetail;
+  managedHeader?: ReactNode;
+  onReaffirm?: (
+    criterionElementIds: readonly string[],
+    expectedBindingRevision: number,
+  ) => void;
+  reaffirming?: boolean;
+  managedError?: string | null;
+  onManagedComment?: (input: { contextId: string; body: string }) => void;
+  commenting?: boolean;
 }
 
 export default function WorkflowBuilderEditor(
@@ -117,6 +131,14 @@ function WorkflowBuilderEditorInner({
   onAutoSwitchPanel,
   projectName,
   libraryProjectName,
+  readOnly = false,
+  management,
+  managedHeader,
+  onReaffirm,
+  reaffirming,
+  managedError,
+  onManagedComment,
+  commenting,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
   const { getNodes } = useReactFlow();
   const draftDefinition = _useGraphWorkflowBuilderStore(
@@ -345,6 +367,7 @@ function WorkflowBuilderEditorInner({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {managedHeader}
       <WorkflowToolbar
         workflowName={workflowName}
         revision={revision}
@@ -362,6 +385,8 @@ function WorkflowBuilderEditorInner({
         hasValidationErrors={hasValidationErrors}
         saveBlocked={outputSchemaBlocked}
         isMobile={isMobile}
+        readOnly={readOnly}
+        hideDelete={management !== undefined}
       />
       {hasValidationErrors &&
         renderIssueList(
@@ -387,6 +412,7 @@ function WorkflowBuilderEditorInner({
           onSelectContext={handleSelectContext}
           globalDefaults={globalDefaults}
           isMobile={isMobile === true}
+          readOnly={readOnly}
         />
         {railOverlay && <RailOverlaySpacer side="right" stripWidth="48" />}
         <aside
@@ -432,16 +458,41 @@ function WorkflowBuilderEditorInner({
               <MobilePanelVisibility
                 onScreen={isMobile !== true || mobilePanel === "inspector"}
               >
-                <BuilderConfigPanel
-                  workflowName={workflowName}
-                  scope={configScope}
-                  onScopeChange={(next) => onConfigScopeChange?.(next)}
-                  globalDefaults={globalDefaults}
-                  projectName={projectName}
-                  libraryProjectName={libraryProjectName}
-                  onDeleteContext={handleDeleteContext}
-                  focus={panelFocus}
-                />
+                {management ? (
+                  <WorkflowBuilderInspectorRail
+                    management={management}
+                    config={
+                      <BuilderConfigPanel
+                        workflowName={workflowName}
+                        scope={configScope}
+                        onScopeChange={(next) => onConfigScopeChange?.(next)}
+                        globalDefaults={globalDefaults}
+                        projectName={projectName}
+                        libraryProjectName={libraryProjectName}
+                        onDeleteContext={handleDeleteContext}
+                        focus={panelFocus}
+                        readOnly={readOnly}
+                      />
+                    }
+                    onReaffirm={onReaffirm}
+                    reaffirming={reaffirming}
+                    error={managedError}
+                    onComment={onManagedComment}
+                    commenting={commenting}
+                  />
+                ) : (
+                  <BuilderConfigPanel
+                    workflowName={workflowName}
+                    scope={configScope}
+                    onScopeChange={(next) => onConfigScopeChange?.(next)}
+                    globalDefaults={globalDefaults}
+                    projectName={projectName}
+                    libraryProjectName={libraryProjectName}
+                    onDeleteContext={handleDeleteContext}
+                    focus={panelFocus}
+                    readOnly={readOnly}
+                  />
+                )}
               </MobilePanelVisibility>
             </>
           )}

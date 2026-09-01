@@ -1,33 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-import type { SpecDetailView } from "@/lib/specs/queries";
-
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import {
-  initialDetailViewForDeepLink,
-  selectEvidenceRevision,
-} from "./SpecDetailViews";
+import { initialDetailViewForDeepLink } from "./SpecDetailViews";
 
 describe("initialDetailViewForDeepLink", () => {
-  it("routes Q/A deep links to the questions tab so their DOM targets mount", () => {
-    expect(initialDetailViewForDeepLink("Q1", "native-sdd")).toBe("questions");
-    expect(initialDetailViewForDeepLink("A2", "native-sdd")).toBe("questions");
+  it("routes Q/A deep links to Requirements so their DOM targets mount", () => {
+    expect(initialDetailViewForDeepLink("Q1", "native-sdd")).toBe(
+      "requirements",
+    );
+    expect(initialDetailViewForDeepLink("A2", "native-sdd")).toBe(
+      "requirements",
+    );
     expect(initialDetailViewForDeepLink("native-sdd/A1", "native-sdd")).toBe(
-      "questions",
+      "requirements",
     );
   });
 
-  it("opens dedicated readers for structural handles and Execution for execution_start", () => {
+  it("maps structural and launch handles into the five detail views", () => {
     expect(initialDetailViewForDeepLink("R1", "native-sdd")).toBe(
       "requirements",
     );
     expect(initialDetailViewForDeepLink("R1.2", "native-sdd")).toBe(
       "requirements",
     );
-    expect(initialDetailViewForDeepLink("D1", "native-sdd")).toBe("decisions");
-    expect(initialDetailViewForDeepLink("T1", "native-sdd")).toBe("tasks");
+    expect(initialDetailViewForDeepLink("D1", "native-sdd")).toBe("design");
+    expect(initialDetailViewForDeepLink("T1", "native-sdd")).toBe("history");
     expect(initialDetailViewForDeepLink("execution_start", "native-sdd")).toBe(
-      "execution",
+      "delivery",
     );
     expect(initialDetailViewForDeepLink(null, "native-sdd")).toBe("overview");
     expect(initialDetailViewForDeepLink("Q1", undefined)).toBe("overview");
@@ -36,61 +34,9 @@ describe("initialDetailViewForDeepLink", () => {
     );
   });
 
-  it("routes the delivery gate deep link to Execution so the merge gate mounts", () => {
+  it("routes the delivery gate deep link to the Delivery bridge", () => {
     expect(initialDetailViewForDeepLink("delivery", "native-sdd")).toBe(
-      "execution",
+      "delivery",
     );
-  });
-});
-
-describe("selectEvidenceRevision", () => {
-  it("targets an active execution's pinned approved revision over a concurrent proposal", () => {
-    const detail = specControlsDetailFixture("definition_review");
-    const approvedSnapshot = detail.currentRevision;
-    if (approvedSnapshot === null) throw new Error("Fixture revision missing");
-    const proposedSnapshot = {
-      revision: {
-        ...approvedSnapshot.revision,
-        id: "revision-2",
-        number: 2,
-        state: "proposed" as const,
-        basedOnRevisionId: "revision-1",
-        contentHash: "proposed-hash",
-        approvedAt: null,
-      },
-      elements: approvedSnapshot.elements.map((entry) => ({
-        ...entry,
-        version: {
-          ...entry.version,
-          revisionId: "revision-2",
-          ...(entry.version.payload.kind === "criterion"
-            ? {
-                payload: {
-                  ...entry.version.payload,
-                  validationStrategy: { kinds: ["validator_verdict" as const] },
-                },
-              }
-            : {}),
-        },
-      })),
-    };
-    const concurrentDetail = {
-      ...detail,
-      revisions: [approvedSnapshot.revision, proposedSnapshot.revision],
-      baseRevision: null,
-      currentRevision: proposedSnapshot,
-      currentApprovedRevision: approvedSnapshot,
-      executionRevisionSnapshots: [approvedSnapshot],
-    } as SpecDetailView;
-
-    const target = selectEvidenceRevision(concurrentDetail);
-
-    expect(target?.snapshot.revision.id).toBe("revision-1");
-    expect(target?.source).toBe("pinned");
-    expect(
-      target?.snapshot.elements.find(
-        (entry) => entry.version.payload.kind === "criterion",
-      )?.version.payload,
-    ).toMatchObject({ validationStrategy: { kinds: ["test_run"] } });
   });
 });

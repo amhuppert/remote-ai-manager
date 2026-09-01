@@ -175,8 +175,6 @@ async function orphanThroughRequestedChanges(
     projectPath: PROJECT_PATH,
     slug: SLUG,
     name: "Native SDD reintroduction",
-    // Fast-path opens the draft at the plan stage, so every element kind is
-    // admissible and the write answers to identity rules rather than to stage.
     gatePolicy: { preset: "fast-path" },
     initialElement: {
       elementId: KEPT_ID,
@@ -196,6 +194,19 @@ async function orphanThroughRequestedChanges(
     approvedAt: "2026-07-31T10:01:00.000Z",
   });
 
+  const designCheckpoint = await service.openAmendment({
+    specId,
+    actor: ACTOR,
+  });
+  await specs.proposeRevision({
+    revisionId: designCheckpoint.revision.id,
+    proposedAt: "2026-07-31T10:01:10.000Z",
+  });
+  await specs.approveRevision({
+    revisionId: designCheckpoint.revision.id,
+    approvedAt: "2026-07-31T10:01:20.000Z",
+  });
+
   const attempt = await service.openAmendment({ specId, actor: ACTOR });
   await attemptElements(attempt.revision.id);
   await specs.proposeRevision({
@@ -208,7 +219,7 @@ async function orphanThroughRequestedChanges(
   const followUp = await service.openAmendment({ specId, actor: ACTOR });
   return {
     specId,
-    approved: created.draft,
+    approved: designCheckpoint.revision,
     attempt: attempt.revision,
     followUp: followUp.revision,
   };
@@ -337,6 +348,9 @@ describe("historical element reintroduction (ticket #42)", () => {
 
   it("refuses a reintroduction that would change the element's kind", async () => {
     const world = await orphanThroughRequestedChanges();
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+    ).run(world.followUp.id);
 
     const error = await errorOf(
       service.upsertDraftElement({
@@ -591,6 +605,19 @@ describe("historical element reintroduction (ticket #42)", () => {
     await specs.approveRevision({
       revisionId: world.followUp.id,
       approvedAt: "2026-07-31T10:05:00.000Z",
+    });
+
+    const designCheckpoint = await service.openAmendment({
+      specId: world.specId,
+      actor: ACTOR,
+    });
+    await specs.proposeRevision({
+      revisionId: designCheckpoint.revision.id,
+      proposedAt: "2026-07-31T10:05:10.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: designCheckpoint.revision.id,
+      approvedAt: "2026-07-31T10:05:20.000Z",
     });
 
     const created = await service.createSpec({

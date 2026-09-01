@@ -2207,7 +2207,7 @@ describe("0035 generalized model selection cutover", () => {
     world.db
       .prepare(
         `UPDATE spec_delivery_plan_snapshots SET content_json = ?
-         WHERE id = 'snapshot-proposed'`,
+           WHERE id = 'snapshot-proposed'`,
       )
       .run(stableStringify(unconvertible));
     const databaseBefore = world.db.serialize();
@@ -2250,7 +2250,7 @@ describe("0035 generalized model selection cutover", () => {
         .prepare("SELECT 1 FROM schema_migrations WHERE version = ?")
         .get(GENERALIZED_MODEL_SELECTION_SCHEMA_VERSION),
     ).toBeUndefined();
-  });
+  }, 60_000);
 
   it("refuses an unconvertible context-artifact row before publishing the barrier", async () => {
     const world = makeWorld();

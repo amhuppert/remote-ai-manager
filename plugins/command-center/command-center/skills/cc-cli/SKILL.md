@@ -547,7 +547,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>`
   - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
   - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
-  - `cctl spec plan open <slug> [--seed-from last]`
+  - `cctl spec plan open <slug>`
   - `cctl spec plan edit <slug> --file <plan.json>`
   - `cctl spec plan propose <slug>`
   - `cctl spec plan reopen <slug> --reason <why>`
@@ -618,6 +618,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec dismiss-superseded <slug> --revision <revision-id> --reason <text>`
 - `cctl spec advance` — conclude a Notify/Off authoring stage explicitly
   - `cctl spec advance <slug> --from <requirements>`
+- `cctl spec return-to-requirements` — withdraw Design and reopen from approved Requirements
+  - `cctl spec return-to-requirements <slug> --reason <why>`
 - `cctl spec question` — open a visible spec question for human answer
   - `cctl spec question <slug> --text <text> [--element <handle>]`
 - `cctl spec answer` — answer an open spec question
@@ -631,7 +633,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
   - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
 - `cctl spec plan` — author the delivery plan attempt that becomes the executed graph
-  - `cctl spec plan open <slug> [--seed-from last]`
+  - `cctl spec plan open <slug>`
   - `cctl spec plan edit <slug> --file <plan.json>`
   - `cctl spec plan propose <slug>`
   - `cctl spec plan reopen <slug> --reason <why>`
@@ -663,7 +665,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec attention uncite` — uncite an assumption on one draft element
   - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
 - `cctl spec plan open` — open a delivery plan attempt against the approved revision
-  - `cctl spec plan open <slug> [--seed-from last]`
+  - `cctl spec plan open <slug>`
 - `cctl spec plan edit` — write the whole plan document at the draft revision you read
   - `cctl spec plan edit <slug> --file <plan.json>`
 - `cctl spec plan propose` — finalize and freeze an immutable candidate envelope
@@ -1164,15 +1166,16 @@ the planning method), then walk the canonical chain: validate → create → sta
   workflow id and hints `review it in the visual builder, then start it with
   'cctl workflow start <id>'`.
 - `replace` — overwrite an existing definition (`<id>`) with a `plan.json`;
-  submit the **complete** graph, not a diff (the previous definition is fully
-  overwritten). Re-validate first. For a targeted change, prefer `edit`. No hint
+  submit the **complete** graph plus `expectedRevision` from `workflow get`, not
+  a diff (the previous definition is fully overwritten). Re-validate first. For
+  a targeted change, prefer `edit`. A stale revision refuses without writing. No hint
   — a revision is not a step in the author-then-start chain.
 - `edit` — apply an ordered, **atomic** batch of domain operations to a saved
   definition, addressed by **stable ids** (never array indices) — cost
   proportional to the change, not the whole plan. `--file` is a JSON object
-  `{ baseRevision, operations[] }` (or `--file -` to read from stdin); take
-  `baseRevision` from what `cctl workflow get` shows (a stale value exits `1`
-  `revision_conflict` — re-read and retry). Ops apply sequentially (later ops see
+  `{ expectedRevision, operations[] }` (or `--file -` to read from stdin); take
+  `expectedRevision` from what `cctl workflow get` shows (a stale value exits `1`
+  `stale_workflow_definition` — re-read and retry). Ops apply sequentially (later ops see
   earlier ones — add a context, then its tasks, then its edges in one batch) and
   reject the whole batch on any per-op or post-batch validation error. Op verbs
   mirror the runtime task-edit vocabulary: `update-workflow`, `update-charter`,
@@ -1245,7 +1248,7 @@ cctl workflow get wf-1
 #     implement  1 impl-tokens  "Migrate tokens"  (1.4k chars)
 #   …
 cctl workflow get wf-1 --task impl-tokens        # pull just that task's full instructions
-# author .cc/temp/ops.json: { "baseRevision": 7, "operations": [ { "type": "update-task", "taskId": "impl-tokens", "instructions": "…" } ] }
+# author .cc/temp/ops.json: { "expectedRevision": 7, "operations": [ { "type": "update-task", "taskId": "impl-tokens", "instructions": "…" } ] }
 cctl workflow edit wf-1 --file .cc/temp/ops.json
 # → edited "Add OAuth2 Support": 1 operation applied, revision 8
 ```

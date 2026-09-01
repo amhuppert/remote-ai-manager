@@ -45,7 +45,7 @@ export interface DraftHealth {
 /**
  * The one reading of a lint result every surface shares: the CLI `spec lint`
  * panel, the `spec status` findings tier, the blocking-count delta on a draft
- * receipt, the propose refusal, and Spec Studio's lint tab. Grouping, ranking,
+ * receipt, the propose refusal, and Spec Studio's inline lint summary. Grouping, ranking,
  * and what counts as blocking are decided here once, so two surfaces cannot
  * disagree about whether a draft is proposable.
  *

@@ -71,8 +71,12 @@ export const SPEC_ACTIONS = [
   // the `plan-*` family through the same route without this list, which only
   // exists so a browser call site cannot mistype a path.
   "plan-comment",
+  "plan-open",
+  "plan-propose",
+  "plan-reopen",
+  "plan-abandon",
   "plan-sign-off",
-  "plan-reaffirm",
+  "plan-reaffirm-batch",
 ] as const;
 export type SpecAction = (typeof SPEC_ACTIONS)[number];
 

@@ -146,8 +146,14 @@ const DB_FILE_NAME = "command-center.db";
  * `related_ticket` attachment rows into first-class relationship storage.
  * Canonical attachment readers no longer admit that discriminator, so an older
  * build must not write legacy rows back after the migration stamps the database.
+ *
+ * Version 14 is the Native SDD managed-definition cutover: migration
+ * `0039-native-sdd-managed-workflow-definitions` removes embedded workflow
+ * graphs from delivery-plan blobs and pins candidates to immutable saved
+ * workflow-definition revisions. Older writers cannot preserve that ownership
+ * or candidate identity contract.
  */
-export const KNOWN_SCHEMA_VERSION = 13;
+export const KNOWN_SCHEMA_VERSION = 14;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -1015,6 +1021,7 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
     approval_json             TEXT,
     prelaunch_json            TEXT,
     launched_execution_id     TEXT,
+    workflow_definition_id    TEXT,
     created_at                TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
@@ -1027,6 +1034,9 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
     ON spec_delivery_plan_attempts (spec_id, updated_at DESC);
   CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_revision
     ON spec_delivery_plan_attempts (pinned_revision_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_definition
+    ON spec_delivery_plan_attempts (workflow_definition_id)
+    WHERE workflow_definition_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS spec_delivery_plan_snapshots (
     id                  TEXT PRIMARY KEY,
@@ -1038,6 +1048,10 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
     pinned_revision_id  TEXT NOT NULL,
     proposed_at         TEXT NOT NULL,
     proposed_by_json    TEXT NOT NULL,
+    workflow_definition_id        TEXT,
+    workflow_definition_revision  INTEGER,
+    workflow_definition_hash      TEXT,
+    binding_hash                  TEXT,
     UNIQUE (attempt_id, draft_revision),
     FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
       ON DELETE CASCADE
@@ -1045,6 +1059,19 @@ export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_snapshots_attempt
     ON spec_delivery_plan_snapshots (attempt_id, draft_revision DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_delivery_plan_snapshots_definition
+    ON spec_delivery_plan_snapshots (workflow_definition_id)
+    WHERE workflow_definition_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS spec_delivery_plan_candidate_approvals (
+    snapshot_id       TEXT PRIMARY KEY,
+    candidate_id      TEXT NOT NULL,
+    candidate_hash    TEXT NOT NULL,
+    approved_at       TEXT NOT NULL,
+    approved_by_json  TEXT NOT NULL,
+    FOREIGN KEY (snapshot_id) REFERENCES spec_delivery_plan_snapshots(id)
+      ON DELETE CASCADE
+  );
 
   CREATE TABLE IF NOT EXISTS spec_delivery_plan_comments (
     id           TEXT PRIMARY KEY,
@@ -2725,6 +2752,45 @@ function ensureAdditiveColumns(db: Db): void {
   }
 }
 
+function ensureManagedDeliveryPlanIndexColumns(db: Db): void {
+  const columns = [
+    {
+      table: "spec_delivery_plan_attempts",
+      column: "workflow_definition_id",
+      type: "TEXT",
+    },
+    {
+      table: "spec_delivery_plan_snapshots",
+      column: "workflow_definition_id",
+      type: "TEXT",
+    },
+    {
+      table: "spec_delivery_plan_snapshots",
+      column: "workflow_definition_revision",
+      type: "INTEGER",
+    },
+    {
+      table: "spec_delivery_plan_snapshots",
+      column: "workflow_definition_hash",
+      type: "TEXT",
+    },
+    {
+      table: "spec_delivery_plan_snapshots",
+      column: "binding_hash",
+      type: "TEXT",
+    },
+  ] as const;
+  for (const { table, column, type } of columns) {
+    if (
+      getTableColumns(db, table).length === 0 ||
+      columnExists(db, table, column)
+    ) {
+      continue;
+    }
+    addColumnToleratingRace(db, table, column, type);
+  }
+}
+
 interface TableColumnInfo {
   name: string;
   notnull: 0 | 1;
@@ -3370,6 +3436,10 @@ function initializeSchema(db: Db, dbPath: string): void {
       durationMs: Date.now() - startedAt,
     });
   }
+  // The schema floor creates indexes over the managed-definition columns.
+  // Existing delivery-plan tables need those additive columns before SQLite
+  // can evaluate the `CREATE INDEX IF NOT EXISTS` statements in SCHEMA_DDL.
+  ensureManagedDeliveryPlanIndexColumns(db);
   db.exec(SCHEMA_DDL);
   migrateNotificationsTable(db);
   db.exec(NOTIFICATIONS_INDEX_DDL);

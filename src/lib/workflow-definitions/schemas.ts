@@ -3,6 +3,10 @@ import {
   cascadeWorkflowSemanticDefinitionSchema,
   workflowDefinitionRecordSchema,
 } from "@/lib/workflow-graph/definition-schemas";
+import {
+  nativeSddWorkflowManagementCompactSchema,
+  nativeSddWorkflowManagementDetailSchema,
+} from "@/lib/workflow-graph/managed-definition";
 
 const workflowDefinitionSummarySchema = z.object({
   id: z.string(),
@@ -11,18 +15,26 @@ const workflowDefinitionSummarySchema = z.object({
   revision: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  management: nativeSddWorkflowManagementCompactSchema.optional(),
 });
+
+const managedWorkflowDefinitionRecordSchema =
+  workflowDefinitionRecordSchema.and(
+    z.object({
+      management: nativeSddWorkflowManagementDetailSchema.optional(),
+    }),
+  );
 
 export const workflowDefinitionsResponseSchema = z.object({
   items: z.array(workflowDefinitionSummarySchema),
 });
 
 export const workflowDefinitionMutationResponseSchema = z.object({
-  item: workflowDefinitionRecordSchema,
+  item: managedWorkflowDefinitionRecordSchema,
 });
 
 export const workflowDefinitionGetResponseSchema = z.object({
-  item: workflowDefinitionRecordSchema,
+  item: managedWorkflowDefinitionRecordSchema,
   resolved: cascadeWorkflowSemanticDefinitionSchema,
 });
 

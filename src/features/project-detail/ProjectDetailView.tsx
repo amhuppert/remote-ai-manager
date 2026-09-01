@@ -24,7 +24,7 @@ import {
   EmptyStateDesc,
 } from "@/components/ui/EmptyState";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
-import CreateSessionModal from "./components/CreateSessionModal";
+import CreateSessionModal from "@/components/session/CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Topbar from "@/components/Topbar";
 import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";

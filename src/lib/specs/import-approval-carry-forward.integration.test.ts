@@ -298,10 +298,7 @@ describe("amending an imported spec", () => {
         gate,
         subject,
       ]),
-    ).toEqual([
-      ["requirements", "R2"],
-      ["design", "D1"],
-    ]);
+    ).toEqual([["requirements", "R2"]]);
     expect(settled.pendingBlock?.display).not.toContain(
       "every consulted subject approved",
     );

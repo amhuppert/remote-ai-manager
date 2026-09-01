@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { SpecGatePreset } from "@/lib/specs/schemas";
 import type { SpecProposeApprovalRequest } from "@/lib/specs/view-schemas";
 import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
 
@@ -43,16 +42,6 @@ const SPEC_SCOPE = {
     { criterionId: "criterion-id-2", disposition: "deferred" },
   ],
 };
-
-function launchFixture() {
-  const record = createWorkflowDefinitionRecord({ id: "workflow-1" });
-  return {
-    name: record.name,
-    description: record.description,
-    definition: record.definition,
-    layout: record.layout,
-  };
-}
 
 function revision(state: "draft" | "approved" = "draft") {
   return {
@@ -960,6 +949,21 @@ function makeHost(
               authoringStage: "design",
             },
           });
+        case "return-to-requirements":
+          return response({
+            revision: {
+              ...revision(),
+              id: "revision-requirements-return",
+              authoringStage: "requirements",
+              basedOnRevisionId: "revision-requirements-approved",
+            },
+            withdrawnRevision: {
+              ...revision(),
+              id: "revision-design-withdrawn",
+              state: "withdrawn",
+              authoringStage: "design",
+            },
+          });
         case "answer-question":
           return response({
             id: "question-id-1",
@@ -1130,7 +1134,10 @@ function makeHost(
               createdAt: CREATED_AT,
               updatedAt: CREATED_AT,
             },
-            launch: launchFixture(),
+            workflowDefinition: {
+              id: "candidate-1",
+              revision: 4,
+            },
             deliveryPlan: {
               attemptId: "attempt-1",
               candidateId: "candidate-1",
@@ -2603,6 +2610,39 @@ describe("cctl spec write verbs", () => {
     });
   });
 
+  it("returns the exact Design draft to a Requirements checkpoint", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      [
+        "spec",
+        "return-to-requirements",
+        "native-sdd",
+        "--reason",
+        "Requirements changed",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      revision: {
+        id: "revision-requirements-return",
+        authoringStage: "requirements",
+      },
+      withdrawnRevision: { id: "revision-design-withdrawn" },
+    });
+    const request = actionRequests(host).find(({ url }) =>
+      url.endsWith("/actions/return-to-requirements"),
+    );
+    expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
+      expectedRevisionId: "revision-draft",
+      reason: "Requirements changed",
+    });
+  });
+
   it("renders the server's pending block instead of deriving one from the stage", async () => {
     const result = await runCli(
       ["spec", "propose", "native-sdd"],
@@ -3295,7 +3335,10 @@ describe("cctl spec start against a delivery plan", () => {
             createdAt: CREATED_AT,
             updatedAt: CREATED_AT,
           },
-          launch: launchFixture(),
+          workflowDefinition: {
+            id: "candidate-1",
+            revision: 4,
+          },
           deliveryPlan: CANDIDATE,
         },
       },

@@ -510,6 +510,55 @@ function persistedCommentRow(comment: SpecDetailView["comments"][number]) {
 }
 
 describe("SpecReviewMode", () => {
+  it("compares a resubmitted proposal with its nearest approved ancestor", () => {
+    const detail = reviewDetailFixture();
+    const entry = detail.liveProposals[0];
+    if (!entry || entry.governanceBaseSnapshot === null) {
+      throw new Error("Review fixture requires an approved baseline");
+    }
+    const unapprovedBase = {
+      ...entry.snapshot,
+      revision: {
+        ...entry.snapshot.revision,
+        id: "revision-2-unapproved",
+        number: 2,
+        state: "proposed" as const,
+        approvedAt: null,
+      },
+    };
+    const resubmitted = {
+      ...entry.snapshot,
+      revision: {
+        ...entry.snapshot.revision,
+        id: "revision-3",
+        number: 3,
+        basedOnRevisionId: unapprovedBase.revision.id,
+      },
+    };
+    detail.liveProposals = [
+      {
+        ...entry,
+        revision: resubmitted.revision,
+        snapshot: resubmitted,
+        baseSnapshot: unapprovedBase,
+      },
+    ];
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const title = screen.getByRole("heading", {
+      name: "Review plan-stage revision 3",
+    });
+    expect(title.parentElement).toHaveTextContent("over approved revision 1");
+    expect(title.parentElement).not.toHaveTextContent("over revision 2");
+  });
+
   /**
    * An import admission settles a subject without approving it: no human read
    * the content and no approval row exists. The readiness surface derives

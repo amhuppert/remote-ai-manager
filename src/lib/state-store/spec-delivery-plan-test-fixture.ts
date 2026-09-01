@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import {
   deliveryPlanDocumentSchema,
+  type DeliveryPlanBinding,
   type DeliveryPlanDocument,
 } from "@/lib/specs/delivery-plan";
 import {
@@ -14,6 +15,13 @@ import {
   createSpecDeliveryPlanRepo,
   type SpecDeliveryPlanRepo,
 } from "./spec-delivery-plan-repo";
+import type { ManagedWorkflowDefinitionService } from "@/lib/specs/managed-workflow-definition-service";
+import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
+import { workflowDefinitionHash } from "@/lib/specs/delivery-plan-hash";
+import type {
+  WorkflowDefinitionDraft,
+  WorkflowDefinitionRecord,
+} from "@/lib/workflow-graph/definition-schemas";
 
 type Db = InstanceType<typeof Database>;
 
@@ -30,6 +38,80 @@ export const PINNED_REVISION_ID = "revision-delivery-plan-pinned";
 export const PRIOR_REVISION_ID = "revision-delivery-plan-prior";
 export const EARLIER_EXECUTION_ID = "execution-delivery-plan-earlier";
 export const LAUNCHED_EXECUTION_ID = "execution-delivery-plan-launched";
+
+export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionService {
+  const records = new Map<string, WorkflowDefinitionRecord>();
+  const save = (input: {
+    specId: string;
+    specSlug: string;
+    pinnedRevisionId: string;
+    attemptId: string;
+    definitionId: string;
+    launch: WorkflowDefinitionDraft;
+  }) => {
+    const finalized = finalizeDeliveryPlanLaunch({
+      specId: input.specId,
+      specSlug: input.specSlug,
+      pinnedRevisionId: input.pinnedRevisionId,
+      attemptId: input.attemptId,
+      candidateId: input.definitionId,
+      launch: input.launch,
+    });
+    const record: WorkflowDefinitionRecord = {
+      ...finalized,
+      id: input.definitionId,
+      schemaVersion: 1,
+      revision: 1,
+      layout: { ...finalized.layout, workflowId: input.definitionId },
+      createdAt: "2026-08-31T00:00:00.000Z",
+      updatedAt: "2026-08-31T00:00:00.000Z",
+    };
+    records.set(record.id, record);
+    return record;
+  };
+  return {
+    runExclusive: async (_workflowDefinitionId, operation) => operation(),
+    get: async ({ workflowDefinitionId }) =>
+      records.get(workflowDefinitionId) ?? null,
+    findOpenOrphan: async () => null,
+    findReopenOrphan: async () => null,
+    removeExact: async ({ workflowDefinitionId }) =>
+      records.delete(workflowDefinitionId),
+    open: async (input) =>
+      records.get(input.attemptId) ??
+      save({
+        specId: input.spec.id,
+        specSlug: input.spec.slug,
+        pinnedRevisionId: input.pinnedRevisionId,
+        attemptId: input.attemptId,
+        definitionId: input.attemptId,
+        launch: input.launch,
+      }),
+    clone: async (input) => {
+      const source = records.get(input.sourceDefinitionId);
+      if (!source) throw new Error("source definition missing");
+      return save({
+        specId: input.spec.id,
+        specSlug: input.spec.slug,
+        pinnedRevisionId: input.pinnedRevisionId,
+        attemptId: input.attemptId,
+        definitionId: input.cloneDefinitionId,
+        launch: source,
+      });
+    },
+    getExact: async (input) => {
+      const record = records.get(input.workflowDefinitionId);
+      if (
+        !record ||
+        record.revision !== input.revision ||
+        workflowDefinitionHash(record) !== input.definitionHash
+      ) {
+        throw new Error("definition identity mismatch");
+      }
+      return record;
+    },
+  };
+}
 
 export function seedDeliveryPlanParents(db: Db): void {
   db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
@@ -99,8 +181,14 @@ export function seedDeliveryPlanParents(db: Db): void {
  * A plan document with every field populated and no null leaf, so the
  * round-trip harness can descend into each collection.
  */
-export function maximalPlanDocument(): DeliveryPlanDocument {
-  return deliveryPlanDocumentSchema.parse({
+export interface LegacyDeliveryPlanTestDocument {
+  schemaVersion: 2;
+  launch: WorkflowDefinitionDraft;
+  binding: DeliveryPlanBinding;
+}
+
+export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
+  return {
     schemaVersion: 2,
     launch: {
       name: "Fixture launch",
@@ -415,7 +503,19 @@ export function maximalPlanDocument(): DeliveryPlanDocument {
         },
       ],
     },
+  };
+}
+
+export function maximalPlanDocument(): DeliveryPlanDocument {
+  const legacy = maximalLegacyPlanDocument();
+  return deliveryPlanDocumentSchema.parse({
+    schemaVersion: 3,
+    binding: legacy.binding,
   });
+}
+
+export function maximalWorkflowLaunch(): WorkflowDefinitionDraft {
+  return maximalLegacyPlanDocument().launch;
 }
 
 export interface DeliveryPlanTestRepos {

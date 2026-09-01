@@ -862,7 +862,8 @@ export interface GraphWorkflowExecutionRouteDeps {
   launchSpecDeliveryExecution(input: {
     projectPath: string;
     sessionName: string;
-    plan: WorkflowDefinitionDraft;
+    definitionId: string;
+    expectedDefinitionRevision: number;
     specSlug: string;
     candidateId: string;
     inputs?: Record<string, unknown>;
@@ -2425,7 +2426,8 @@ export function createGraphWorkflowExecutionRouteHandlers(
     projectPath: string;
     projectName: string;
     sessionName: string;
-    plan: WorkflowDefinitionDraft;
+    definitionId: string;
+    expectedDefinitionRevision: number;
     specSlug: string;
     candidateId: string;
     inputs?: Record<string, unknown>;
@@ -2436,7 +2438,8 @@ export function createGraphWorkflowExecutionRouteHandlers(
     const outcome = await deps.launchSpecDeliveryExecution({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
-      plan: input.plan,
+      definitionId: input.definitionId,
+      expectedDefinitionRevision: input.expectedDefinitionRevision,
       specSlug: input.specSlug,
       candidateId: input.candidateId,
       ...(input.inputs !== undefined ? { inputs: input.inputs } : {}),
@@ -4038,7 +4041,8 @@ export async function launchSpecDeliveryGraphWorkflowExecution(
     projectPath: string;
     projectName: string;
     sessionName: string;
-    plan: WorkflowDefinitionDraft;
+    definitionId: string;
+    expectedDefinitionRevision: number;
     specSlug: string;
     candidateId: string;
     inputs?: Record<string, unknown>;

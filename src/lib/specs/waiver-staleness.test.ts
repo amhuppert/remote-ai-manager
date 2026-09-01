@@ -131,20 +131,6 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       },
       actor: AGENT,
     });
-    if (created.draft.authoringStage !== "plan") {
-      await specs.advanceDraftAuthoringStage({
-        specId: created.spec.id,
-        revisionId: created.draft.id,
-        expectedStage: "requirements",
-        targetStage: "design",
-      });
-      await specs.advanceDraftAuthoringStage({
-        specId: created.spec.id,
-        revisionId: created.draft.id,
-        expectedStage: "design",
-        targetStage: "plan",
-      });
-    }
     for (const element of [
       {
         elementId: "criterion-1",
@@ -166,21 +152,6 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
           kind: "criterion" as const,
           text: "The untouched behavior holds.",
           validationStrategy: { kinds: ["test_run" as const] },
-        },
-      },
-      {
-        elementId: "task-1",
-        kind: "task" as const,
-        parentElementId: null,
-        position: 3,
-        payload: {
-          kind: "task" as const,
-          title: "Implement the waived behavior",
-          instructions: "Implement and test.",
-          tracedRequirementElementIds: ["requirement-1"],
-          tracedDecisionElementIds: [],
-          coveredCriterionElementIds: ["criterion-1", "criterion-2"],
-          dependsOnTaskElementIds: [],
         },
       },
     ]) {
@@ -216,8 +187,14 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
     specId: string,
     changedText: string,
   ): Promise<string> {
-    const { revision: amendment } = await authoring.openAmendment({
+    const { revision: design } = await authoring.openAmendment({
       specId,
+      actor: AGENT,
+    });
+    const { revision: amendment } = await authoring.returnToRequirements({
+      specId,
+      expectedRevisionId: design.id,
+      reason: "Extend the approved Requirements contract.",
       actor: AGENT,
     });
     const snapshot = await specs.getRevisionSnapshot(amendment.id);

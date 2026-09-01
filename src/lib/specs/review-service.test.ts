@@ -113,7 +113,7 @@ async function proposedSpec(
     projectPath: PROJECT_PATH,
     slug: `review-${preset}`,
     name: `Review ${preset}`,
-    gatePolicy: { preset: "fast-path" },
+    gatePolicy: { preset: "contract-bearing" },
     initialElement: {
       elementId: "requirement-1",
       kind: "requirement" as const,
@@ -131,7 +131,7 @@ async function proposedSpec(
   db.prepare(
     "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
   ).run(created.draft.id);
-  for (const element of [
+  for (const { elementId, ...element } of [
     {
       elementId: "criterion-1",
       kind: "criterion" as const,
@@ -173,15 +173,16 @@ async function proposedSpec(
       },
     },
   ]) {
-    await authoring.upsertDraftElement({
+    await specs.createDraftElement({
+      id: elementId,
       specId: created.spec.id,
       revisionId: created.draft.id,
       ...element,
-      baseElementVersion: null,
-      actor: AGENT,
+      createdAt: "2026-07-18T14:00:00.250Z",
+      updatedAt: "2026-07-18T14:00:00.250Z",
     });
   }
-  if (preset !== "fast-path") {
+  if (preset !== "contract-bearing") {
     await specs.updateGatePolicy({
       specId: created.spec.id,
       gatePolicy: { preset },
@@ -193,7 +194,10 @@ async function proposedSpec(
     revisionId: created.draft.id,
     actor: AGENT,
   });
-  return created;
+  return {
+    ...created,
+    spec: { ...created.spec, gatePolicy: { preset } },
+  };
 }
 
 /**
@@ -354,7 +358,7 @@ describe("ReviewService", () => {
         draft: {
           state: "draft",
           basedOnRevisionId: created.draft.id,
-          authoringStage: created.draft.authoringStage,
+          authoringStage: "design",
         },
       },
     });
@@ -538,10 +542,10 @@ describe("ReviewService", () => {
       specId: created.spec.id,
       actor: AGENT,
     });
-    await authoring.upsertDraftElement({
+    await specs.createDraftElement({
+      id: "requirement-withdrawn",
       specId: created.spec.id,
       revisionId: withdrawnAmendment.revision.id,
-      elementId: "requirement-withdrawn",
       kind: "requirement",
       parentElementId: null,
       position: 4,
@@ -551,8 +555,8 @@ describe("ReviewService", () => {
         priority: "must",
         risk: "low",
       },
-      baseElementVersion: null,
-      actor: AGENT,
+      createdAt: "2026-07-18T14:00:10.000Z",
+      updatedAt: "2026-07-18T14:00:10.000Z",
     });
     await authoring.proposeRevision({
       specId: created.spec.id,
@@ -630,21 +634,17 @@ describe("ReviewService", () => {
       amendment.revision.id,
       "requirement-1",
     );
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
+    await specs.updateDraftElement({
       revisionId: amendment.revision.id,
       elementId: "requirement-1",
-      kind: "requirement",
-      parentElementId: null,
-      position: 0,
       payload: {
         kind: "requirement",
         statement: "Review gates are durable across withdrawn attempts.",
         priority: "must",
         risk: "high",
       },
-      baseElementVersion: requirementVersion?.elementVersion ?? null,
-      actor: AGENT,
+      expectedElementVersion: requirementVersion?.elementVersion ?? 1,
+      updatedAt: "2026-07-18T14:00:11.000Z",
     });
     await authoring.proposeRevision({
       specId: created.spec.id,
@@ -664,13 +664,9 @@ describe("ReviewService", () => {
       followUp.id,
       "decision-1",
     );
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
+    await specs.updateDraftElement({
       revisionId: followUp.id,
       elementId: "decision-1",
-      kind: "decision",
-      parentElementId: null,
-      position: 2,
       payload: {
         kind: "decision",
         title: "Transition owner",
@@ -679,8 +675,8 @@ describe("ReviewService", () => {
         reason: "No prompt can bypass the gate.",
         tracedRequirementElementIds: ["requirement-1"],
       },
-      baseElementVersion: decisionVersion?.elementVersion ?? null,
-      actor: AGENT,
+      expectedElementVersion: decisionVersion?.elementVersion ?? 1,
+      updatedAt: "2026-07-18T14:00:12.000Z",
     });
     await authoring.proposeRevision({
       specId: created.spec.id,

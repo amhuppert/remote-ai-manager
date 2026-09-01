@@ -142,8 +142,6 @@ async function proposeSpec(
     projectPath: PROJECT_PATH,
     slug,
     name: `Withdraw ${slug}`,
-    // Fast-path opens the first draft directly at design stage; the durable
-    // policy under review is installed before the propose.
     gatePolicy: { preset: "fast-path" },
     initialElement: {
       elementId: `${slug}-r1`,
@@ -159,53 +157,63 @@ async function proposeSpec(
     },
     actor: PROPOSER,
   });
-  for (const element of [
-    {
-      elementId: `${slug}-c1`,
-      kind: "criterion" as const,
-      parentElementId: `${slug}-r1`,
-      position: 1,
-      payload: {
-        kind: "criterion" as const,
-        text: "The withdrawal opens exactly one follow-up draft.",
-        validationStrategy: { kinds: ["test_run" as const] },
-      },
+  await authoring.upsertDraftElement({
+    specId: created.spec.id,
+    revisionId: created.draft.id,
+    elementId: `${slug}-c1`,
+    kind: "criterion",
+    parentElementId: `${slug}-r1`,
+    position: 1,
+    payload: {
+      kind: "criterion",
+      text: "The withdrawal opens exactly one follow-up draft.",
+      validationStrategy: { kinds: ["test_run"] },
     },
-    {
-      elementId: `${slug}-d1`,
-      kind: "decision" as const,
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "decision" as const,
-        title: "Withdrawal owner",
-        chosenApproach: "The proposing conversation owns its proposal.",
-        rejectedAlternatives: [],
-        reason: "A successor conversation is not the author.",
-        tracedRequirementElementIds: [`${slug}-r1`],
-      },
-    },
-  ]) {
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      ...element,
-      baseElementVersion: null,
-      actor: PROPOSER,
-    });
-  }
+    baseElementVersion: null,
+    actor: PROPOSER,
+  });
+  await specs.proposeRevision({
+    revisionId: created.draft.id,
+    proposedAt: "2026-08-02T09:58:00.000Z",
+  });
+  await specs.approveRevision({
+    revisionId: created.draft.id,
+    approvedAt: "2026-08-02T09:58:01.000Z",
+  });
+  const design = await authoring.openAmendment({
+    specId: created.spec.id,
+    actor: PROPOSER,
+  });
   await specs.updateGatePolicy({
     specId: created.spec.id,
     gatePolicy,
     updatedAt: "2026-08-02T09:59:59.000Z",
   });
+  await authoring.upsertDraftElement({
+    specId: created.spec.id,
+    revisionId: design.revision.id,
+    elementId: `${slug}-d1`,
+    kind: "decision",
+    parentElementId: null,
+    position: 2,
+    payload: {
+      kind: "decision",
+      title: "Withdrawal owner",
+      chosenApproach: "The proposing conversation owns its proposal.",
+      rejectedAlternatives: [],
+      reason: "A successor conversation is not the author.",
+      tracedRequirementElementIds: [`${slug}-r1`],
+    },
+    baseElementVersion: null,
+    actor: PROPOSER,
+  });
   const proposed = await authoring.proposeRevision({
     specId: created.spec.id,
-    revisionId: created.draft.id,
+    revisionId: design.revision.id,
     actor: proposer,
   });
   if (!proposed.ok) throw new Error("the fixture propose was refused");
-  return { specId: created.spec.id, revisionId: created.draft.id };
+  return { specId: created.spec.id, revisionId: design.revision.id };
 }
 
 async function elementIdsOf(revisionId: string): Promise<string[]> {
@@ -302,10 +310,7 @@ describe("withdrawProposal", () => {
       result.value.approvalLedger.subjects.map(
         ({ gate, subject, classification }) => [gate, subject, classification],
       ),
-    ).toEqual([
-      ["requirements", "R1", "pending"],
-      ["design", "D1", "pending"],
-    ]);
+    ).toEqual([["design", "D1", "pending"]]);
   });
 
   it("clears the ended attempt's authoring attention and leaves nothing open", async () => {
@@ -507,7 +512,7 @@ describe("withdrawProposal", () => {
       refusal: {
         code: "gate_blocked",
         unmetConditions: [
-          "Revision 1 is no longer an untouched proposal: a human has already approved or unapproved content on it.",
+          "Revision 2 is no longer an untouched proposal: a human has already approved or unapproved content on it.",
         ],
         rationale: WITHDRAW_AFTER_ENGAGEMENT_RATIONALE,
         instruction:
@@ -604,7 +609,7 @@ describe("withdrawProposal", () => {
     expect((await specs.findRevision(revisionId))?.state).toBe("withdrawn");
   });
 
-  it("is not blocked by an agent approval request or a policy admission", async () => {
+  it("is not blocked by an agent approval request", async () => {
     const { specId, revisionId } = await proposeSpec(
       "agent-acts-only",
       PROPOSER,
@@ -613,12 +618,13 @@ describe("withdrawProposal", () => {
         overrides: { requirements: "notify" },
       },
     );
-    // The Notify dial admitted requirements without a human act.
+    // Requirements admission belongs to its immutable checkpoint, never to
+    // the separate Design proposal this withdrawal targets.
     expect(
       reviewRepo
         .findGateAdmissionsByRevision(revisionId)
         .map(({ gate, basis }) => ({ gate, basis })),
-    ).toEqual([{ gate: "requirements", basis: "notify_policy" }]);
+    ).toEqual([]);
     const requested = await reviewing.requestApproval({
       specId,
       revisionId,

@@ -413,6 +413,7 @@ export const refusalCodeSchema = z.enum([
   // editing a proposal, reopening a launched run, opening a second attempt.
   // Every one names the act that IS available from that status.
   "plan_status_conflict",
+  "authoring_unsettled",
   // A launch whose spec-side records committed but whose workflow start did
   // not take. Distinct from `integrity_mismatch`: nothing about the approved
   // candidate is wrong, so the remedy is a retry or an abandon of the run that
@@ -482,6 +483,13 @@ export type SpecInterventionEventType = z.infer<
   typeof specInterventionEventTypeSchema
 >;
 
+export const specAuthoringEventTypeSchema = z.enum([
+  "spec-authoring-returned-to-requirements",
+]);
+export type SpecAuthoringEventType = z.infer<
+  typeof specAuthoringEventTypeSchema
+>;
+
 /**
  * Durable audit trail for `DeliveryPlanAttempt` transitions. The matching
  * typed SSE event refreshes live plan review surfaces after these rows commit.
@@ -493,6 +501,7 @@ export const specDeliveryPlanEventTypeSchema = z.enum([
   "spec-delivery-plan-transitioned",
   "spec-delivery-plan-commented",
   "spec-delivery-plan-reaffirmed",
+  "spec-delivery-plan-candidate-migrated",
 ]);
 export type SpecDeliveryPlanEventType = z.infer<
   typeof specDeliveryPlanEventTypeSchema
@@ -544,6 +553,7 @@ export const specEventTypeSchema = z.union([
   specSseEventTypeSchema,
   specReviewEventTypeSchema,
   specInterventionEventTypeSchema,
+  specAuthoringEventTypeSchema,
   specDeliveryPlanEventTypeSchema,
   specImportEventTypeSchema,
 ]);
@@ -1858,6 +1868,7 @@ export const specDeliveryPlanAttemptRowSchema = z.object({
    */
   prelaunch_json: jsonColumnSchema.nullable(),
   launched_execution_id: nullableIdSchema,
+  workflow_definition_id: nullableIdSchema,
   created_at: timestampSchema,
   updated_at: timestampSchema,
 });
@@ -1888,9 +1899,24 @@ export const specDeliveryPlanSnapshotRowSchema = z.object({
   pinned_revision_id: idSchema,
   proposed_at: timestampSchema,
   proposed_by_json: jsonColumnSchema,
+  workflow_definition_id: nullableIdSchema,
+  workflow_definition_revision: z.number().int().positive().nullable(),
+  workflow_definition_hash: z.string().min(1).nullable(),
+  binding_hash: z.string().min(1).nullable(),
 });
 export type SpecDeliveryPlanSnapshotRow = z.infer<
   typeof specDeliveryPlanSnapshotRowSchema
+>;
+
+export const specDeliveryPlanCandidateApprovalRowSchema = z.object({
+  snapshot_id: idSchema,
+  candidate_id: idSchema,
+  candidate_hash: z.string().min(1),
+  approved_at: timestampSchema,
+  approved_by_json: jsonColumnSchema,
+});
+export type SpecDeliveryPlanCandidateApprovalRow = z.infer<
+  typeof specDeliveryPlanCandidateApprovalRowSchema
 >;
 
 /**

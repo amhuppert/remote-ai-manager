@@ -663,3 +663,12 @@
   - Done when: all registered validation passes and the live flow demonstrates every slice behavior against durable state, not only rendered output.
   - _Depends: 26.1–26.9_
   - _Requirements: 2.17, 6.10, 6.11, 9.14, 10.12, 10.13, 24.19–24.21_
+
+- [x] 27. Native SDD post-design simplification (approved 2026-08-31)
+  - Enforce separate Requirements and Design checkpoints, including extension cycles and return-to-requirements.
+  - Cut delivery plans over to binding-only version 3 backed by managed project workflow definitions and migration 0039.
+  - Move configuration, review, reaffirmation, sign-off, reopening, abandonment, and launch into Workflow Builder.
+  - Reduce Spec Studio to Overview, Requirements, Design, Delivery, and History with inline evidence and stage-local lint.
+  - Remove duplicate graph/execution and retired Integrity, Lint, Traceability, Tasks, and Verify UI destinations.
+  - Verify exact candidate identity, crash recovery, migration integrity, responsive Storybook states, and the live extension-to-delivery flow.
+  - _Requirements: 26.1–26.10_

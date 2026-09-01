@@ -43,6 +43,7 @@ interface SpecExecutionStartAttachmentInput {
   scope: ExecutionScope;
   /** The spec-delivery origin the launched execution records. */
   origin: GraphWorkflowExecutionOrigin;
+  workflowDefinition: { id: string; revision: number };
   binding: SpecExecutionBindingSnapshotV2;
   actor: ActorProvenance;
   createdAt: string;
@@ -82,8 +83,8 @@ export function prepareSpecExecutionStartAttachment(
         scope_json: stableStringify(input.scope),
         state: "definition_review",
         execution_start_dial: input.executionStartDial,
-        workflow_definition_id: null,
-        workflow_definition_revision: null,
+        workflow_definition_id: input.workflowDefinition.id,
+        workflow_definition_revision: input.workflowDefinition.revision,
         workflow_seed_source_json: stableStringify(input.origin),
         workflow_execution_binding_json: null,
         workflow_execution_id: executionId,

@@ -88,7 +88,7 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-/** A fully-authored revision proposed by `proposer`, with no review comments. */
+/** A Design checkpoint proposed by `proposer`, with no review comments. */
 async function proposedSpec(proposer: ActorProvenance) {
   const created = await authoring.createSpec({
     projectPath: PROJECT_PATH,
@@ -109,75 +109,58 @@ async function proposedSpec(proposer: ActorProvenance) {
     },
     actor: AGENT,
   });
-  await specs.advanceDraftAuthoringStage({
+  await authoring.upsertDraftElement({
     specId: created.spec.id,
     revisionId: created.draft.id,
-    expectedStage: "requirements",
-    targetStage: "design",
+    elementId: "fb-c1",
+    kind: "criterion",
+    parentElementId: "fb-r1",
+    position: 1,
+    payload: {
+      kind: "criterion",
+      text: "A feedback notice reaches the proposer's conversation.",
+      validationStrategy: { kinds: ["test_run"] },
+    },
+    baseElementVersion: null,
+    actor: AGENT,
   });
-  await specs.advanceDraftAuthoringStage({
-    specId: created.spec.id,
+  await specs.proposeRevision({
     revisionId: created.draft.id,
-    expectedStage: "design",
-    targetStage: "plan",
+    proposedAt: "2026-08-12T09:58:00.000Z",
   });
-  for (const element of [
-    {
-      elementId: "fb-c1",
-      kind: "criterion" as const,
-      parentElementId: "fb-r1",
-      position: 1,
-      payload: {
-        kind: "criterion" as const,
-        text: "A feedback notice reaches the proposer's conversation.",
-        validationStrategy: { kinds: ["test_run" as const] },
-      },
+  await specs.approveRevision({
+    revisionId: created.draft.id,
+    approvedAt: "2026-08-12T09:58:01.000Z",
+  });
+  const design = await authoring.openAmendment({
+    specId: created.spec.id,
+    actor: AGENT,
+  });
+  await authoring.upsertDraftElement({
+    specId: created.spec.id,
+    revisionId: design.revision.id,
+    elementId: "fb-d1",
+    kind: "decision",
+    parentElementId: null,
+    position: 2,
+    payload: {
+      kind: "decision",
+      title: "Passive delivery",
+      chosenApproach: "Durable notices, never an auto-wake.",
+      rejectedAlternatives: [],
+      reason: "The proposer reads feedback on its own next turn.",
+      tracedRequirementElementIds: ["fb-r1"],
     },
-    {
-      elementId: "fb-d1",
-      kind: "decision" as const,
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "decision" as const,
-        title: "Passive delivery",
-        chosenApproach: "Durable notices, never an auto-wake.",
-        rejectedAlternatives: [],
-        reason: "The proposer reads feedback on its own next turn.",
-        tracedRequirementElementIds: ["fb-r1"],
-      },
-    },
-    {
-      elementId: "fb-t1",
-      kind: "task" as const,
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task" as const,
-        title: "Deliver the notice",
-        instructions: "Append the transcript and agent notices.",
-        tracedRequirementElementIds: ["fb-r1"],
-        tracedDecisionElementIds: ["fb-d1"],
-        coveredCriterionElementIds: ["fb-c1"],
-        dependsOnTaskElementIds: [],
-      },
-    },
-  ]) {
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      ...element,
-      baseElementVersion: null,
-      actor: AGENT,
-    });
-  }
+    baseElementVersion: null,
+    actor: AGENT,
+  });
   const proposed = await authoring.proposeRevision({
     specId: created.spec.id,
-    revisionId: created.draft.id,
+    revisionId: design.revision.id,
     actor: proposer,
   });
   if (!proposed.ok) throw new Error("the fixture propose was refused");
-  return { specId: created.spec.id, revisionId: created.draft.id };
+  return { specId: created.spec.id, revisionId: design.revision.id };
 }
 
 async function humanComment(specId: string, revisionId: string) {
@@ -289,8 +272,8 @@ describe("review feedback notices to the proposing conversation", () => {
     const approved = await reviewing.approveItem({
       specId,
       revisionId,
-      subjectKind: "requirement",
-      elementId: "fb-r1",
+      subjectKind: "decision",
+      elementId: "fb-d1",
       approver: "alex",
       actor: HUMAN,
     });
@@ -304,8 +287,8 @@ describe("review feedback notices to the proposing conversation", () => {
     });
 
     if (!reopened.ok) throw new Error("the request for changes was refused");
-    // R1 is unchanged, so the approval a human granted on the withdrawn
-    // revision still stands for the draft that replaced it.
+    // D1 is unchanged, so the approval a human granted on the withdrawn
+    // Design revision still stands for the draft that replaced it.
     expect(reopened.value.approvalLedger).toMatchObject({
       satisfied: 1,
       carried: 1,
@@ -316,10 +299,7 @@ describe("review feedback notices to the proposing conversation", () => {
       reopened.value.approvalLedger.subjects.map(
         ({ subject, classification }) => [subject, classification],
       ),
-    ).toEqual([
-      ["R1", "carried"],
-      ["D1", "pending"],
-    ]);
+    ).toEqual([["D1", "carried"]]);
     expect(feedbackNotices).toHaveLength(1);
     expect(feedbackNotices[0]?.approvalLedger).toEqual(
       reopened.value.approvalLedger,

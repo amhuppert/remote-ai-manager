@@ -102,10 +102,15 @@ describe("workflow storage — global scope round-trip", () => {
     const loaded = await storage.get(GLOBAL_SCOPE, created.id);
     expect(loaded?.name).toBe("Scope Workflow");
 
-    const updated = await storage.update(GLOBAL_SCOPE, created.id, {
-      ...draft(),
-      name: "Updated Global",
-    });
+    const updated = await storage.update(
+      GLOBAL_SCOPE,
+      created.id,
+      created.revision,
+      {
+        ...draft(),
+        name: "Updated Global",
+      },
+    );
     expect(updated.revision).toBe(2);
     expect(updated.name).toBe("Updated Global");
 
@@ -220,7 +225,7 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
     const created = await storage.create(GLOBAL_SCOPE, draft());
 
     await expect(
-      storage.update(GLOBAL_SCOPE, created.id, {
+      storage.update(GLOBAL_SCOPE, created.id, created.revision, {
         ...draft(),
         definition: definitionReferencing({
           tier: "project",

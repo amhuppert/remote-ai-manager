@@ -190,28 +190,24 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
     const admissions = reviewRepo
       .findGateAdmissionsByRevision(created.draft.id)
       .filter((admission) => admission.basis === "notify_policy");
-    expect(admissions.map((admission) => admission.gate).sort()).toEqual([
-      "design",
+    expect(admissions.map((admission) => admission.gate)).toEqual([
       "requirements",
     ]);
 
     const rows = notificationsRepo.findSpecNotificationsBySpecId(
       created.spec.id,
     );
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(
       rows
         .map((row) => ({ type: row.type, gate: row.gate }))
         .sort((a, b) => a.gate.localeCompare(b.gate)),
-    ).toEqual([
-      { type: "spec-policy-admitted", gate: "design" },
-      { type: "spec-policy-admitted", gate: "requirements" },
-    ]);
+    ).toEqual([{ type: "spec-policy-admitted", gate: "requirements" }]);
     // Each notification correlates to its admission row.
     expect(new Set(rows.map((row) => row.gateRequestId))).toEqual(
       new Set(admissions.map((admission) => admission.id)),
     );
-    expect(pushed).toHaveLength(2);
+    expect(pushed).toHaveLength(1);
 
     // Post-hoc review notices never open a Needs You item (R11.2).
     const outcomes = deriveNotificationOutcomes(rows, []);
@@ -231,7 +227,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
     );
     expect(
       admissions.filter((admission) => admission.basis === "off_policy"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       notificationsRepo.findSpecNotificationsBySpecId(created.spec.id),
     ).toHaveLength(0);
@@ -252,11 +248,11 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
 
     expect(
       notificationsRepo.findSpecNotificationsBySpecId(created.spec.id),
-    ).toHaveLength(2);
-    expect(pushed).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(pushed).toHaveLength(1);
   });
 
-  it("keeps a committed proposal successful and files pending asks when a Notify notice throws", async () => {
+  it("keeps a committed checkpoint successful when its Notify notice throws", async () => {
     const authoredBody = "Notify-dial admissions surface post hoc.";
     policyAdmissionResponder = () => {
       throw new Error(authoredBody);
@@ -269,27 +265,15 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
 
     expect(proposed).toMatchObject({
       ok: true,
-      revision: { id: created.draft.id, state: "proposed" },
+      revision: { id: created.draft.id, state: "approved" },
       approvalRequests: [
         { gate: "requirements", outcome: "not-needed", attentionId: null },
-        {
-          gate: "design",
-          outcome: "filed",
-          attentionId: "attention-design",
-        },
       ],
     });
     expect(await specs.findRevision(created.draft.id)).toMatchObject({
-      state: "proposed",
+      state: "approved",
     });
-    expect(approvalRequestCalls).toEqual([
-      {
-        specId: created.spec.id,
-        revisionId: created.draft.id,
-        gate: "design",
-        actor: AGENT,
-      },
-    ]);
+    expect(approvalRequestCalls).toEqual([]);
 
     const admission = reviewRepo
       .findGateAdmissionsByRevision(created.draft.id)

@@ -6,7 +6,6 @@ import {
   deliveryPlanDocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
   finalizedDeliveryPlanCandidateIdentitySchema,
-  finalizedDeliveryPlanDocumentSchema,
 } from "./delivery-plan";
 import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 import {
@@ -54,6 +53,7 @@ export const deliveryPlanAttemptViewSchema = z
     candidateId: z.string().min(1).nullable(),
     candidateHash: z.string().min(1).nullable(),
     launchedExecutionId: z.string().min(1).nullable(),
+    workflowDefinitionId: z.string().min(1),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
@@ -117,7 +117,15 @@ export const deliveryPlanViewSchema = z
     attempt: deliveryPlanAttemptViewSchema,
     approval: finalizedDeliveryPlanApprovalSchema.nullable(),
     prelaunch: deliveryPlanPrelaunchViewSchema.nullable(),
-    document: finalizedDeliveryPlanDocumentSchema,
+    document: deliveryPlanDocumentSchema,
+    workflowDefinition: z
+      .object({
+        id: z.string().min(1),
+        revision: z.number().int().positive(),
+        definitionHash: z.string().min(1),
+        builderHref: z.string().min(1),
+      })
+      .strict(),
     health: deliveryPlanHealthViewSchema,
     dispositionCounts: z.array(
       z
@@ -170,15 +178,13 @@ export type DeliveryPlanMutationView = z.infer<
 export const deliveryPlanEditRequestSchema = z
   .object({
     expectedDraftRevision: z.number().int().positive(),
-    document: deliveryPlanDocumentSchema,
+    binding: deliveryPlanBindingSchema,
   })
   .strict();
 export type DeliveryPlanEditRequest = z.infer<
   typeof deliveryPlanEditRequestSchema
 >;
-export const deliveryPlanOpenRequestSchema = z
-  .object({ seedFromLast: z.boolean() })
-  .strict();
+export const deliveryPlanOpenRequestSchema = z.object({}).strict();
 export const deliveryPlanReopenRequestSchema = z
   .object({ reason: z.string().min(1) })
   .strict();
@@ -188,15 +194,16 @@ export const deliveryPlanAbandonRequestSchema = z
   .strict();
 export const deliveryPlanSignOffRequestSchema =
   finalizedDeliveryPlanCandidateIdentitySchema;
-/**
- * Reaffirmation carries the draft revision the human reviewed. Without it the
- * act would land on whatever the draft became between the read and the click,
- * which is exactly the judgment the reaffirmation is supposed to record.
- */
-export const deliveryPlanReaffirmRequestSchema = z
+export const deliveryPlanReaffirmBatchRequestSchema = z
   .object({
-    criterionElementId: z.string().min(1),
     expectedDraftRevision: z.number().int().positive(),
+    criterionElementIds: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(500)
+      .refine((values) => new Set(values).size === values.length, {
+        message: "criterionElementIds must be unique",
+      }),
   })
   .strict();
 export const deliveryPlanCommentRequestSchema = z
@@ -261,7 +268,12 @@ const parkedDeliveryPlanReceiptSchema = deliveryPlanReceiptCandidateSchema
 export const launchedSpecExecutionReceiptSchema = z
   .object({
     execution: specStartedExecutionViewSchema,
-    launch: workflowDefinitionMutationSchema,
+    workflowDefinition: z
+      .object({
+        id: z.string().min(1),
+        revision: z.number().int().positive(),
+      })
+      .strict(),
     deliveryPlan: launchedDeliveryPlanReceiptSchema,
   })
   .strict();

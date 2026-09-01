@@ -1610,23 +1610,28 @@ describe("graph workflow manager", () => {
       ).toBe(false);
     });
 
-    it("creates a spec-delivery execution carrying spec provenance, filler, and the authored launch document", async () => {
+    it("creates a spec-delivery execution from the exact stored managed definition", async () => {
       const loadCalls: string[] = [];
       const manager = buildParityManager(loadCalls);
       const plan = authoredPlan();
+      const record = await definitionStorage().create(
+        scopeForTier("project", PROJECT_PATH),
+        plan,
+      );
       const before = await snapshotDefinitionStore();
 
       const launched = await manager.launchSpecDelivery({
         projectPath: PROJECT_PATH,
         sessionName: INLINE_SESSION,
-        plan,
+        definitionId: record.id,
+        expectedDefinitionRevision: record.revision,
         specSlug: "conversation-compaction",
-        candidateId: "cand-42",
+        candidateId: record.id,
       });
 
-      // A spec delivery persists no template and resolves none (R1.1 parity).
+      // Launching reads but never rewrites the immutable managed definition.
       expect(await snapshotDefinitionStore()).toEqual(before);
-      expect(loadCalls).toEqual([]);
+      expect(loadCalls).toEqual([record.id]);
 
       const row = await fixture.store.getActiveGraphWorkflowExecution(
         PROJECT_PATH,
@@ -1636,16 +1641,15 @@ describe("graph workflow manager", () => {
       expect(row?.origin).toEqual({
         kind: "spec_delivery",
         specSlug: "conversation-compaction",
-        candidateId: "cand-42",
+        candidateId: record.id,
       });
-      expect(row?.seedDefinitionId).toBe(
-        `spec-delivery:${launched.execution.id}`,
-      );
+      expect(row?.seedDefinitionId).toBe(record.id);
+      expect(row?.seedDefinitionRevision).toBe(record.revision);
       expect(row?.launchDocument).toEqual({
-        name: plan.name,
-        description: plan.description,
-        definition: plan.definition,
-        layout: plan.layout,
+        name: record.name,
+        description: record.description,
+        definition: record.definition,
+        layout: record.layout,
       });
     });
 

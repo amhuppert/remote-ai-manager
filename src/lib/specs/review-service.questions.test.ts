@@ -101,18 +101,6 @@ async function createPopulatedSpec() {
     },
     actor: AGENT,
   });
-  await specs.advanceDraftAuthoringStage({
-    specId: created.spec.id,
-    revisionId: created.draft.id,
-    expectedStage: "requirements",
-    targetStage: "design",
-  });
-  await specs.advanceDraftAuthoringStage({
-    specId: created.spec.id,
-    revisionId: created.draft.id,
-    expectedStage: "design",
-    targetStage: "plan",
-  });
   for (const element of [
     {
       elementId: "criterion-1",
@@ -155,6 +143,22 @@ async function createPopulatedSpec() {
       },
     },
   ]) {
+    if (element.kind === "decision") {
+      await specs.advanceDraftAuthoringStage({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedStage: "requirements",
+        targetStage: "design",
+      });
+    }
+    if (element.kind === "task") {
+      await specs.advanceDraftAuthoringStage({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        expectedStage: "design",
+        targetStage: "plan",
+      });
+    }
     await authoring.upsertDraftElement({
       specId: created.spec.id,
       revisionId: created.draft.id,

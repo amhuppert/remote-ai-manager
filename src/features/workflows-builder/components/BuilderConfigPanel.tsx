@@ -73,6 +73,7 @@ interface BuilderConfigPanelProps {
   libraryProjectName?: string | null;
   onDeleteContext: (contextId: string) => void;
   focus?: BuilderConfigPanelFocus | null;
+  readOnly?: boolean;
 }
 
 function replaceContext(
@@ -123,6 +124,7 @@ export default function BuilderConfigPanel({
   libraryProjectName,
   onDeleteContext,
   focus,
+  readOnly = false,
 }: BuilderConfigPanelProps): React.JSX.Element {
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (state) => state.draftDefinition,
@@ -200,7 +202,7 @@ export default function BuilderConfigPanel({
 
   const cascadeEditor: ConfigCascadeEditor = {
     host: "builder",
-    affordance: "editable",
+    affordance: readOnly ? "read-only" : "editable",
     cascade,
     onEdit: (intent) => {
       if (!draftDefinition) return;
@@ -245,7 +247,7 @@ export default function BuilderConfigPanel({
       ? null
       : {
           host: "builder",
-          affordance: "editable",
+          affordance: readOnly ? "read-only" : "editable",
           context,
           onContextChange: (next) =>
             updateDefinition(replaceContext(draftDefinition, next)),
@@ -271,7 +273,7 @@ export default function BuilderConfigPanel({
         };
 
   const workflowEditor: WorkflowStructuralEditor = {
-    affordance: "editable",
+    affordance: readOnly ? "read-only" : "editable",
     charter: draftDefinition.charter,
     onCharterChange: (next) =>
       updateDefinition({ ...draftDefinition, charter: next }),
@@ -335,7 +337,9 @@ export default function BuilderConfigPanel({
       hasOverrides={cascade.paths.some((path) => cascade.own(path))}
       rootCards={rootCards}
       screens={screens}
-      onResetAll={() => cascadeEditor.onEdit(cascade.resetAll())}
+      {...(!readOnly
+        ? { onResetAll: () => cascadeEditor.onEdit(cascade.resetAll()) }
+        : {})}
       {...(focus ? { initialScreenPath: focus.screenPath } : {})}
     />
   );

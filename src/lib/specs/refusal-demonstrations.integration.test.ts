@@ -298,7 +298,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
         "agent",
       ),
     );
-    expect(created.draft.authoringStage).toBe("design");
+    expect(created.draft.authoringStage).toBe("requirements");
     world.db
       .prepare(
         "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
@@ -404,6 +404,17 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     await world.repos.specs.approveRevision({
       revisionId: created.draft.id,
       approvedAt: "2026-07-31T10:01:00.000Z",
+    });
+    const design = await postJson<{ revision: { id: string } }>(
+      world.postAction(slug, "open-amendment", {}, "agent"),
+    );
+    await world.repos.specs.proposeRevision({
+      revisionId: design.revision.id,
+      proposedAt: "2026-07-31T10:01:10.000Z",
+    });
+    await world.repos.specs.approveRevision({
+      revisionId: design.revision.id,
+      approvedAt: "2026-07-31T10:01:20.000Z",
     });
     const attempt = await postJson<{ revision: { id: string } }>(
       world.postAction(slug, "open-amendment", {}, "agent"),
@@ -1077,6 +1088,11 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
       world.postAction(slug, "open-amendment", {}, "agent"),
     );
     const withdrawnRevisionId = attempt.revision.id;
+    world.db
+      .prepare(
+        "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+      )
+      .run(withdrawnRevisionId);
     await postJson(
       world.postAction(
         slug,
@@ -1098,6 +1114,11 @@ describe("authoring blocks (ticket #42): the CLI renders the server's projection
         "agent",
       ),
     );
+    world.db
+      .prepare(
+        "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+      )
+      .run(withdrawnRevisionId);
     await postJson(
       world.postAction(
         slug,

@@ -192,6 +192,10 @@ function prepare(failAt?: AttachmentWriteBoundary) {
         specSlug: spec.slug,
         candidateId: CANDIDATE_ID,
       },
+      workflowDefinition: {
+        id: CANDIDATE_ID,
+        revision: 3,
+      },
       binding: {
         schemaVersion: 2,
         candidateId: CANDIDATE_ID,
@@ -249,6 +253,8 @@ describe("spec one-off execution transaction attachment", () => {
       workflow_execution_id: WORKFLOW_EXECUTION_ID,
       workflow_execution_binding_json: null,
       state: "definition_review",
+      workflow_definition_id: CANDIDATE_ID,
+      workflow_definition_revision: 3,
     });
     expect(
       createSpecExecutionBindingRepo(db).requireByWorkflowExecutionId(

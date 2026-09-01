@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  afterEach,
   describe,
   expect,
   expectTypeOf,
@@ -10,6 +11,7 @@ import {
 } from "vitest";
 import { act, fireEvent, render, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
 import {
   createHotkeyDispatcher,
@@ -22,13 +24,19 @@ import {
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import type { NativeSddWorkflowManagementDetail } from "@/lib/workflow-graph/managed-definition";
 import ConnectedWorkflowBuilderPage, {
   resolveDefinitionClientSide,
 } from "./ConnectedWorkflowBuilderPage";
 
 const workflowMutationState = vi.hoisted(() => ({
   create: vi.fn(),
+  update: vi.fn(),
   createPending: false,
+}));
+const workflowQueryState = vi.hoisted(() => ({
+  definitions: null as null | Array<Record<string, unknown>>,
+  detail: null as null | { item: Record<string, unknown>; resolved: unknown },
 }));
 
 vi.mock(
@@ -144,6 +152,100 @@ const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {
   raw: {},
 };
 
+function managedDetail(
+  lifecycle: NativeSddWorkflowManagementDetail["lifecycle"],
+): NativeSddWorkflowManagementDetail {
+  return {
+    kind: "native_sdd_delivery",
+    specId: "spec-1",
+    specSlug: "checkout",
+    specName: "Checkout",
+    attemptId: "attempt-1",
+    pinnedRevisionId: "revision-8",
+    pinnedRevisionNumber: 8,
+    lifecycle,
+    editable: lifecycle === "draft",
+    isCurrentDefinition: true,
+    specHref: "/specs/test-project/checkout",
+    builderHref: `/projects/test-project/workflows?definition=${record.id}`,
+    executionHref: null,
+    bindingRevision: 2,
+    deltaBasisExecutionId: null,
+    binding: { dispositions: [], claims: [] },
+    dispositionCounts: {},
+    unresolvedItems: [],
+    criterionRows: [],
+    claims: [],
+    comments: [],
+    nextAct: lifecycle === "draft" ? "propose" : "sign_off",
+    currentCandidate: null,
+    currentCandidateHash: null,
+    currentApproval: null,
+    approvedBaseline: null,
+    changes: {
+      workflowSettings: false,
+      contexts: false,
+      tasks: false,
+      edges: false,
+      layout: false,
+      dispositions: false,
+      claims: false,
+    },
+    capabilities: {
+      canPropose: lifecycle === "draft",
+      canSignOff: lifecycle === "in_review",
+      canReopen: lifecycle === "in_review",
+      canAbandon: true,
+      canLaunch: false,
+      refusals: {},
+    },
+  };
+}
+
+function proposedDeliveryPlanResponse(): Record<string, unknown> {
+  return {
+    attempt: {
+      id: "attempt-1",
+      specSlug: "checkout",
+      status: "proposed",
+      draftRevision: 2,
+      pinnedRevisionId: "revision-8",
+      deltaBasisExecutionId: null,
+      proposedSnapshotId: "snapshot-1",
+      candidateId: record.id,
+      candidateHash: "sha256:candidate",
+      launchedExecutionId: null,
+      workflowDefinitionId: record.id,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    },
+    approval: null,
+    prelaunch: null,
+    document: {
+      schemaVersion: 3,
+      binding: { dispositions: [], claims: [] },
+    },
+    workflowDefinition: {
+      id: record.id,
+      revision: record.revision,
+      definitionHash: "sha256:definition",
+      builderHref: `/projects/test-project/workflows?definition=${record.id}`,
+    },
+    health: { total: 0, blocking: 0, counts: [], findings: [] },
+    dispositionCounts: [],
+    unresolved: [],
+    snapshots: [],
+    nextAct: {
+      actor: "human",
+      command: "Review the managed definition",
+      reason: "The delivery plan is ready for review.",
+    },
+    previousHealth: null,
+    invalidatedApproval: null,
+    executionStartAdmission: null,
+  };
+}
+
 vi.mock("@/lib/workflows/queries", () => ({
   // Reached through the sidebar's approval peek; no gate stands in this page's
   // fixtures, so the query is never enabled and a quiet stub is sufficient.
@@ -152,7 +254,7 @@ vi.mock("@/lib/workflows/queries", () => ({
     error: null,
   }),
   useScopedWorkflowDefinitionsQuery: () => ({
-    data: [
+    data: workflowQueryState.definitions ?? [
       {
         id: record.id,
         name: record.name,
@@ -187,7 +289,7 @@ vi.mock("@/lib/workflows/queries", () => ({
       ]),
     ),
   useScopedWorkflowDefinitionQuery: () => ({
-    data: {
+    data: workflowQueryState.detail ?? {
       item: record,
       resolved: resolveWorkflowDefinition(fullConfig.config, record.definition),
     },
@@ -210,7 +312,7 @@ vi.mock("@/lib/workflows/mutations", async (importOriginal) => ({
     isPending: workflowMutationState.createPending,
   }),
   useScopedUpdateWorkflowDefinitionMutation: () => ({
-    mutateAsync: vi.fn(),
+    mutateAsync: workflowMutationState.update,
     isPending: false,
   }),
   useScopedDeleteWorkflowDefinitionMutation: () => ({
@@ -248,6 +350,10 @@ beforeAll(() => {
 
 beforeEach(() => {
   viewportWidth = 1440;
+  workflowQueryState.definitions = null;
+  workflowQueryState.detail = null;
+  workflowMutationState.update.mockReset();
+  workflowMutationState.update.mockResolvedValue({});
 });
 
 function resetStore() {
@@ -260,6 +366,7 @@ function resetStore() {
     dirty: false,
     refusedEdits: [],
     pendingOutputSchemaText: {},
+    highlightedContextIds: [],
   });
 }
 
@@ -455,6 +562,86 @@ describe("ConnectedWorkflowBuilderPage — definitions sidebar metadata", () => 
     expect(
       within(sidebar).getByText(`r${record.revision} · 3 contexts · unsaved`),
     ).toBeInTheDocument();
+  });
+});
+
+describe("ConnectedWorkflowBuilderPage — managed delivery definitions", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    resetStore();
+    api = installFetchFixture();
+  });
+
+  afterEach(() => api.restore());
+
+  function selectManaged(
+    lifecycle: NativeSddWorkflowManagementDetail["lifecycle"],
+  ): void {
+    const management = managedDetail(lifecycle);
+    workflowQueryState.definitions = [
+      {
+        id: record.id,
+        name: record.name,
+        description: record.description,
+        revision: record.revision,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        management,
+      },
+    ];
+    workflowQueryState.detail = {
+      item: { ...record, management },
+      resolved: resolveWorkflowDefinition(fullConfig.config, record.definition),
+    };
+  }
+
+  it("routes draft proposal through the managed plan mutation and removes generic delete", async () => {
+    selectManaged("draft");
+    api.json(
+      "POST",
+      "/api/specs/test-project/checkout/actions/plan-propose",
+      proposedDeliveryPlanResponse(),
+    );
+    const view = renderPage();
+
+    expect(view.getByRole("link", { name: "Checkout" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "Delete" })).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Propose for review" }));
+    await vi.waitFor(() =>
+      expect(
+        api.requestsTo("POST", /actions\/plan-propose/)[0]?.jsonBody,
+      ).toEqual({}),
+    );
+  });
+
+  it("saves an editable managed draft against the displayed definition revision", async () => {
+    selectManaged("draft");
+    const view = renderPage();
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Save Draft" }));
+
+    await vi.waitFor(() =>
+      expect(workflowMutationState.update).toHaveBeenCalledWith(
+        expect.objectContaining({ expectedRevision: record.revision }),
+      ),
+    );
+  });
+
+  it("makes an in-review candidate read-only while preserving graph inspection", () => {
+    selectManaged("in_review");
+    const view = renderPage();
+
+    expect(view.getAllByText(/Read-only/).length).toBeGreaterThan(0);
+    expect(view.queryByRole("button", { name: "Add Context" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Save Draft" })).toBeNull();
+    expect(
+      view.container.querySelector('[data-testid="context-node"]'),
+    ).not.toBeNull();
+    expect(view.getByRole("tab", { name: "Scope" })).toBeInTheDocument();
   });
 });
 

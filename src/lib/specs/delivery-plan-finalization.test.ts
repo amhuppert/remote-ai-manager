@@ -10,6 +10,7 @@ import {
 const INPUT = {
   specId: "spec-finalization",
   specSlug: "direct-plan",
+  pinnedRevisionId: "revision-finalization",
   attemptId: "attempt-finalization",
 } as const;
 
@@ -123,7 +124,7 @@ describe("delivery-plan candidate finalization", () => {
       launch: createMaximalAuthoredWorkflowLaunchFixture(),
     });
     const sourceUri =
-      "spec-plan://spec-finalization/attempts/attempt-finalization/candidates/candidate-finalization";
+      "spec-plan://spec-finalization/revisions/revision-finalization/attempts/attempt-finalization/candidates/candidate-finalization";
 
     expect(finalized.definition.origin).toEqual({ sourceUri });
     expect(finalized.definition.approvalRequired).toBe(false);

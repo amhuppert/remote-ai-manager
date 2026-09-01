@@ -253,7 +253,7 @@ export default function SpecReviewMode({
   onComplete?(message: string): void;
 }): React.JSX.Element {
   const selection = useProposalSelection(detail, addressedRevisionId);
-  const baseSnapshot = selection.selected?.baseSnapshot ?? null;
+  const baseSnapshot = selection.selected?.governanceBaseSnapshot ?? null;
   const currentSnapshot = selection.selected?.snapshot ?? null;
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -524,7 +524,7 @@ export default function SpecReviewMode({
                 ·{" "}
                 {baseSnapshot === null
                   ? "initial proposal"
-                  : `over revision ${baseSnapshot.revision.number}`}
+                  : `over approved revision ${baseSnapshot.revision.number}`}
               </span>
             </div>
           </div>
@@ -1224,9 +1224,14 @@ function SupersededProposalReview({
   const diff = useMemo(
     () =>
       diffRevisions(
-        entry.baseSnapshot === null ? [] : toDiffRows(entry.baseSnapshot),
+        entry.governanceBaseSnapshot === null
+          ? []
+          : toDiffRows(entry.governanceBaseSnapshot),
         toDiffRows(entry.snapshot),
-        revisionCitationDiffContext(entry.baseSnapshot, entry.snapshot),
+        revisionCitationDiffContext(
+          entry.governanceBaseSnapshot,
+          entry.snapshot,
+        ),
       ),
     [entry],
   );
@@ -1241,9 +1246,13 @@ function SupersededProposalReview({
     { specId: detail.spec.id, eventTypes: ["spec-revision-changed"] },
   );
   const changeCards = requirementCardChanges(
-    reviewCardChanges(diff.changeList, entry.snapshot, entry.baseSnapshot),
+    reviewCardChanges(
+      diff.changeList,
+      entry.snapshot,
+      entry.governanceBaseSnapshot,
+    ),
     entry.snapshot,
-    entry.baseSnapshot,
+    entry.governanceBaseSnapshot,
   );
   const commentedElementIds = new Set(
     commentPlacement.coLocated.map(({ thread }) => thread.root.elementId),
@@ -1283,7 +1292,7 @@ function SupersededProposalReview({
   }
 
   function renderChangeCard(change: ReviewCardChange): React.JSX.Element {
-    const base = viewForElement(entry.baseSnapshot, change.elementId);
+    const base = viewForElement(entry.governanceBaseSnapshot, change.elementId);
     const current = viewForElement(entry.snapshot, change.elementId);
     const placements = placementsForChange(change);
     return (
@@ -1303,7 +1312,9 @@ function SupersededProposalReview({
         <RevisionComparison
           base={base}
           current={current}
-          baseRevisionNumber={entry.baseSnapshot?.revision.number ?? null}
+          baseRevisionNumber={
+            entry.governanceBaseSnapshot?.revision.number ?? null
+          }
           currentRevisionNumber={revision.number}
         />
         {placements.length > 0 ? (
@@ -1378,9 +1389,9 @@ function SupersededProposalReview({
               ? ""
               : ` ${revision.proposedAt.slice(0, 10)}`}{" "}
             ·{" "}
-            {entry.baseSnapshot === null
+            {entry.governanceBaseSnapshot === null
               ? "initial proposal"
-              : `over revision ${entry.baseSnapshot.revision.number}`}
+              : `over approved revision ${entry.governanceBaseSnapshot.revision.number}`}
           </span>
         </div>
         <SupersededDismissAction
@@ -1927,10 +1938,10 @@ function ReviewQuestionsPanel({
             : `${unresolvedCount} active attention`}
         </StatusChip>
         <Link
-          href={`${detailPath}?view=questions`}
+          href={`${detailPath}?view=requirements`}
           className="ml-auto inline-flex min-h-[28px] items-center font-mono text-[0.7rem] font-semibold text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
         >
-          Resolve on Questions screen
+          Resolve in Requirements
         </Link>
       </div>
 
@@ -2527,6 +2538,7 @@ function ReviewChangeCard({
                 change,
                 current,
                 handle,
+                currentSnapshot.revision.authoringStage,
               )}
               className="inline-flex min-h-[28px] items-center font-mono text-[0.72rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
             >
@@ -2656,6 +2668,7 @@ function ReviewChangeCard({
                               detail.spec.slug,
                               criterion,
                               criterionDisplay.handle,
+                              currentSnapshot.revision.authoringStage,
                             )}
                             className="inline-flex min-h-[28px] shrink-0 items-center font-mono text-[0.72rem] font-bold text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
                           >
@@ -3045,13 +3058,15 @@ function changeDeepLink(
   change: ReviewCardChange,
   current: ReviewElementView | null,
   handle: string,
+  authoringStage: SpecRevision["authoringStage"],
 ): string {
   const detailPath = detailPathFor(projectName, slug);
   if (
     change.change === "removed" ||
     current?.entry.version.payload.kind === "section"
   ) {
-    return `${detailPath}?view=review&change=${encodeURIComponent(change.elementId)}`;
+    const reviewView = authoringStage === "design" ? "design" : "requirements";
+    return `${detailPath}?view=${reviewView}&change=${encodeURIComponent(change.elementId)}`;
   }
   return `${detailPath}?el=${encodeURIComponent(handle)}`;
 }
@@ -3065,10 +3080,12 @@ function criterionDeepLink(
   slug: string,
   criterion: RequirementCriterionReview,
   handle: string,
+  authoringStage: SpecRevision["authoringStage"],
 ): string {
   const detailPath = detailPathFor(projectName, slug);
+  const reviewView = authoringStage === "design" ? "design" : "requirements";
   return criterion.change === "removed"
-    ? `${detailPath}?view=review&change=${encodeURIComponent(criterion.elementId)}`
+    ? `${detailPath}?view=${reviewView}&change=${encodeURIComponent(criterion.elementId)}`
     : `${detailPath}?el=${encodeURIComponent(handle)}`;
 }
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
@@ -16,6 +17,7 @@ import {
 } from "./assignment-references";
 import {
   createWorkflowStorageService,
+  StaleWorkflowDefinitionError,
   type WorkflowDefinitionDraft,
   type WorkflowDefinitionSummary,
 } from "./storage";
@@ -28,6 +30,11 @@ import {
   assignmentReferenceRefusal,
   assignmentReferenceRefusalBody,
 } from "@/lib/workflows/assignment-reference-refusal";
+import { staleWorkflowDefinitionResponse } from "./stale-workflow-definition";
+
+const workflowTemplateReplaceRevisionSchema = z.object({
+  expectedRevision: z.number().int().min(1),
+});
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -50,6 +57,7 @@ export interface TemplateLibraryRouteDeps {
   getGlobal(workflowId: string): Promise<WorkflowDefinitionRecord | null>;
   updateGlobal(
     workflowId: string,
+    expectedRevision: number,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord>;
   deleteGlobal(workflowId: string): Promise<boolean>;
@@ -68,8 +76,13 @@ const defaultDeps: TemplateLibraryRouteDeps = {
   listGlobal: () => defaultStorage.list({ kind: "global" }),
   createGlobal: (draft) => defaultStorage.create({ kind: "global" }, draft),
   getGlobal: (workflowId) => defaultStorage.get({ kind: "global" }, workflowId),
-  updateGlobal: (workflowId, draft) =>
-    defaultStorage.update({ kind: "global" }, workflowId, draft),
+  updateGlobal: (workflowId, expectedRevision, draft) =>
+    defaultStorage.update(
+      { kind: "global" },
+      workflowId,
+      expectedRevision,
+      draft,
+    ),
   deleteGlobal: (workflowId) =>
     defaultStorage.delete({ kind: "global" }, workflowId),
 };
@@ -178,24 +191,40 @@ export function createTemplateLibraryRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { workflowId = "" } = await context.params;
+    const rawBody = await request.json().catch(() => null);
+    const revision = workflowTemplateReplaceRevisionSchema.safeParse(rawBody);
+    if (!revision.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid workflow definition revision",
+          issues: revision.error.issues.map((issue) => ({
+            path: issue.path.join(".") || "expectedRevision",
+            message: issue.message,
+          })),
+        },
+        { status: 400 },
+      );
+    }
+
     const globalConfig = await deps.readConfig();
-    const validation = await admitAuthoredWorkflowLaunch(
-      await request.json().catch(() => null),
-      {
-        caller: "global-template-replace",
-        documentScope: { kind: "global" },
-        globalValidation: globalConfig.validation,
-        workflowDefaults: globalConfig.workflowDefaults,
-        agentBackends: globalConfig.agentBackends,
-        assignmentReferences,
-      },
-    );
+    const validation = await admitAuthoredWorkflowLaunch(rawBody, {
+      caller: "global-template-replace",
+      documentScope: { kind: "global" },
+      globalValidation: globalConfig.validation,
+      workflowDefaults: globalConfig.workflowDefaults,
+      agentBackends: globalConfig.agentBackends,
+      assignmentReferences,
+    });
     if (!validation.ok) {
       return invalidPlanResponse(validation.issues, validation.code);
     }
 
     try {
-      const item = await deps.updateGlobal(workflowId, validation.launch);
+      const item = await deps.updateGlobal(
+        workflowId,
+        revision.data.expectedRevision,
+        validation.launch,
+      );
       return NextResponse.json({
         item,
         ...authoredLaunchWarningFields(validation.warnings),
@@ -203,6 +232,13 @@ export function createTemplateLibraryRouteHandlers(
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
       if (refusal) return refusal;
+      if (error instanceof StaleWorkflowDefinitionError) {
+        return staleWorkflowDefinitionResponse(
+          error.workflowId,
+          error.expectedRevision,
+          error.currentRevision,
+        );
+      }
       const message =
         error instanceof Error ? error.message : "Failed to update template";
       // Accept-time validation throws with a graph-validation code string, which
@@ -235,7 +271,8 @@ export function createTemplateLibraryRouteHandlers(
           assignmentReferences,
         });
       },
-      persist: (draft) => deps.updateGlobal(workflowId, draft),
+      persist: (draft, expectedRevision) =>
+        deps.updateGlobal(workflowId, expectedRevision, draft),
     });
   }
 

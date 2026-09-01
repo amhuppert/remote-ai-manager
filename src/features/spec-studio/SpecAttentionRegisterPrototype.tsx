@@ -283,7 +283,7 @@ function CapabilityNotice({
         {capability.instruction}
       </p>
       <a
-        href={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=review`}
+        href={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=requirements`}
         className="mt-xs inline-flex min-h-[44px] items-center font-mono text-[0.72rem] font-semibold text-amber underline-offset-2 hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
       >
         Open Review

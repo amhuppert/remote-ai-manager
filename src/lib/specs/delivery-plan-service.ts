@@ -13,6 +13,7 @@ import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/s
 import {
   type WorkflowDefinitionDraft,
   type WorkflowDefinitionMutation,
+  type WorkflowDefinitionRecord,
 } from "@/lib/workflow-graph/definition-schemas";
 
 import {
@@ -39,21 +40,16 @@ import {
 } from "./delivery-plan-approval";
 import { deliveryPlanBindingAccountabilityGroups } from "./delivery-plan-binding-lint";
 import {
+  deliveryPlanBindingHash,
   deliveryPlanCandidateHash,
   deliveryPlanCandidateHashFromBytes,
+  workflowDefinitionHash,
 } from "./delivery-plan-hash";
 import type { SpecEventsPublisher } from "./events";
 import { dialRequiresHumanApproval, resolveDial } from "./policy";
 import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import type { SpecPolicyAdmissionNotifier } from "./policy-admissions";
-import {
-  deliveryPlanDocumentDiff,
-  type DeliveryPlanDocumentDiff,
-} from "./delivery-plan-diff";
-import {
-  finalizeAndAdmitDeliveryPlanLaunch,
-  finalizeDeliveryPlanLaunch,
-} from "./delivery-plan-finalization";
+import type { DeliveryPlanDocumentDiff } from "./delivery-plan-diff";
 import {
   projectDeliveryPlanDraftHealth,
   type DeliveryPlanDraftHealth,
@@ -63,6 +59,7 @@ import {
   seedDispositionsFromDelivery,
   type DeliveryPlanSeedBasis,
   type DeliveryPlanSeedBasisResult,
+  type SeededDeliveryPlanDraft,
 } from "./delivery-plan-seed";
 import { draftHealth } from "./draft-health";
 import {
@@ -89,6 +86,7 @@ import type {
   SpecRevisionSnapshot,
 } from "./schemas";
 import type { ExecutionScope } from "./scope-validation";
+import type { ManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
 
 const logger = createLogger("specs.delivery-plan");
 
@@ -96,14 +94,24 @@ export interface DeliveryPlanServiceDeps {
   plans: SpecDeliveryPlanRepo;
   reviewRepo: Pick<SpecReviewRepo, "saveApproval" | "insertGateAdmission">;
   events: SpecEventsPublisher;
+  managedDefinitions: ManagedWorkflowDefinitionService;
   policyNotifier?: SpecPolicyAdmissionNotifier;
   runInTransaction<T>(operation: () => T): T;
   currentApprovedRevision(specId: string): Promise<SpecRevisionSnapshot | null>;
+  activeAuthoringBlocker?(input: {
+    specId: string;
+    pinnedRevisionId: string;
+  }): Promise<{
+    revisionId: string;
+    revisionNumber: number;
+    stage: "requirements" | "design";
+    state: "draft" | "proposed" | "approved";
+  } | null>;
   revisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
   /**
    * The delivery a new attempt is measured against, read from the delivery
    * delta at open time. Every attempt records the execution it was measured
-   * against; `--seed-from last` also derives its dispositions from it.
+   * against; the default delta seed also derives its dispositions from it.
    */
   lastDeliveryBasis(input: {
     spec: Spec;
@@ -127,6 +135,7 @@ export interface DeliveryPlanServiceDeps {
   }): Promise<AuthoredWorkflowModelSelectionAdmissionResult>;
   nextId(): string;
   now(): string;
+  projectName?(projectPath: string): string;
 }
 
 export type PlanResult<T> =
@@ -135,13 +144,12 @@ export type PlanResult<T> =
 
 export interface OpenDeliveryPlanInput {
   spec: Spec;
-  seedFromLast: boolean;
   actor: ActorProvenance;
 }
 export interface EditDeliveryPlanInput {
   spec: Spec;
   expectedDraftRevision: number;
-  document: DeliveryPlanDocument;
+  binding: DeliveryPlanBinding;
   actor: ActorProvenance;
 }
 export interface ProposeDeliveryPlanServiceInput {
@@ -153,15 +161,10 @@ export interface DiffDeliveryPlanSnapshotsInput {
   fromSnapshotId: string;
   toSnapshotId: string;
 }
-export interface ReaffirmDeliveryPlanCriterionInput {
+export interface ReaffirmDeliveryPlanCriteriaInput {
   spec: Spec;
-  /**
-   * The draft revision the caller reviewed. A reaffirmation is a human judgment
-   * about specific bytes, so it refuses rather than lands on a draft that moved
-   * between the read and the click.
-   */
   expectedDraftRevision: number;
-  criterionElementId: string;
+  criterionElementIds: readonly string[];
   actor: ActorProvenance;
 }
 export interface CommentOnDeliveryPlanInput {
@@ -198,7 +201,11 @@ export interface DeliveryPlanLaunchCandidate {
   candidate: FinalizedDeliveryPlanCandidateIdentity;
   candidateRecord: DeliveryPlanCandidateRecord;
   candidateBytes: string;
-  launch: WorkflowDefinitionDraft;
+  workflowDefinition: {
+    id: string;
+    revision: number;
+    definitionHash: string;
+  };
   binding: DeliveryPlanBinding;
   scope: ExecutionScope;
   dispositions: readonly {
@@ -236,8 +243,8 @@ export interface DeliveryPlanService {
   comment(
     input: CommentOnDeliveryPlanInput,
   ): Promise<PlanResult<DeliveryPlanReviewView>>;
-  reaffirm(
-    input: ReaffirmDeliveryPlanCriterionInput,
+  reaffirmBatch(
+    input: ReaffirmDeliveryPlanCriteriaInput,
   ): Promise<PlanResult<DeliveryPlanReviewView>>;
   diffSnapshots(
     input: DiffDeliveryPlanSnapshotsInput,
@@ -288,6 +295,26 @@ export function createDeliveryPlanService(
     });
   }
 
+  async function authoringBlocker(
+    spec: Spec,
+    pinnedRevisionId: string,
+  ): Promise<Refusal | null> {
+    const blocker = await deps.activeAuthoringBlocker?.({
+      specId: spec.id,
+      pinnedRevisionId,
+    });
+    if (!blocker) return null;
+    return {
+      code: "authoring_unsettled",
+      unmetConditions: [
+        `${blocker.stage} revision ${blocker.revisionNumber} (${blocker.revisionId}) is ${blocker.state}.`,
+      ],
+      rationale:
+        "Requirements settle before design, and design settles before delivery planning so implementation choices cannot shape an unapproved contract.",
+      instruction: `Settle or withdraw the active ${blocker.stage} revision before planning or launching delivery for ${spec.slug}.`,
+    };
+  }
+
   async function pinned(
     attempt: SpecDeliveryPlanAttemptRow,
     spec: Spec,
@@ -328,6 +355,17 @@ export function createDeliveryPlanService(
         };
   }
 
+  async function workingDefinition(
+    attempt: SpecDeliveryPlanAttemptRow,
+    spec: Spec,
+  ): Promise<WorkflowDefinitionRecord | null> {
+    if (attempt.workflow_definition_id === null) return null;
+    return deps.managedDefinitions.get({
+      projectPath: spec.projectPath,
+      workflowDefinitionId: attempt.workflow_definition_id,
+    });
+  }
+
   /**
    * What the draft still owes, read through the projection `propose` refuses
    * on. A frozen attempt owes nothing: its bytes were admitted and linted at
@@ -360,22 +398,28 @@ export function createDeliveryPlanService(
         refusalConditions: [message],
       };
     }
+    const definition = await workingDefinition(attempt, spec);
+    if (definition === null) {
+      const message = `Managed workflow definition ${attempt.workflow_definition_id ?? "(missing identity)"} is unavailable.`;
+      return {
+        findings: [
+          {
+            ruleId: "plan/workflow-definition-unavailable",
+            severity: "blocks_propose",
+            elementHandle: attempt.id,
+            message,
+          },
+        ],
+        unresolved: [],
+        refusalConditions: [message],
+      };
+    }
     return projectDeliveryPlanDraftHealth({
       pinnedRevision,
       binding: document.binding,
       admission: await deps.admitLaunch({
         spec,
-        // The health projection admits exactly the shape proposal will admit.
-        // The candidate id reaches only the claims-source locator, so the
-        // attempt id stands in for the id proposal allocates: reading a draft
-        // never invents a candidate identity.
-        launch: finalizeDeliveryPlanLaunch({
-          specId: spec.id,
-          specSlug: spec.slug,
-          attemptId: attempt.id,
-          candidateId: attempt.id,
-          launch: document.launch,
-        }),
+        launch: definition,
         accountabilityGroups: deliveryPlanBindingAccountabilityGroups(
           document.binding,
         ),
@@ -390,12 +434,31 @@ export function createDeliveryPlanService(
     const candidate = candidateIdentity(attempt);
     const frozenCandidate = candidateRecord(attempt, deps.plans);
     const document =
-      frozenCandidate?.document ??
-      deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json));
+      frozenCandidate === null
+        ? deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json))
+        : deliveryPlanDocumentSchema.parse({
+            schemaVersion: 3,
+            binding: frozenCandidate.binding,
+          });
     const approval = parseApproval(attempt);
     const current = candidate;
     const prelaunch = parsePrelaunch(attempt);
     const health = await healthOf(attempt, spec, document);
+    const currentDefinition = await workingDefinition(attempt, spec);
+    const workflowDefinition =
+      frozenCandidate?.workflowDefinition ??
+      (currentDefinition === null
+        ? null
+        : {
+            id: currentDefinition.id,
+            revision: currentDefinition.revision,
+            definitionHash: workflowDefinitionHash(currentDefinition),
+          });
+    if (workflowDefinition === null) {
+      throw new Error(
+        `Managed workflow definition ${attempt.workflow_definition_id ?? "(missing identity)"} is unavailable.`,
+      );
+    }
     return {
       attempt: {
         id: attempt.id,
@@ -408,6 +471,10 @@ export function createDeliveryPlanService(
         candidateId: current?.candidateId ?? null,
         candidateHash: current?.candidateHash ?? null,
         launchedExecutionId: attempt.launched_execution_id,
+        workflowDefinitionId:
+          attempt.workflow_definition_id ??
+          frozenCandidate?.workflowDefinition.id ??
+          attempt.id,
         createdAt: attempt.created_at,
         updatedAt: attempt.updated_at,
       },
@@ -429,6 +496,10 @@ export function createDeliveryPlanService(
                 !sameCandidate(current, prelaunch.candidate),
             },
       document,
+      workflowDefinition: {
+        ...workflowDefinition,
+        builderHref: `/projects/${encodeURIComponent(deps.projectName?.(spec.projectPath) ?? spec.projectPath.split("/").filter(Boolean).at(-1) ?? spec.projectPath)}/workflows?definition=${encodeURIComponent(workflowDefinition.id)}`,
+      },
       health: healthView(health),
       dispositionCounts: dispositionCounts(document.binding),
       unresolved: [...health.unresolved],
@@ -481,8 +552,8 @@ export function createDeliveryPlanService(
 
   async function admitSeededModelSelections(
     spec: Spec,
-    document: DeliveryPlanDocument,
-  ): Promise<PlanResult<DeliveryPlanDocument>> {
+    document: SeededDeliveryPlanDraft,
+  ): Promise<PlanResult<SeededDeliveryPlanDraft>> {
     const admission = await deps.admitModelSelections({
       spec,
       launch: document.launch,
@@ -507,97 +578,145 @@ export function createDeliveryPlanService(
 
   return {
     async open(input) {
-      const blocking = liveAttempt(input.spec.id);
-      if (blocking !== null && blocksReplacement(blocking)) {
-        return liveAttemptAlreadyOpen(input.spec.slug);
-      }
-      const pinnedRevision = await deps.currentApprovedRevision(input.spec.id);
-      if (pinnedRevision === null) return noApprovedRevision(input.spec.slug);
-      const basis = await deps.lastDeliveryBasis({
-        spec: input.spec,
-        pinnedRevision,
-      });
-      if (!basis.ok)
-        return unreadableDeliveryBasis(input.spec.slug, basis.message);
-      const document = input.seedFromLast
-        ? seededDocumentForOpen(
-            deps.plans,
+      return deps.managedDefinitions.runExclusive(
+        `native-sdd-open:${input.spec.id}`,
+        async () => {
+          const pinnedRevision = await deps.currentApprovedRevision(
+            input.spec.id,
+          );
+          if (pinnedRevision === null)
+            return noApprovedRevision(input.spec.slug);
+          const unsettled = await authoringBlocker(
             input.spec,
+            pinnedRevision.revision.id,
+          );
+          if (unsettled) return { ok: false, refusal: unsettled };
+          const blocking = liveAttempt(input.spec.id);
+          if (blocking !== null && blocksReplacement(blocking)) {
+            return liveAttemptAlreadyOpen(input.spec.slug);
+          }
+          const basis = await deps.lastDeliveryBasis({
+            spec: input.spec,
             pinnedRevision,
-            basis.basis,
-          )
-        : {
-            ok: true as const,
-            value: initialDocumentForOpen(input.spec, pinnedRevision),
-          };
-      if (!document.ok) return document;
-      const admittedDocument = input.seedFromLast
-        ? await admitSeededModelSelections(input.spec, document.value)
-        : document;
-      if (!admittedDocument.ok) return admittedDocument;
-      const occurredAt = deps.now();
-      try {
-        const opened = deps.plans.open({
-          attempt: {
-            id: deps.nextId(),
-            spec_id: input.spec.id,
-            pinned_revision_id: pinnedRevision.revision.id,
-            delta_basis_execution_id: basis.basis.comparedExecutionId,
-            status: "draft",
-            draft_revision: 1,
-            content_json: canonicalDeliveryPlanEnvelopeBytes(
-              admittedDocument.value,
-            ),
-            proposed_snapshot_id: null,
-            approval_json: null,
-            prelaunch_json: null,
-            launched_execution_id: null,
-            created_at: occurredAt,
-            updated_at: occurredAt,
-          },
-          occurredAt,
-          actor: input.actor,
-        });
-        const view = await project(opened, input.spec);
-        logger.info("specs.delivery-plan.opened", {
-          specId: input.spec.id,
-          attemptId: opened.id,
-          seedFromLast: input.seedFromLast,
-          deltaBasisExecutionId: basis.basis.comparedExecutionId,
-          blockingFindingCount: view.health.blocking,
-        });
-        publishPlanChange(input.spec, view, "opened");
-        return mutation(view, null, null);
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
-      }
+          });
+          if (!basis.ok)
+            return unreadableDeliveryBasis(input.spec.slug, basis.message);
+          const hasSeedCandidate = deps.plans
+            .findAttemptsBySpecId(input.spec.id)
+            .some((attempt) => storedCandidate(attempt, deps.plans) !== null);
+          const document = hasSeedCandidate
+            ? await seededDocumentForOpen(
+                deps.plans,
+                deps.managedDefinitions,
+                input.spec,
+                pinnedRevision,
+                basis.basis,
+              )
+            : {
+                ok: true as const,
+                value: initialDocumentForOpen(input.spec, pinnedRevision),
+              };
+          if (!document.ok) return document;
+          const admittedDocument = hasSeedCandidate
+            ? await admitSeededModelSelections(input.spec, document.value)
+            : document;
+          if (!admittedDocument.ok) return admittedDocument;
+          const occurredAt = deps.now();
+          try {
+            const attempts = deps.plans.findAttemptsBySpecId(input.spec.id);
+            const orphan = await deps.managedDefinitions.findOpenOrphan({
+              spec: input.spec,
+              pinnedRevisionId: pinnedRevision.revision.id,
+              existingAttemptIds: attempts.map((attempt) => attempt.id),
+            });
+            const attemptId = orphan?.id ?? deps.nextId();
+            const existingDefinition = await deps.managedDefinitions.get({
+              projectPath: input.spec.projectPath,
+              workflowDefinitionId: attemptId,
+            });
+            const definition = await deps.managedDefinitions.open({
+              spec: input.spec,
+              pinnedRevisionId: pinnedRevision.revision.id,
+              attemptId,
+              launch: admittedDocument.value.launch,
+            });
+            const planDocument = deliveryPlanDocumentSchema.parse({
+              schemaVersion: 3,
+              binding: admittedDocument.value.binding,
+            });
+            let opened: SpecDeliveryPlanAttemptRow;
+            try {
+              opened = deps.plans.open({
+                attempt: {
+                  id: attemptId,
+                  spec_id: input.spec.id,
+                  pinned_revision_id: pinnedRevision.revision.id,
+                  delta_basis_execution_id: basis.basis.comparedExecutionId,
+                  status: "draft",
+                  draft_revision: 1,
+                  content_json:
+                    canonicalDeliveryPlanEnvelopeBytes(planDocument),
+                  proposed_snapshot_id: null,
+                  approval_json: null,
+                  prelaunch_json: null,
+                  launched_execution_id: null,
+                  workflow_definition_id: definition.id,
+                  created_at: occurredAt,
+                  updated_at: occurredAt,
+                },
+                occurredAt,
+                actor: input.actor,
+              });
+            } catch (error) {
+              if (existingDefinition === null) {
+                try {
+                  await deps.managedDefinitions.removeExact({
+                    projectPath: input.spec.projectPath,
+                    workflowDefinitionId: definition.id,
+                    revision: definition.revision,
+                    definitionHash: workflowDefinitionHash(definition),
+                  });
+                } catch (cleanupError) {
+                  logger.error(
+                    "specs.delivery-plan.definition.cleanup_failed",
+                    {
+                      specId: input.spec.id,
+                      attemptId,
+                      workflowDefinitionId: definition.id,
+                      error:
+                        cleanupError instanceof Error
+                          ? cleanupError.message
+                          : String(cleanupError),
+                    },
+                  );
+                }
+              }
+              throw error;
+            }
+            const view = await project(opened, input.spec);
+            logger.info("specs.delivery-plan.opened", {
+              specId: input.spec.id,
+              attemptId: opened.id,
+              seedFromLast: hasSeedCandidate,
+              deltaBasisExecutionId: basis.basis.comparedExecutionId,
+              blockingFindingCount: view.health.blocking,
+            });
+            publishPlanChange(input.spec, view, "opened");
+            return mutation(view, null, null);
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
 
     async edit(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
-      const modelSelectionAdmission = await deps.admitModelSelections({
-        spec: input.spec,
-        launch: input.document.launch,
+      const document = deliveryPlanDocumentSchema.parse({
+        schemaVersion: 3,
+        binding: input.binding,
       });
-      if (!modelSelectionAdmission.ok) {
-        logger.warn("specs.delivery-plan.model-selection-rejected", {
-          specId: input.spec.id,
-          attemptId: attempt.id,
-          issueCount: modelSelectionAdmission.issues.length,
-          issueCodes: modelSelectionAdmission.issues.map((issue) => issue.code),
-        });
-        return admissionRefusal(
-          input.spec.slug,
-          modelSelectionAdmission.issues.map(
-            (issue) => `${issue.path}: ${issue.message}`,
-          ),
-        );
-      }
-      const document = {
-        ...input.document,
-        launch: modelSelectionAdmission.launch,
-      };
       // Read before the write: the receipt reports the blocking count the edit
       // moved from, which is what makes a partial correction legible.
       const before = await healthOf(
@@ -629,131 +748,222 @@ export function createDeliveryPlanService(
     async propose(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
-      const document = deliveryPlanDocumentSchema.parse(
-        JSON.parse(attempt.content_json),
-      );
-      const pinnedRevision = await deps.revisionSnapshot(
+      const unsettled = await authoringBlocker(
+        input.spec,
         attempt.pinned_revision_id,
       );
-      if (pinnedRevision === null) {
+      if (unsettled) return { ok: false, refusal: unsettled };
+      if (attempt.workflow_definition_id === null) {
         return {
           ok: false,
-          refusal: {
-            code: "not_found",
-            unmetConditions: [
-              `Pinned revision ${attempt.pinned_revision_id} is unavailable.`,
-            ],
-            instruction: `Open a fresh attempt for ${input.spec.slug}.`,
-          },
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The managed workflow definition is missing.",
+          ),
         };
       }
-      const finalized = await finalizeAndAdmitDeliveryPlanLaunch(
-        {
-          specId: input.spec.id,
-          specSlug: input.spec.slug,
-          attemptId: attempt.id,
-          launch: document.launch,
-        },
-        {
-          allocateCandidateId: deps.nextId,
-          admitLaunch: (launch) =>
-            deps.admitLaunch({
-              spec: input.spec,
-              launch,
-              accountabilityGroups: deliveryPlanBindingAccountabilityGroups(
-                document.binding,
+      const sourceDefinitionId = attempt.workflow_definition_id;
+      return deps.managedDefinitions.runExclusive(
+        sourceDefinitionId,
+        async () => {
+          const document = deliveryPlanDocumentSchema.parse(
+            JSON.parse(attempt.content_json),
+          );
+          const pinnedRevision = await deps.revisionSnapshot(
+            attempt.pinned_revision_id,
+          );
+          if (pinnedRevision === null) {
+            return {
+              ok: false,
+              refusal: {
+                code: "not_found",
+                unmetConditions: [
+                  `Pinned revision ${attempt.pinned_revision_id} is unavailable.`,
+                ],
+                instruction: `Open a fresh attempt for ${input.spec.slug}.`,
+              },
+            };
+          }
+          const definition = await workingDefinition(attempt, input.spec);
+          if (definition === null) {
+            return {
+              ok: false,
+              refusal: invalidCandidate(
+                input.spec.slug,
+                "The managed workflow definition is missing.",
               ),
-            }),
+            };
+          }
+          const admitted = await deps.admitLaunch({
+            spec: input.spec,
+            launch: definition,
+            accountabilityGroups: deliveryPlanBindingAccountabilityGroups(
+              document.binding,
+            ),
+          });
+          // The refusal and `plan status` read the same projection, so a draft that
+          // reads proposable cannot refuse here and a refusal always shows up on
+          // the next status.
+          const health = projectDeliveryPlanDraftHealth({
+            pinnedRevision,
+            binding: document.binding,
+            admission: admitted,
+          });
+          if (!admitted.ok) {
+            return admissionRefusal(input.spec.slug, health.refusalConditions);
+          }
+          if (health.refusalConditions.length > 0) {
+            logger.info("specs.delivery-plan.binding_lint_refused", {
+              specId: input.spec.id,
+              attemptId: attempt.id,
+              candidateId: definition.id,
+              issueCount: health.refusalConditions.length,
+            });
+            return {
+              ok: false,
+              refusal: {
+                code: "lint_blocked",
+                unmetConditions: [...health.refusalConditions],
+                instruction: `Correct the immutable binding in \`cctl spec plan edit ${input.spec.slug} --file <plan.json>\`, then propose again.`,
+              },
+            };
+          }
+          const candidateRecord: DeliveryPlanCandidateRecord = {
+            protocol: "native-sdd-delivery-candidate/v3",
+            schemaVersion: 3,
+            specId: input.spec.id,
+            attemptId: attempt.id,
+            candidateId: definition.id,
+            pinnedRevisionId: attempt.pinned_revision_id,
+            draftRevision: attempt.draft_revision,
+            workflowDefinition: {
+              id: definition.id,
+              revision: definition.revision,
+              definitionHash: workflowDefinitionHash(definition),
+            },
+            binding: document.binding,
+            bindingHash: deliveryPlanBindingHash(document.binding),
+          };
+          const candidateHash = deliveryPlanCandidateHash(candidateRecord);
+          try {
+            const proposed = deps.plans.propose({
+              attemptId: attempt.id,
+              expectedDraftRevision: attempt.draft_revision,
+              snapshotId: deps.nextId(),
+              proposedAt: deps.now(),
+              actor: input.actor,
+              candidate: { record: candidateRecord, candidateHash },
+            });
+            logger.info("specs.delivery-plan.proposed", {
+              specId: input.spec.id,
+              attemptId: attempt.id,
+              candidateId: candidateRecord.candidateId,
+              candidateHash,
+            });
+            const view = await project(proposed.attempt, input.spec);
+            publishPlanChange(input.spec, view, "proposed");
+            return mutation(view, healthTotals(health), null);
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
         },
       );
-      const admitted = finalized.admission;
-      // The refusal and `plan status` read the same projection, so a draft that
-      // reads proposable cannot refuse here and a refusal always shows up on
-      // the next status.
-      const health = projectDeliveryPlanDraftHealth({
-        pinnedRevision,
-        binding: document.binding,
-        admission: admitted,
-      });
-      if (!admitted.ok) {
-        return admissionRefusal(input.spec.slug, health.refusalConditions);
-      }
-      if (health.refusalConditions.length > 0) {
-        logger.info("specs.delivery-plan.binding_lint_refused", {
-          specId: input.spec.id,
-          attemptId: attempt.id,
-          candidateId: finalized.candidateId,
-          issueCount: health.refusalConditions.length,
-        });
-        return {
-          ok: false,
-          refusal: {
-            code: "lint_blocked",
-            unmetConditions: [...health.refusalConditions],
-            instruction: `Correct the immutable binding in \`cctl spec plan edit ${input.spec.slug} --file <plan.json>\`, then propose again.`,
-          },
-        };
-      }
-      const candidateRecord: DeliveryPlanCandidateRecord = {
-        protocol: "native-sdd-delivery-candidate/v2",
-        schemaVersion: 2,
-        specId: input.spec.id,
-        attemptId: attempt.id,
-        candidateId: finalized.candidateId,
-        pinnedRevisionId: attempt.pinned_revision_id,
-        draftRevision: attempt.draft_revision,
-        document: {
-          schemaVersion: 2,
-          launch: admitted.launch,
-          binding: document.binding,
-        },
-      };
-      const candidateHash = deliveryPlanCandidateHash(candidateRecord);
-      try {
-        const proposed = deps.plans.propose({
-          attemptId: attempt.id,
-          expectedDraftRevision: attempt.draft_revision,
-          snapshotId: deps.nextId(),
-          proposedAt: deps.now(),
-          actor: input.actor,
-          candidate: { record: candidateRecord, candidateHash },
-        });
-        logger.info("specs.delivery-plan.proposed", {
-          specId: input.spec.id,
-          attemptId: attempt.id,
-          candidateId: candidateRecord.candidateId,
-          candidateHash,
-        });
-        const view = await project(proposed.attempt, input.spec);
-        publishPlanChange(input.spec, view, "proposed");
-        return mutation(view, healthTotals(health), null);
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
-      }
     },
 
     async reopen(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
-      try {
-        const reopened = deps.plans.reopen({
-          attemptId: attempt.id,
-          reopenedAt: deps.now(),
-          actor: input.actor,
-          reason: input.reason,
-        });
-        const view = await project(reopened.attempt, input.spec);
-        publishPlanChange(input.spec, view, "reopened");
-        // Frozen bytes owed nothing; the reopened draft's own health is what
-        // the receipt moves to.
-        return mutation(
-          view,
-          { total: 0, blocking: 0 },
-          reopened.invalidatedApproval,
-        );
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
+      if (attempt.workflow_definition_id === null) {
+        return {
+          ok: false,
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The attempt has no managed workflow definition to reopen.",
+          ),
+        };
       }
+      const sourceDefinitionId = attempt.workflow_definition_id;
+      return deps.managedDefinitions.runExclusive(
+        sourceDefinitionId,
+        async () => {
+          try {
+            const linkedDefinitionIds = [
+              sourceDefinitionId,
+              ...deps.plans
+                .findSnapshotsByAttemptId(attempt.id)
+                .flatMap((snapshot) =>
+                  snapshot.workflow_definition_id === null
+                    ? []
+                    : [snapshot.workflow_definition_id],
+                ),
+            ];
+            const orphan = await deps.managedDefinitions.findReopenOrphan({
+              spec: input.spec,
+              pinnedRevisionId: attempt.pinned_revision_id,
+              attemptId: attempt.id,
+              linkedDefinitionIds,
+            });
+            const cloneDefinitionId = orphan?.id ?? deps.nextId();
+            const existingDefinition = await deps.managedDefinitions.get({
+              projectPath: input.spec.projectPath,
+              workflowDefinitionId: cloneDefinitionId,
+            });
+            const clone = await deps.managedDefinitions.clone({
+              spec: input.spec,
+              pinnedRevisionId: attempt.pinned_revision_id,
+              attemptId: attempt.id,
+              sourceDefinitionId,
+              cloneDefinitionId,
+            });
+            let reopened: ReturnType<SpecDeliveryPlanRepo["reopen"]>;
+            try {
+              reopened = deps.plans.reopen({
+                attemptId: attempt.id,
+                reopenedAt: deps.now(),
+                actor: input.actor,
+                reason: input.reason,
+                workflowDefinitionId: clone.id,
+              });
+            } catch (error) {
+              if (existingDefinition === null) {
+                try {
+                  await deps.managedDefinitions.removeExact({
+                    projectPath: input.spec.projectPath,
+                    workflowDefinitionId: clone.id,
+                    revision: clone.revision,
+                    definitionHash: workflowDefinitionHash(clone),
+                  });
+                } catch (cleanupError) {
+                  logger.error(
+                    "specs.delivery-plan.definition.cleanup_failed",
+                    {
+                      specId: input.spec.id,
+                      attemptId: attempt.id,
+                      workflowDefinitionId: clone.id,
+                      error:
+                        cleanupError instanceof Error
+                          ? cleanupError.message
+                          : String(cleanupError),
+                    },
+                  );
+                }
+              }
+              throw error;
+            }
+            const view = await project(reopened.attempt, input.spec);
+            publishPlanChange(input.spec, view, "reopened");
+            // Frozen bytes owed nothing; the reopened draft's own health is what
+            // the receipt moves to.
+            return mutation(
+              view,
+              { total: 0, blocking: 0 },
+              reopened.invalidatedApproval,
+            );
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
 
     async read(input) {
@@ -789,16 +999,16 @@ export function createDeliveryPlanService(
       return result;
     },
 
-    async reaffirm(input) {
+    async reaffirmBatch(input) {
       if (input.actor.kind !== "human")
         return humanReaffirmation(input.spec.slug);
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
       try {
-        const reaffirmed = deps.plans.reaffirmDraft({
+        const reaffirmed = deps.plans.reaffirmDraftBatch({
           attemptId: attempt.id,
           expectedDraftRevision: input.expectedDraftRevision,
-          criterionElementId: input.criterionElementId,
+          criterionElementIds: input.criterionElementIds,
           reaffirmedAt: deps.now(),
           actor: input.actor,
         });
@@ -807,7 +1017,7 @@ export function createDeliveryPlanService(
           logger.info("specs.delivery-plan.reaffirmed", {
             specId: input.spec.id,
             attemptId: reaffirmed.id,
-            criterionElementId: input.criterionElementId,
+            criterionCount: input.criterionElementIds.length,
           });
           publishPlanChange(input.spec, result.value, "reaffirmed");
         }
@@ -830,12 +1040,18 @@ export function createDeliveryPlanService(
       ) {
         return { ok: false, refusal: unknownSnapshots(input.spec.slug) };
       }
-      const diff: DeliveryPlanDocumentDiff = deliveryPlanDocumentDiff(
-        deliveryPlanCandidateRecordSchema.parse(JSON.parse(from.content_json))
-          .document,
-        deliveryPlanCandidateRecordSchema.parse(JSON.parse(to.content_json))
-          .document,
+      const fromCandidate = deliveryPlanCandidateRecordSchema.parse(
+        JSON.parse(from.content_json),
       );
+      const toCandidate = deliveryPlanCandidateRecordSchema.parse(
+        JSON.parse(to.content_json),
+      );
+      const diff: DeliveryPlanDocumentDiff = {
+        launchChanged:
+          fromCandidate.workflowDefinition.definitionHash !==
+          toCandidate.workflowDefinition.definitionHash,
+        bindingChanged: fromCandidate.bindingHash !== toCandidate.bindingHash,
+      };
       return {
         ok: true,
         value: { from: snapshotView(from), to: snapshotView(to), diff },
@@ -862,6 +1078,16 @@ export function createDeliveryPlanService(
         const document = deliveryPlanDocumentSchema.parse(
           JSON.parse(attempt.content_json),
         );
+        const definition = await workingDefinition(attempt, input.spec);
+        if (definition === null) {
+          return {
+            ok: false,
+            refusal: invalidCandidate(
+              input.spec.slug,
+              "The managed workflow definition is missing.",
+            ),
+          };
+        }
         return {
           ok: true,
           value: previewView({
@@ -869,6 +1095,7 @@ export function createDeliveryPlanService(
             attempt,
             spec: input.spec,
             document,
+            launch: definition,
             candidate: null,
           }),
         };
@@ -898,8 +1125,13 @@ export function createDeliveryPlanService(
             attempt.status === "approved" ||
             attempt.status === "parked",
           approvability: "This is the stored finalized launch envelope.",
-          launch: stored.record.document.launch,
-          binding: stored.record.document.binding,
+          launch: await deps.managedDefinitions.getExact({
+            projectPath: input.spec.projectPath,
+            workflowDefinitionId: stored.record.workflowDefinition.id,
+            revision: stored.record.workflowDefinition.revision,
+            definitionHash: stored.record.workflowDefinition.definitionHash,
+          }),
+          binding: stored.record.binding,
         },
       };
     },
@@ -907,160 +1139,275 @@ export function createDeliveryPlanService(
     async signOff(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
-      const candidate = statedCandidate(input);
-      const stored = candidateIdentity(attempt);
-      if (stored === null || !sameCandidate(candidate, stored))
-        return staleCandidate(input.spec.slug, attempt, candidate, stored);
-      const dial = resolveDial(input.spec.gatePolicy, "execution_start");
-      if (dialRequiresHumanApproval(dial) && input.actor.kind !== "human")
-        return humanSignoff(input.spec.slug);
-      try {
-        const outcome = deps.runInTransaction(() => {
-          const approved = deps.plans.recordTransition({
-            attemptId: attempt.id,
-            transition: { kind: "approve", ...candidate },
-            occurredAt: deps.now(),
-            actor: input.actor,
-          });
-          const admission = admitExecutionStartForAttemptInTransaction(
-            {
-              reviewRepo: deps.reviewRepo,
-              events: deps.events,
-              nextId: deps.nextId,
-            },
-            {
-              spec: input.spec,
-              pinnedRevisionId: approved.pinned_revision_id,
-              attemptId: approved.id,
-              candidate,
-              actor: input.actor,
-              approver: input.approver,
-              occurredAt: deps.now(),
-            },
-          );
-          return { approved, admission };
-        });
-        deps.events.publishAfterCommit(outcome.admission.prepared);
-        if (outcome.admission.notice !== null)
-          deps.policyNotifier?.policyAdmitted(outcome.admission.notice);
-        const view = await project(outcome.approved, input.spec);
-        publishPlanChange(input.spec, view, "signed-off");
-        return mutation(view, null, null, admissionView(outcome.admission));
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
+      if (attempt.workflow_definition_id === null) {
+        return {
+          ok: false,
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The attempt has no managed workflow definition to sign off.",
+          ),
+        };
       }
+      return deps.managedDefinitions.runExclusive(
+        attempt.workflow_definition_id,
+        async () => {
+          const unsettled = await authoringBlocker(
+            input.spec,
+            attempt.pinned_revision_id,
+          );
+          if (unsettled) return { ok: false, refusal: unsettled };
+          const candidate = statedCandidate(input);
+          const stored = candidateIdentity(attempt);
+          if (stored === null || !sameCandidate(candidate, stored))
+            return staleCandidate(input.spec.slug, attempt, candidate, stored);
+          const candidateSnapshot = storedCandidate(attempt, deps.plans);
+          if (candidateSnapshot === null) {
+            return { ok: false, refusal: noCandidate(input.spec.slug) };
+          }
+          const integrity = candidateIntegrityFailure(
+            attempt,
+            candidateSnapshot,
+          );
+          if (integrity !== null) {
+            return {
+              ok: false,
+              refusal: invalidCandidate(input.spec.slug, integrity),
+            };
+          }
+          try {
+            await deps.managedDefinitions.getExact({
+              projectPath: input.spec.projectPath,
+              workflowDefinitionId:
+                candidateSnapshot.record.workflowDefinition.id,
+              revision: candidateSnapshot.record.workflowDefinition.revision,
+              definitionHash:
+                candidateSnapshot.record.workflowDefinition.definitionHash,
+            });
+          } catch (error) {
+            return {
+              ok: false,
+              refusal: invalidCandidate(
+                input.spec.slug,
+                error instanceof Error ? error.message : String(error),
+              ),
+            };
+          }
+          const dial = resolveDial(input.spec.gatePolicy, "execution_start");
+          if (dialRequiresHumanApproval(dial) && input.actor.kind !== "human")
+            return humanSignoff(input.spec.slug);
+          try {
+            const outcome = deps.runInTransaction(() => {
+              const approved = deps.plans.recordTransition({
+                attemptId: attempt.id,
+                transition: { kind: "approve", ...candidate },
+                occurredAt: deps.now(),
+                actor: input.actor,
+              });
+              const admission = admitExecutionStartForAttemptInTransaction(
+                {
+                  reviewRepo: deps.reviewRepo,
+                  events: deps.events,
+                  nextId: deps.nextId,
+                },
+                {
+                  spec: input.spec,
+                  pinnedRevisionId: approved.pinned_revision_id,
+                  attemptId: approved.id,
+                  candidate,
+                  actor: input.actor,
+                  approver: input.approver,
+                  occurredAt: deps.now(),
+                },
+              );
+              return { approved, admission };
+            });
+            deps.events.publishAfterCommit(outcome.admission.prepared);
+            if (outcome.admission.notice !== null)
+              deps.policyNotifier?.policyAdmitted(outcome.admission.notice);
+            const view = await project(outcome.approved, input.spec);
+            publishPlanChange(input.spec, view, "signed-off");
+            return mutation(view, null, null, admissionView(outcome.admission));
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
 
     async park(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
-      const candidate = statedCandidate(input);
-      const stored = candidateIdentity(attempt);
-      if (stored === null || !sameCandidate(candidate, stored))
-        return staleCandidate(input.spec.slug, attempt, candidate, stored);
-      try {
-        const parked = deps.plans.recordTransition({
-          attemptId: attempt.id,
-          transition: { kind: "park", ...candidate, reason: input.reason },
-          occurredAt: deps.now(),
-          actor: input.actor,
-        });
-        const view = await project(parked, input.spec);
-        publishPlanChange(input.spec, view, "parked");
-        return mutation(view, null, null);
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
+      if (attempt.workflow_definition_id === null) {
+        return {
+          ok: false,
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The attempt has no managed workflow definition to park.",
+          ),
+        };
       }
+      return deps.managedDefinitions.runExclusive(
+        attempt.workflow_definition_id,
+        async () => {
+          const candidate = statedCandidate(input);
+          const stored = candidateIdentity(attempt);
+          if (stored === null || !sameCandidate(candidate, stored))
+            return staleCandidate(input.spec.slug, attempt, candidate, stored);
+          try {
+            const parked = deps.plans.recordTransition({
+              attemptId: attempt.id,
+              transition: { kind: "park", ...candidate, reason: input.reason },
+              occurredAt: deps.now(),
+              actor: input.actor,
+            });
+            const view = await project(parked, input.spec);
+            publishPlanChange(input.spec, view, "parked");
+            return mutation(view, null, null);
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
 
     async resolveLaunch(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null)
         return { kind: "refused", refusal: noAttemptRefusal(input.spec.slug) };
-      const candidate = candidateIdentity(attempt);
-      if (candidate === null)
-        return { kind: "refused", refusal: noCandidate(input.spec.slug) };
-      const approval = parseApproval(attempt);
-      if (
-        (attempt.status !== "approved" && attempt.status !== "parked") ||
-        approval === null
-      ) {
-        return {
-          kind: "unapproved",
-          attemptId: attempt.id,
-          candidate,
-          refusal: notApproved(input.spec.slug, attempt),
-        };
-      }
-      if (!sameCandidate(approval, candidate)) {
-        return {
-          kind: "refused",
-          refusal: approvalIntegrityFailure(
-            input.spec.slug,
-            approval,
-            candidate,
-          ),
-        };
-      }
-      const stored = storedCandidate(attempt, deps.plans);
-      if (stored === null)
+      if (attempt.workflow_definition_id === null) {
         return {
           kind: "refused",
           refusal: invalidCandidate(
             input.spec.slug,
-            "The proposed snapshot does not contain a finalized candidate record.",
+            "The attempt has no managed workflow definition to launch.",
           ),
         };
-      const integrity = candidateIntegrityFailure(attempt, stored);
-      if (integrity !== null)
-        return {
-          kind: "refused",
-          refusal: invalidCandidate(input.spec.slug, integrity),
-        };
-      const launch = stored.record.document.launch;
-      const binding = stored.record.document.binding;
-      return {
-        kind: "ready",
-        value: {
-          attemptId: attempt.id,
-          pinnedRevisionId: attempt.pinned_revision_id,
-          launchRevision: attempt.draft_revision,
-          candidate,
-          candidateRecord: stored.record,
-          candidateBytes: stored.candidateBytes,
-          launch,
-          binding,
-          scope: executionScopeFromDeliveryPlanBinding(binding),
-          dispositions: binding.dispositions.map((disposition) => ({
-            ...disposition,
-            disposition: executionDispositionFromDeliveryPlan(
-              disposition.disposition,
-            ),
-          })),
+      }
+      return deps.managedDefinitions.runExclusive(
+        attempt.workflow_definition_id,
+        async () => {
+          const unsettled = await authoringBlocker(
+            input.spec,
+            attempt.pinned_revision_id,
+          );
+          if (unsettled) {
+            return { kind: "refused", refusal: unsettled };
+          }
+          const candidate = candidateIdentity(attempt);
+          if (candidate === null)
+            return { kind: "refused", refusal: noCandidate(input.spec.slug) };
+          const approval = parseApproval(attempt);
+          if (
+            (attempt.status !== "approved" && attempt.status !== "parked") ||
+            approval === null
+          ) {
+            return {
+              kind: "unapproved",
+              attemptId: attempt.id,
+              candidate,
+              refusal: notApproved(input.spec.slug, attempt),
+            };
+          }
+          if (!sameCandidate(approval, candidate)) {
+            return {
+              kind: "refused",
+              refusal: approvalIntegrityFailure(
+                input.spec.slug,
+                approval,
+                candidate,
+              ),
+            };
+          }
+          const stored = storedCandidate(attempt, deps.plans);
+          if (stored === null)
+            return {
+              kind: "refused",
+              refusal: invalidCandidate(
+                input.spec.slug,
+                "The proposed snapshot does not contain a finalized candidate record.",
+              ),
+            };
+          const integrity = candidateIntegrityFailure(attempt, stored);
+          if (integrity !== null)
+            return {
+              kind: "refused",
+              refusal: invalidCandidate(input.spec.slug, integrity),
+            };
+          try {
+            await deps.managedDefinitions.getExact({
+              projectPath: input.spec.projectPath,
+              workflowDefinitionId: stored.record.workflowDefinition.id,
+              revision: stored.record.workflowDefinition.revision,
+              definitionHash: stored.record.workflowDefinition.definitionHash,
+            });
+          } catch (error) {
+            return {
+              kind: "refused",
+              refusal: invalidCandidate(
+                input.spec.slug,
+                error instanceof Error ? error.message : String(error),
+              ),
+            };
+          }
+          const binding = stored.record.binding;
+          return {
+            kind: "ready",
+            value: {
+              attemptId: attempt.id,
+              pinnedRevisionId: attempt.pinned_revision_id,
+              launchRevision: attempt.draft_revision,
+              candidate,
+              candidateRecord: stored.record,
+              candidateBytes: stored.candidateBytes,
+              workflowDefinition: stored.record.workflowDefinition,
+              binding,
+              scope: executionScopeFromDeliveryPlanBinding(binding),
+              dispositions: binding.dispositions.map((disposition) => ({
+                ...disposition,
+                disposition: executionDispositionFromDeliveryPlan(
+                  disposition.disposition,
+                ),
+              })),
+            },
+          };
         },
-      };
+      );
     },
 
     async recordLaunch(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
-      try {
-        const launched = deps.plans.recordTransition({
-          attemptId: attempt.id,
-          transition: {
-            kind: "launch",
-            ...input.candidate,
-            executionId: input.executionId,
-          },
-          occurredAt: deps.now(),
-          actor: input.actor,
-        });
-        const view = await project(launched, input.spec);
-        publishPlanChange(input.spec, view, "launched");
-        return mutation(view, null, null);
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
+      if (attempt.workflow_definition_id === null) {
+        return {
+          ok: false,
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The attempt has no managed workflow definition to launch.",
+          ),
+        };
       }
+      return deps.managedDefinitions.runExclusive(
+        attempt.workflow_definition_id,
+        async () => {
+          try {
+            const launched = deps.plans.recordTransition({
+              attemptId: attempt.id,
+              transition: {
+                kind: "launch",
+                ...input.candidate,
+                executionId: input.executionId,
+              },
+              occurredAt: deps.now(),
+              actor: input.actor,
+            });
+            const view = await project(launched, input.spec);
+            publishPlanChange(input.spec, view, "launched");
+            return mutation(view, null, null);
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
 
     /**
@@ -1089,32 +1436,55 @@ export function createDeliveryPlanService(
           },
         };
       }
-      try {
-        const abandoned = deps.plans.recordTransition({
-          attemptId: attempt.id,
-          transition: { kind: "abandon", reason: input.reason },
-          occurredAt: deps.now(),
-          actor: input.actor,
-        });
-        logger.info("specs.delivery-plan.abandoned", {
-          specId: input.spec.id,
-          attemptId: abandoned.id,
-          executionId: null,
-        });
-        publishPlanChange(
-          input.spec,
-          await project(abandoned, input.spec),
-          "abandoned",
-        );
-        return { ok: true, value: { attemptId: abandoned.id } };
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
+      if (attempt.workflow_definition_id === null) {
+        return {
+          ok: false,
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The managed workflow definition is missing.",
+          ),
+        };
       }
+      return deps.managedDefinitions.runExclusive(
+        attempt.workflow_definition_id,
+        async () => {
+          try {
+            const abandoned = deps.plans.recordTransition({
+              attemptId: attempt.id,
+              transition: { kind: "abandon", reason: input.reason },
+              occurredAt: deps.now(),
+              actor: input.actor,
+            });
+            logger.info("specs.delivery-plan.abandoned", {
+              specId: input.spec.id,
+              attemptId: abandoned.id,
+              executionId: null,
+            });
+            publishPlanChange(
+              input.spec,
+              await project(abandoned, input.spec),
+              "abandoned",
+            );
+            return { ok: true, value: { attemptId: abandoned.id } };
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
 
     async abandonLaunch(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
+      if (attempt.workflow_definition_id === null) {
+        return {
+          ok: false,
+          refusal: invalidCandidate(
+            input.spec.slug,
+            "The launched attempt has no managed workflow definition.",
+          ),
+        };
+      }
       if (
         attempt.status !== "launched" ||
         attempt.launched_execution_id !== input.executionId
@@ -1130,27 +1500,32 @@ export function createDeliveryPlanService(
           },
         };
       }
-      try {
-        const abandoned = deps.plans.recordTransition({
-          attemptId: attempt.id,
-          transition: { kind: "abandon", reason: input.reason },
-          occurredAt: deps.now(),
-          actor: input.actor,
-        });
-        logger.info("specs.delivery-plan.abandoned", {
-          specId: input.spec.id,
-          attemptId: abandoned.id,
-          executionId: input.executionId,
-        });
-        publishPlanChange(
-          input.spec,
-          await project(abandoned, input.spec),
-          "abandoned",
-        );
-        return { ok: true, value: { attemptId: abandoned.id } };
-      } catch (error) {
-        return planFailure(error, input.spec.slug);
-      }
+      return deps.managedDefinitions.runExclusive(
+        attempt.workflow_definition_id,
+        async () => {
+          try {
+            const abandoned = deps.plans.recordTransition({
+              attemptId: attempt.id,
+              transition: { kind: "abandon", reason: input.reason },
+              occurredAt: deps.now(),
+              actor: input.actor,
+            });
+            logger.info("specs.delivery-plan.abandoned", {
+              specId: input.spec.id,
+              attemptId: abandoned.id,
+              executionId: input.executionId,
+            });
+            publishPlanChange(
+              input.spec,
+              await project(abandoned, input.spec),
+              "abandoned",
+            );
+            return { ok: true, value: { attemptId: abandoned.id } };
+          } catch (error) {
+            return planFailure(error, input.spec.slug);
+          }
+        },
+      );
     },
   };
 }
@@ -1381,6 +1756,18 @@ function candidateIntegrityFailure(
     return `Candidate ${record.candidateId} pins ${record.pinnedRevisionId}, not ${attempt.pinned_revision_id}.`;
   if (record.draftRevision !== snapshot.draft_revision)
     return `Candidate ${record.candidateId} names draft revision ${record.draftRevision}, not ${snapshot.draft_revision}.`;
+  if (
+    snapshot.workflow_definition_id !== record.workflowDefinition.id ||
+    snapshot.workflow_definition_revision !==
+      record.workflowDefinition.revision ||
+    snapshot.workflow_definition_hash !==
+      record.workflowDefinition.definitionHash
+  ) {
+    return `Snapshot ${snapshot.id} workflow-definition identity does not match its manifest.`;
+  }
+  if (deliveryPlanBindingHash(record.binding) !== record.bindingHash) {
+    return `Candidate ${record.candidateId} binding hash does not match its binding bytes.`;
+  }
   const actualHash = deliveryPlanCandidateHashFromBytes(stored.candidateBytes);
   return actualHash === identity.candidateHash
     ? null
@@ -1415,6 +1802,7 @@ function previewView(input: {
   attempt: SpecDeliveryPlanAttemptRow;
   spec: Spec;
   document: DeliveryPlanDocument;
+  launch: WorkflowDefinitionDraft;
   candidate: null;
 }): DeliveryPlanPreviewView {
   return {
@@ -1428,21 +1816,21 @@ function previewView(input: {
     candidateId: null,
     approvable: false,
     approvability: "Draft bytes must be proposed before approval.",
-    launch: input.document.launch,
+    launch: input.launch,
     binding: input.document.binding,
   };
 }
 function initialDocumentForOpen(
   spec: Spec,
   pinnedRevision: SpecRevisionSnapshot,
-): DeliveryPlanDocument {
-  return deliveryPlanDocumentSchema.parse({
-    schemaVersion: 2,
+): SeededDeliveryPlanDraft {
+  return {
     launch: {
       name: `${spec.name} delivery launch`,
       description: null,
       definition: {
         schemaVersion: 1,
+        workflowConfig: {},
         charter: {
           mission: `Author the delivery launch for ${spec.slug}.`,
           sourcesOfTruth: [
@@ -1454,17 +1842,19 @@ function initialDocumentForOpen(
               locator: ".cc/graph-workflow-docs/delivery-plan-authoring.md",
               description:
                 "The authored launch envelope is completed before proposal.",
-              accessPolicy: "worktree-relative",
             },
           ],
         },
         executionContexts: [],
         tasks: [],
         edges: [],
+        parameters: [],
+        prerequisites: [],
       },
       layout: {
         workflowId: `delivery-plan-${spec.slug}`,
         contextPositions: {},
+        viewport: { x: 0, y: 0, zoom: 1 },
       },
     },
     binding: {
@@ -1481,7 +1871,7 @@ function initialDocumentForOpen(
       ),
       claims: [],
     },
-  });
+  };
 }
 /**
  * The authored launch comes from the last finalized candidate; the dispositions
@@ -1489,25 +1879,32 @@ function initialDocumentForOpen(
  * run actually delivered leaves scope on the evidence rather than on the
  * previous author's word.
  */
-function seededDocumentForOpen(
+async function seededDocumentForOpen(
   plans: SpecDeliveryPlanRepo,
+  managedDefinitions: ManagedWorkflowDefinitionService,
   spec: Spec,
   pinnedRevision: SpecRevisionSnapshot,
   basis: DeliveryPlanSeedBasis,
-): PlanResult<DeliveryPlanDocument> {
+): Promise<PlanResult<SeededDeliveryPlanDraft>> {
   const source = [...plans.findAttemptsBySpecId(spec.id)]
     .reverse()
     .map((attempt) => storedCandidate(attempt, plans))
     .find((candidate) => candidate !== null);
   if (source === undefined) return noSeedCandidate(spec.slug);
   try {
+    const definition = await managedDefinitions.getExact({
+      projectPath: spec.projectPath,
+      workflowDefinitionId: source.record.workflowDefinition.id,
+      revision: source.record.workflowDefinition.revision,
+      definitionHash: source.record.workflowDefinition.definitionHash,
+    });
     return {
       ok: true,
       value: seedDeliveryPlanFromLast({
         source: {
           candidateId: source.identity.candidateId,
-          launch: source.record.document.launch,
-          binding: source.record.document.binding,
+          launch: definition,
+          binding: source.record.binding,
         },
         dispositions: seedDispositionsFromDelivery({
           basis,

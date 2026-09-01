@@ -98,6 +98,9 @@ describe("R24.12 element position ordering", () => {
       baseElementVersion: null,
       actor: AGENT,
     });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+    ).run(created.draft.id);
     const decision = await authoring.upsertDraftElement({
       specId: created.spec.id,
       revisionId: created.draft.id,

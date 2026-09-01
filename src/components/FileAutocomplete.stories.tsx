@@ -23,7 +23,7 @@ const MOCK_FILES = [
   "src/app/page.tsx",
   "src/app/projects/ProjectCard.tsx",
   "src/app/projects/ProjectCard.stories.tsx",
-  "src/app/projects/[name]/CreateSessionModal.tsx",
+  "src/components/session/CreateSessionModal.tsx",
   "src/app/projects/[name]/OptimisticDialog.tsx",
   "src/features/session/ConversationWorkspace.tsx",
   "src/features/session/conversation/LayoutSwitcher.tsx",

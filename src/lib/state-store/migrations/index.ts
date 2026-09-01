@@ -48,6 +48,7 @@ import { generalizedModelSelection } from "./0035-generalized-model-selection";
 import { addNotepadComments } from "./0036-add-notepad-comments";
 import { addNotepadDeliveryWatermarks } from "./0037-add-notepad-delivery-watermarks";
 import { ticketRelationshipsAndStatusUpdates } from "./0038-ticket-relationships-and-status-updates";
+import { nativeSddManagedWorkflowDefinitions } from "./0039-native-sdd-managed-workflow-definitions";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -113,6 +114,7 @@ export const migrations: readonly StateMigration[] = [
   addNotepadComments,
   addNotepadDeliveryWatermarks,
   ticketRelationshipsAndStatusUpdates,
+  nativeSddManagedWorkflowDefinitions,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

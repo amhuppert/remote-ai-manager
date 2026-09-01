@@ -6,7 +6,6 @@ import {
   SpecRevisionImmutableError,
   StaleStageConflictError,
 } from "@/lib/state-store/specs-repo";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 
 import {
   SpecRevisionInReviewError,
@@ -128,6 +127,18 @@ function createServices() {
       reorderDraftElement: vi.fn(),
       removeDraftElement: vi.fn(),
       openAmendment: vi.fn(),
+      returnToRequirements: vi.fn(async () => ({
+        revision: revision({
+          id: "revision-requirements",
+          number: 3,
+          state: "draft",
+        }),
+        withdrawnRevision: revision({
+          id: "revision-design",
+          number: 2,
+          state: "withdrawn",
+        }),
+      })),
       renameSpec: vi.fn(async () => ({
         spec: { ...spec, slug: "native-sdd-v2" },
         alias: {
@@ -669,6 +680,27 @@ describe("spec write route handlers", () => {
     expect(instruction).not.toContain("Open an amendment draft");
   });
 
+  it("returns an exact Design revision to Requirements for human or agent callers", async () => {
+    const services = createServices();
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.specActionPOST(
+      postRequest({
+        expectedRevisionId: "revision-design",
+        reason: "Requirements need clarification.",
+      }),
+      routeContext("return-to-requirements"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(services.authoring.returnToRequirements).toHaveBeenCalledWith({
+      specId: spec.id,
+      expectedRevisionId: "revision-design",
+      reason: "Requirements need clarification.",
+      actor: { kind: "human" },
+    });
+  });
+
   it.each([
     ["proposed", "revision_in_review"],
     ["approved", "amendment_required"],
@@ -924,9 +956,7 @@ describe("spec write route handlers", () => {
         created_at: "2026-07-18T00:00:00.000Z",
         updated_at: "2026-07-18T00:00:00.000Z",
       },
-      launch: createWorkflowDefinitionRecord({
-        id: "workflow-definition-1",
-      }),
+      workflowDefinition: { id: "workflow-definition-1", revision: 1 },
       revisionNumber: 4,
       deliveryPlan: {
         attemptId: "attempt-approved",
@@ -968,7 +998,7 @@ describe("spec write route handlers", () => {
         },
         sessionName: "feature-session",
       },
-      launch: { id: "workflow-definition-1" },
+      workflowDefinition: { id: "workflow-definition-1", revision: 1 },
       deliveryPlan: {
         attemptId: "attempt-approved",
         candidateId: "candidate-approved",

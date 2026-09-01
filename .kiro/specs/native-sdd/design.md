@@ -1622,3 +1622,36 @@ scratch spec, renumber-induced prose dangle caught by lint, narrow section
 read, refused re-parent, propose with auto-filed Needs You row, ledger on
 withdraw-and-reopen, and a forced notifier failure recovered by
 `request-approval`.
+
+## Amendment — exclusive checkpoints and managed delivery definitions (2026-08-31)
+
+Requirements and Design use exact-stage write admission. An extension opens at
+Requirements, records its own approved checkpoint, and only then advances into
+Design. `return-to-requirements` withdraws the active Design revision and
+creates a Requirements draft from the latest approved Requirements ancestor.
+
+Delivery plan version 3 stores only `{ schemaVersion: 3, binding }` on the
+attempt. The attempt points to a project workflow definition. Graph writes use
+the definition revision CAS; binding writes use `draft_revision`. Proposal
+stores an immutable manifest containing definition id/revision/hash and
+binding/hash, with candidate id equal to definition id. Reopen clones and
+rebinds every server-owned origin, charter, lock, and layout field.
+
+All definition mutations and lifecycle acts coordinate through the shared
+keyed definition lock. Proposal reloads the definition under the lock before
+committing its snapshot. Open and reopen reuse the sole unlinked definition
+left by a process crash; ambiguity is an integrity refusal. A synchronous
+SQLite failure removes only a definition created by that call, after exact
+revision/hash verification.
+
+Migration 0039 is a one-way schema-14 cutover. It materializes version-2 graph
+bytes as managed project definitions before rewriting attempts/snapshots to
+strict version 3, updates approvals/execution bindings/verdict hashes in one
+immediate transaction, verifies references, then stamps the version. Runtime
+code contains no version-2 reader.
+
+Spec Studio composes five surfaces: Overview, Requirements, Design, Delivery,
+and History. Criterion evidence and stage-local lint are inline. Delivery is a
+deep-link bridge to the managed definition and launched execution. Workflow
+Builder groups managed definitions by spec and adds lifecycle actions plus
+Config, Scope, and Changes inspector tabs; it remains the only graph editor.

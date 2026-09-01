@@ -12,8 +12,7 @@ export function deliveryPlanDocumentDiff(
   target: DeliveryPlanDocument,
 ): DeliveryPlanDocumentDiff {
   return deliveryPlanDocumentDiffSchema.parse({
-    launchChanged:
-      stableStringify(base.launch) !== stableStringify(target.launch),
+    launchChanged: false,
     bindingChanged:
       stableStringify(base.binding) !== stableStringify(target.binding),
   });

@@ -18,15 +18,6 @@ describe("readRepoConfig", () => {
 
     expect(result?.validation).toEqual({
       commands: {
-        "pre-merge": {
-          command: {
-            full: "scripts/pre-merge-validate-full.sh",
-            changed: "scripts/pre-merge-validate.sh",
-          },
-          cost: 5,
-          timeoutMs: 3_600_000,
-          pathArgs: "forbid",
-        },
         format: {
           command: {
             full: "scripts/validate/format-full.sh",
@@ -59,14 +50,6 @@ describe("readRepoConfig", () => {
           description: "Architecture seam ratchet",
           pathArgs: "forbid",
         },
-        build: {
-          command: { full: "scripts/validate/build.sh" },
-          cost: 4,
-          timeoutMs: 3_600_000,
-          description:
-            "Production build (Next.js + CLI bundle); run at checkpoints and before merge readiness, not per iteration",
-          pathArgs: "forbid",
-        },
         test: {
           command: {
             full: "scripts/validate/test-full-suite.sh",
@@ -77,14 +60,6 @@ describe("readRepoConfig", () => {
           description:
             "Run unit tests in a worker pool clamped to the machine's memory budget",
           pathArgs: "paths",
-        },
-        "cursor-acceptance": {
-          command: { full: "scripts/validate/cursor-acceptance.sh" },
-          cost: 5,
-          timeoutMs: 3_600_000,
-          description:
-            "Authenticated live Cursor acceptance matrix on the pinned baseline; reports blocked (exit 78) without CURSOR_API_KEY and is never part of a merge gate",
-          pathArgs: "forbid",
         },
       },
       preMerge: ["format", "lint", "typecheck", "seams", "test"],

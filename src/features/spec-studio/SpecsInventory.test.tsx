@@ -288,7 +288,7 @@ describe("SpecsInventory", () => {
       within(menu).getByRole("menuitem", { name: "Copy spec reference" }),
     ).toBeInTheDocument();
     expect(
-      within(menu).getByRole("menuitem", { name: "Gate policy" }),
-    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=gate");
+      within(menu).queryByRole("menuitem", { name: "Gate policy" }),
+    ).not.toBeInTheDocument();
   });
 });

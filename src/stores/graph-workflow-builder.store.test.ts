@@ -16,6 +16,7 @@ function resetStore() {
     refusedEdits: [],
     pendingOutputSchemaText: {},
     ephemeralLanes: [],
+    highlightedContextIds: [],
   });
 }
 
@@ -47,6 +48,24 @@ describe("graph workflow builder store", () => {
     expect(state.dirty).toBe(false);
     expect(state.draftDefinition?.executionContexts).toHaveLength(3);
     expect(state.draftLayout?.workflowId).toBe("workflow-1");
+  });
+
+  it("keeps criterion claimant highlights ephemeral and clears them with the draft", () => {
+    const store = loadDraft();
+
+    store.setHighlightedContextIds(["context-plan", "context-implement"]);
+    expect(
+      _useGraphWorkflowBuilderStore.getState().highlightedContextIds,
+    ).toEqual(["context-plan", "context-implement"]);
+    expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(false);
+
+    store.loadPersistedDraft({
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    });
+    expect(
+      _useGraphWorkflowBuilderStore.getState().highlightedContextIds,
+    ).toEqual([]);
   });
 
   it("marks the draft dirty when definition or layout changes", () => {

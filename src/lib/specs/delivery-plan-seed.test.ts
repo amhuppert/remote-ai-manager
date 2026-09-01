@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { maximalPlanDocument } from "@/lib/state-store/spec-delivery-plan-test-fixture";
+import {
+  maximalPlanDocument,
+  maximalWorkflowLaunch,
+} from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { seedDeliveryPlanFromLast } from "./delivery-plan-seed";
 
 describe("seedDeliveryPlanFromLast", () => {
   it("copies the approved direct authored launch wholesale while stripping server fields and retaining only still-selected claims", () => {
     const prior = maximalPlanDocument();
-    const approvedLaunch = structuredClone(prior.launch);
+    const approvedLaunch = structuredClone(maximalWorkflowLaunch());
     approvedLaunch.name = "Approved launch with guarded topology and loops";
     approvedLaunch.definition.origin = {
       sourceUri: "spec-plan://spec-1/attempts/attempt-1/candidates/candidate-1",
@@ -96,7 +99,6 @@ describe("seedDeliveryPlanFromLast", () => {
       ],
     });
 
-    expect(seeded.schemaVersion).toBe(2);
     expect(seeded.launch.name).toBe(approvedLaunch.name);
     expect(seeded.launch.definition.edges).toEqual(
       approvedLaunch.definition.edges,

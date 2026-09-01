@@ -184,6 +184,6 @@ describe("PostLaunchCapturePaths", () => {
       within(
         screen.getByRole("region", { name: "Non-blocking discovery" }),
       ).getByRole("link", { name: "Open delivery plan" }),
-    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=plan");
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=delivery");
   });
 });

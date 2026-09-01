@@ -31,7 +31,7 @@ import { HOTKEY_REGISTRY, formatHotkeyDisplay } from "@/lib/shared/hotkeys";
 // needed after the user picks "New session", so it loads on demand rather than
 // riding in every page's Topbar chunk.
 const CreateSessionModal = lazy(
-  () => import("@/features/project-detail/components/CreateSessionModal"),
+  () => import("@/components/session/CreateSessionModal"),
 );
 
 const logger = createClientLogger("topbar-project-switcher");

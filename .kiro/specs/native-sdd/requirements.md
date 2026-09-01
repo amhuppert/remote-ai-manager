@@ -408,3 +408,20 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 8. The spec system shall keep abandoning the active execution reachable from the agent surface with its required reason.
 9. Any surface requesting a policy change shall present the hard confirmation whenever the server requires one for that change and shall assert a confirmed change only from that confirmation's explicit accept action; whether the change loosens gates shall govern the warning content only, never whether the confirmation appears.
 10. The spec system shall record on every confirmed policy change the acting human, the previous policy, the resulting policy, and the pinned authoring stage of any open draft, so a later reviewer can determine which dials governed which transition.
+
+### Requirement 26: Exclusive checkpoints and builder-owned delivery
+
+**Objective:** As the operator, I want one obvious authoring sequence and one graph workflow surface, so that requirements remain independent of implementation choices and delivery is not represented twice.
+
+#### Acceptance Criteria
+
+1. Requirements shall admit only intent, requirement, and criterion mutations; Design shall admit only design narrative and decision mutations; a batch mixing stages shall be refused atomically.
+2. Extending an approved spec shall begin with a Requirements draft for the extension, then open a separate Design draft only after the Requirements checkpoint settles.
+3. Returning from Design to Requirements shall withdraw the Design attempt and base the new Requirements draft on the latest approved Requirements checkpoint, excluding unapproved Design edits.
+4. A delivery-plan attempt shall link an approved Design revision to a real project workflow definition; graph configuration shall not be stored in the active plan document.
+5. A proposal shall freeze the exact definition id, definition revision, definition hash, binding hash, and candidate hash. Reopening shall clone the frozen definition and preserve the prior candidate.
+6. Workflow Builder shall own managed-definition configuration, review, batch reaffirmation, sign-off, reopening, abandonment, session selection, and launch. Frozen candidates shall be explicitly read-only.
+7. Spec Studio shall expose exactly Overview, Requirements, Design, Delivery, and History in one navigation row. Delivery shall be a compact deep-link bridge plus the next-plan delta and shall not embed a graph or duplicate execution controls.
+8. Each criterion shall render its evidence state and records inline. Lint shall render only on the authoring stage that can repair it. No separate Integrity, Lint, Traceability, Tasks, Verify, plan-builder, or execution destination shall remain.
+9. Review diffs shall compare proposals with the nearest approved ancestor, not an unapproved intermediate revision.
+10. Every plan open shall seed from the current delivery delta without a caller-selectable legacy seed mode. Application runtime shall accept only the binding-only version-3 contract; legacy parsing shall exist only in the one-way migration.

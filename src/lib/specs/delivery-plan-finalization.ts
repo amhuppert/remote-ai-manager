@@ -13,6 +13,7 @@ import {
 export interface DeliveryPlanLaunchFinalizationInput {
   readonly specId: string;
   readonly specSlug: string;
+  readonly pinnedRevisionId: string;
   readonly attemptId: string;
   readonly candidateId: string;
   readonly launch: WorkflowDefinitionMutation;
@@ -36,10 +37,11 @@ export function candidateClaimsDocumentPath(candidateId: string): string {
 
 export function deliveryPlanCandidateSourceUri(input: {
   readonly specId: string;
+  readonly pinnedRevisionId: string;
   readonly attemptId: string;
   readonly candidateId: string;
 }): string {
-  return `spec-plan://${input.specId}/attempts/${input.attemptId}/candidates/${input.candidateId}`;
+  return `spec-plan://${input.specId}/revisions/${input.pinnedRevisionId}/attempts/${input.attemptId}/candidates/${input.candidateId}`;
 }
 
 export function finalizeDeliveryPlanLaunch(

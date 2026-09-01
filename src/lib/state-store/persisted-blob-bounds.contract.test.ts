@@ -414,14 +414,6 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: the complete canonical delivery-plan envelope is limited to DELIVERY_PLAN_ENVELOPE_MAX_BYTES before persistence.",
       "binding.claims[].criterionElementIds":
         "bounded: the complete canonical delivery-plan envelope is limited to DELIVERY_PLAN_ENVELOPE_MAX_BYTES before persistence.",
-      "launch.**":
-        "bounded: one agent-authored graph launch admitted through the shared graph-admission service and stored immutably with its delivery-plan attempt; it is replaced wholesale only while drafting, never appended to.",
-      "launch.definition.executionContexts[].outputSchema.**":
-        "tracked: opaque author-declared JSON Schema document inside the one immutable admitted launch, validated at graph admission against the supported subset.",
-      "launch.definition.edges[].when.schema.**":
-        "tracked: opaque author-declared edge guard inside the one immutable admitted launch, validated at graph admission.",
-      "launch.definition.loopGroups[].until.schema.**":
-        "tracked: opaque author-declared loop predicate inside the one immutable admitted launch, validated at graph admission.",
     },
   },
   {
@@ -522,32 +514,6 @@ describe("persisted blob bounds gate", () => {
         unanswered.map((field) => field.path),
         "every blob-shaped D4 field is either statically capped or declared in this registry",
       ).toEqual([]);
-    });
-  });
-
-  /**
-   * The generic gate above only proves nothing UNBOUNDED escaped. A statically
-   * capped collection self-discharges, which makes it indistinguishable from a
-   * collection that was never registered — or that quietly stopped being one.
-   * Authored placement is the newest collection in this blob and the one whose
-   * size an author controls directly, so its cap is pinned by path here.
-   */
-  describe("spec_delivery_plan_attempts graph-owned placement collections", () => {
-    const census = describeCollections(deliveryPlanDocumentSchema);
-
-    it("caps the graph-owned path set an authored placement may declare", () => {
-      const ownedPaths = census.filter(
-        (node) =>
-          node.path ===
-          "launch.definition.executionContexts[].placement.ownedPaths",
-      );
-      expect(
-        ownedPaths.map((node) => node.kind),
-        `graph-owned placement paths are absent from the census: ${census
-          .map((node) => node.path)
-          .join(", ")}`,
-      ).toEqual(["array"]);
-      expect(ownedPaths.every((node) => node.bounded)).toBe(true);
     });
   });
 

@@ -84,7 +84,13 @@ export type GraphWorkflowLaunchSource =
       tier: "project" | "global";
     }
   | { kind: "one_off"; planName: string }
-  | { kind: "spec_delivery"; specSlug: string; candidateId: string };
+  | {
+      kind: "spec_delivery";
+      specSlug: string;
+      candidateId: string;
+      definitionId: string;
+      definitionRevision: number;
+    };
 
 /** The definition-tier provenance fields one launch source resolves to. */
 export interface GraphWorkflowExecutionProvenance {
@@ -128,7 +134,9 @@ export function buildExecutionProvenance(
         specSlug: source.specSlug,
         candidateId: source.candidateId,
       },
-      ...buildSpecDeliverySeedCompatibilityFields(executionId),
+      seedDefinitionId: source.definitionId,
+      seedDefinitionRevision: source.definitionRevision,
+      launchedTier: "project",
     };
   }
   return {
@@ -145,7 +153,7 @@ export function buildExecutionProvenance(
  * which on a definition-less row means nothing.
  */
 export function describeLaunchSource(
-  source: GraphWorkflowLaunchSource,
+  source: GraphWorkflowLaunchSource | GraphWorkflowExecutionOrigin,
 ): Record<string, string | number> {
   if (source.kind === "template") {
     return {
@@ -156,11 +164,18 @@ export function describeLaunchSource(
     };
   }
   if (source.kind === "spec_delivery") {
-    return {
+    const attribution = {
       origin: "spec_delivery",
       specSlug: source.specSlug,
       candidateId: source.candidateId,
     };
+    return "definitionId" in source
+      ? {
+          ...attribution,
+          definitionId: source.definitionId,
+          definitionRevision: source.definitionRevision,
+        }
+      : attribution;
   }
   return { origin: "one_off", planName: source.planName };
 }

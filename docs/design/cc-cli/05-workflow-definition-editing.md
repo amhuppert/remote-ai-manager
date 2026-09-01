@@ -95,7 +95,7 @@ config overrides: workflow=- · contexts: plan(contextValidator)
 ```
 
 Prose fields show **sizes, not bodies** — the agent sees what exists and fetches only what
-it intends to change. The outline always includes `revision` (needed for `baseRevision`
+it intends to change. The outline always includes `revision` (needed for `expectedRevision`
 below).
 
 ## Edit API
@@ -108,7 +108,7 @@ cctl workflow edit <id> --file ops.json [--dry-run] [--tier project|global]
 
 ```jsonc
 {
-  "baseRevision": 7,
+  "expectedRevision": 7,
   "operations": [
     { "type": "update-task", "taskId": "impl-tokens", "instructions": "…new instructions…" },
     { "type": "add-context", "id": "docs", "title": "Document", "acceptanceCriteria": "…" },
@@ -129,8 +129,8 @@ Semantics:
 - **Validated** — after the last op, the full mutated definition runs
   `validateAuthoredDefinition` (identical gate to `create`/`replace`), then persists via
   `storage.update()` (which re-asserts). Invariants hold by construction.
-- **Optimistic concurrency** — `baseRevision` is required; if the stored revision differs,
-  the server rejects with 409 / code `revision_conflict` (payload includes
+- **Optimistic concurrency** — `expectedRevision` is required; if the stored revision differs,
+  the server rejects with 409 / code `stale_workflow_definition` (payload includes
   `currentRevision`; hint points at `cctl workflow get <id>`). Every successful edit (and
   `create`) returns the new revision, so edit chains never need a re-read.
 - **`--dry-run`** — full apply + validate, report the outcome, persist nothing. For
@@ -213,7 +213,7 @@ does not affect it — start a fresh execution to pick it up`. This is a hint, n
 ## Server surface
 
 New endpoint: `PATCH /api/projects/[name]/workflows/[workflowId]`
-(body `{ baseRevision, dryRun?, operations[] }`) in
+(body `{ expectedRevision, dryRun?, operations[] }`) in
 `src/lib/workflows/definition-route-handlers.ts`, wired through the existing
 `src/app/api/projects/[name]/workflows/[workflowId]/route.ts` shell. Global tier (if
 in scope): same handler shape on `/api/workflow-templates/[id]`.
@@ -294,7 +294,7 @@ Typical definition: 15–30 KB ≈ 4–8k tokens.
 
 1. **`get` default → outline**, `--full` opt-in. Breaking change to today's full dump is
    accepted; the token-safe path becomes the default.
-2. **`baseRevision` required** — optimistic concurrency enforced; mismatch → `revision_conflict`.
+2. **`expectedRevision` required** — optimistic concurrency enforced; mismatch → `stale_workflow_definition`.
 3. **Project + global tiers** via `--tier global` (same storage choke point).
 4. **Saved definitions only in v1** — the runtime-edits endpoint stays UI-only; a sibling
    CLI command reusing the aligned task-op vocabulary is a future seam.

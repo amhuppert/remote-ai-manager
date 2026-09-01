@@ -65,6 +65,7 @@ function resetStore() {
     refusedEdits: [],
     pendingOutputSchemaText: {},
     ephemeralLanes: [],
+    highlightedContextIds: [],
   });
 }
 
@@ -155,6 +156,36 @@ describe("WorkflowBuilderEditor", () => {
     );
 
     expect(screen.getByText("Network error")).toBeInTheDocument();
+  });
+
+  it("keeps a read-only managed definition inspectable without mutation controls", async () => {
+    resetStore();
+    const record = createWorkflowDefinitionRecord();
+    const { container } = renderWithQuery(
+      <WorkflowBuilderEditor
+        record={record}
+        {...defaultHeaderProps}
+        readOnly
+      />,
+    );
+
+    expect(screen.getAllByText("Test Workflow").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /Add Context/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Save Draft/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Delete/i })).toBeNull();
+    expect(
+      container.querySelector('[data-testid="context-node"]'),
+    ).not.toBeNull();
+
+    fireEvent.click(
+      container.querySelector('.react-flow__node[data-id="context-plan"]')!,
+    );
+    await waitFor(() =>
+      expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
+        "context-plan",
+      ),
+    );
   });
 
   it("blocks save and lists every error when the definition has empty required fields", async () => {

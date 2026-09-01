@@ -73,8 +73,8 @@ function realHandlers() {
     listGlobal: () => storage.list({ kind: "global" }),
     createGlobal: (draft) => storage.create({ kind: "global" }, draft),
     getGlobal: (workflowId) => storage.get({ kind: "global" }, workflowId),
-    updateGlobal: (workflowId, draft) =>
-      storage.update({ kind: "global" }, workflowId, draft),
+    updateGlobal: (workflowId, expectedRevision, draft) =>
+      storage.update({ kind: "global" }, workflowId, expectedRevision, draft),
     deleteGlobal: (workflowId) =>
       storage.delete({ kind: "global" }, workflowId),
   });
@@ -82,6 +82,7 @@ function realHandlers() {
 
 function mutationBody(name: string, overrides = {}) {
   return {
+    expectedRevision: 1,
     name,
     description: `Description for ${name}`,
     definition: createWorkflowDefinition(overrides),
@@ -278,6 +279,7 @@ describe("template library route handlers — global-tier CRUD", () => {
     const handlers = realHandlers();
     const definition = createRootIndependentWarningDefinition();
     const plan = {
+      expectedRevision: 1,
       name: "Global warning plan",
       description: "Root-independent global admission",
       definition,
@@ -309,7 +311,7 @@ describe("template library route handlers — global-tier CRUD", () => {
         `/api/workflow-templates/${createdBody.item.id}/edit`,
         "PATCH",
         {
-          baseRevision: replacedBody.item.revision,
+          expectedRevision: replacedBody.item.revision,
           operations: [
             { type: "update-workflow", name: "Edited global warning plan" },
           ],
@@ -420,6 +422,7 @@ describe("template library route handlers — global-tier CRUD", () => {
       const [firstContext, ...restContexts] = definition.executionContexts;
       if (!firstContext) throw new Error("fixture missing context");
       const body = {
+        expectedRevision: 1,
         name: "Bad Output Schema",
         description: "bad",
         definition: {

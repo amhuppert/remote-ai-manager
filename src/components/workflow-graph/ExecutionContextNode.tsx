@@ -517,6 +517,9 @@ export function ContextNodeCard({
       aria-label={contextNodeAccessibleName(data)}
       data-testid="context-node"
       data-status={status.key}
+      {...(data.scopeHighlighted
+        ? { "data-scope-highlighted": "true" as const }
+        : {})}
       {...(isSkipped ? { "data-skipped": "true" } : {})}
       className={cn(
         NODE_BASE,
@@ -527,6 +530,8 @@ export function ContextNodeCard({
         // Pulse belongs to live work only, and the reduced-motion rule in
         // workflow-graph.css disables it for readers who ask.
         status.live && !selected && "node-live-pulse",
+        data.scopeHighlighted &&
+          "border-cyan shadow-[0_0_0_2px_var(--cyan-glow-strong),0_0_22px_var(--cyan-glow)]",
         isSkipped && "border-dashed opacity-[0.45] grayscale-[0.6]",
       )}
     >

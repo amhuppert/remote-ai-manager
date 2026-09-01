@@ -19,6 +19,8 @@ import {
 } from "@/lib/workflow-graph/authored-launch-admission";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE } from "@/lib/workflow-graph/assignment-references";
+import { StaleWorkflowDefinitionError } from "@/lib/workflow-graph/storage";
+import { staleWorkflowDefinitionResponse } from "@/lib/workflow-graph/stale-workflow-definition";
 
 const logger = createLogger("workflow-graph");
 
@@ -58,14 +60,17 @@ export interface DefinitionEditRequestParams {
   admitLaunch?(
     launch: WorkflowDefinitionDraft,
   ): Promise<AuthoredWorkflowLaunchAdmissionResult>;
-  persist(draft: WorkflowDefinitionDraft): Promise<unknown>;
+  persist(
+    draft: WorkflowDefinitionDraft,
+    expectedRevision: number,
+  ): Promise<unknown>;
 }
 
 /**
  * The PATCH (targeted edit) request pipeline shared by the project- and
  * global-tier definition routes (docs/design/cc-cli/05). A thin shell around the
  * pure `applyDefinitionEdits`: parse the ops → load the record (404) → optimistic
- * concurrency check (409 `revision_conflict`) → apply + validate (400 with
+ * concurrency check (409 `stale_workflow_definition`) → apply + validate (400 with
  * locator-first issues) → dry-run report or persist. Every invariant is enforced
  * by construction: a batch either persists a definition indistinguishable from
  * one accepted via create, or nothing changes.
@@ -92,19 +97,16 @@ export async function runDefinitionEditRequest(
     return notFound(params.notFoundError);
   }
 
-  if (record.revision !== parsed.data.baseRevision) {
+  if (record.revision !== parsed.data.expectedRevision) {
     logger.info("workflow-graph.definition-edit.revision-conflict", {
       workflowId: record.id,
-      baseRevision: parsed.data.baseRevision,
+      expectedRevision: parsed.data.expectedRevision,
       currentRevision: record.revision,
     });
-    return NextResponse.json(
-      {
-        error: `definition changed since revision ${parsed.data.baseRevision} (current revision ${record.revision}) — re-read with 'cctl workflow get ${record.id}'`,
-        code: "revision_conflict",
-        currentRevision: record.revision,
-      },
-      { status: 409 },
+    return staleWorkflowDefinitionResponse(
+      record.id,
+      parsed.data.expectedRevision,
+      record.revision,
     );
   }
 
@@ -196,10 +198,20 @@ export async function runDefinitionEditRequest(
 
   let persisted: unknown;
   try {
-    persisted = await params.persist({
-      ...admittedLaunch,
-    });
+    persisted = await params.persist(
+      {
+        ...admittedLaunch,
+      },
+      parsed.data.expectedRevision,
+    );
   } catch (error) {
+    if (error instanceof StaleWorkflowDefinitionError) {
+      return staleWorkflowDefinitionResponse(
+        error.workflowId,
+        error.expectedRevision,
+        error.currentRevision,
+      );
+    }
     const refusal = assignmentReferenceRefusal(error);
     if (!refusal) throw error;
     logger.warn("workflow-graph.definition-edit.rejected", {

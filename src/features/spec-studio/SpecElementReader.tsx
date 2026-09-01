@@ -22,6 +22,7 @@ export interface SpecElementReaderProps {
   kind: SpecElementReaderKind;
   /** Route segment the draft-removal action is addressed through. */
   projectName: string;
+  criterionEvidence?(criterion: SnapshotElement): ReactNode;
 }
 
 type Snapshot = NonNullable<SpecDetailView["currentRevision"]>;
@@ -78,6 +79,7 @@ export function SpecElementReader({
   detail,
   kind,
   projectName,
+  criterionEvidence,
 }: SpecElementReaderProps): React.JSX.Element {
   const readerId = useId();
   const copy = KIND_COPY[kind];
@@ -142,6 +144,7 @@ export function SpecElementReader({
           requirements={elements}
           readerId={readerId}
           removal={removal}
+          criterionEvidence={criterionEvidence}
         />
       ) : kind === "decisions" ? (
         <DecisionDocument
@@ -479,12 +482,14 @@ function RequirementDocument({
   requirements,
   readerId,
   removal,
+  criterionEvidence,
 }: {
   detail: SpecDetailView;
   snapshot: Snapshot;
   requirements: SnapshotElement[];
   readerId: string;
   removal: DraftRemoval;
+  criterionEvidence?: (criterion: SnapshotElement) => ReactNode;
 }): React.JSX.Element {
   const criteriaByRequirement = new Map<string, SnapshotElement[]>();
   for (const entry of orderedElements(snapshot.elements)) {
@@ -563,6 +568,7 @@ function RequirementDocument({
               snapshot={snapshot}
               headingId={`${headingId}-criteria`}
               removal={removal}
+              criterionEvidence={criterionEvidence}
             />
           </article>
         );
@@ -576,11 +582,13 @@ function CriteriaList({
   snapshot,
   headingId,
   removal,
+  criterionEvidence,
 }: {
   criteria: SnapshotElement[];
   snapshot: Snapshot;
   headingId: string;
   removal: DraftRemoval;
+  criterionEvidence?: (criterion: SnapshotElement) => ReactNode;
 }): React.JSX.Element {
   return (
     <section
@@ -641,6 +649,7 @@ function CriteriaList({
                       />
                     </div>
                   )}
+                  {criterionEvidence?.(criterion)}
                   <RemoveElementAction
                     removal={removal}
                     kindLabel="criterion"

@@ -605,6 +605,9 @@ export interface SpecsRepo {
   proposeRevision(input: ProposeRevisionInput): Promise<SpecRevision>;
   approveRevision(input: ApproveRevisionInput): Promise<SpecRevision>;
   withdrawRevision(input: WithdrawRevisionInput): Promise<SpecRevision>;
+  withdrawAuthoringRevision(
+    input: WithdrawRevisionInput,
+  ): Promise<SpecRevision>;
   recordExternalDelivery(
     input: RecordExternalDeliveryInput,
   ): Promise<SpecRevision>;
@@ -665,6 +668,7 @@ export interface SpecsRepoTransaction {
   proposeRevision(input: ProposeRevisionInput): SpecRevision;
   approveRevision(input: ApproveRevisionInput): SpecRevision;
   withdrawRevision(input: WithdrawRevisionInput): SpecRevision;
+  withdrawAuthoringRevision(input: WithdrawRevisionInput): SpecRevision;
   recordExternalDelivery(input: RecordExternalDeliveryInput): SpecRevision;
   supersedeRevision(input: SupersedeRevisionInput): SupersedeRevisionResult;
   findSupersession(revisionId: string): SpecRevisionSupersession | null;
@@ -999,6 +1003,12 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     `UPDATE spec_revisions
      SET state = 'withdrawn'
      WHERE id = @id AND state = 'proposed' AND content_hash IS NOT NULL`,
+  );
+  const withdrawAuthoringRevisionStmt = db.prepare(
+    `UPDATE spec_revisions
+     SET state = 'withdrawn',
+         content_hash = COALESCE(content_hash, @content_hash)
+     WHERE id = @id AND state IN ('draft', 'proposed')`,
   );
   const recordExternalDeliveryStmt = db.prepare(
     `UPDATE spec_revisions
@@ -2228,6 +2238,41 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     },
   );
 
+  const withdrawAuthoringRevisionTx = db.transaction(
+    (input: z.output<typeof withdrawRevisionInputSchema>): SpecRevision => {
+      const current = requireRevision(input.revisionId);
+      if (current.state !== "draft" && current.state !== "proposed") {
+        return validationFailure("spec_revision", input.revisionId, [
+          {
+            code: "custom",
+            path: ["state"],
+            message: "only draft or proposed revisions can be withdrawn",
+          },
+        ]);
+      }
+      const snapshot = readSnapshot(input.revisionId);
+      if (snapshot === null) return notFound("spec_revision", input.revisionId);
+      const contentHash = computeSpecRevisionContentHash(
+        snapshot.revision.authoringStage,
+        snapshot.elements,
+      );
+      const result = withdrawAuthoringRevisionStmt.run({
+        id: input.revisionId,
+        content_hash: contentHash,
+      });
+      if (result.changes !== 1) {
+        throw new PersistenceError({
+          kind: "constraint",
+          constraint:
+            "spec_revisions.authoring_withdrawal_requires_open_revision",
+          entity: "spec_revision",
+          identifier: input.revisionId,
+        });
+      }
+      return requireRevision(input.revisionId);
+    },
+  );
+
   /**
    * Withdraw a proposal AND record why, atomically. The two writes are one
    * transaction on purpose: #50's manual repair produced a `withdrawn` row
@@ -2675,6 +2720,11 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     withdrawRevision(input) {
       return withdrawRevisionTx(withdrawRevisionInputSchema.parse(input));
     },
+    withdrawAuthoringRevision(input) {
+      return withdrawAuthoringRevisionTx(
+        withdrawRevisionInputSchema.parse(input),
+      );
+    },
     recordExternalDelivery(input) {
       return recordExternalDeliveryTx(
         recordExternalDeliveryInputSchema.parse(input),
@@ -2986,6 +3036,20 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         () =>
           writeQueue.withWriteQueue("specs.withdrawRevision", async () =>
             withdrawRevisionTx.immediate(validated),
+          ),
+      );
+    },
+
+    async withdrawAuthoringRevision(input) {
+      const validated = withdrawRevisionInputSchema.parse(input);
+      return timed(
+        logger,
+        "state-store.specs.withdraw_authoring_revision",
+        { revisionId: validated.revisionId },
+        () =>
+          writeQueue.withWriteQueue(
+            "specs.withdrawAuthoringRevision",
+            async () => withdrawAuthoringRevisionTx.immediate(validated),
           ),
       );
     },

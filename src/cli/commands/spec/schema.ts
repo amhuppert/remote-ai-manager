@@ -47,7 +47,6 @@ import {
 } from "@/lib/specs/transitions";
 import type { DeliveryPlanDocument } from "@/lib/specs/delivery-plan";
 import { deliveryPlanEditRequestSchema } from "@/lib/specs/delivery-plan-views";
-import { graphWorkflowLaunchExample } from "@/lib/workflow-graph/launch-presentation";
 import {
   NATIVE_SDD_GUIDANCE,
   nativeSddGuidanceSchema,
@@ -397,10 +396,8 @@ const REMOVAL_BATCH_EXAMPLE = {
  * disposition and ownership law, so an author can copy it and grow it rather
  * than assemble the shape from the JSON Schema.
  */
-const planEditExampleLaunch = graphWorkflowLaunchExample();
 const PLAN_EDIT_EXAMPLE: DeliveryPlanDocument = {
-  schemaVersion: 2,
-  launch: planEditExampleLaunch,
+  schemaVersion: 3,
   binding: {
     dispositions: [
       {
@@ -717,13 +714,13 @@ function planEditDocument(): SchemaDocument {
     enums: collectEnums(schema, ""),
     example: {
       expectedDraftRevision: 1,
-      document: PLAN_EDIT_EXAMPLE,
+      binding: PLAN_EDIT_EXAMPLE.binding,
     },
     notes: [
       "`expectedDraftRevision` is the plan's compare-and-swap token, the way `baseElementVersion` is an element's: read it from `cctl spec plan get <slug> --json` and send back the revision you edited.",
       "Every criterion of the pinned revision carries exactly one disposition. Each selected criterion needs at least one claim naming a stable authored graph source; dynamic contexts and execution outcomes stay graph-owned.",
-      "`launch` is the complete ordinary graph launch and is accepted without a native-SDD field allowlist. Graph admission owns topology, loops, guards, expansion, output schemas, invariants, runtime configuration, and layout.",
-      "Proposal adds the pinned-spec and claims sources as server-owned finalization data. Keep externally hosted sources `external-readonly`; the charter requires explicit human permission before they are read.",
+      "Graph configuration is edited on the linked managed definition with `cctl workflow get/edit <definitionId>` or Workflow Builder; plan edit accepts only the spec-owned binding.",
+      "Proposal freezes the current binding together with the managed definition's exact id, revision, and hash.",
     ],
   };
 }

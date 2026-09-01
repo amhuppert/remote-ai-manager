@@ -253,7 +253,9 @@ export function admitDraftWrite(
   resolvedDials: ResolvedAuthoringDials,
 ): TransitionDecision {
   const elementStage = authoringStageForElement(elementKind, sectionRole);
-  if (authoringStageIndex(elementStage) <= authoringStageIndex(stage)) {
+  const elementStagePosition = authoringStageIndex(elementStage);
+  const currentStagePosition = authoringStageIndex(stage);
+  if (elementStagePosition === currentStagePosition) {
     return allowed();
   }
 
@@ -266,6 +268,14 @@ export function admitDraftWrite(
       ],
       "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl spec plan edit <slug> --file <plan.json>`.",
       { rationale: PLAN_IN_EVERGREEN_RATIONALE },
+    );
+  }
+  if (elementStagePosition < currentStagePosition) {
+    return refused(
+      "stage_blocked",
+      [`A ${label} cannot be authored during the ${stage} stage.`],
+      `Return to the ${elementStage} stage before authoring ${label} content.`,
+      { rationale: LATER_STAGE_RATIONALE },
     );
   }
   const dial = resolvedDials[stage];
@@ -297,12 +307,12 @@ export function openDraftAuthoringStage(
     return base.authoringStage === "plan" ? "design" : base.authoringStage;
   }
   if (base?.state === "approved") {
-    return nextAuthoringStage(base.authoringStage) ?? "design";
+    if (base.authoringStage === "requirements") return "design";
+    if (base.authoringStage === "design") return "requirements";
+    return "design";
   }
 
-  return authoringApprovalsCollapseIntoSignOff(context.policy)
-    ? "design"
-    : "requirements";
+  return "requirements";
 }
 
 export function advanceAuthoringStage(
@@ -553,7 +563,7 @@ export function propose(context: ProposeContext): TransitionDecision {
 
   // What blocks propose is read from the shared projection rather than
   // re-filtered here, so the refusal, `cctl spec lint`, the status tier, and
-  // Studio's lint tab cannot disagree about which findings are blocking.
+  // Studio's inline lint summary cannot disagree about which findings are blocking.
   const health = draftHealth(lint(context.draft, context.records));
   if (health.blocking > 0) {
     return refused(

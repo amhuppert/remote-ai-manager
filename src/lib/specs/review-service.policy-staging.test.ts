@@ -120,6 +120,23 @@ async function authoredSpec(slug: string, gatePolicy: SpecGatePolicy) {
   return created;
 }
 
+async function authoredDesignSpec(slug: string, gatePolicy: SpecGatePolicy) {
+  const created = await authoredSpec(slug, gatePolicy);
+  await specs.proposeRevision({
+    revisionId: created.draft.id,
+    proposedAt: "2026-07-25T08:58:00.000Z",
+  });
+  await specs.approveRevision({
+    revisionId: created.draft.id,
+    approvedAt: "2026-07-25T08:58:01.000Z",
+  });
+  const design = await authoring.openAmendment({
+    specId: created.spec.id,
+    actor: AGENT,
+  });
+  return { ...created, draft: design.revision };
+}
+
 describe("R25 policy-change staging semantics", () => {
   it("pins the open draft's stage and reports the sequence it still owes under the new dials", async () => {
     const created = await authoredSpec("pin-forward", {
@@ -161,7 +178,9 @@ describe("R25 policy-change staging semantics", () => {
   });
 
   it("never moves a design-stage draft backward when the policy tightens", async () => {
-    const created = await authoredSpec("pin-backward", { preset: "fast-path" });
+    const created = await authoredDesignSpec("pin-backward", {
+      preset: "fast-path",
+    });
     expect(created.draft.authoringStage).toBe("design");
 
     const result = await reviewing.changePolicy({
@@ -225,7 +244,7 @@ describe("R25 policy-change staging semantics", () => {
     expect(result.value.authoringSequence).toBeNull();
     const revisions = await specs.listRevisions(created.spec.id);
     expect(revisions.map((revision) => revision.authoringStage)).toEqual([
-      "design",
+      "requirements",
     ]);
     expect(revisions[0]?.state).toBe("proposed");
   });

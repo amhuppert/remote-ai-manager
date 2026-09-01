@@ -182,7 +182,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "overwrite an existing definition from a plan file",
     description:
-      "Overwrite an existing definition (<id>) with a plan.json — submit the COMPLETE graph, not a diff (the previous definition is fully overwritten). For a targeted change (one task, add a context, clear an override) prefer `cctl workflow edit` — far cheaper. Re-validate first. No hint — a revision is not a step in the author-then-start chain. Any `warning: <path>: <message>` lines the same checks `validate` runs would have printed appear above the replaced line; they never change the exit code. Refused only in one case: this exact revision carries a changes-requested review nobody acknowledged — read the findings, then either revise the plan (which changes its hash and clears the gate on its own) or re-run with --acknowledge-review <hash>.",
+      "Overwrite an existing definition (<id>) with a plan.json — submit the COMPLETE graph plus the expectedRevision shown by `cctl workflow get`, not a diff (the previous definition is fully overwritten). For a targeted change (one task, add a context, clear an override) prefer `cctl workflow edit` — far cheaper. Re-validate first. A stale expectedRevision is refused without overwriting the winning definition. No hint — a revision is not a step in the author-then-start chain. Any `warning: <path>: <message>` lines the same checks `validate` runs would have printed appear above the replaced line; they never change the exit code. Refused only in one case: this exact revision carries a changes-requested review nobody acknowledged — read the findings, then either revise the plan (which changes its hash and clears the gate on its own) or re-run with --acknowledge-review <hash>.",
     usage: [
       "cctl workflow replace <id> --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]",
     ],
@@ -191,7 +191,8 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         name: "file",
         kind: "value",
         valuePlaceholder: "<plan.json>",
-        description: "the complete replacement graph (not a diff)",
+        description:
+          "the complete replacement graph with expectedRevision from workflow get (not a diff)",
       },
       {
         name: "acknowledge-review",
@@ -205,7 +206,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl workflow replace wf-1 --file .cc/temp/plan.json",
         explanation:
-          "fully overwrites wf-1 — `cctl workflow get wf-1 --full` first, edit the whole graph, re-validate, then replace",
+          "fully overwrites wf-1 — `cctl workflow get wf-1 --full` first, retain its expectedRevision, edit the whole graph, re-validate, then replace",
       },
       {
         invocation:
@@ -417,7 +418,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "apply targeted, atomic edits to a saved definition",
     description:
-      'Apply an ordered batch of domain operations to a saved definition, addressed by STABLE IDS (never array indices) — cost proportional to the change, not the whole plan. --file is a JSON object { baseRevision, operations[] }; baseRevision is the revision `cctl workflow get` shows (a stale value exits 1 revision_conflict — re-read and retry). Operations apply SEQUENTIALLY (later ops see earlier ones — add a context, then its tasks, then its edges in one batch) and ATOMICALLY (any per-op or post-batch validation error rejects the whole batch; nothing persists). Ops (verbs mirror the runtime task-edit vocabulary): update-workflow, update-charter, update-workflow-config, add/update/remove-context, add/update/remove/move-task, reorder-tasks, add/update/remove-edge, add/update/remove-parameter, add/remove-prerequisite. An edge may carry an activation guard: `when: { "schema": { … } }` (a supported-subset JSON Schema the source context\'s captured output must match) or `when: { "else": true }` (taken when no conditional sibling from that source activated) — the source must declare an outputSchema, the guard must be compatible with it, and one source admits at most one else edge. update-edge is addressed by edgeId (when: null clears the guard); remove-edge takes edgeId, or an endpoint pair when it matches exactly one edge. Task order is never written by hand — place with position {"at":"start|end"} | {"after":"<id>"} | {"before":"<id>"}. A config/override field set to null CLEARS it (restores cascade inheritance). Malformed ops exit 2; a rejected batch exits 1 with locator-first issues (operations[i]: <code> — <detail>).',
+      'Apply an ordered batch of domain operations to a saved definition, addressed by STABLE IDS (never array indices) — cost proportional to the change, not the whole plan. --file is a JSON object { expectedRevision, operations[] }; expectedRevision is the revision `cctl workflow get` shows (a stale value exits 1 stale_workflow_definition — re-read and retry). Operations apply SEQUENTIALLY (later ops see earlier ones — add a context, then its tasks, then its edges in one batch) and ATOMICALLY (any per-op or post-batch validation error rejects the whole batch; nothing persists). Ops (verbs mirror the runtime task-edit vocabulary): update-workflow, update-charter, update-workflow-config, add/update/remove-context, add/update/remove/move-task, reorder-tasks, add/update/remove-edge, add/update/remove-parameter, add/remove-prerequisite. An edge may carry an activation guard: `when: { "schema": { … } }` (a supported-subset JSON Schema the source context\'s captured output must match) or `when: { "else": true }` (taken when no conditional sibling from that source activated) — the source must declare an outputSchema, the guard must be compatible with it, and one source admits at most one else edge. update-edge is addressed by edgeId (when: null clears the guard); remove-edge takes edgeId, or an endpoint pair when it matches exactly one edge. Task order is never written by hand — place with position {"at":"start|end"} | {"after":"<id>"} | {"before":"<id>"}. A config/override field set to null CLEARS it (restores cascade inheritance). Malformed ops exit 2; a rejected batch exits 1 with locator-first issues (operations[i]: <code> — <detail>).',
     usage: [
       "cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]",
     ],
@@ -427,7 +428,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<ops.json>",
         description:
-          'JSON object { "baseRevision": N, "operations": [ … ] } (or - to read from stdin)',
+          'JSON object { "expectedRevision": N, "operations": [ … ] } (or - to read from stdin)',
       },
       {
         name: "dry-run",
@@ -446,7 +447,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl workflow edit wf-1 --file .cc/temp/ops.json",
         explanation:
-          'ops.json: { "baseRevision": 7, "operations": [ { "type": "update-task", "taskId": "impl-tokens", "instructions": "…" } ] } — take baseRevision from `cctl workflow get`',
+          'ops.json: { "expectedRevision": 7, "operations": [ { "type": "update-task", "taskId": "impl-tokens", "instructions": "…" } ] } — take expectedRevision from `cctl workflow get`',
       },
       {
         invocation:
@@ -458,7 +459,8 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     related: [
       {
         command: "workflow get",
-        oneLiner: "read the outline for the ids + baseRevision to edit against",
+        oneLiner:
+          "read the outline for the ids + expectedRevision to edit against",
       },
       {
         command: "workflow live edit",

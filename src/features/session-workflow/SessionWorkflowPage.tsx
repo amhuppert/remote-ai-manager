@@ -117,6 +117,23 @@ function SessionWorkflowPageContent() {
             ? "Current"
             : "History"
         }`;
+  const selectedDefinition =
+    selectedExecutionId === executionQuery.data?.id
+      ? {
+          id: executionQuery.data.seedDefinitionId,
+          revision: executionQuery.data.seedDefinitionRevision,
+        }
+      : (() => {
+          const selected = history.find(
+            (item) => item.executionId === selectedExecutionId,
+          );
+          return selected
+            ? {
+                id: selected.definitionId,
+                revision: selected.definitionRevision,
+              }
+            : null;
+        })();
 
   const renderExecutionsSheet = useCallback(
     (close: () => void) => (
@@ -235,6 +252,17 @@ function SessionWorkflowPageContent() {
               />
             )}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {selectedDefinition !== null && (
+                <div className="flex min-h-[36px] shrink-0 items-center justify-end border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-base px-md font-mono text-[0.68rem] text-text-tertiary">
+                  <Link
+                    href={`/projects/${encodeURIComponent(projectName)}/workflows?definition=${encodeURIComponent(selectedDefinition.id)}`}
+                    className="font-semibold text-cyan no-underline hover:underline"
+                  >
+                    Source definition
+                  </Link>
+                  <span className="ml-xs">r{selectedDefinition.revision}</span>
+                </div>
+              )}
               <ConnectedGraphWorkflowPanel
                 projectName={projectName}
                 sessionName={sessionName}

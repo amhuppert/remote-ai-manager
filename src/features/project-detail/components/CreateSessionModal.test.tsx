@@ -11,7 +11,7 @@ import {
 import { screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
-import CreateSessionModal from "./CreateSessionModal";
+import CreateSessionModal from "@/components/session/CreateSessionModal";
 
 // Shared mocks
 vi.mock(
@@ -138,6 +138,26 @@ describe("CreateSessionModal", () => {
       },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("returns an in-place created session to an embedding flow", () => {
+    const onCreated = vi.fn();
+    renderWithQuery(
+      <CreateSessionModal {...defaultProps} onCreated={onCreated} />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("e.g. Copy To Clipboard"), {
+      target: { value: "Delivery Session" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Session" }));
+
+    const session = {
+      sessionName: "delivery-session",
+      conversations: [{ id: "conv-1" }],
+    };
+    act(() => mutateMock.mock.calls[0]?.[1]?.onSuccess?.(session));
+
+    expect(onCreated).toHaveBeenCalledWith(session);
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 
   // R7.1: the session-kickoff path shows the picker on its Standard Agent

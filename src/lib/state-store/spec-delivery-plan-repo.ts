@@ -13,16 +13,21 @@ import {
   type FinalizedDeliveryPlanCandidateIdentity,
   type FinalizedDeliveryPlanPrelaunch,
 } from "@/lib/specs/delivery-plan";
-import { deliveryPlanCandidateHash } from "@/lib/specs/delivery-plan-hash";
+import {
+  deliveryPlanBindingHash,
+  deliveryPlanCandidateHash,
+} from "@/lib/specs/delivery-plan-hash";
 import {
   specDeliveryDiscoveryRowSchema,
   specDeliveryPlanAttemptRowSchema,
+  specDeliveryPlanCandidateApprovalRowSchema,
   specDeliveryPlanCommentRowSchema,
   specDeliveryPlanSnapshotRowSchema,
   type ActorProvenance,
   type DeliveryPlanAttemptStatus,
   type SpecDeliveryDiscoveryRow,
   type SpecDeliveryPlanAttemptRow,
+  type SpecDeliveryPlanCandidateApprovalRow,
   type SpecDeliveryPlanCommentRow,
   type SpecDeliveryPlanSnapshotRow,
   type SpecEventRow,
@@ -118,6 +123,14 @@ export interface ReaffirmDeliveryPlanDraftInput {
   readonly actor: ActorProvenance;
 }
 
+export interface ReaffirmDeliveryPlanDraftBatchInput {
+  readonly attemptId: string;
+  readonly expectedDraftRevision: number;
+  readonly criterionElementIds: readonly string[];
+  readonly reaffirmedAt: string;
+  readonly actor: ActorProvenance;
+}
+
 export class DeliveryPlanReaffirmationStateError extends Error {
   readonly code = "plan_status_conflict" as const;
 
@@ -176,6 +189,7 @@ export interface ReopenDeliveryPlanInput {
   readonly reopenedAt: string;
   readonly actor: ActorProvenance;
   readonly reason: string;
+  readonly workflowDefinitionId: string;
 }
 
 export interface ReopenDeliveryPlanResult {
@@ -270,6 +284,9 @@ export interface SpecDeliveryPlanRepo {
   reaffirmDraft(
     input: ReaffirmDeliveryPlanDraftInput,
   ): SpecDeliveryPlanAttemptRow;
+  reaffirmDraftBatch(
+    input: ReaffirmDeliveryPlanDraftBatchInput,
+  ): SpecDeliveryPlanAttemptRow;
   propose(input: ProposeDeliveryPlanInput): ProposeDeliveryPlanResult;
   reopen(input: ReopenDeliveryPlanInput): ReopenDeliveryPlanResult;
   recordTransition(input: {
@@ -280,6 +297,14 @@ export interface SpecDeliveryPlanRepo {
   }): SpecDeliveryPlanAttemptRow;
   findSnapshotById(snapshotId: string): SpecDeliveryPlanSnapshotRow | null;
   findSnapshotsByAttemptId(attemptId: string): SpecDeliveryPlanSnapshotRow[];
+  findCandidateApprovalBySnapshotId(
+    snapshotId: string,
+  ): SpecDeliveryPlanCandidateApprovalRow | null;
+  findLatestApprovedSnapshotBySpecId(input: {
+    specId: string;
+    beforeProposedAt?: string;
+    excludingSnapshotId?: string;
+  }): SpecDeliveryPlanSnapshotRow | null;
   addComment(input: AddDeliveryPlanCommentInput): SpecDeliveryPlanCommentRow;
   findCommentsByAttemptId(attemptId: string): SpecDeliveryPlanCommentRow[];
   recordDiscovery(
@@ -312,11 +337,13 @@ export function createSpecDeliveryPlanRepo(
     `INSERT INTO spec_delivery_plan_attempts (
        id, spec_id, pinned_revision_id, delta_basis_execution_id, status,
        draft_revision, content_json, proposed_snapshot_id, approval_json,
-       prelaunch_json, launched_execution_id, created_at, updated_at
+       prelaunch_json, launched_execution_id, workflow_definition_id,
+       created_at, updated_at
      ) VALUES (
        @id, @spec_id, @pinned_revision_id, @delta_basis_execution_id, @status,
        @draft_revision, @content_json, @proposed_snapshot_id, @approval_json,
-       @prelaunch_json, @launched_execution_id, @created_at, @updated_at
+       @prelaunch_json, @launched_execution_id, @workflow_definition_id,
+       @created_at, @updated_at
      )`,
   );
   const findAttemptStmt = db.prepare(
@@ -336,16 +363,21 @@ export function createSpecDeliveryPlanRepo(
        approval_json = @approval_json,
        prelaunch_json = @prelaunch_json,
        launched_execution_id = @launched_execution_id,
+       workflow_definition_id = @workflow_definition_id,
        updated_at = @updated_at
      WHERE id = @id`,
   );
   const insertSnapshotStmt = db.prepare(
     `INSERT INTO spec_delivery_plan_snapshots (
        id, attempt_id, candidate_id, candidate_hash, draft_revision,
-       content_json, pinned_revision_id, proposed_at, proposed_by_json
+       content_json, pinned_revision_id, proposed_at, proposed_by_json,
+       workflow_definition_id, workflow_definition_revision,
+       workflow_definition_hash, binding_hash
      ) VALUES (
        @id, @attempt_id, @candidate_id, @candidate_hash, @draft_revision,
-       @content_json, @pinned_revision_id, @proposed_at, @proposed_by_json
+       @content_json, @pinned_revision_id, @proposed_at, @proposed_by_json,
+       @workflow_definition_id, @workflow_definition_revision,
+       @workflow_definition_hash, @binding_hash
      )`,
   );
   const findSnapshotStmt = db.prepare(
@@ -355,6 +387,31 @@ export function createSpecDeliveryPlanRepo(
     `SELECT * FROM spec_delivery_plan_snapshots
      WHERE attempt_id = ?
      ORDER BY draft_revision ASC, id ASC`,
+  );
+  const insertCandidateApprovalStmt = db.prepare(
+    `INSERT OR IGNORE INTO spec_delivery_plan_candidate_approvals (
+       snapshot_id, candidate_id, candidate_hash, approved_at, approved_by_json
+     ) VALUES (
+       @snapshot_id, @candidate_id, @candidate_hash, @approved_at,
+       @approved_by_json
+     )`,
+  );
+  const findCandidateApprovalStmt = db.prepare(
+    `SELECT * FROM spec_delivery_plan_candidate_approvals
+     WHERE snapshot_id = ? LIMIT 1`,
+  );
+  const findLatestApprovedSnapshotStmt = db.prepare(
+    `SELECT snapshots.*
+     FROM spec_delivery_plan_snapshots snapshots
+     JOIN spec_delivery_plan_attempts attempts
+       ON attempts.id = snapshots.attempt_id
+     JOIN spec_delivery_plan_candidate_approvals approvals
+       ON approvals.snapshot_id = snapshots.id
+     WHERE attempts.spec_id = @spec_id
+       AND (@before_proposed_at IS NULL OR snapshots.proposed_at < @before_proposed_at)
+       AND (@excluding_snapshot_id IS NULL OR snapshots.id <> @excluding_snapshot_id)
+     ORDER BY snapshots.proposed_at DESC, snapshots.id DESC
+     LIMIT 1`,
   );
   const insertCommentStmt = db.prepare(
     `INSERT INTO spec_delivery_plan_comments (
@@ -409,7 +466,7 @@ export function createSpecDeliveryPlanRepo(
         attempt.status === "launched" && attempt.launched_execution_id !== null
           ? POST_LAUNCH_PATHS(attempt.launched_execution_id)
           : attempt.status === "abandoned"
-            ? "Open a fresh attempt with `cctl spec plan open --seed-from last`."
+            ? "Open a fresh attempt with `cctl spec plan open`."
             : "Return it to draft with `cctl spec plan reopen` before editing it.",
       );
     }
@@ -497,28 +554,33 @@ export function createSpecDeliveryPlanRepo(
     return next;
   });
 
-  const reaffirmDraftTx = db.transaction(
-    (input: ReaffirmDeliveryPlanDraftInput): SpecDeliveryPlanAttemptRow => {
+  const reaffirmDraftBatchTx = db.transaction(
+    (
+      input: ReaffirmDeliveryPlanDraftBatchInput,
+    ): SpecDeliveryPlanAttemptRow => {
       const attempt = requireAttempt(input.attemptId);
       requireDraft(attempt, input.expectedDraftRevision);
       const document = deliveryPlanDocumentSchema.parse(
         JSON.parse(attempt.content_json),
       );
-      const disposition = document.binding.dispositions.find(
-        (entry) => entry.criterionElementId === input.criterionElementId,
-      );
-      if (disposition?.disposition !== "pending_reaffirmation") {
-        throw new DeliveryPlanReaffirmationStateError(
-          attempt.id,
-          input.criterionElementId,
+      for (const criterionElementId of input.criterionElementIds) {
+        const disposition = document.binding.dispositions.find(
+          (entry) => entry.criterionElementId === criterionElementId,
         );
+        if (disposition?.disposition !== "pending_reaffirmation") {
+          throw new DeliveryPlanReaffirmationStateError(
+            attempt.id,
+            criterionElementId,
+          );
+        }
       }
+      const targets = new Set(input.criterionElementIds);
       const nextDocument = deliveryPlanDocumentSchema.parse({
         ...document,
         binding: {
           ...document.binding,
           dispositions: document.binding.dispositions.map((entry) =>
-            entry.criterionElementId === input.criterionElementId
+            targets.has(entry.criterionElementId)
               ? { ...entry, disposition: "reaffirmed" as const }
               : entry,
           ),
@@ -537,7 +599,7 @@ export function createSpecDeliveryPlanRepo(
         input.actor,
         "spec-delivery-plan-reaffirmed",
         {
-          criterionElementId: input.criterionElementId,
+          criterionElementIds: [...input.criterionElementIds],
           draftRevision: next.draft_revision,
         },
       );
@@ -548,7 +610,9 @@ export function createSpecDeliveryPlanRepo(
   const proposeTx = db.transaction((input: ProposeDeliveryPlanInput) => {
     const attempt = requireAttempt(input.attemptId);
     requireDraft(attempt, input.expectedDraftRevision);
-    deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json));
+    const document = deliveryPlanDocumentSchema.parse(
+      JSON.parse(attempt.content_json),
+    );
     const record = input.candidate.record;
     const candidate = finalizedDeliveryPlanCandidateIdentitySchema.parse({
       candidateId: record.candidateId,
@@ -563,9 +627,21 @@ export function createSpecDeliveryPlanRepo(
             ? "pinnedRevisionId does not match the attempt"
             : record.draftRevision !== attempt.draft_revision
               ? "draftRevision does not match the attempt"
-              : deliveryPlanCandidateHash(record) !== candidate.candidateHash
-                ? "candidateHash does not match the canonical candidate bytes"
-                : null;
+              : record.candidateId !== record.workflowDefinition.id
+                ? "candidateId does not match the workflow definition"
+                : record.workflowDefinition.id !==
+                    attempt.workflow_definition_id
+                  ? "workflow definition does not match the attempt"
+                  : record.bindingHash !==
+                      deliveryPlanBindingHash(record.binding)
+                    ? "bindingHash does not match the canonical binding bytes"
+                    : stableStringify(record.binding) !==
+                        stableStringify(document.binding)
+                      ? "binding does not match the editable draft"
+                      : deliveryPlanCandidateHash(record) !==
+                          candidate.candidateHash
+                        ? "candidateHash does not match the canonical candidate bytes"
+                        : null;
     if (mismatchedField !== null) {
       throw new FinalizedDeliveryPlanCandidateMismatchError(
         attempt.id,
@@ -582,6 +658,10 @@ export function createSpecDeliveryPlanRepo(
       pinned_revision_id: attempt.pinned_revision_id,
       proposed_at: input.proposedAt,
       proposed_by_json: stableStringify(input.actor),
+      workflow_definition_id: record.workflowDefinition.id,
+      workflow_definition_revision: record.workflowDefinition.revision,
+      workflow_definition_hash: record.workflowDefinition.definitionHash,
+      binding_hash: record.bindingHash,
     });
     insertSnapshotStmt.run(snapshot);
     const next: SpecDeliveryPlanAttemptRow = {
@@ -630,7 +710,7 @@ export function createSpecDeliveryPlanRepo(
       throw new DeliveryPlanStatusConflictError(
         attempt.id,
         attempt.status,
-        "Open a fresh attempt with `cctl spec plan open --seed-from last`.",
+        "Open a fresh attempt with `cctl spec plan open`.",
       );
     }
     const approval =
@@ -648,6 +728,7 @@ export function createSpecDeliveryPlanRepo(
       draft_revision: attempt.draft_revision + 1,
       proposed_snapshot_id: null,
       approval_json: null,
+      workflow_definition_id: input.workflowDefinitionId,
       updated_at: input.reopenedAt,
     };
     updateAttemptStmt.run(next);
@@ -733,6 +814,18 @@ export function createSpecDeliveryPlanRepo(
       }
       const next = applyTransition(attempt, input);
       updateAttemptStmt.run(next);
+      if (
+        input.transition.kind === "approve" &&
+        next.proposed_snapshot_id !== null
+      ) {
+        insertCandidateApprovalStmt.run({
+          snapshot_id: next.proposed_snapshot_id,
+          candidate_id: input.transition.candidateId,
+          candidate_hash: input.transition.candidateHash,
+          approved_at: input.occurredAt,
+          approved_by_json: stableStringify(input.actor),
+        });
+      }
       appendPlanEvent(
         next,
         input.occurredAt,
@@ -796,11 +889,17 @@ export function createSpecDeliveryPlanRepo(
       );
     },
     reaffirmDraft(input) {
+      return this.reaffirmDraftBatch({
+        ...input,
+        criterionElementIds: [input.criterionElementId],
+      });
+    },
+    reaffirmDraftBatch(input) {
       return timed(
-        "reaffirm_draft",
+        "reaffirm_draft_batch",
         "spec_delivery_plan_attempt",
         input.attemptId,
-        () => reaffirmDraftTx(input),
+        () => reaffirmDraftBatchTx(input),
       );
     },
     propose(input) {
@@ -841,6 +940,27 @@ export function createSpecDeliveryPlanRepo(
         "spec_delivery_plan_snapshot",
         `attempt:${attemptId}`,
         () => findSnapshotsByAttemptStmt.all(attemptId),
+      );
+    },
+    findCandidateApprovalBySnapshotId(snapshotId) {
+      return readOne(
+        specDeliveryPlanCandidateApprovalRowSchema,
+        "spec_delivery_plan_candidate_approval",
+        snapshotId,
+        () => findCandidateApprovalStmt.get(snapshotId),
+      );
+    },
+    findLatestApprovedSnapshotBySpecId(input) {
+      return readOne(
+        specDeliveryPlanSnapshotRowSchema,
+        "spec_delivery_plan_snapshot",
+        `approved:${input.specId}`,
+        () =>
+          findLatestApprovedSnapshotStmt.get({
+            spec_id: input.specId,
+            before_proposed_at: input.beforeProposedAt ?? null,
+            excluding_snapshot_id: input.excludingSnapshotId ?? null,
+          }),
       );
     },
     addComment(input) {
@@ -964,7 +1084,7 @@ function applyTransition(
         attempt.id,
         attempt.status,
         attempt.status === "launched" || attempt.status === "abandoned"
-          ? "Open a fresh attempt with `cctl spec plan open --seed-from last`."
+          ? "Open a fresh attempt with `cctl spec plan open`."
           : "Only an approved candidate launches. Sign the proposal off with `cctl spec plan sign-off` first.",
       );
     }
@@ -979,7 +1099,7 @@ function applyTransition(
     throw new DeliveryPlanStatusConflictError(
       attempt.id,
       attempt.status,
-      "Open a fresh attempt with `cctl spec plan open --seed-from last`.",
+      "Open a fresh attempt with `cctl spec plan open`.",
     );
   }
   return { ...attempt, status: "abandoned", updated_at: input.occurredAt };

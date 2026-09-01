@@ -516,7 +516,7 @@ function definitionResourcePath(
 /**
  * `workflow edit` failure mapping (docs/design/cc-cli/05 §Error contract): a 404
  * (unknown id) is a caller mistake → exit 2; a SEMANTIC rejection (server code
- * `invalid_edit`) and a `revision_conflict` are "server said no about valid-shaped
+ * `invalid_edit`) and a `stale_workflow_definition` are "server said no about valid-shaped
  * ops" → exit 1; a malformed-shape 400 (no code) is a usage error → exit 2. All
  * carry the structured issues/code onto the JSON envelope.
  */

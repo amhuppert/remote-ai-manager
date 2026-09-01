@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import { ChevronLeftIcon } from "@/components/icons";
@@ -18,7 +20,10 @@ import {
   useScopedWorkflowDefinitionQuery,
   useScopedWorkflowDefinitionsQuery,
 } from "@/lib/workflows/queries";
-import type { WorkflowDefinitionScope } from "@/lib/workflows/definition-scope";
+import {
+  workflowDefinitionScopeApi,
+  type WorkflowDefinitionScope,
+} from "@/lib/workflows/definition-scope";
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import { useGlobalDefaults } from "@/hooks/use-global-defaults";
@@ -37,6 +42,10 @@ import type { BuilderMobilePanel } from "./WorkflowBuilderEditor";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 import type { ConfigScope } from "@/components/workflow-config-panel/types";
+import { deliveryPlanMutationViewSchema } from "@/lib/specs/delivery-plan-views";
+import { useSpecActionMutation } from "@/lib/specs/mutations";
+import ManagedDeliveryWorkflowHeader from "./native-sdd/ManagedDeliveryWorkflowHeader";
+import ManagedDeliveryLaunchControl from "./native-sdd/ManagedDeliveryLaunchControl";
 
 interface ConnectedWorkflowBuilderPageProps {
   scope: WorkflowDefinitionScope;
@@ -97,6 +106,8 @@ export default function ConnectedWorkflowBuilderPage({
   initialWorkflowId = null,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
   const isGlobal = scope.kind === "global";
+  const queryClient = useQueryClient();
+  const scopeApi = workflowDefinitionScopeApi(scope);
   const projectName = scope.kind === "project" ? scope.projectName : null;
   const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
     useWorkflowMobilePanel<BuilderMobilePanel>("graph");
@@ -106,6 +117,10 @@ export default function ConnectedWorkflowBuilderPage({
     initialWorkflowId,
   );
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [managedError, setManagedError] = useState<string | null>(null);
+  const [pendingManagedAction, setPendingManagedAction] = useState<
+    string | null
+  >(null);
   const [configScope, setConfigScope] = useState<ConfigScope>("workflow");
   const selectedContextId = _useGraphWorkflowBuilderStore(
     (s) => s.selectedContextId,
@@ -151,6 +166,56 @@ export default function ConnectedWorkflowBuilderPage({
     selectedWorkflowId ?? "",
   );
   const deleteMutation = useScopedDeleteWorkflowDefinitionMutation(scope);
+  const managedSlug = selectedRecord.data?.item.management?.specSlug ?? "";
+  const managedProjectName = projectName ?? "";
+  const proposePlan = useSpecActionMutation<Record<string, never>, unknown>(
+    managedProjectName,
+    managedSlug,
+    "plan-propose",
+    deliveryPlanMutationViewSchema,
+  );
+  const reopenPlan = useSpecActionMutation<{ reason: string }, unknown>(
+    managedProjectName,
+    managedSlug,
+    "plan-reopen",
+    deliveryPlanMutationViewSchema,
+  );
+  const abandonPlan = useSpecActionMutation<
+    { reason: string },
+    { attemptId: string }
+  >(
+    managedProjectName,
+    managedSlug,
+    "plan-abandon",
+    z.object({ attemptId: z.string().min(1) }).strict(),
+  );
+  const signOffPlan = useSpecActionMutation<
+    { candidateId: string; candidateHash: string },
+    unknown
+  >(
+    managedProjectName,
+    managedSlug,
+    "plan-sign-off",
+    deliveryPlanMutationViewSchema,
+  );
+  const reaffirmPlan = useSpecActionMutation<
+    { criterionElementIds: readonly string[]; expectedDraftRevision: number },
+    unknown
+  >(
+    managedProjectName,
+    managedSlug,
+    "plan-reaffirm-batch",
+    deliveryPlanMutationViewSchema,
+  );
+  const commentPlan = useSpecActionMutation<
+    { contextId: string; body: string },
+    unknown
+  >(
+    managedProjectName,
+    managedSlug,
+    "plan-comment",
+    deliveryPlanMutationViewSchema,
+  );
 
   const selectedSummary = useMemo(() => {
     return (
@@ -210,6 +275,7 @@ export default function ConnectedWorkflowBuilderPage({
 
     try {
       await updateMutation.mutateAsync({
+        expectedRevision: item.revision,
         name: item.name,
         description: item.description,
         definition: draft.definition,
@@ -228,6 +294,7 @@ export default function ConnectedWorkflowBuilderPage({
 
     try {
       await updateMutation.mutateAsync({
+        expectedRevision: item.revision,
         name,
         description: item.description,
         definition: item.definition,
@@ -246,6 +313,35 @@ export default function ConnectedWorkflowBuilderPage({
     await deleteMutation.mutateAsync(selectedWorkflowId);
     setSaveError(null);
     setRequestedWorkflowId(null);
+  }
+
+  async function refreshManagedDefinition(): Promise<void> {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: scopeApi.listKey }),
+      selectedWorkflowId
+        ? queryClient.invalidateQueries({
+            queryKey: scopeApi.detailKey(selectedWorkflowId),
+          })
+        : Promise.resolve(),
+    ]);
+  }
+
+  async function runManagedAction(
+    action: string,
+    run: () => Promise<unknown>,
+  ): Promise<void> {
+    setPendingManagedAction(action);
+    setManagedError(null);
+    try {
+      await run();
+      await refreshManagedDefinition();
+    } catch (error) {
+      setManagedError(
+        error instanceof Error ? error.message : "The plan action failed.",
+      );
+    } finally {
+      setPendingManagedAction(null);
+    }
   }
 
   return (
@@ -333,6 +429,84 @@ export default function ConnectedWorkflowBuilderPage({
                 onAutoSwitchPanel={autoSwitchPanel}
                 projectName={projectName}
                 libraryProjectName={projectName}
+                management={selectedRecord.data.item.management}
+                readOnly={
+                  selectedRecord.data.item.management !== undefined &&
+                  !selectedRecord.data.item.management.editable
+                }
+                managedHeader={
+                  selectedRecord.data.item.management ? (
+                    <ManagedDeliveryWorkflowHeader
+                      management={selectedRecord.data.item.management}
+                      definitionRevision={selectedRecord.data.item.revision}
+                      pendingAction={pendingManagedAction}
+                      error={managedError}
+                      onPropose={() =>
+                        void runManagedAction("propose", () =>
+                          proposePlan.mutateAsync({}),
+                        )
+                      }
+                      onSignOff={() => {
+                        const management = selectedRecord.data.item.management;
+                        if (
+                          !management?.currentCandidate ||
+                          !management.currentCandidateHash
+                        ) {
+                          setManagedError(
+                            "The frozen candidate identity is unavailable. Re-read this definition before signing off.",
+                          );
+                          return;
+                        }
+                        void runManagedAction("sign-off", () =>
+                          signOffPlan.mutateAsync({
+                            candidateId:
+                              management.currentCandidate!.candidateId,
+                            candidateHash: management.currentCandidateHash!,
+                          }),
+                        );
+                      }}
+                      onReopen={() =>
+                        void runManagedAction("reopen", () =>
+                          reopenPlan.mutateAsync({
+                            reason:
+                              "Reopened from Workflow Builder to revise the delivery candidate.",
+                          }),
+                        )
+                      }
+                      onAbandon={() =>
+                        void runManagedAction("abandon", () =>
+                          abandonPlan.mutateAsync({
+                            reason: "Abandoned from Workflow Builder.",
+                          }),
+                        )
+                      }
+                      launchControl={
+                        projectName ? (
+                          <ManagedDeliveryLaunchControl
+                            projectName={projectName}
+                            management={selectedRecord.data.item.management}
+                          />
+                        ) : null
+                      }
+                    />
+                  ) : null
+                }
+                onReaffirm={(criterionElementIds, expectedDraftRevision) =>
+                  void runManagedAction("reaffirm", () =>
+                    reaffirmPlan.mutateAsync({
+                      criterionElementIds,
+                      expectedDraftRevision,
+                    }),
+                  )
+                }
+                reaffirming={pendingManagedAction === "reaffirm"}
+                managedError={managedError}
+                onManagedComment={(input) =>
+                  void runManagedAction("comment", () =>
+                    commentPlan.mutateAsync(input),
+                  )
+                }
+                commenting={pendingManagedAction === "comment"}
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">

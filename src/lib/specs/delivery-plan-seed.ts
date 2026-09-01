@@ -3,9 +3,7 @@ import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition
 import {
   NATIVE_SDD_CLAIMS_SOURCE_ID,
   NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
-  deliveryPlanDocumentSchema,
   type DeliveryPlanBinding,
-  type DeliveryPlanDocument,
 } from "./delivery-plan";
 import type { CriterionDeliveryClass } from "./delivery-delta";
 
@@ -25,6 +23,10 @@ const RESERVED_SOURCE_LOCATOR_PREFIXES = [
  */
 export interface DeliveryPlanSeedSource {
   readonly candidateId: string;
+  readonly launch: WorkflowDefinitionMutation;
+  readonly binding: DeliveryPlanBinding;
+}
+export interface SeededDeliveryPlanDraft {
   readonly launch: WorkflowDefinitionMutation;
   readonly binding: DeliveryPlanBinding;
 }
@@ -121,7 +123,7 @@ function requireDelivery(criterion: DeliveryPlanSeedBasisCriterion): string {
 export function seedDeliveryPlanFromLast(input: {
   readonly source: DeliveryPlanSeedSource;
   readonly dispositions: DeliveryPlanBinding["dispositions"];
-}): DeliveryPlanDocument {
+}): SeededDeliveryPlanDraft {
   const launch = structuredClone(input.source.launch);
   const {
     approvalRequired: _approvalRequired,
@@ -164,8 +166,7 @@ export function seedDeliveryPlanFromLast(input: {
       : [{ contextId: claim.contextId, criterionElementIds }];
   });
 
-  return deliveryPlanDocumentSchema.parse({
-    schemaVersion: 2,
+  return {
     launch: {
       ...launch,
       definition: {
@@ -180,5 +181,5 @@ export function seedDeliveryPlanFromLast(input: {
       dispositions: input.dispositions,
       claims,
     },
-  });
+  };
 }

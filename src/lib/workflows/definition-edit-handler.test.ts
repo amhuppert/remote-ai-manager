@@ -45,7 +45,7 @@ describe("runDefinitionEditRequest", () => {
   it("returns 404 for an unknown definition", async () => {
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 1,
+        expectedRevision: 1,
         operations: [{ type: "update-workflow", name: "x" }],
       },
       notFoundError: "Workflow not found",
@@ -58,12 +58,12 @@ describe("runDefinitionEditRequest", () => {
     });
   });
 
-  it("returns 409 revision_conflict when baseRevision is stale", async () => {
+  it("returns 409 stale_workflow_definition when expectedRevision is stale", async () => {
     const record = createWorkflowDefinitionRecord({ revision: 8 });
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 7,
+        expectedRevision: 7,
         operations: [{ type: "update-workflow", name: "x" }],
       },
       notFoundError: "Workflow not found",
@@ -72,7 +72,8 @@ describe("runDefinitionEditRequest", () => {
     });
     expect(response.status).toBe(409);
     expect(await bodyOf(response)).toMatchObject({
-      code: "revision_conflict",
+      code: "stale_workflow_definition",
+      expectedRevision: 7,
       currentRevision: 8,
     });
     expect(persist).not.toHaveBeenCalled();
@@ -83,7 +84,7 @@ describe("runDefinitionEditRequest", () => {
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [{ type: "update-task", taskId: "missing", title: "x" }],
       },
       notFoundError: "Workflow not found",
@@ -116,7 +117,7 @@ describe("runDefinitionEditRequest", () => {
 
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           {
             type: "update-task",
@@ -144,7 +145,7 @@ describe("runDefinitionEditRequest", () => {
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 3,
+        expectedRevision: 3,
         dryRun: true,
         operations: [
           {
@@ -172,7 +173,7 @@ describe("runDefinitionEditRequest", () => {
     const { persist } = persistSpy(record);
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           {
             type: "update-workflow",
@@ -216,7 +217,7 @@ describe("runDefinitionEditRequest", () => {
     const { persist, calls } = persistSpy(record);
     const response = await runDefinitionEditRequest({
       rawBody: {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           {
             type: "update-task",

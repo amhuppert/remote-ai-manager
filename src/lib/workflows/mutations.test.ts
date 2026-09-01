@@ -8,12 +8,14 @@ import {
   usePauseGraphWorkflowMutation,
   useResetExecutionContextMutation,
   useResolveApprovalMutation,
+  useScopedUpdateWorkflowDefinitionMutation,
   useStartGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { graphWorkflowExecutionKeys } from "@/lib/workflows/query-keys";
 import { ApiCallError } from "@/lib/api/errors";
+import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({
@@ -43,6 +45,48 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+describe("useScopedUpdateWorkflowDefinitionMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ item: createWorkflowDefinitionRecord({ revision: 5 }) }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the displayed revision as the definition compare-and-swap token", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 4 });
+    const { result } = renderHook(
+      () =>
+        useScopedUpdateWorkflowDefinitionMutation(
+          { kind: "project", projectName: "demo" },
+          record.id,
+        ),
+      { wrapper },
+    );
+
+    await result.current.mutateAsync({
+      expectedRevision: record.revision,
+      name: record.name,
+      description: record.description,
+      definition: record.definition,
+      layout: record.layout,
+    });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      expectedRevision: 4,
+      name: record.name,
+    });
+  });
+});
 
 describe("useResetExecutionContextMutation", () => {
   const fetchSpy = vi.fn();

@@ -125,9 +125,10 @@ open review items.
 `cctl spec status` reports the draft's authoring stage, and that stage is
 the server-enforced write boundary: requirements admits intent and context
 prose, requirements, and acceptance criteria; design adds decisions and
-design narrative. Design is the final evergreen stage. Tasks belong to a
-delivery plan attempt, authored with `cctl spec plan open <slug>` and
-`cctl spec plan edit <slug> --file <plan.json>`. A `stage_blocked` refusal
+design narrative. Design is the final evergreen stage. Delivery work
+belongs to a managed workflow definition opened with `cctl spec plan open
+<slug>`; only its criterion binding is edited through `cctl spec plan edit
+<slug> --file <plan.json>`. A `stage_blocked` refusal
 names the correct authoring surface — follow it instead of authoring ahead.
 
 What would refuse a propose is readable before you attempt one:
@@ -158,8 +159,9 @@ on unchanged subjects carry under the same applicable gate, so a
 reopened draft owes re-approval only on what it edited, and a pending
 count is work never done rather than work undone.
 
-After design sign-off, read `cctl spec plan open --help` before authoring
-the exact delivery launch and binding reviewers will sign off.
+After design sign-off, read `cctl spec plan open --help`, open an attempt,
+and review or configure its managed workflow in Workflow Builder before
+proposing the exact definition and binding reviewers will sign off.
 
 ## Continuing an approved spec
 
@@ -168,9 +170,13 @@ approved and no draft is open, continue the spec by opening an amendment:
 `cctl spec amend <slug>` opens the next draft from the approved revision,
 and authoring resumes through `cctl spec draft`.
 
-An amendment opens at design. An approved legacy Plan revision remains
-readable as history, but its tasks are not copied into an authorable
-evergreen Plan stage; delivery changes use a new delivery plan attempt.
+An amendment opens at requirements so an extension must establish and
+approve its what before design can shape its how. If a design draft must
+return to requirements, use `cctl spec return-to-requirements <slug>
+--reason <why>`; the server reopens that boundary explicitly and prevents
+requirements and design edits from proceeding at the same time. Approved
+legacy Plan revisions remain readable as history, but their tasks are not
+copied forward; delivery changes use a new delivery plan attempt.
 
 ## Execution start launches the approved candidate
 
@@ -239,17 +245,14 @@ batch, end the turn as required by the ask protocol and continue authoring
 after the answers arrive. Author spec element payload files under
 `.cc/temp/` as well.
 
-## Direct-authored delivery launch
+## Managed delivery workflow
 
 Open an attempt with `cctl spec plan open <slug>`, then read its bounded
-receipt with `cctl spec plan get <slug>` and write the complete file payload
-with `cctl spec plan edit <slug> --file <plan.json>`. The document is
-`schemaVersion: 2` with `{ launch, binding }`: `launch` is the exact ordinary
-graph launch (`name`, `description`, `definition`, and `layout`) and is
-written verbatim. Native SDD has no field allowlist or alternate graph
-shape; consult ordinary workflow authoring for loops, guards, expansion,
-output schemas, scoped invariants, per-context validation and breakers,
-layout, and required inputs.
+receipt with `cctl spec plan get <slug>`. It names the managed workflow
+definition and the binding-only `schemaVersion: 3` plan document. Edit graph
+configuration with `cctl workflow get/edit <definitionId>` or Workflow
+Builder; edit criterion dispositions and claims with `cctl spec plan edit
+<slug> --file <plan.json>`. Native SDD has no alternate graph shape.
 
 `binding` supplies a total disposition for each pinned criterion and claims
 against stable authored source contexts. A claim means at least one named
@@ -258,11 +261,10 @@ outcomes remain graph semantics, so SDD never infers accountability from
 expansion or topology. There is no modality-proof field: the graph's
 validators and execution outcomes supply evidence.
 
-Review `cctl spec plan preview <slug> --stage draft` as authored content
-before proposing. Then review `cctl spec plan preview <slug> --stage
-proposed`: it is the immutable server-finalized envelope with injected
-sources, locks, origin, `approvalRequired: false`, and the `candidateId`
-and `candidateHash` the human sign-off and start both address. Reopen a
+Review the managed definition and binding before proposing. The proposal
+freezes the exact workflow definition id, `revision`, `definitionHash`,
+`bindingHash`, and `candidateHash` that human sign-off and start both
+address. Reopen a
 stale proposal, edit the draft, and propose a replacement candidate; never
 pretend a draft has a candidate identity.
 
@@ -272,10 +274,10 @@ capture`; `--blocking-reason` abandons the run and opens a replacement
 attempt. Those acts preserve the approved candidate rather than changing it
 in place.
 
-Direct launch ends in a destructive cutover: the dedicated
-legacy-retirement boundary removes the inactive historical
-delivery-planning runtime and obsolete plan command surfaces. Do not retain
-or reintroduce a parallel reader, compatibility branch, or alternate plan
-dialect after that boundary.
+The managed-workflow transition is a destructive cutover: the dedicated
+legacy-retirement boundary removes the inactive historical planning
+runtime and obsolete plan command surfaces. Do not retain or reintroduce a
+parallel reader, compatibility branch, or alternate plan dialect after
+that boundary.
 
 <!-- END SHARED SPEC GUIDANCE -->

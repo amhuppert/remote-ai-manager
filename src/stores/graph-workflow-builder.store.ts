@@ -25,6 +25,7 @@ interface GraphWorkflowBuilderStoreState {
   draftLayout: GraphWorkflowVisualLayout | null;
   selectedContextId: string | null;
   selectedTaskId: string | null;
+  highlightedContextIds: string[];
   dirty: boolean;
   /**
    * Edits the canvas REFUSED — a self-edge, a duplicate dependency, a cycle.
@@ -56,6 +57,7 @@ interface GraphWorkflowBuilderStoreActions {
   updateLayout: (layout: GraphWorkflowVisualLayout) => void;
   setSelectedContextId: (contextId: string | null) => void;
   setSelectedTaskId: (taskId: string | null) => void;
+  setHighlightedContextIds: (contextIds: readonly string[]) => void;
   setRefusedEdits: (errors: WorkflowGraphValidationError[]) => void;
   setPendingOutputSchemaText: (
     contextId: string,
@@ -89,6 +91,7 @@ const useGraphWorkflowBuilderStore = create<GraphWorkflowBuilderStore>()(
     draftLayout: null,
     selectedContextId: null,
     selectedTaskId: null,
+    highlightedContextIds: [],
     dirty: false,
     refusedEdits: [],
     pendingOutputSchemaText: {},
@@ -101,6 +104,7 @@ const useGraphWorkflowBuilderStore = create<GraphWorkflowBuilderStore>()(
         state.draftLayout = cloneDraft(draft.layout);
         state.selectedContextId = null;
         state.selectedTaskId = null;
+        state.highlightedContextIds = [];
         state.dirty = false;
         state.refusedEdits = [];
         state.pendingOutputSchemaText = {};
@@ -113,6 +117,7 @@ const useGraphWorkflowBuilderStore = create<GraphWorkflowBuilderStore>()(
         state.draftLayout = cloneDraft(draft.layout);
         state.selectedContextId = null;
         state.selectedTaskId = null;
+        state.highlightedContextIds = [];
         state.dirty = true;
         state.refusedEdits = cloneDraft(draft.validationErrors);
         state.pendingOutputSchemaText = {};
@@ -145,6 +150,11 @@ const useGraphWorkflowBuilderStore = create<GraphWorkflowBuilderStore>()(
     setSelectedTaskId: (taskId) =>
       set((state) => {
         state.selectedTaskId = taskId;
+      }),
+
+    setHighlightedContextIds: (contextIds) =>
+      set((state) => {
+        state.highlightedContextIds = [...new Set(contextIds)];
       }),
 
     setRefusedEdits: (errors) =>
@@ -205,6 +215,7 @@ const useGraphWorkflowBuilderStore = create<GraphWorkflowBuilderStore>()(
         state.ephemeralLanes = [];
         state.selectedContextId = null;
         state.selectedTaskId = null;
+        state.highlightedContextIds = [];
 
         if (!state.persistedDraft) {
           state.draftDefinition = null;

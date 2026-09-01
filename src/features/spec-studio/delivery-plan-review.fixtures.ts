@@ -2,7 +2,6 @@ import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
 import type { DeliveryPlanPreviewView } from "@/lib/specs/delivery-plan-views";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 
 type ReviewOverrides = {
   attempt?: Partial<DeliveryPlanReviewView["attempt"]>;
@@ -17,7 +16,6 @@ type ReviewOverrides = {
 export function reviewView(
   overrides: ReviewOverrides = {},
 ): DeliveryPlanReviewView {
-  const record = createWorkflowDefinitionRecord();
   const base: DeliveryPlanReviewView = {
     attempt: {
       id: "attempt-2",
@@ -30,20 +28,21 @@ export function reviewView(
       candidateId: "candidate-2",
       candidateHash: "sha256:candidate-2",
       launchedExecutionId: null,
+      workflowDefinitionId: "candidate-2",
       createdAt: "2026-08-14T00:00:00.000Z",
       updatedAt: "2026-08-14T00:00:00.000Z",
     },
     approval: null,
     prelaunch: null,
     document: {
-      schemaVersion: 2,
-      launch: {
-        name: record.name,
-        description: record.description,
-        definition: record.definition,
-        layout: record.layout,
-      },
+      schemaVersion: 3,
       binding: { dispositions: [], claims: [] },
+    },
+    workflowDefinition: {
+      id: "candidate-2",
+      revision: 2,
+      definitionHash: `sha256:${"2".repeat(64)}`,
+      builderHref: "/projects/command-center/workflows?definition=candidate-2",
     },
     health: { total: 0, blocking: 0, counts: [], findings: [] },
     dispositionCounts: [],
@@ -85,6 +84,7 @@ export function previewView(): DeliveryPlanPreviewView {
     launch: finalizeDeliveryPlanLaunch({
       specId: "spec-native-sdd",
       specSlug: "native-sdd",
+      pinnedRevisionId: "revision-2",
       attemptId: "attempt-2",
       candidateId: "candidate-2",
       launch: createMaximalAuthoredWorkflowLaunchFixture(),

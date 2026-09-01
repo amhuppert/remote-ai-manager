@@ -147,12 +147,9 @@ describe("propose route files the gate asks it leaves pending", () => {
     });
     specId = created.spec.id;
     revisionId = created.draft.id;
-    db.prepare(
-      "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
-    ).run(revisionId);
     await authoring.upsertDraftElement({
       specId,
-      revisionId,
+      revisionId: created.draft.id,
       elementId: "criterion-1",
       kind: "criterion",
       parentElementId: "requirement-1",
@@ -161,25 +158,6 @@ describe("propose route files the gate asks it leaves pending", () => {
         kind: "criterion",
         text: "The propose receipt names the asks it filed.",
         validationStrategy: { kinds: ["test_run"] },
-      },
-      baseElementVersion: null,
-      actor,
-    });
-    await authoring.upsertDraftElement({
-      specId,
-      revisionId,
-      elementId: "task-1",
-      kind: "task",
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "task",
-        title: "File the asks",
-        instructions: "Run the coordinator after the commit.",
-        tracedRequirementElementIds: ["requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: ["criterion-1"],
-        dependsOnTaskElementIds: [],
       },
       baseElementVersion: null,
       actor,
@@ -194,7 +172,7 @@ describe("propose route files the gate asks it leaves pending", () => {
       .filter((row) => row.type === "spec-approval-requested");
   }
 
-  it("answers with a filed outcome per pending gate and leaves one durable ask behind each", async () => {
+  it("files the current Requirements checkpoint's pending gate and leaves its durable ask behind", async () => {
     const response = await handlers.specActionPOST(
       new Request(
         `http://cc.test/api/projects/${PROJECT_NAME}/specs/${SLUG}/actions/propose`,
@@ -221,18 +199,12 @@ describe("propose route files the gate asks it leaves pending", () => {
     const body = specProposeResultViewSchema.parse(await response.json());
     expect(
       body.approvalRequests.map(({ gate, outcome }) => [gate, outcome]),
-    ).toEqual([
-      ["requirements", "filed"],
-      ["plan", "filed"],
-    ]);
+    ).toEqual([["requirements", "filed"]]);
 
     // The receipt's ids are the durable registry's ids: the Needs You rows a
     // human acts on carry exactly what the agent was told was filed.
     const rows = openRequests();
-    expect(rows.map((row) => row.gate).sort()).toEqual([
-      "plan",
-      "requirements",
-    ]);
+    expect(rows.map((row) => row.gate).sort()).toEqual(["requirements"]);
     expect(rows.map((row) => row.gateRequestId).sort()).toEqual(
       body.approvalRequests.map((request) => request.attentionId).sort(),
     );

@@ -113,6 +113,8 @@ export type ExecutionContextNodeData = {
   laneState: LaneBandState;
   /** Present only when a runtime expansion created this context's whole lane. */
   laneCreatedAtRuntime?: true;
+  /** Builder-only accountability highlight for contexts claiming one criterion. */
+  scopeHighlighted?: boolean;
   /**
    * Blocks this context overrides at its OWN tier, named for display — the
    * set-on-this-context marker's reason. Empty when everything is inherited.

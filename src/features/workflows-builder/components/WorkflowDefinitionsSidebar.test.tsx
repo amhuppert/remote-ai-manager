@@ -26,6 +26,75 @@ const DEFINITIONS = [
   },
 ];
 
+const MANAGED_DEFINITIONS = [
+  {
+    id: "wf-current",
+    name: "Native SDD · checkout",
+    revision: 4,
+    contextCount: 3,
+    updatedAt: "2026-08-31T12:00:00.000Z",
+    management: {
+      kind: "native_sdd_delivery" as const,
+      specId: "spec-1",
+      specSlug: "checkout",
+      specName: "Checkout",
+      attemptId: "attempt-2",
+      pinnedRevisionId: "revision-8",
+      pinnedRevisionNumber: 8,
+      lifecycle: "draft" as const,
+      editable: true,
+      isCurrentDefinition: true,
+      specHref: "/specs/demo/checkout",
+      builderHref: "/projects/demo/workflows?definition=wf-current",
+      executionHref: null,
+    },
+  },
+  {
+    id: "wf-launched",
+    name: "Native SDD · checkout · launch",
+    revision: 2,
+    contextCount: 2,
+    updatedAt: "2026-08-30T12:00:00.000Z",
+    management: {
+      kind: "native_sdd_delivery" as const,
+      specId: "spec-1",
+      specSlug: "checkout",
+      specName: "Checkout",
+      attemptId: "attempt-1",
+      pinnedRevisionId: "revision-5",
+      pinnedRevisionNumber: 5,
+      lifecycle: "launched" as const,
+      editable: false,
+      isCurrentDefinition: false,
+      specHref: "/specs/demo/checkout",
+      builderHref: "/projects/demo/workflows?definition=wf-launched",
+      executionHref: "/projects/demo/session/workflow?execution=execution-1",
+    },
+  },
+  {
+    id: "wf-past",
+    name: "Native SDD · checkout · old",
+    revision: 1,
+    contextCount: 1,
+    updatedAt: "2026-08-29T12:00:00.000Z",
+    management: {
+      kind: "native_sdd_delivery" as const,
+      specId: "spec-1",
+      specSlug: "checkout",
+      specName: "Checkout",
+      attemptId: "attempt-0",
+      pinnedRevisionId: "revision-2",
+      pinnedRevisionNumber: 2,
+      lifecycle: "superseded" as const,
+      editable: false,
+      isCurrentDefinition: false,
+      specHref: "/specs/demo/checkout",
+      builderHref: "/projects/demo/workflows?definition=wf-past",
+      executionHref: null,
+    },
+  },
+];
+
 describe("WorkflowDefinitionsSidebar", () => {
   it("lists each definition with its revision and context count", () => {
     render(
@@ -151,6 +220,54 @@ describe("WorkflowDefinitionsSidebar", () => {
 
     await user.click(screen.getByRole("button", { name: "New workflow" }));
     expect(onCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("groups managed definitions by spec and collapses older candidates", async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={[DEFINITIONS[0]!, ...MANAGED_DEFINITIONS]}
+      />,
+    );
+
+    expect(screen.getByText("Definitions")).toBeInTheDocument();
+    expect(screen.getByText("Spec delivery")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Checkout" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Native SDD · checkout — Draft/ }),
+    ).toHaveTextContent("Draft · spec r8 · r4 · 3 contexts");
+    expect(
+      screen.getByRole("button", {
+        name: /Native SDD · checkout · launch — Launched/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Native SDD · checkout · old/ }),
+    ).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Past candidates (1)" }),
+    );
+    expect(
+      screen.getByRole("button", { name: /Native SDD · checkout · old/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("expands a past candidate selected by a builder deep link", () => {
+    render(
+      <WorkflowDefinitionsSidebar
+        {...baseProps}
+        definitions={MANAGED_DEFINITIONS}
+        selectedId="wf-past"
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Native SDD · checkout · old/ }),
+    ).toHaveAttribute("aria-current", "true");
   });
 
   it("shows Creating… and disables the create button while creation is in flight", () => {

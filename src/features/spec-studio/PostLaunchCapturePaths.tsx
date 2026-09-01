@@ -378,7 +378,7 @@ export default function PostLaunchCapturePaths({
   captureFailure,
   onCapture,
 }: PostLaunchCapturePathsProps): React.JSX.Element {
-  const planHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=plan`;
+  const planHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=delivery`;
   const discoveryReceipt =
     captureOutcomePath === "discovery" && captureReceipt?.replacement === null
       ? captureReceipt

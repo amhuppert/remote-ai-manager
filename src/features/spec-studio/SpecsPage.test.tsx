@@ -23,6 +23,7 @@ import type { SpecApprovalRow } from "@/lib/specs/schemas";
 import { buildSpecSectionReferenceXml } from "@/lib/prompt-editor/spec-reference-contract";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 import type { SpecCommentView } from "@/lib/specs/view-schemas";
+import { specDetailViewSchema } from "@/lib/specs/queries";
 
 import SpecDetailPage from "./SpecDetailPage";
 import {
@@ -131,7 +132,7 @@ const detailRevision = {
   specId: executingSpec.id,
   number: 4,
   state: "proposed",
-  authoringStage: "plan",
+  authoringStage: "requirements",
   basedOnRevisionId: "revision-3",
   contentHash: "revision-4-hash",
   citationContractVersion: 2,
@@ -465,7 +466,7 @@ function detailPayload(
       phase: {
         primary: "executing",
         authoringFacet: "in_review",
-        authoringStage: "plan",
+        authoringStage: "requirements",
       },
       gates: [
         {
@@ -615,6 +616,7 @@ function reviewDetailPayload() {
         supersededBy: null,
         snapshot: payload.currentRevision,
         baseSnapshot,
+        governanceBaseSnapshot: baseSnapshot,
         notes: null,
       },
     ],
@@ -709,6 +711,7 @@ function initialReviewDetailPayload() {
         supersededBy: null,
         snapshot,
         baseSnapshot: null,
+        governanceBaseSnapshot: null,
         notes: null,
       },
     ],
@@ -860,7 +863,7 @@ describe("Spec Studio detail routes", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens execution-start attention links on the Execution view", async () => {
+  it("opens execution-start attention links on the Delivery view", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -878,9 +881,9 @@ describe("Spec Studio detail routes", () => {
     renderWithQuery(<SpecDetailPage />);
 
     expect(
-      await screen.findByRole("region", { name: "Execution and merge" }),
+      await screen.findByRole("heading", { name: "Delivery" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Execution" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Delivery" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -1106,7 +1109,7 @@ describe("Spec Studio detail routes", () => {
         headingLabel: "",
       },
     };
-    api.json("GET", "/api/specs/command-center/native-sdd", {
+    const response = {
       ...payload,
       comments: [
         root,
@@ -1132,7 +1135,9 @@ describe("Spec Studio detail routes", () => {
           updatedAt: "2026-07-18T12:05:00.000Z",
         },
       ],
-    });
+    };
+    specDetailViewSchema.parse(response);
+    api.json("GET", "/api/specs/command-center/native-sdd", response);
 
     renderWithQuery(<SpecDetailPage />);
 
@@ -1268,7 +1273,7 @@ describe("Spec Studio detail routes", () => {
       sectionId: "",
       headingLabel: "",
     };
-    api.json("GET", "/api/specs/command-center/native-sdd", {
+    const response = {
       ...payload,
       comments: [
         { ...payload.comments[0]!, anchor },
@@ -1282,7 +1287,9 @@ describe("Spec Studio detail routes", () => {
           updatedAt: "2026-07-18T12:01:00.000Z",
         },
       ],
-    });
+    };
+    specDetailViewSchema.parse(response);
+    api.json("GET", "/api/specs/command-center/native-sdd", response);
     const user = userEvent.setup();
     renderWithQuery(<SpecDetailPage />);
 
@@ -1309,7 +1316,7 @@ describe("Spec Studio detail routes", () => {
       threadId: "thread-invalid",
       body: "First competing root.",
     };
-    api.json("GET", "/api/specs/command-center/native-sdd", {
+    const response = {
       ...payload,
       comments: [
         ...payload.comments,
@@ -1322,10 +1329,15 @@ describe("Spec Studio detail routes", () => {
           updatedAt: "2026-07-18T12:02:00.000Z",
         },
       ],
-    });
+    };
+    specDetailViewSchema.parse(response);
+    api.json("GET", "/api/specs/command-center/native-sdd", response);
 
     renderWithQuery(<SpecDetailPage />);
 
+    expect(
+      await screen.findByRole("button", { name: "Overview" }),
+    ).toHaveAttribute("aria-current", "page");
     const heading = await screen.findByRole("heading", {
       name: "Review threads without inline placement",
     });
@@ -1370,7 +1382,7 @@ describe("Spec Studio detail routes", () => {
         quote: "Every spec",
         body: "Keep this requirement feedback visible after review ends.",
       };
-      api.json("GET", "/api/specs/command-center/native-sdd", {
+      const response = {
         ...payload,
         spec: abandoned
           ? {
@@ -1389,12 +1401,17 @@ describe("Spec Studio detail routes", () => {
                 approvedAt: NOW,
               },
             },
-        liveProposals: abandoned ? payload.liveProposals : [],
+        liveProposals: [],
         comments: [structuredRoot],
-      });
+      };
+      specDetailViewSchema.parse(response);
+      api.json("GET", "/api/specs/command-center/native-sdd", response);
 
       renderWithQuery(<SpecDetailPage />);
 
+      expect(
+        await screen.findByRole("button", { name: "Overview" }),
+      ).toHaveAttribute("aria-current", "page");
       const heading = await screen.findByRole("heading", {
         name: "Review threads without inline placement",
       });
@@ -1497,7 +1514,7 @@ describe("Spec Studio detail routes", () => {
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=review",
+      "/specs/command-center/native-sdd?view=requirements",
     );
     api.json(
       "GET",
@@ -1509,7 +1526,7 @@ describe("Spec Studio detail routes", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Review plan-stage revision 1",
+        name: "Review requirements-stage revision 1",
       }),
     ).toBeInTheDocument();
     expect(screen.getByText(/initial proposal/i)).toBeInTheDocument();
@@ -1532,7 +1549,7 @@ describe("Spec Studio detail routes", () => {
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=review&change=section-retired",
+      "/specs/command-center/native-sdd?view=requirements&change=section-retired",
     );
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -1554,14 +1571,14 @@ describe("Spec Studio detail routes", () => {
       within(changedSection).getByRole("link", { name: "section-intent" }),
     ).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=review&change=section-intent",
+      "/specs/command-center/native-sdd?view=requirements&change=section-intent",
     );
     const removedSection = screen.getByTestId("review-change-section-retired");
     expect(
       within(removedSection).getByRole("link", { name: "section-retired" }),
     ).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=review&change=section-retired",
+      "/specs/command-center/native-sdd?view=requirements&change=section-retired",
     );
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     expect(removedSection).toHaveAttribute(
@@ -1575,7 +1592,7 @@ describe("Spec Studio detail routes", () => {
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=review",
+      "/specs/command-center/native-sdd?view=requirements",
     );
     api.json(
       "GET",
@@ -1633,7 +1650,7 @@ describe("Spec Studio detail routes", () => {
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=review",
+      "/specs/command-center/native-sdd?view=requirements",
     );
     api.json(
       "GET",
@@ -1661,7 +1678,7 @@ describe("Spec Studio detail routes", () => {
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=review",
+      "/specs/command-center/native-sdd?view=requirements",
     );
     const approvals: SpecApprovalRow[] = [
       {

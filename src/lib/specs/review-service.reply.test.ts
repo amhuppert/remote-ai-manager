@@ -96,77 +96,60 @@ async function proposedSpecWithComment() {
     },
     actor: AGENT,
   });
-  await specs.advanceDraftAuthoringStage({
+  await authoring.upsertDraftElement({
     specId: created.spec.id,
     revisionId: created.draft.id,
-    expectedStage: "requirements",
-    targetStage: "design",
+    elementId: "reply-c1",
+    kind: "criterion",
+    parentElementId: "reply-r1",
+    position: 1,
+    payload: {
+      kind: "criterion",
+      text: "A reply lands in the thread it answers.",
+      validationStrategy: { kinds: ["test_run"] },
+    },
+    baseElementVersion: null,
+    actor: AGENT,
   });
-  await specs.advanceDraftAuthoringStage({
-    specId: created.spec.id,
+  await specs.proposeRevision({
     revisionId: created.draft.id,
-    expectedStage: "design",
-    targetStage: "plan",
+    proposedAt: "2026-08-12T09:58:00.000Z",
   });
-  for (const element of [
-    {
-      elementId: "reply-c1",
-      kind: "criterion" as const,
-      parentElementId: "reply-r1",
-      position: 1,
-      payload: {
-        kind: "criterion" as const,
-        text: "A reply lands in the thread it answers.",
-        validationStrategy: { kinds: ["test_run" as const] },
-      },
+  await specs.approveRevision({
+    revisionId: created.draft.id,
+    approvedAt: "2026-08-12T09:58:01.000Z",
+  });
+  const design = await authoring.openAmendment({
+    specId: created.spec.id,
+    actor: AGENT,
+  });
+  await authoring.upsertDraftElement({
+    specId: created.spec.id,
+    revisionId: design.revision.id,
+    elementId: "reply-d1",
+    kind: "decision",
+    parentElementId: null,
+    position: 2,
+    payload: {
+      kind: "decision",
+      title: "Thread ownership",
+      chosenApproach: "Replies join the reviewer's thread.",
+      rejectedAlternatives: [],
+      reason: "The reviewer reads answers where they asked.",
+      tracedRequirementElementIds: ["reply-r1"],
     },
-    {
-      elementId: "reply-d1",
-      kind: "decision" as const,
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "decision" as const,
-        title: "Thread ownership",
-        chosenApproach: "Replies join the reviewer's thread.",
-        rejectedAlternatives: [],
-        reason: "The reviewer reads answers where they asked.",
-        tracedRequirementElementIds: ["reply-r1"],
-      },
-    },
-    {
-      elementId: "reply-t1",
-      kind: "task" as const,
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task" as const,
-        title: "Implement the reply surface",
-        instructions: "Wire the reply verb.",
-        tracedRequirementElementIds: ["reply-r1"],
-        tracedDecisionElementIds: ["reply-d1"],
-        coveredCriterionElementIds: ["reply-c1"],
-        dependsOnTaskElementIds: [],
-      },
-    },
-  ]) {
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      ...element,
-      baseElementVersion: null,
-      actor: AGENT,
-    });
-  }
+    baseElementVersion: null,
+    actor: AGENT,
+  });
   const proposed = await authoring.proposeRevision({
     specId: created.spec.id,
-    revisionId: created.draft.id,
+    revisionId: design.revision.id,
     actor: AGENT,
   });
   if (!proposed.ok) throw new Error("the fixture propose was refused");
   const commented = await reviewing.comment({
     specId: created.spec.id,
-    revisionId: created.draft.id,
+    revisionId: design.revision.id,
     actor: HUMAN,
     elementId: "reply-r1",
     threadId: "thread-1",
@@ -180,7 +163,7 @@ async function proposedSpecWithComment() {
       quote: "answer review feedback",
       prefix: "",
       suffix: "",
-      docRevision: created.draft.id,
+      docRevision: design.revision.id,
     },
     body: "Which surface answers this feedback?",
     blocking: true,
@@ -188,7 +171,7 @@ async function proposedSpecWithComment() {
   if (!commented.ok) throw new Error("the fixture comment was refused");
   return {
     specId: created.spec.id,
-    revisionId: created.draft.id,
+    revisionId: design.revision.id,
     root: commented.value,
   };
 }

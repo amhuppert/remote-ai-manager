@@ -1187,19 +1187,23 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 13 after the ticket-relationship cutover", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(13);
+  it("this build understands schema version 14 after the managed-definition cutover", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(14);
   });
 
   it("refuses a version-12 binary after ticket relationships stamp version 13", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
     const dbPath = path.join(dir, "command-center.db");
-    const current = _createTestDbAtPath(dbPath);
-    current
-      .prepare(
-        "INSERT OR IGNORE INTO schema_migrations (version, description) VALUES (13, ?)",
-      )
-      .run("ticket relationships and append-only status updates");
+    const current = new Database(dbPath);
+    current.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schema_migrations (version, description)
+      VALUES (13, 'ticket relationships and append-only status updates');
+    `);
     current.close();
 
     const oldBinaryConnection = new Database(dbPath);
@@ -1207,6 +1211,32 @@ describe("state-db breaking-cutover versions", () => {
       expect(() =>
         enforceCurrentSchemaCompatibility(oldBinaryConnection, dbPath, 12),
       ).toThrow(/recorded schema version 13.*known build version 12/i);
+    } finally {
+      oldBinaryConnection.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a version-13 binary after managed definitions stamp version 14", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+    const current = new Database(dbPath);
+    current.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO schema_migrations (version, description)
+      VALUES (14, 'native SDD managed workflow definitions');
+    `);
+    current.close();
+
+    const oldBinaryConnection = new Database(dbPath);
+    try {
+      expect(() =>
+        enforceCurrentSchemaCompatibility(oldBinaryConnection, dbPath, 13),
+      ).toThrow(/recorded schema version 14.*known build version 13/i);
     } finally {
       oldBinaryConnection.close();
       rmSync(dir, { recursive: true, force: true });

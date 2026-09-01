@@ -39,7 +39,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec attention supersede <slug> <An> --file <successor.json> --if-version <n> --if-citation-version <n>",
       "cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>",
       "cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>",
-      "cctl spec plan open <slug> [--seed-from last]",
+      "cctl spec plan open <slug>",
       "cctl spec plan edit <slug> --file <plan.json>",
       "cctl spec plan propose <slug>",
       "cctl spec plan reopen <slug> --reason <why>",
@@ -351,7 +351,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "lint"],
     summary: "read every deterministic lint finding on the open draft",
     description:
-      "Print the whole finding panel for the editable revision, grouped by severity, with the subset that would refuse propose flagged as such. This is the same deterministic lint the propose refusal runs and Spec Studio's lint tab renders — reading it here is how an author learns what the draft owes BEFORE attempting the transition, rather than discovering it as a refusal. Findings name the element they are about by handle and carry the rule that produced them. A draft with no findings says so; a draft whose only findings are advisory can be proposed.",
+      "Print the whole finding panel for the editable revision, grouped by severity, with the subset that would refuse propose flagged as such. This is the same deterministic lint the propose refusal runs and Spec Studio summarizes inline in Requirements and Design — reading it here is how an author learns what the draft owes BEFORE attempting the transition, rather than discovering it as a refusal. Findings name the element they are about by handle and carry the rule that produced them. A draft with no findings says so; a draft whose only findings are advisory can be proposed.",
     usage: ["cctl spec lint <slug>"],
     flags: [],
     examples: [
@@ -1209,7 +1209,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "advance"],
     summary: "conclude a Notify/Off authoring stage explicitly",
     description:
-      "Advance the current draft from requirements to design when the requirements dial is Notify or Off. Design is the final evergreen stage: propose it for review, then open delivery planning with `cctl spec plan open <slug>` after sign-off. Gate requires human review and sign-off instead; stale revision or stage expectations are refused without changing content.",
+      "Conclude the current Requirements checkpoint and open a separate Design draft when the requirements dial is Notify or Off. The Requirements revision is approved before its content becomes the base of Design. Design is the final evergreen stage: propose it for review, then open delivery planning with `cctl spec plan open <slug>` after sign-off. Gate requires human review and sign-off instead; stale revision or stage expectations are refused without changing content.",
     usage: ["cctl spec advance <slug> --from <requirements>"],
     flags: [
       {
@@ -1224,7 +1224,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl spec advance audit-log --from requirements --json",
         explanation:
-          "record the policy admission and advance the same draft to design",
+          "record the policy admission, approve the Requirements checkpoint, and open its Design draft",
       },
     ],
     related: [
@@ -1236,6 +1236,39 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec draft",
         oneLiner: "author content admitted by the stage",
+      },
+    ],
+  },
+  {
+    path: ["spec", "return-to-requirements"],
+    summary: "withdraw Design and reopen from approved Requirements",
+    description:
+      "Return an active Design draft or proposal to a separate Requirements draft based on the latest approved Requirements checkpoint. The Design revision is withdrawn; its unapproved design content is not copied into Requirements.",
+    usage: ["cctl spec return-to-requirements <slug> --reason <why>"],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<why>",
+        description: "durable reason the Design attempt was set aside",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec return-to-requirements audit-log --reason 'the user contract changed' --json",
+        explanation:
+          "withdraw the exact current Design revision and reopen Requirements from its approved checkpoint",
+      },
+    ],
+    domainContext:
+      "Requirements and Design are exclusive checkpoints. Returning never folds unapproved design choices into the requirements contract; after the new Requirements checkpoint is approved, advance into a fresh Design draft.",
+    related: [
+      { command: "spec status", oneLiner: "read the current authoring stage" },
+      { command: "spec draft", oneLiner: "author the reopened requirements" },
+      {
+        command: "spec advance",
+        oneLiner: "enter a fresh Design stage after Requirements settle",
       },
     ],
   },
@@ -1526,9 +1559,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "plan"],
     summary: "author the delivery plan attempt that becomes the executed graph",
     description:
-      "A delivery plan attempt pairs one ordinary graph launch with a thin immutable spec binding. It pins one approved revision, so the spec can move on without moving the attempt, and proposal freezes the server-finalized envelope as a candidate a human approves by id and hash. Every criterion of the pinned revision carries exactly one disposition — selected, deferred, waived, delivered_elsewhere, reaffirmed, or pending_reaffirmation — so nothing leaves scope silently.",
+      "A delivery plan attempt links one managed project workflow definition with a thin immutable spec binding. It pins one approved Design revision, and proposal freezes the exact definition id, revision, hash, and binding as the candidate a human approves. Every criterion of the pinned revision carries exactly one disposition: selected, deferred, waived, delivered_elsewhere, reaffirmed, or pending_reaffirmation. Nothing leaves scope silently.",
     usage: [
-      "cctl spec plan open <slug> [--seed-from last]",
+      "cctl spec plan open <slug>",
       "cctl spec plan edit <slug> --file <plan.json>",
       "cctl spec plan propose <slug>",
       "cctl spec plan reopen <slug> --reason <why>",
@@ -1544,7 +1577,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     related: [
       {
         command: "spec plan open",
-        oneLiner: "open an attempt, optionally seeded from the last delivery",
+        oneLiner: "open the delta-seeded managed delivery workflow",
       },
       {
         command: "spec plan status",
@@ -1552,7 +1585,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
       {
         command: "spec plan preview",
-        oneLiner: "read the authored or finalized launch and binding",
+        oneLiner: "read the draft or proposed binding and definition identity",
       },
       {
         command: "spec delta",
@@ -1564,31 +1597,18 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "plan", "open"],
     summary: "open a delivery plan attempt against the approved revision",
     description:
-      "Open the attempt this delivery is planned in. It pins the spec's current approved revision, so a later amendment never forks or blocks it. With --seed-from last, a prior direct candidate's authored launch is copied wholesale after server-owned fields are removed, and claims remain only for still-selected criteria. Every criterion of the pinned revision gets exactly one disposition.",
-    usage: ["cctl spec plan open <slug> [--seed-from last]"],
-    flags: [
-      {
-        name: "seed-from",
-        kind: "value",
-        valuePlaceholder: "last",
-        description:
-          "seed the attempt from the last delivery instead of an empty plan",
-      },
-    ],
+      "Open the attempt this delivery is planned in. It pins the current approved Design revision, creates a managed project workflow definition, and gives every pinned criterion exactly one disposition. It always seeds from the delivery delta: the launched delta-basis candidate, otherwise the latest approved candidate, otherwise an empty valid workflow.",
+    usage: ["cctl spec plan open <slug>"],
+    flags: [],
     examples: [
       {
-        invocation: "cctl spec plan open native-sdd --seed-from last --json",
+        invocation: "cctl spec plan open native-sdd --json",
         explanation:
-          "carry the last delivery forward with a disposition on every pinned criterion",
-      },
-      {
-        invocation: "cctl spec plan open native-sdd",
-        explanation:
-          "author the first plan for a spec that has never delivered",
+          "open the delta-seeded managed definition and bind every pinned criterion",
       },
     ],
     domainContext:
-      "Seeding is total-disposition-preserving and derived from the delivery delta: a criterion delivered and still fresh auto-proposes delivered_elsewhere against the execution that delivered it; a soft-stale one seeds as pending_reaffirmation, which a draft may carry and a proposal may not; undelivered, hard-stale, and previously deferred criteria become selected; a waived one stays waived. A second attempt is refused while one is still live. The seeded launch is authored data: proposal injects the pinned-spec and claims sources for the new candidate without changing its topology or dynamic controls.",
+      "Seeding is derived from the delivery delta: fresh delivered criteria become delivered_elsewhere, soft-stale criteria become pending_reaffirmation, undelivered/hard-stale/deferred criteria become selected, and waivers stay waived. A second attempt is refused while one is live. Graph configuration belongs to the managed definition in Workflow Builder.",
     related: [
       {
         command: "spec plan edit",
@@ -1631,7 +1651,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, document }`. The document is `{ schemaVersion: 2, launch, binding }`: launch is the exact ordinary graph launch document, while binding contains dispositions and stable authored-context claims. Run `cctl spec schema plan-edit` for the exact shape. Every edit bumps the draft revision, so a second write must re-read first.",
+      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, binding }`. Graph configuration belongs to the linked managed definition and is edited through `cctl workflow get/edit` or Workflow Builder. Run `cctl spec schema plan-edit` for the exact binding shape. Every edit bumps the draft revision, so a second write must re-read first.",
     related: [
       {
         command: "spec plan get",
@@ -1796,7 +1816,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The retired attempt and its snapshots stay readable in history; nothing is rewritten. A fresh `spec plan open` starts from an empty document — pass `--seed-from last` to seed from the previous delivery, not from the retired draft.",
+      "The retired attempt, definition, and snapshots stay readable in history; nothing is rewritten. A fresh `spec plan open` always computes its seed from the current delivery delta, never from the retired draft.",
     related: [
       {
         command: "spec plan open",

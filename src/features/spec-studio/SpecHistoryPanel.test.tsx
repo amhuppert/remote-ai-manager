@@ -177,7 +177,7 @@ describe("buildSpecHistory", () => {
         id: "attention:41",
         label: "Q1 answered",
         occurredAt: "2026-07-18T12:09:00.000Z",
-        href: "/specs/command-center/native-sdd?view=questions&el=Q1",
+        href: "/specs/command-center/native-sdd?view=requirements&el=Q1",
         audit: expect.objectContaining({
           operation: "answered",
           changes: expect.arrayContaining([
@@ -428,7 +428,7 @@ describe("buildSpecHistory", () => {
       within(row).getByRole("link", { name: "Open subject →" }),
     ).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=questions&el=Q1",
+      "/specs/command-center/native-sdd?view=requirements&el=Q1",
     );
     const changes = within(row).getByLabelText(
       "Q1 answered at import field changes",
@@ -528,7 +528,9 @@ describe("buildSpecHistory", () => {
     // plain text leaves them where #50 left them — informed and stuck.
     expect(
       events.find((event) => event.id === "revision-2:proposed")?.href,
-    ).toBe("/specs/command-center/native-sdd?view=review&revision=revision-2");
+    ).toBe(
+      "/specs/command-center/native-sdd?view=requirements&revision=revision-2",
+    );
   });
 
   it("drops the link once the proposal is no longer live", () => {
@@ -571,7 +573,7 @@ describe("buildSpecHistory", () => {
       within(row).getByRole("link", { name: /Open subject/i }),
     ).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=review&revision=revision-2",
+      "/specs/command-center/native-sdd?view=requirements&revision=revision-2",
     );
   });
 

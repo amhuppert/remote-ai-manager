@@ -249,6 +249,34 @@ describe("SessionWorkflowPage execution selection", () => {
     );
   });
 
+  it("links the selected execution to its exact source definition", async () => {
+    const current = execution(
+      "exec-current",
+      "2026-08-14T16:00:00.000Z",
+      "running",
+    );
+    const historical = execution("exec-history", "2026-08-14T12:00:00.000Z");
+    renderWithQuery(<SessionWorkflowPage />, seedPage(current, [historical]));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: "Source definition" }),
+      ).toHaveAttribute(
+        "href",
+        `/projects/proj/workflows?definition=${encodeURIComponent(current.seedDefinitionId)}`,
+      ),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /execution exec-history/i }),
+    );
+    expect(
+      screen.getByRole("link", { name: "Source definition" }),
+    ).toHaveAttribute(
+      "href",
+      `/projects/proj/workflows?definition=${encodeURIComponent(historical.seedDefinitionId)}`,
+    );
+  });
+
   it("keeps explicit History selection across a new launch and rail invalidation", async () => {
     const current = execution(
       "exec-current",

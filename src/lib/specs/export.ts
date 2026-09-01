@@ -273,12 +273,17 @@ const canonicalManifestRevisionSchema = z
           "contentHash is null exactly while the revision remains a draft",
       });
     }
-    if ((revision.proposedAt !== null) !== frozen) {
+    const reviewTimestampRequired =
+      revision.state === "proposed" || revision.state === "approved";
+    if (
+      (reviewTimestampRequired && revision.proposedAt === null) ||
+      (revision.state === "draft" && revision.proposedAt !== null)
+    ) {
       context.addIssue({
         code: "custom",
         path: ["proposedAt"],
         message:
-          "proposedAt is present exactly after the revision leaves draft",
+          "proposedAt is present for revisions that entered review; a withdrawn authoring draft may not have entered review",
       });
     }
     if ((revision.approvedAt !== null) !== (revision.state === "approved")) {

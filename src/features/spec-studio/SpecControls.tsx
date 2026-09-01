@@ -1,11 +1,8 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { z } from "zod";
 
-import { CompactMarkdown } from "@/components/markdown/Markdown";
-import { ApiCallError } from "@/lib/api/errors";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,61 +23,36 @@ import {
 } from "@/components/ui/FormField";
 import { RadioGroup, RadioGroupOption } from "@/components/ui/RadioGroup";
 import {
-  SegmentedControl,
-  SegmentedControlItem,
-} from "@/components/ui/SegmentedControl";
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
+import { StatusChip } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { specSlugSchema } from "@/lib/specs/handles";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import {
-  COMBINED_APPROVAL_DIAL,
   policyChangeRequiresHardConfirmation,
   resolveDial,
 } from "@/lib/specs/policy";
-import {
-  useSpecIntegrityQuery,
-  type SpecDetailView,
-} from "@/lib/specs/queries";
-import {
-  specPolicyChangeResultSchema,
-  type CriterionDeliveryProjection,
-  type IntegrityReport,
-  type SpecExecutionView,
-  type SpecGateAdmissionView,
-} from "@/lib/specs/view-schemas";
+import type { SpecDetailView } from "@/lib/specs/queries";
 import {
   specAliasSchema,
-  specApprovalRowSchema,
-  specCriterionDispositionRowSchema,
-  specExecutionRowSchema,
   specGatePolicySchema,
   specSchema,
-  specWaiverRowSchema,
-  type SpecCriterionDisposition,
-  type SpecCriterionDispositionRow,
   type SpecGate,
   type SpecGateDial,
   type SpecGatePolicy,
   type SpecGatePreset,
-  type SpecRevisionSnapshot,
-  type SpecWaiverRow,
 } from "@/lib/specs/schemas";
-import { cn } from "@/lib/ui/cn";
+import {
+  specPolicyChangeResultSchema,
+  type SpecGateAdmissionView,
+} from "@/lib/specs/view-schemas";
 
 import { gateLabels } from "./presentation";
-import PostLaunchCapturePaths, {
-  type CaptureDiscoveredWorkRequest,
-  type CaptureScopeAmendmentReceipt,
-  type PostLaunchFailure,
-} from "./PostLaunchCapturePaths";
 import {
   openDraftForPolicyImpact,
   PolicyImpactPreview,
@@ -89,14 +61,13 @@ import {
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-controls");
-const GATES: readonly SpecGate[] = [
+
+const ACTIVE_GATES = [
   "requirements",
   "design",
-  "plan",
   "execution_start",
   "delivery",
-];
-const ACTIVE_POLICY_GATES = GATES.filter((gate) => gate !== "plan");
+] as const satisfies readonly SpecGate[];
 
 const presetLabels: Record<SpecGatePreset, string> = {
   "contract-bearing": "Contract-bearing",
@@ -105,48 +76,242 @@ const presetLabels: Record<SpecGatePreset, string> = {
 };
 
 const presetDescriptions: Record<SpecGatePreset, string> = {
-  "contract-bearing":
-    "Evergreen authoring, delivery-plan launch, and delivery require human gates.",
-  exploratory:
-    "Evergreen authoring transitions notify; delivery remains gated and cannot merge.",
-  "fast-path": "Requirements and design share one combined proposal approval.",
+  "contract-bearing": "Human review for authoring, launch, and delivery.",
+  exploratory: "Notify while authoring; preserve the delivery gate.",
+  "fast-path": "One combined approval for Requirements and Design.",
 };
 
-const gateDescriptions: Record<SpecGate, string> = {
+const gateDescriptions: Record<(typeof ACTIVE_GATES)[number], string> = {
   requirements: "Admits the requirements contract.",
   design: "Admits the design narrative and decisions.",
-  plan: "Admits only a legacy evergreen Plan revision.",
-  execution_start: "Admits the approved delivery-plan candidate for launch.",
+  execution_start: "Admits the approved delivery candidate for launch.",
   delivery: "Admits delivery claims and merge readiness.",
 };
 
-const dispositionLabels: Record<SpecCriterionDisposition, string> = {
-  in_scope: "In scope",
-  deferred: "Deferred",
-  waived: "Waived",
-  delivered_elsewhere: "Delivered elsewhere",
-};
-
-/** Rendered verbatim from the server's current-attempt delivery projection. */
-const deliveryStatePresentation: Record<
-  CriterionDeliveryProjection["deliveryState"],
-  { label: string; tone: StatusChipTone }
-> = {
-  delivered: { label: "Delivered", tone: "green" },
-  verdict_recorded: { label: "Outcome satisfied", tone: "cyan" },
-  waived: { label: "Waived", tone: "amber" },
-  delivered_elsewhere: { label: "Delivered elsewhere", tone: "neutral" },
-  awaiting_outcome: { label: "Awaiting outcome", tone: "neutral" },
-};
+type GateSelection = SpecGateDial | "inherit";
 
 export const renameSpecResultSchema = z
   .object({ spec: specSchema, alias: specAliasSchema })
   .strict();
 export type RenameSpecResultView = z.infer<typeof renameSpecResultSchema>;
 
-type GateSelection = SpecGateDial | "inherit";
+function policyWithSelection(
+  current: SpecGatePolicy,
+  preset: SpecGatePreset,
+  selections: Partial<Record<SpecGate, GateSelection>>,
+): SpecGatePolicy {
+  const overrides = Object.fromEntries(
+    Object.entries(selections).flatMap(([gate, dial]) =>
+      dial === undefined || dial === "inherit" ? [] : [[gate, dial]],
+    ),
+  );
+  return specGatePolicySchema.parse({
+    ...current,
+    preset,
+    overrides: Object.keys(overrides).length === 0 ? undefined : overrides,
+  });
+}
 
-export function RenameSpecDialog({
+export function PolicyDialog({
+  currentPolicy,
+  pending,
+  error,
+  onChangePolicy,
+  openDraft,
+}: {
+  currentPolicy: SpecGatePolicy;
+  pending: boolean;
+  error: string | null;
+  onChangePolicy(input: {
+    proposedPolicy: SpecGatePolicy;
+    hardConfirmed: boolean;
+  }): void;
+  openDraft?: PolicyImpactDraft | null;
+}): React.JSX.Element {
+  const [preset, setPreset] = useState(currentPolicy.preset);
+  const [selections, setSelections] = useState<
+    Partial<Record<SpecGate, GateSelection>>
+  >(() =>
+    Object.fromEntries(
+      ACTIVE_GATES.map((gate) => [
+        gate,
+        currentPolicy.overrides?.[gate] ?? "inherit",
+      ]),
+    ),
+  );
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const proposedPolicy = policyWithSelection(currentPolicy, preset, selections);
+  const changed =
+    JSON.stringify(proposedPolicy) !== JSON.stringify(currentPolicy);
+  const hardConfirmation = policyChangeRequiresHardConfirmation(
+    currentPolicy,
+    proposedPolicy,
+  );
+
+  return (
+    <section
+      aria-labelledby="gate-policy-heading"
+      className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
+    >
+      <h2
+        id="gate-policy-heading"
+        className="m-0 font-display text-[0.95rem] font-bold text-text-primary"
+      >
+        Gate policy
+      </h2>
+      <p className="mt-xs mb-md font-mono text-[0.7rem] leading-relaxed text-text-tertiary">
+        Choose the default, then override only gates that deliberately differ.
+      </p>
+
+      <RadioGroup
+        value={preset}
+        onValueChange={(value) => setPreset(value as SpecGatePreset)}
+        aria-label="Gate policy preset"
+      >
+        {(Object.keys(presetLabels) as SpecGatePreset[]).map((value) => (
+          <RadioGroupOption
+            key={value}
+            value={value}
+            label={presetLabels[value]}
+            description={presetDescriptions[value]}
+          />
+        ))}
+      </RadioGroup>
+
+      <div className="mt-md grid gap-sm">
+        {ACTIVE_GATES.map((gate) => (
+          <FormGroup key={gate}>
+            <FormLabel htmlFor={`gate-policy-${gate}`}>
+              {gateLabels[gate]}
+            </FormLabel>
+            <FormHint>{gateDescriptions[gate]}</FormHint>
+            {gate === "delivery" && (
+              <FormHint>Delivery can never be Off.</FormHint>
+            )}
+            <Select
+              value={selections[gate] ?? "inherit"}
+              onValueChange={(value) =>
+                setSelections((current) => ({
+                  ...current,
+                  [gate]: value as GateSelection,
+                }))
+              }
+            >
+              <SelectTrigger
+                id={`gate-policy-${gate}`}
+                layoutClassName="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="inherit">
+                  Inherit (
+                  {resolveDial(
+                    { ...proposedPolicy, overrides: undefined },
+                    gate,
+                  )}
+                  )
+                </SelectItem>
+                <SelectItem value="gate">Gate</SelectItem>
+                <SelectItem value="notify">Notify</SelectItem>
+                <SelectItem value="off" disabled={gate === "delivery"}>
+                  Off
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </FormGroup>
+        ))}
+      </div>
+
+      {openDraft && (
+        <div className="mt-md">
+          <PolicyImpactPreview
+            draft={openDraft}
+            currentPolicy={currentPolicy}
+            proposedPolicy={proposedPolicy}
+          />
+        </div>
+      )}
+      {error && <FormError role="alert">{error}</FormError>}
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogTrigger asChild>
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
+            disabled={!changed || pending}
+          >
+            Review policy change
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle>Confirm gate policy change</AlertDialogTitle>
+          <AlertDialogDescription>
+            {hardConfirmation
+              ? "This change loosens at least one gate. Existing approvals are not manufactured and the open authoring stage does not move."
+              : "The confirmed policy governs future transitions. Existing approvals and the open authoring stage do not change."}
+          </AlertDialogDescription>
+          <AlertDialogActions>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                onChangePolicy({
+                  proposedPolicy,
+                  hardConfirmed: hardConfirmation,
+                })
+              }
+            >
+              Confirm policy change
+            </AlertDialogAction>
+          </AlertDialogActions>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
+export function PolicyAdmissionNotices({
+  admissions,
+}: {
+  admissions: readonly SpecGateAdmissionView[];
+}): React.JSX.Element | null {
+  const policyAdmissions = admissions.filter(
+    (admission) =>
+      admission.basis === "notify_policy" || admission.basis === "off_policy",
+  );
+  if (policyAdmissions.length === 0) return null;
+  return (
+    <section
+      aria-label="Policy-admitted gates"
+      className="mb-lg rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
+    >
+      <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
+        Policy-admitted gates
+      </h2>
+      <ul className="m-0 mt-md grid list-none gap-sm p-0">
+        {policyAdmissions.map((admission) => (
+          <li key={admission.id} className="flex flex-wrap items-center gap-md">
+            <StatusChip
+              tone={admission.basis === "notify_policy" ? "amber" : "neutral"}
+            >
+              {admission.basis === "notify_policy"
+                ? "Proceeded under Notify"
+                : "Proceeded with gate off"}
+            </StatusChip>
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
+              {gateLabels[admission.gate]} · revision{" "}
+              {admission.revisionId ?? "n/a"}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function RenameSpecControl({
   currentSlug,
   currentName,
   pending,
@@ -159,1192 +324,104 @@ export function RenameSpecDialog({
   error: string | null;
   onRename(input: { slug: string; name?: string }): void;
 }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [slug, setSlug] = useState(currentSlug);
   const [name, setName] = useState(currentName);
-  const trimmedSlug = slug.trim();
-  const trimmedName = name.trim();
-  const slugValid = specSlugSchema.safeParse(trimmedSlug).success;
-  const canRename = slugValid && trimmedSlug !== currentSlug;
-
-  function handleOpenChange(nextOpen: boolean): void {
-    setOpen(nextOpen);
-    if (!nextOpen) return;
-    setSlug(currentSlug);
-    setName(currentName);
-  }
-
-  function handleRename(): void {
-    onRename({
-      slug: trimmedSlug,
-      ...(trimmedName.length > 0 && trimmedName !== currentName
-        ? { name: trimmedName }
-        : {}),
-    });
-  }
-
-  return (
-    <AlertDialog open={open} onOpenChange={handleOpenChange}>
-      <AlertDialogTrigger asChild>
-        <Button size="sm" variant="ghost">
-          Rename
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent size="default">
-        <AlertDialogTitle>Rename spec</AlertDialogTitle>
-        <AlertDialogDescription>
-          The current slug {currentSlug} stays behind as an alias, so previously
-          copied references and deep links keep resolving.
-        </AlertDialogDescription>
-
-        <FormGroup layoutClassName="mt-lg">
-          <FormLabel htmlFor="spec-rename-slug">New slug</FormLabel>
-          <FormInput
-            id="spec-rename-slug"
-            aria-label="New slug"
-            value={slug}
-            onChange={(event) => setSlug(event.currentTarget.value)}
-            autoComplete="off"
-          />
-          {!slugValid && (
-            <FormHint>Use lowercase kebab-case: letters and digits.</FormHint>
-          )}
-        </FormGroup>
-        <FormGroup layoutClassName="mt-md mb-sm">
-          <FormLabel htmlFor="spec-rename-name">Name</FormLabel>
-          <FormInput
-            id="spec-rename-name"
-            aria-label="Name"
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
-            autoComplete="off"
-          />
-        </FormGroup>
-        {error !== null && <FormError role="alert">{error}</FormError>}
-        <AlertDialogActions>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={handleRename}
-            loading={pending}
-            disabled={!canRename}
-          >
-            Rename spec
-          </AlertDialogAction>
-        </AlertDialogActions>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-interface PolicyDialogProps {
-  currentPolicy: SpecGatePolicy;
-  pending: boolean;
-  error: string | null;
-  onChangePolicy(input: {
-    proposedPolicy: SpecGatePolicy;
-    hardConfirmed: boolean;
-  }): void;
-  specSlug?: string;
-  backHref?: string;
-  /**
-   * The spec's open draft, for the confirmation's impact preview. Omitted by
-   * callers that have no spec detail to read one from, which the preview
-   * reports as no open draft rather than inventing a stage.
-   */
-  openDraft?: PolicyImpactDraft | null;
-}
-
-export function PolicyDialog(props: PolicyDialogProps): React.JSX.Element {
-  const policyKey = JSON.stringify(props.currentPolicy);
-  return <PolicyEditor key={policyKey} {...props} />;
-}
-
-function PolicyEditor({
-  currentPolicy,
-  pending,
-  error,
-  onChangePolicy,
-  specSlug,
-  backHref,
-  openDraft = null,
-}: PolicyDialogProps): React.JSX.Element {
-  const [preset, setPreset] = useState<SpecGatePreset>(currentPolicy.preset);
-  const [overrides, setOverrides] = useState<Record<SpecGate, GateSelection>>(
-    () => policyOverrides(currentPolicy),
-  );
-  const [confirmationPolicy, setConfirmationPolicy] =
-    useState<SpecGatePolicy | null>(null);
-  const confirmationAccepted = useRef(false);
-  const proposedPolicy = proposedGatePolicy(preset, overrides);
-  const confirmationLoosens =
-    confirmationPolicy !== null &&
-    policyChoiceLoosens(currentPolicy, confirmationPolicy);
-
-  function showPolicy(policy: SpecGatePolicy): void {
-    setPreset(policy.preset);
-    setOverrides(policyOverrides(policy));
-  }
-
-  // `policyChangeRequiresHardConfirmation` is the same predicate the transition
-  // enforces, so it — and only it — decides whether the modal opens. Loosening
-  // is a copy signal: it escalates the warning, never the requirement.
-  function proposePolicy(policy: SpecGatePolicy): void {
-    showPolicy(policy);
-    const loosensPolicy = policyChoiceLoosens(currentPolicy, policy);
-    const requiresHardConfirmation = policyChangeRequiresHardConfirmation(
-      currentPolicy,
-      policy,
-    );
-    logger.info("spec_studio.policy_change.requested", {
-      currentPreset: currentPolicy.preset,
-      proposedPreset: policy.preset,
-      loosensPolicy,
-      requiresHardConfirmation,
-    });
-    if (requiresHardConfirmation) {
-      setConfirmationPolicy(policy);
-      logger.info("spec_studio.policy_change.confirmation_required", {
-        currentPreset: currentPolicy.preset,
-        proposedPreset: policy.preset,
-        loosensPolicy,
-        requiresHardConfirmation,
-      });
-      return;
-    }
-
-    onChangePolicy({
-      proposedPolicy: policy,
-      hardConfirmed: false,
-    });
-  }
-
-  function discardConfirmation(): void {
-    showPolicy(currentPolicy);
-    setConfirmationPolicy(null);
-    logger.info("spec_studio.policy_change.confirmation_cancelled", {
-      currentPreset: currentPolicy.preset,
-    });
-  }
-
-  // The only site allowed to assert `hardConfirmed: true` — a human clicked it.
-  function confirmPolicyChange(): void {
-    if (confirmationPolicy === null) return;
-    confirmationAccepted.current = true;
-    const policy = confirmationPolicy;
-    setConfirmationPolicy(null);
-    logger.info("spec_studio.policy_change.confirmed", {
-      currentPreset: currentPolicy.preset,
-      proposedPreset: policy.preset,
-      loosensPolicy: policyChoiceLoosens(currentPolicy, policy),
-      requiresHardConfirmation: true,
-    });
-    onChangePolicy({
-      proposedPolicy: policy,
-      hardConfirmed: true,
-    });
-  }
-
-  return (
-    <section
-      aria-labelledby="gate-policy-heading"
-      aria-busy={pending}
-      className="mx-auto max-w-[920px]"
+  return editing ? (
+    <form
+      className="grid gap-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const parsed = specSlugSchema.safeParse(slug);
+        if (!parsed.success || name.trim().length === 0) return;
+        onRename({ slug: parsed.data, name: name.trim() });
+      }}
     >
-      <header className="border-x-0 border-t-0 border-b border-solid border-border-dim pt-[10px] pb-[12px]">
-        {specSlug !== undefined && backHref !== undefined && (
-          <Link
-            href={backHref}
-            className="inline-flex min-h-[28px] items-center gap-[6px] font-mono text-[0.72rem] text-text-tertiary no-underline hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
-          >
-            ← {specSlug}
-          </Link>
-        )}
-        <div className="mt-[3px] flex items-baseline gap-[10px] max-768:flex-col max-768:items-start max-768:gap-xs">
-          <h1
-            id="gate-policy-heading"
-            className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary"
-          >
-            Gate policy
-          </h1>
-          <span className="font-mono text-[0.72rem] text-text-tertiary">
-            preset supplies the five dials · overrides are sparse and visible ·
-            resolved like workflow cascades
-          </span>
-        </div>
-      </header>
-
-      <div className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md">
-        <RadioGroup
-          aria-label="Gate policy preset"
-          value={preset}
-          disabled={pending}
-          onValueChange={(value) => {
-            const nextPreset = value as SpecGatePreset;
-            proposePolicy({ preset: nextPreset });
-          }}
-        >
-          <div className="grid grid-cols-3 gap-[10px] max-768:grid-cols-1">
-            {(Object.keys(presetLabels) as SpecGatePreset[]).map((value) => (
-              <div
-                key={value}
-                data-selected={preset === value}
-                className={cn(
-                  "rounded-md border border-solid border-border-subtle bg-bg-base px-[13px] py-[11px] transition-colors hover:border-border-strong data-[selected=true]:border-cyan-dim data-[selected=true]:bg-cyan-glow",
-                  preset === value && "[&_span[id]]:text-text-primary",
-                )}
-              >
-                <RadioGroupOption
-                  value={value}
-                  label={presetLabels[value]}
-                  description={presetDescriptions[value]}
-                />
-              </div>
-            ))}
-          </div>
-        </RadioGroup>
-
-        {preset === "exploratory" && (
-          <div className="relative mt-sm mb-md overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-gradient-to-r before:from-amber before:to-transparent">
-            <span className="mr-md font-mono text-[0.7rem] font-bold tracking-[0.06em] text-amber uppercase">
-              Exploratory posture
-            </span>
-            <span className="font-mono text-[0.72rem] text-text-secondary">
-              Nothing merges from this spec — completion claims and merges are
-              refused while this preset is active.
-            </span>
-          </div>
-        )}
-
-        <div className="mt-sm overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface">
-          {ACTIVE_POLICY_GATES.map((gate) => {
-            const isOverride = overrides[gate] !== "inherit";
-            const resolved = resolveDial(proposedPolicy, gate);
-            const isCombined = resolved === COMBINED_APPROVAL_DIAL;
-            const selectedDial = isCombined ? "gate" : resolved;
-            const presetResolved = resolveDial({ preset }, gate);
-            const presetDial =
-              presetResolved === COMBINED_APPROVAL_DIAL
-                ? "gate"
-                : presetResolved;
-            return (
-              <section
-                key={gate}
-                className="grid grid-cols-[minmax(180px,1fr)_auto] items-center gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-[11px] last:border-b-0 max-768:grid-cols-1"
-              >
-                <div>
-                  <div className="flex flex-wrap items-center gap-sm">
-                    <h2 className="m-0 font-mono text-[0.78rem] font-semibold text-text-primary">
-                      {gateLabels[gate]}
-                    </h2>
-                    {isOverride ? (
-                      <StatusChip tone="amber">Override</StatusChip>
-                    ) : isCombined ? (
-                      <StatusChip tone="neutral">
-                        Combined at propose
-                      </StatusChip>
-                    ) : null}
-                    {isOverride && (
-                      <button
-                        type="button"
-                        disabled={pending}
-                        title={`Reset to preset default (${presetDial})`}
-                        onClick={() => {
-                          const nextOverrides = {
-                            ...overrides,
-                            [gate]: "inherit" as const,
-                          };
-                          proposePolicy(
-                            proposedGatePolicy(preset, nextOverrides),
-                          );
-                        }}
-                        className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[0.64rem] text-text-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        ↺ preset
-                      </button>
-                    )}
-                  </div>
-                  <p className="mt-[2px] mb-0 font-mono text-[0.68rem] text-text-tertiary">
-                    {gateDescriptions[gate]}
-                  </p>
-                </div>
-                <SegmentedControl
-                  aria-label={`${gateLabels[gate]} gate mode`}
-                  value={selectedDial}
-                  onValueChange={(value) => {
-                    const nextDial = value as SpecGateDial;
-                    const nextOverrides = {
-                      ...overrides,
-                      [gate]: nextDial === presetDial ? "inherit" : nextDial,
-                    };
-                    proposePolicy(proposedGatePolicy(preset, nextOverrides));
-                  }}
-                  disabled={pending}
-                  layoutClassName="max-768:w-full max-768:overflow-x-auto"
-                >
-                  <SegmentedControlItem value="gate" disabled={isCombined}>
-                    Gate
-                  </SegmentedControlItem>
-                  <SegmentedControlItem value="notify" disabled={isCombined}>
-                    Notify
-                  </SegmentedControlItem>
-                  <SegmentedControlItem
-                    value="off"
-                    disabled={isCombined || gate === "delivery"}
-                  >
-                    Off
-                  </SegmentedControlItem>
-                </SegmentedControl>
-                {gate === "delivery" && (
-                  <p className="col-span-2 m-0 font-mono text-[0.68rem] text-text-tertiary max-768:col-span-1">
-                    Delivery can never be Off.
-                  </p>
-                )}
-              </section>
-            );
-          })}
-        </div>
-
-        <aside
-          role="note"
-          aria-label="Dial values"
-          className="mt-md rounded-md border border-solid border-border-subtle bg-bg-surface px-md py-sm"
-        >
-          <p className="mt-0 mb-sm font-mono text-[0.62rem] font-bold tracking-[0.1em] text-text-tertiary uppercase">
-            Dial values
-          </p>
-          <dl className="m-0 grid grid-cols-[56px_minmax(0,1fr)] gap-x-md gap-y-xs font-mono text-[0.7rem]">
-            <dt className="font-bold text-text-primary">Gate</dt>
-            <dd className="m-0 text-text-secondary">
-              hard stop — human approval required
-            </dd>
-            <dt className="font-bold text-text-primary">Notify</dt>
-            <dd className="m-0 text-text-secondary">
-              agent proceeds; human notified; recorded as a policy admission
-            </dd>
-            <dt className="font-bold text-text-primary">Off</dt>
-            <dd className="m-0 text-text-secondary">
-              transition free — still recorded as a policy admission
-            </dd>
-          </dl>
-          <p className="mt-sm mb-0 border-x-0 border-t border-b-0 border-solid border-border-dim pt-sm font-mono text-[0.68rem] text-amber-dim">
-            Floor: executions always pin revision and scope · evidence is always
-            collected · Delivery is never Off · waivers are never grantable by
-            policy
-          </p>
-        </aside>
-
-        {error !== null && (
-          <FormError role="alert" layoutClassName="mt-md">
-            {error}
-          </FormError>
-        )}
-      </div>
-
-      <AlertDialog
-        open={confirmationPolicy !== null}
-        onOpenChange={(open) => {
-          if (open) return;
-          if (confirmationAccepted.current) {
-            confirmationAccepted.current = false;
-            setConfirmationPolicy(null);
-            return;
-          }
-          discardConfirmation();
-        }}
-      >
-        <AlertDialogContent size="wide">
-          <AlertDialogTitle>
-            Gate policy change — human confirmation
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {confirmationLoosens
-              ? "This policy change reduces at least one gate. Confirm that the agent may use the looser posture for future work."
-              : "This policy change switches the preset without reducing any gate. Confirm the new posture for future work."}
-          </AlertDialogDescription>
-          {confirmationLoosens && (
-            <p className="mt-md mb-0 rounded-md border border-solid border-amber-dim bg-amber-glow px-md py-sm font-mono text-[0.7rem] text-amber">
-              Loosening — at least one gate becomes weaker than it is today.
-            </p>
-          )}
-          {confirmationPolicy !== null && (
-            <PolicyImpactPreview
-              currentPolicy={currentPolicy}
-              proposedPolicy={confirmationPolicy}
-              draft={openDraft}
-            />
-          )}
-          <div className="my-md grid gap-xs rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.7rem] text-text-secondary">
-            <span>
-              · applies prospectively only — nothing already admitted is
-              retroactively approved
-            </span>
-            <span>· recorded with your identity as the confirming human</span>
-            <span>
-              · Delivery remains floored at Notify and waivers remain human-only
-            </span>
-          </div>
-          <AlertDialogActions>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmPolicyChange} loading={pending}>
-              Confirm policy change
-            </AlertDialogAction>
-          </AlertDialogActions>
-        </AlertDialogContent>
-      </AlertDialog>
-    </section>
-  );
-}
-
-interface GrantWaiverInput {
-  criterionElementId: string;
-  revisionId: string;
-  reason: string;
-}
-
-interface SetDispositionInput {
-  executionId: string;
-  criterionElementId: string;
-  disposition: SpecCriterionDisposition;
-  waiverId?: string;
-  deliveredByExecutionId?: string;
-}
-
-interface GrantGateApprovalPanelInput {
-  executionId: string;
-  revisionId: string;
-}
-
-export type CaptureDiscoveredWorkInput = CaptureDiscoveredWorkRequest;
-
-export interface ExecutionPanelPostLaunchState {
-  captureOutcomePath: "discovery" | "replan" | null;
-  captureReceipt: CaptureScopeAmendmentReceipt | null;
-  captureFailure: PostLaunchFailure | null;
-  onCaptureIntent(path: "discovery" | "replan"): void;
-}
-
-export interface AbandonExecutionPanelInput {
-  executionId: string;
-  reason: string;
-}
-
-export function ExecutionPanel({
-  detail,
-  projectName,
-  pendingAction,
-  error,
-  onGrantWaiver,
-  onSetDisposition,
-  onGrantGateApproval,
-  onCaptureScopeAmendment,
-  onAbandonExecution,
-  postLaunch,
-}: {
-  detail: SpecDetailView;
-  projectName: string;
-  pendingAction: string | null;
-  error: string | null;
-  onGrantWaiver(input: GrantWaiverInput): void;
-  onSetDisposition(input: SetDispositionInput): void;
-  onGrantGateApproval(input: GrantGateApprovalPanelInput): void;
-  onCaptureScopeAmendment(input: CaptureDiscoveredWorkInput): void;
-  onAbandonExecution(input: AbandonExecutionPanelInput): void;
-  postLaunch?: ExecutionPanelPostLaunchState;
-}): React.JSX.Element {
-  const activeExecution = detail.executions.find(
-    (execution) =>
-      execution.state === "definition_review" || execution.state === "running",
-  );
-  const workflowCompleted =
-    activeExecution?.state === "running" &&
-    detail.status.executions.some(
-      (execution) =>
-        execution.id === activeExecution.id &&
-        execution.workflowStatus === "completed",
-    );
-  const deliveryRequiresGateApproval =
-    resolveDial(detail.spec.gatePolicy, "delivery") === "gate";
-  const gateAdmitted = (gate: "delivery") => (execution: { id: string }) =>
-    detail.gateAdmissions.some(
-      (admission) =>
-        admission.gate === gate && admission.executionId === execution.id,
-    );
-  const deliveryAdmitted = gateAdmitted("delivery");
-
-  return (
-    <section
-      aria-label="Execution and merge"
-      className="mx-auto max-w-[1000px] pb-[48px]"
-    >
-      <ExecutionWorkflowHeader
-        specSlug={detail.spec.slug}
-        execution={activeExecution}
-        readyToMerge={workflowCompleted}
+      <FormLabel htmlFor="spec-name">Name</FormLabel>
+      <FormInput
+        id="spec-name"
+        value={name}
+        onChange={(event) => setName(event.target.value)}
       />
-
-      {activeExecution !== undefined ? (
-        <>
-          {activeExecution.state === "definition_review" ? (
-            <WorkflowReviewPanel
-              detail={detail}
-              projectName={projectName}
-              execution={activeExecution}
-            />
-          ) : (
-            <div className="mb-md flex flex-wrap items-center justify-between gap-md rounded-md border border-solid border-[var(--cc-green-border)] bg-green-glow px-md py-sm">
-              <div className="flex items-center gap-sm">
-                <span
-                  aria-hidden="true"
-                  className="size-[7px] rounded-full bg-green shadow-[0_0_10px_var(--color-green)]"
-                />
-                <div>
-                  <p className="m-0 font-mono text-[0.72rem] font-bold tracking-[0.05em] text-green uppercase">
-                    {workflowCompleted
-                      ? "Workflow complete — ready to merge"
-                      : "Workflow launch active"}
-                  </p>
-                  <p className="mt-[2px] mb-0 font-mono text-[0.66rem] text-text-primary">
-                    {workflowCompleted
-                      ? activeExecution.sessionName === null
-                        ? "Merge the execution session into its delivery target to mark this execution Delivered."
-                        : `Merge session ${activeExecution.sessionName} into its delivery target to mark this execution Delivered.`
-                      : "Contract provenance is locked for this running execution."}
-                  </p>
-                </div>
-              </div>
-              <ExecutionLinks
-                projectName={projectName}
-                execution={activeExecution}
-                readyToMerge={workflowCompleted}
-              />
-            </div>
-          )}
-
-          <MergeGatePanel
-            detail={detail}
-            execution={activeExecution}
-            snapshot={snapshotForExecution(detail, activeExecution)}
-            deliveryRequiresGateApproval={deliveryRequiresGateApproval}
-            deliveryAdmitted={deliveryAdmitted(activeExecution)}
-            workflowCompleted={workflowCompleted}
-            pendingAction={pendingAction}
-            error={error}
-            onGrantWaiver={onGrantWaiver}
-            onSetDisposition={onSetDisposition}
-            onGrantGateApproval={onGrantGateApproval}
-          />
-
-          {activeExecution.state === "running" && !workflowCompleted && (
-            <PostLaunchCapturePaths
-              projectName={projectName}
-              slug={detail.spec.slug}
-              executionId={activeExecution.id}
-              state="running"
-              capturePending={pendingAction === "capture-scope-amendment"}
-              captureOutcomePath={postLaunch?.captureOutcomePath ?? null}
-              captureReceipt={postLaunch?.captureReceipt ?? null}
-              captureFailure={postLaunch?.captureFailure ?? null}
-              onCapture={(path, input) => {
-                postLaunch?.onCaptureIntent(path);
-                onCaptureScopeAmendment(input);
-              }}
-            />
-          )}
-
-          {(activeExecution.state === "definition_review" ||
-            workflowCompleted) && (
-            <AbandonExecutionForm
-              executionId={activeExecution.id}
-              stage={workflowCompleted ? "awaiting_merge" : "definition_review"}
-              pending={pendingAction === "abandon-execution"}
-              onAbandon={onAbandonExecution}
-            />
-          )}
-        </>
-      ) : (
-        <>
-          <section className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg">
-            <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-              Launch from Delivery plan
-            </h2>
-            <p className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
-              Execution starts from an approved DeliveryPlanAttempt. Review its
-              finalized candidate, sign it off, and launch those exact bytes
-              from the Delivery plan surface.
-            </p>
-            <Link
-              href={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}?view=plan`}
-              className="mt-sm inline-flex rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[6px] font-mono text-[0.72rem] font-medium text-text-primary no-underline hover:border-border-strong hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-            >
-              Open Delivery plan
-            </Link>
-          </section>
-          <PostLaunchCapturePaths
-            projectName={projectName}
-            slug={detail.spec.slug}
-            executionId={null}
-            state="unlaunched"
-            capturePending={pendingAction === "capture-scope-amendment"}
-            captureOutcomePath={postLaunch?.captureOutcomePath ?? null}
-            captureReceipt={postLaunch?.captureReceipt ?? null}
-            captureFailure={postLaunch?.captureFailure ?? null}
-            onCapture={(path, input) => {
-              postLaunch?.onCaptureIntent(path);
-              onCaptureScopeAmendment(input);
-            }}
-          />
-        </>
-      )}
-    </section>
-  );
-}
-
-function ExecutionWorkflowHeader({
-  specSlug,
-  execution,
-  readyToMerge,
-}: {
-  specSlug: string;
-  execution: SpecExecutionView | undefined;
-  readyToMerge: boolean;
-}): React.JSX.Element {
-  return (
-    <header className="mb-md border-x-0 border-t-0 border-b border-solid border-border-dim pt-[10px] pb-[12px]">
-      <p className="m-0 font-mono text-[0.68rem] text-text-tertiary">
-        workflows /{" "}
-        {execution === undefined ? specSlug : `${execution.id} — ${specSlug}`}
-      </p>
-      <div className="mt-xs flex flex-wrap items-end justify-between gap-sm">
-        <div>
-          <h2 className="m-0 font-display text-[1.05rem] font-bold text-text-primary">
-            Execution — inside the workflow surface
-          </h2>
-          <p className="mt-[3px] mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-            The approved delivery plan is the graph workflow; candidate
-            provenance and merge criteria stay visible here.
-          </p>
-        </div>
-        {execution !== undefined && (
-          <StatusChip
-            tone={
-              execution.state === "definition_review"
-                ? "amber"
-                : readyToMerge
-                  ? "green"
-                  : "cyan"
-            }
-          >
-            {readyToMerge
-              ? "Ready to merge"
-              : executionStateLabel(execution.state)}
-          </StatusChip>
-        )}
+      <FormLabel htmlFor="spec-slug">Slug</FormLabel>
+      <FormInput
+        id="spec-slug"
+        value={slug}
+        onChange={(event) => setSlug(event.target.value)}
+      />
+      {error && <FormError role="alert">{error}</FormError>}
+      <div className="flex gap-xs">
+        <Button type="submit" size="sm" variant="primary" loading={pending}>
+          Save identity
+        </Button>
+        <Button type="button" size="sm" onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
       </div>
-    </header>
-  );
-}
-
-function ExecutionLinks({
-  projectName,
-  execution,
-  readyToMerge,
-}: {
-  projectName: string;
-  execution: SpecExecutionView;
-  readyToMerge: boolean;
-}): React.JSX.Element {
-  return (
-    <div className="flex flex-wrap gap-md">
-      {readyToMerge && execution.sessionName !== null && (
-        <Link
-          href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(execution.sessionName)}`}
-          className="font-mono text-[0.68rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-        >
-          Open session to merge
-        </Link>
-      )}
-      {execution.workflowExecutionId !== null &&
-        execution.sessionName !== null && (
-          <Link
-            href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(execution.sessionName)}/workflow`}
-            className="font-mono text-[0.68rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-          >
-            Open workflow run
-          </Link>
-        )}
-    </div>
-  );
-}
-
-function WorkflowReviewPanel({
-  detail,
-  projectName,
-  execution,
-}: {
-  detail: SpecDetailView;
-  projectName: string;
-  execution: SpecExecutionView;
-}): React.JSX.Element {
-  return (
-    <section
-      data-testid="workflow-review-banner"
-      className="relative mb-md overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface p-md before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-gradient-to-r before:from-amber before:via-amber before:to-transparent"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
-        <div className="flex min-w-0 items-start gap-sm">
-          <span
-            aria-hidden="true"
-            className="mt-[5px] size-[8px] shrink-0 rounded-full bg-amber shadow-[0_0_10px_var(--color-amber)]"
-          />
-          <div>
-            <h3 className="m-0 font-mono text-[0.78rem] font-bold tracking-[0.04em] text-amber uppercase">
-              Workflow launch awaiting approval
-            </h3>
-            <p className="mt-[3px] mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-              The admitted one-off launch is bound to {detail.spec.slug}. Its
-              approval and execution controls live on the workflow run.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-sm">
-          <Link
-            href={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`}
-            className="rounded-md border border-solid border-border-default px-[12px] py-[6px] font-mono text-[0.72rem] font-medium text-text-secondary no-underline hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-          >
-            Request changes
-          </Link>
-        </div>
-      </div>
-      <div className="mt-md">
-        <ExecutionLinks
-          projectName={projectName}
-          execution={execution}
-          readyToMerge={false}
-        />
-      </div>
-      {execution.workflowSeedSource === null && (
-        <p
-          role="alert"
-          className="mt-md mb-0 font-mono text-[0.66rem] text-red"
-        >
-          {`This retired execution has no immutable one-off launch. Abandon it with cctl spec abandon ${detail.spec.slug} --execution ${execution.id} --reason <reason>, then author and sign off a new delivery-plan launch.`}
+    </form>
+  ) : (
+    <div className="flex items-center justify-between gap-md">
+      <div>
+        <h2 className="m-0 font-display text-[0.95rem] font-bold text-text-primary">
+          Identity
+        </h2>
+        <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
+          {currentName} · {currentSlug}
         </p>
-      )}
-    </section>
-  );
-}
-
-function MergeGatePanel({
-  detail,
-  execution,
-  snapshot,
-  deliveryRequiresGateApproval,
-  deliveryAdmitted,
-  workflowCompleted,
-  pendingAction,
-  error,
-  onGrantWaiver,
-  onSetDisposition,
-  onGrantGateApproval,
-}: {
-  detail: SpecDetailView;
-  execution: SpecExecutionView;
-  snapshot: SpecRevisionSnapshot | null;
-  deliveryRequiresGateApproval: boolean;
-  deliveryAdmitted: boolean;
-  workflowCompleted: boolean;
-  pendingAction: string | null;
-  error: string | null;
-  onGrantWaiver(input: GrantWaiverInput): void;
-  onSetDisposition(input: SetDispositionInput): void;
-  onGrantGateApproval(input: GrantGateApprovalPanelInput): void;
-}): React.JSX.Element {
-  const selectedCriteria = selectedCriterionIds(execution.scope);
-  const criteria = (snapshot?.elements ?? []).filter(
-    (entry) => entry.version.payload.kind === "criterion",
-  );
-  const scopedCriteria = criteria.filter((entry) =>
-    selectedCriteria.has(entry.element.id),
-  );
-  const excludedCriteria = criteria.filter(
-    (entry) => !selectedCriteria.has(entry.element.id),
-  );
-  const dispositions = detail.criterionDispositions.filter(
-    (row) => row.execution_id === execution.id,
-  );
-  const deliveredElsewhereCount = dispositions.filter(
-    (row) =>
-      selectedCriteria.has(row.criterion_element_id) &&
-      row.disposition === "delivered_elsewhere",
-  ).length;
-  const projectionByCriterion = new Map(
-    execution.deliveryProjection.map((row) => [row.criterionElementId, row]),
-  );
-  const satisfiedOrDelivered = execution.deliveryProjection.filter(
-    (row) =>
-      row.deliveryState === "verdict_recorded" ||
-      row.deliveryState === "delivered",
-  ).length;
-  const projectionWaivedCount = execution.deliveryProjection.filter(
-    (row) => row.deliveryState === "waived",
-  ).length;
-  const projectionDeliveredElsewhereCount = execution.deliveryProjection.filter(
-    (row) => row.deliveryState === "delivered_elsewhere",
-  ).length;
-
-  return (
-    // The ?el=delivery deep link resolves here: focusable so the retrying
-    // scroll/focus effect actually lands (focus() is a no-op on a
-    // non-focusable section).
-    <section
-      id="merge-gate"
-      tabIndex={-1}
-      aria-label={`Merge gate for ${execution.id}`}
-      className="scroll-mt-lg overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
-    >
-      <header className="flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-raised px-md py-sm">
-        <div>
-          <h3 className="m-0 font-mono text-[0.76rem] font-bold tracking-[0.05em] text-text-primary uppercase">
-            Merge gate — {execution.id} → main
-          </h3>
-          <p className="mt-[3px] mb-0 font-mono text-[0.65rem] text-text-secondary">
-            Scoped only to promised criteria; exclusions remain visible but do
-            not block this delivery.
-          </p>
-        </div>
-        <span className="font-mono text-[0.64rem] text-text-secondary">
-          revision {snapshot?.revision.number ?? "?"} pinned
-        </span>
-      </header>
-
-      <div className="divide-y divide-border-dim">
-        {scopedCriteria.map((entry) => {
-          if (entry.version.payload.kind !== "criterion") return null;
-          const handle = criterionHandle(snapshot, entry.element.id);
-          if (handle === null) return null;
-          const disposition = dispositions.find(
-            (row) => row.criterion_element_id === entry.element.id,
-          );
-          const waiver = detail.waivers.find(
-            (row) =>
-              row.criterion_element_id === entry.element.id &&
-              row.revision_id === execution.revisionId &&
-              row.stale === 0,
-          );
-          const deliveredExecution =
-            detail.executions.find(
-              (candidate) =>
-                candidate.id === disposition?.delivered_by_execution_id &&
-                candidate.state === "delivered",
-            ) ??
-            detail.executions.find(
-              (candidate) => candidate.state === "delivered",
-            );
-          return (
-            <CriterionExecutionControls
-              key={`${entry.element.id}:${disposition?.updated_at ?? "initial"}`}
-              criterionElementId={entry.element.id}
-              handle={handle}
-              text={entry.version.payload.text}
-              execution={execution}
-              disposition={disposition}
-              projection={projectionByCriterion.get(entry.element.id)}
-              waiver={waiver}
-              deliveredExecution={deliveredExecution}
-              pendingAction={pendingAction}
-              onGrantWaiver={onGrantWaiver}
-              onSetDisposition={onSetDisposition}
-            />
-          );
-        })}
       </div>
-
-      {(excludedCriteria.length > 0 || deliveredElsewhereCount > 0) && (
-        <div className="mx-md mt-md rounded-md border border-dashed border-border-default bg-bg-base px-md py-sm">
-          <p className="m-0 font-mono text-[0.65rem] font-bold tracking-[0.05em] text-text-secondary uppercase">
-            Non-blocking outcomes
-          </p>
-          <div className="mt-[6px] flex flex-wrap items-center gap-sm font-mono text-[0.64rem] text-text-tertiary">
-            {excludedCriteria.length > 0 && (
-              <span>
-                {excludedCriteria.length} deferred criterion
-                {excludedCriteria.length === 1 ? "" : "s"}:{" "}
-                {excludedCriteria
-                  .map((entry) => criterionHandle(snapshot, entry.element.id))
-                  .filter((handle): handle is string => handle !== null)
-                  .map((handle) => (
-                    <span
-                      key={handle}
-                      className="ml-[4px] font-bold text-text-secondary"
-                    >
-                      {handle}
-                    </span>
-                  ))}
-              </span>
-            )}
-            {deliveredElsewhereCount > 0 && (
-              <span>
-                · {deliveredElsewhereCount} delivered elsewhere · proof belongs
-                to the linked execution
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="m-md flex flex-wrap items-center justify-between gap-md border-x-0 border-t border-b-0 border-solid border-border-dim pt-md">
-        <div>
-          <p className="m-0 font-mono text-[0.7rem] font-bold text-text-primary">
-            {satisfiedOrDelivered}/{scopedCriteria.length} outcomes satisfied ·{" "}
-            {projectionWaivedCount} waived · {projectionDeliveredElsewhereCount}{" "}
-            external delivery
-          </p>
-          <p className="mt-[3px] mb-0 font-mono text-[0.64rem] text-text-tertiary">
-            Criteria count as proven once a gate-passed merge publishes — merged
-            proof {detail.status.delivery.provenCount}/
-            {detail.status.delivery.totalInScope}.
-          </p>
-        </div>
-
-        {deliveryRequiresGateApproval ? (
-          deliveryAdmitted ? (
-            <div className="flex max-w-[520px] flex-wrap items-center justify-end gap-sm">
-              <StatusChip tone="green">Delivery approved</StatusChip>
-              <p className="m-0 font-mono text-[0.63rem] text-text-tertiary">
-                {workflowCompleted
-                  ? "Proof and approval are ready. Merge the session to its delivery target to complete delivery."
-                  : "The merge still needs valid proof or a waiver for every in-scope criterion before the gate admits it."}
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-end gap-sm">
-              <p className="m-0 max-w-[360px] font-mono text-[0.63rem] text-text-tertiary">
-                The delivery gate refuses this run&apos;s merge until a human
-                approves delivery.
-              </p>
-              <Button
-                size="sm"
-                variant="success"
-                loading={pendingAction === "grant-gate-approval"}
-                onClick={() =>
-                  onGrantGateApproval({
-                    executionId: execution.id,
-                    revisionId: execution.revisionId,
-                  })
-                }
-              >
-                Approve delivery for merge
-              </Button>
-            </div>
-          )
-        ) : (
-          <StatusChip tone="neutral">Delivery admitted by policy</StatusChip>
-        )}
-      </div>
-
-      {error !== null && (
-        <p
-          role="alert"
-          className="mx-md mt-0 mb-md font-mono text-[0.68rem] text-red"
-        >
-          {error}
-        </p>
-      )}
-    </section>
-  );
-}
-
-/**
- * The two states this form is reachable from, and why only these two. A run
- * still executing is served by the blocking-replan coordinator, which abandons
- * and reopens a seeded replacement in one act; offering a bare abandon there
- * would compete with it. That leaves the run whose workflow already finished,
- * which replan no longer covers and which reaches Delivered only through a
- * merge — so when that merge happens elsewhere, this is its only exit.
- */
-type AbandonExecutionStage = "definition_review" | "awaiting_merge";
-
-const ABANDON_EXECUTION_RATIONALE: Record<AbandonExecutionStage, string> = {
-  definition_review:
-    "Abandonment is terminal for this run: its pinned revision and scope are retained as history, and a new execution can start from any approved revision.",
-  awaiting_merge:
-    "This run's workflow finished, so it can only record Delivered by merging its session. If that work already landed another way, or the merge will never happen, abandoning is the only way to close the run out. Its pinned revision and scope are retained as history, and a new execution can start from any approved revision.",
-};
-
-function AbandonExecutionForm({
-  executionId,
-  stage,
-  pending,
-  onAbandon,
-}: {
-  executionId: string;
-  stage: AbandonExecutionStage;
-  pending: boolean;
-  onAbandon(input: AbandonExecutionPanelInput): void;
-}): React.JSX.Element {
-  const [reason, setReason] = useState("");
-
-  return (
-    <div className="mt-md rounded-md border border-solid border-[var(--cc-red-border)] bg-bg-base p-md">
-      <h3 className="m-0 font-display text-[0.8rem] font-bold text-text-primary">
-        Abandon execution
-      </h3>
-      <p className="mt-xs mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-        {ABANDON_EXECUTION_RATIONALE[stage]}
-      </p>
-      <FormGroup layoutClassName="mt-md">
-        <FormLabel htmlFor="spec-abandon-execution-reason">
-          Abandonment reason
-        </FormLabel>
-        <FormInput
-          id="spec-abandon-execution-reason"
-          aria-label="Abandonment reason"
-          value={reason}
-          onChange={(event) => setReason(event.currentTarget.value)}
-          placeholder="Required durable abandonment reason"
-          autoComplete="off"
-        />
-      </FormGroup>
-      <Button
-        size="sm"
-        variant="danger"
-        layoutClassName="mt-md"
-        loading={pending}
-        disabled={reason.trim().length === 0}
-        onClick={() => onAbandon({ executionId, reason: reason.trim() })}
-      >
-        Abandon execution
+      <Button type="button" size="sm" onClick={() => setEditing(true)}>
+        Edit identity
       </Button>
     </div>
   );
 }
 
-export interface AbandonSpecPanelInput {
-  reason: string;
-}
-
-/**
- * Whole-spec abandonment. The transport gate refuses this action for agents,
- * so this control is the only surface that can reach it — and it is
- * deliberately kept apart from `AbandonExecutionForm`: that one stops a single
- * run, this one retires the durable spec every run belongs to.
- */
-export function AbandonSpecPanel({
-  slug,
-  abandonedAt,
-  abandonedReason,
+function AbandonSpecControl({
   pending,
   error,
-  onAbandonSpec,
+  onAbandon,
 }: {
-  slug: string;
-  abandonedAt: string | null;
-  abandonedReason: string | null;
   pending: boolean;
   error: string | null;
-  onAbandonSpec(input: AbandonSpecPanelInput): void;
+  onAbandon(reason: string): void;
 }): React.JSX.Element {
-  const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
-  const trimmedReason = reason.trim();
-
-  function handleOpenChange(open: boolean): void {
-    setConfirming(open);
-    setReason("");
-  }
-
-  // The only site allowed to abandon the spec: a human confirmed it here. No
-  // predicate and no fall-through path may reach `onAbandonSpec`.
-  function confirmAbandonSpec(): void {
-    if (trimmedReason.length === 0) return;
-    logger.info("spec_studio.abandon_spec.confirmed", { slug });
-    onAbandonSpec({ reason: trimmedReason });
-  }
-
-  if (abandonedAt !== null) {
-    return (
-      <section
-        aria-label="Spec lifecycle"
-        className="mt-xl rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
-      >
-        <div className="flex flex-wrap items-center gap-sm">
-          <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-            Spec abandoned
-          </h2>
-          <StatusChip tone="red">Retired</StatusChip>
-          <span className="font-mono text-[0.7rem] text-text-tertiary">
-            {abandonedAt}
-          </span>
-        </div>
-        <p className="mt-sm mb-0 max-w-[680px] text-[0.76rem] leading-relaxed text-text-secondary">
-          {abandonedReason ?? "No reason was recorded."}
-        </p>
-      </section>
-    );
-  }
-
   return (
-    <section
-      aria-label="Spec lifecycle"
-      className="mt-xl rounded-lg border border-solid border-red-dim bg-red-glow p-lg"
-    >
-      <div className="flex flex-wrap items-center gap-sm">
-        <h2 className="m-0 font-display text-[0.92rem] font-bold text-red">
-          Abandon this spec
-        </h2>
-        <StatusChip tone="red">Terminal</StatusChip>
-      </div>
-      <p className="mt-sm mb-0 max-w-[680px] text-[0.76rem] leading-relaxed text-text-secondary">
-        This retires the whole spec, not a run: it leaves the active inventory,
-        no further execution can start from it, and its revisions stay readable
-        as history. To stop one run and start another, use Abandon execution on
-        the execution surface above.
+    <section className="rounded-lg border border-solid border-red-dim bg-red-glow p-lg">
+      <h2 className="m-0 font-display text-[0.9rem] font-bold text-red">
+        Abandon spec
+      </h2>
+      <p className="mt-xs mb-md font-mono text-[0.7rem] text-text-secondary">
+        This is terminal and preserves the full read-only history.
       </p>
-      {error !== null && (
-        <FormError role="alert" layoutClassName="mt-md">
-          {error}
-        </FormError>
-      )}
-      <AlertDialog open={confirming} onOpenChange={handleOpenChange}>
+      <FormLabel htmlFor="abandon-spec-reason">Reason</FormLabel>
+      <FormInput
+        id="abandon-spec-reason"
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+      />
+      {error && <FormError role="alert">{error}</FormError>}
+      <AlertDialog>
         <AlertDialogTrigger asChild>
           <Button
+            type="button"
             size="sm"
             variant="danger"
-            layoutClassName="mt-md"
-            loading={pending}
+            disabled={!reason.trim() || pending}
           >
-            Abandon whole spec
+            Abandon spec
           </Button>
         </AlertDialogTrigger>
-        <AlertDialogContent size="default">
-          <AlertDialogTitle>Abandon spec {slug}?</AlertDialogTitle>
+        <AlertDialogContent>
+          <AlertDialogTitle>Abandon this spec?</AlertDialogTitle>
           <AlertDialogDescription>
-            {slug} stops being an active spec. Its approved revisions, evidence,
-            and executions remain readable, but nothing new can be proposed,
-            started, or delivered from it. Studio cannot undo this.
+            The spec becomes read-only. Existing definitions and execution
+            history remain available.
           </AlertDialogDescription>
-          <FormGroup layoutClassName="mt-lg mb-sm">
-            <FormLabel htmlFor="spec-abandon-spec-reason">
-              Spec abandonment reason
-            </FormLabel>
-            <FormInput
-              id="spec-abandon-spec-reason"
-              aria-label="Spec abandonment reason"
-              value={reason}
-              onChange={(event) => setReason(event.currentTarget.value)}
-              placeholder="Required durable reason, kept with the spec"
-              autoComplete="off"
-            />
-          </FormGroup>
           <AlertDialogActions>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              danger
-              onClick={confirmAbandonSpec}
-              loading={pending}
-              disabled={trimmedReason.length === 0}
-            >
-              Abandon spec permanently
+            <AlertDialogAction onClick={() => onAbandon(reason.trim())}>
+              Confirm abandonment
             </AlertDialogAction>
           </AlertDialogActions>
         </AlertDialogContent>
@@ -1353,393 +430,13 @@ export function AbandonSpecPanel({
   );
 }
 
-function CriterionExecutionControls({
-  criterionElementId,
-  handle,
-  text,
-  execution,
-  disposition,
-  projection,
-  waiver,
-  deliveredExecution,
-  pendingAction,
-  onGrantWaiver,
-  onSetDisposition,
-}: {
-  criterionElementId: string;
-  handle: string;
-  text: string;
-  execution: SpecExecutionView;
-  disposition: SpecCriterionDispositionRow | undefined;
-  projection: CriterionDeliveryProjection | undefined;
-  waiver: SpecWaiverRow | undefined;
-  deliveredExecution: SpecExecutionView | undefined;
-  pendingAction: string | null;
-  onGrantWaiver(input: GrantWaiverInput): void;
-  onSetDisposition(input: SetDispositionInput): void;
-}): React.JSX.Element {
-  const [reason, setReason] = useState("");
-  const [waiverOpen, setWaiverOpen] = useState(false);
-  const [selectedDisposition, setSelectedDisposition] = useState<
-    "" | "waived" | "delivered_elsewhere"
-  >("");
-
-  const canSaveDisposition =
-    selectedDisposition !== "" &&
-    (selectedDisposition !== "waived" || waiver !== undefined) &&
-    (selectedDisposition !== "delivered_elsewhere" ||
-      deliveredExecution !== undefined);
-
-  function saveDisposition(): void {
-    if (selectedDisposition === "") return;
-    const input: SetDispositionInput = {
-      executionId: execution.id,
-      criterionElementId,
-      disposition: selectedDisposition,
-    };
-    if (selectedDisposition === "waived" && waiver !== undefined) {
-      input.waiverId = waiver.id;
-    }
-    if (
-      selectedDisposition === "delivered_elsewhere" &&
-      deliveredExecution !== undefined
-    ) {
-      input.deliveredByExecutionId = deliveredExecution.id;
-    }
-    onSetDisposition(input);
-  }
-
-  return (
-    <article className="bg-bg-base px-md py-sm">
-      <div className="grid grid-cols-[42px_minmax(0,1fr)_auto] items-center gap-sm max-768:grid-cols-[42px_minmax(0,1fr)]">
-        <span className="font-mono text-[0.7rem] font-bold text-cyan">
-          {handle}
-        </span>
-        <div className="min-w-0">
-          <CompactMarkdown content={text} />
-        </div>
-        <span className="inline-flex flex-wrap items-center justify-end gap-[6px]">
-          {projection !== undefined && (
-            <StatusChip
-              tone={deliveryStatePresentation[projection.deliveryState].tone}
-            >
-              {deliveryStatePresentation[projection.deliveryState].label}
-            </StatusChip>
-          )}
-          <StatusChip
-            tone={disposition?.disposition === "waived" ? "amber" : "neutral"}
-          >
-            {dispositionLabels[disposition?.disposition ?? "in_scope"]}
-          </StatusChip>
-        </span>
-      </div>
-      <div className="mt-[6px] flex flex-wrap items-center justify-end gap-[6px]">
-        <Select
-          value={selectedDisposition}
-          onValueChange={(value) =>
-            setSelectedDisposition(value as "waived" | "delivered_elsewhere")
-          }
-        >
-          <SelectTrigger
-            aria-label={`Disposition for ${handle}`}
-            layoutClassName="w-[170px] max-768:w-full"
-          >
-            <SelectValue placeholder="Set outcome" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="waived" disabled={waiver === undefined}>
-              Waived
-            </SelectItem>
-            <SelectItem
-              value="delivered_elsewhere"
-              disabled={deliveredExecution === undefined}
-            >
-              Delivered elsewhere
-            </SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
-          size="sm"
-          loading={pendingAction === "set-disposition"}
-          disabled={!canSaveDisposition}
-          aria-label={`Save disposition for ${handle}`}
-          onClick={saveDisposition}
-        >
-          Save outcome
-        </Button>
-        {waiver === undefined && !waiverOpen && (
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label={`Waive ${handle}`}
-            onClick={() => setWaiverOpen(true)}
-          >
-            Waive…
-          </Button>
-        )}
-      </div>
-
-      {waiverOpen && waiver === undefined && (
-        <div className="mt-sm flex flex-wrap items-end justify-end gap-sm rounded-md border border-solid border-[var(--cc-amber-border)] bg-amber-glow p-sm">
-          <FormGroup layoutClassName="mb-0 min-w-[280px] flex-1">
-            <FormLabel htmlFor={`waiver-reason-${criterionElementId}`}>
-              Human waiver reason
-            </FormLabel>
-            <FormInput
-              id={`waiver-reason-${criterionElementId}`}
-              aria-label={`Waiver reason for ${handle}`}
-              value={reason}
-              onChange={(event) => setReason(event.currentTarget.value)}
-              placeholder="Required human rationale"
-            />
-          </FormGroup>
-          <Button
-            size="sm"
-            variant="success"
-            loading={pendingAction === "grant-waiver"}
-            disabled={reason.trim().length === 0}
-            aria-label={`Record waiver for ${handle}`}
-            onClick={() =>
-              onGrantWaiver({
-                criterionElementId,
-                revisionId: execution.revisionId,
-                reason: reason.trim(),
-              })
-            }
-          >
-            Record waiver
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setWaiverOpen(false);
-              setReason("");
-            }}
-          >
-            Cancel
-          </Button>
-        </div>
-      )}
-      {waiver !== undefined && (
-        <p className="mt-[6px] mb-0 text-right font-mono text-[0.62rem] text-amber">
-          Human waiver recorded · {waiver.reason}
-        </p>
-      )}
-    </article>
-  );
-}
-
-/**
- * R11.2 post-hoc review surface: transitions the policy admitted under a
- * Notify (or Off) dial proceeded without a human approval, so Studio lists
- * them for review. Correction happens through the operations already on this
- * surface — request changes, an amendment, or abandoning the spec.
- */
-export function PolicyAdmissionNotices({
-  admissions,
-}: {
-  admissions: SpecGateAdmissionView[];
-}): React.JSX.Element | null {
-  const policyAdmissions = admissions.filter(
-    (admission) =>
-      admission.basis === "notify_policy" || admission.basis === "off_policy",
-  );
-  if (policyAdmissions.length === 0) return null;
-
-  return (
-    <section
-      aria-label="Policy-admitted gates"
-      className="mb-lg rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
-    >
-      <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-        Policy-admitted gates
-      </h2>
-      <p className="mt-xs mb-0 text-[0.74rem] leading-relaxed text-text-secondary">
-        These transitions proceeded under the gate policy without a human
-        approval. Review them; correct course with request changes, an
-        amendment, or abandoning the spec.
-      </p>
-      <ul className="m-0 mt-md grid list-none gap-sm p-0">
-        {policyAdmissions.map((admission) => (
-          <li
-            key={admission.id}
-            className="flex flex-wrap items-center gap-md rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm"
-          >
-            <StatusChip
-              tone={admission.basis === "notify_policy" ? "amber" : "neutral"}
-            >
-              {admission.basis === "notify_policy"
-                ? "Proceeded under Notify"
-                : "Proceeded with gate off"}
-            </StatusChip>
-            <span className="font-mono text-[0.7rem] text-text-tertiary">
-              {gateLabels[admission.gate]} gate · {admission.createdAt}
-              {admission.revisionId !== null &&
-                ` · revision ${admission.revisionId}`}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-export function IntegrityBanner({
-  report,
-  isPending,
-  error,
-}: {
-  report: IntegrityReport | null;
-  isPending: boolean;
-  error: string | null;
-}): React.JSX.Element | null {
-  if (error !== null) {
-    return (
-      <div
-        role="alert"
-        className="mb-lg rounded-lg border border-solid border-red-dim bg-red-glow p-md text-red"
-      >
-        <strong className="font-display text-[0.86rem]">
-          Integrity verification failed
-        </strong>
-        <p className="mt-xs mb-0 font-mono text-[0.7rem]">{error}</p>
-      </div>
-    );
-  }
-  if (isPending || report === null) return null;
-
-  if (report.ok) {
-    const revisionCount = report.checkedRevisionIds.length;
-    return (
-      <div
-        role="status"
-        className="mb-lg flex flex-wrap items-center justify-between gap-sm rounded-lg border border-solid border-green-dim bg-green-glow px-md py-sm text-green"
-      >
-        <strong className="font-display text-[0.82rem]">
-          Integrity intact
-        </strong>
-        <span className="font-mono text-[0.7rem]">
-          {revisionCount} approved{" "}
-          {revisionCount === 1 ? "revision" : "revisions"} verified
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      role="alert"
-      className="mb-lg rounded-lg border border-solid border-red-dim bg-red-glow p-md text-red"
-    >
-      <strong className="font-display text-[0.86rem]">
-        Integrity mismatch
-      </strong>
-      <p className="mt-xs mb-sm text-[0.74rem] leading-relaxed">
-        Stored revision content does not match its immutable approved hashes.
-        Resolve the mismatch before relying on execution or delivery state.
-      </p>
-      <ul className="m-0 grid gap-xs pl-lg font-mono text-[0.68rem]">
-        {report.mismatches.map((mismatch) => (
-          <li key={mismatch.revisionId}>
-            Revision {mismatch.revisionId}
-            {mismatch.mismatchedElementIds.length > 0
-              ? ` — elements ${mismatch.mismatchedElementIds.join(", ")}`
-              : " — content hash mismatch"}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export function SpecIntegrityPanel({
-  detail,
-  projectName,
-}: {
-  detail: SpecDetailView;
-  projectName: string;
-}): React.JSX.Element {
-  const verify = useSpecIntegrityQuery(projectName, detail.spec.slug);
-  const report = verify.data ?? null;
-  const error = verify.error instanceof Error ? verify.error.message : null;
-
-  useEffect(() => {
-    if (report !== null && !report.ok) {
-      logger.error("spec_studio.integrity.mismatch", {
-        specId: detail.spec.id,
-        mismatchCount: report.mismatches.length,
-      });
-    }
-    if (error !== null) {
-      logger.warn("spec_studio.integrity.verify_failed", {
-        specId: detail.spec.id,
-        error,
-      });
-    }
-  }, [detail.spec.id, error, report]);
-
-  return (
-    <IntegrityBanner
-      report={report}
-      isPending={verify.isPending}
-      error={error}
-    />
-  );
-}
-
-// The capture receipt names the durable discovery and any replacement attempt.
-const captureScopeAmendmentResponseSchema = z
-  .object({
-    discovery: z
-      .object({
-        id: z.string().min(1),
-        executionId: z.string().min(1),
-        attemptId: z.string().min(1).nullable(),
-        title: z.string().min(1),
-      })
-      .strict(),
-    restartRequired: z.boolean(),
-    replacement: z
-      .object({
-        abandonedExecutionId: z.string().min(1),
-        replacementAttemptId: z.string().min(1),
-      })
-      .strict()
-      .nullable(),
-  })
-  .strict();
-
-function postLaunchFailure(error: Error | null): PostLaunchFailure | null {
-  if (error === null) return null;
-  const instruction =
-    error instanceof ApiCallError &&
-    typeof error.details?.["instruction"] === "string"
-      ? error.details["instruction"]
-      : null;
-  return { message: error.message, instruction };
-}
-
 export default function SpecControlsPanel({
   detail,
   projectName,
-  surface,
 }: {
   detail: SpecDetailView;
   projectName: string;
-  surface: "gate" | "execution";
 }): React.JSX.Element {
-  const [actionFailure, setActionFailure] = useState<{
-    action: string;
-    message: string;
-    executionId?: string | null;
-  } | null>(null);
-  const [captureOutcomePath, setCaptureOutcomePath] = useState<
-    "discovery" | "replan" | null
-  >(null);
-  // change-policy answers with the spec *and* what the open draft still owes
-  // under the confirmed dials, so a spec-only schema would reject every
-  // accepted change as a parse failure.
   const changePolicy = useSpecActionMutation<
     { proposedPolicy: SpecGatePolicy; hardConfirmed: boolean },
     z.infer<typeof specPolicyChangeResultSchema>
@@ -1749,362 +446,71 @@ export default function SpecControlsPanel({
     "change-policy",
     specPolicyChangeResultSchema,
   );
-  const grantWaiver = useSpecActionMutation<
-    GrantWaiverInput,
-    z.infer<typeof specWaiverRowSchema>
-  >(projectName, detail.spec.slug, "grant-waiver", specWaiverRowSchema);
-  const setDisposition = useSpecActionMutation<
-    SetDispositionInput,
-    z.infer<typeof specCriterionDispositionRowSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "set-disposition",
-    specCriterionDispositionRowSchema,
-  );
-  const grantGateApproval = useSpecActionMutation<
-    GrantGateApprovalPanelInput & { gate: "delivery" },
-    z.infer<typeof specApprovalRowSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "grant-gate-approval",
-    specApprovalRowSchema,
-  );
-  const captureScopeAmendment = useSpecActionMutation<
-    CaptureDiscoveredWorkInput,
-    z.infer<typeof captureScopeAmendmentResponseSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "capture-scope-amendment",
-    captureScopeAmendmentResponseSchema,
-  );
-  const abandonExecution = useSpecActionMutation<
-    AbandonExecutionPanelInput,
-    z.infer<typeof specExecutionRowSchema>
-  >(projectName, detail.spec.slug, "abandon-execution", specExecutionRowSchema);
-  const abandonSpec = useSpecActionMutation<
-    AbandonSpecPanelInput,
-    z.infer<typeof specSchema>
-  >(projectName, detail.spec.slug, "abandon-spec", specSchema);
-  const renameSpec = useSpecActionMutation<
+  const rename = useSpecActionMutation<
     { slug: string; name?: string },
     RenameSpecResultView
   >(projectName, detail.spec.slug, "rename", renameSpecResultSchema);
-  function mutationCallbacks(action: string) {
-    return {
-      onSuccess: () => {
-        setActionFailure(null);
-        logger.info("spec_studio.control_action.completed", {
-          action,
-          specId: detail.spec.id,
-        });
-      },
-      onError: (mutationError: Error) => {
-        setActionFailure({ action, message: mutationError.message });
-        logger.warn("spec_studio.control_action.failed", {
-          action,
-          specId: detail.spec.id,
-          error: mutationError.message,
-        });
-      },
-    };
-  }
-
-  const pendingAction = changePolicy.isPending
-    ? "change-policy"
-    : grantWaiver.isPending
-      ? "grant-waiver"
-      : setDisposition.isPending
-        ? "set-disposition"
-        : grantGateApproval.isPending
-          ? "grant-gate-approval"
-          : captureScopeAmendment.isPending
-            ? "capture-scope-amendment"
-            : abandonExecution.isPending
-              ? "abandon-execution"
-              : null;
+  const abandon = useSpecActionMutation<
+    { reason: string },
+    z.infer<typeof specSchema>
+  >(projectName, detail.spec.slug, "abandon-spec", specSchema);
 
   if (detail.spec.abandonedAt !== null) {
-    const context =
-      surface === "gate"
-        ? `Recorded gate preset: ${presetLabels[detail.spec.gatePolicy.preset]}.`
-        : `${detail.executions.length} execution ${detail.executions.length === 1 ? "record remains" : "records remain"} available in History.`;
-
     return (
-      <div
-        className={cn(
-          "mx-auto",
-          surface === "gate" ? "max-w-[900px]" : "max-w-[1000px]",
-        )}
-      >
-        <SpecReadOnlyNotice
-          reason={detail.spec.abandonedReason}
-          context={context}
-        />
-      </div>
+      <SpecReadOnlyNotice
+        reason={detail.spec.abandonedReason}
+        context={`Recorded gate preset: ${presetLabels[detail.spec.gatePolicy.preset]}.`}
+      />
     );
   }
 
   return (
-    <div>
-      {surface === "gate" ? (
-        <div className="mx-auto max-w-[900px]">
-          <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
-          <section
-            aria-labelledby="spec-identity-heading"
-            className="mb-xl flex items-baseline justify-between gap-md"
-          >
-            <div>
-              <h2
-                id="spec-identity-heading"
-                className="m-0 font-display text-[0.95rem] font-extrabold text-text-primary"
-              >
-                Identity
-              </h2>
-              <p className="mt-[2px] mb-0 font-mono text-[0.72rem] text-text-tertiary">
-                {detail.spec.slug}
-              </p>
-            </div>
-            <RenameSpecDialog
-              currentSlug={detail.spec.slug}
-              currentName={detail.spec.name}
-              pending={renameSpec.isPending}
-              error={
-                actionFailure?.action === "rename"
-                  ? actionFailure.message
-                  : null
-              }
-              onRename={(input) =>
-                renameSpec.mutate(input, mutationCallbacks("rename"))
-              }
-            />
-          </section>
-          <div id="gate-policy" className="mb-xl scroll-mt-lg">
-            <PolicyDialog
-              currentPolicy={detail.spec.gatePolicy}
-              pending={changePolicy.isPending}
-              error={
-                actionFailure?.action === "change-policy"
-                  ? actionFailure.message
-                  : null
-              }
-              onChangePolicy={(input) =>
-                changePolicy.mutate(input, mutationCallbacks("change-policy"))
-              }
-              openDraft={openDraftForPolicyImpact(detail)}
-            />
-          </div>
-        </div>
-      ) : (
-        <>
-          <ExecutionPanel
-            detail={detail}
-            projectName={projectName}
-            pendingAction={pendingAction}
-            error={
-              actionFailure !== null &&
-              actionFailure.action !== "change-policy" &&
-              actionFailure.action !== "abandon-spec" &&
-              actionFailure.action !== "rename" &&
-              actionFailure.action !== "capture-scope-amendment"
-                ? actionFailure.message
-                : null
-            }
-            onGrantWaiver={(input) =>
-              grantWaiver.mutate(input, mutationCallbacks("grant-waiver"))
-            }
-            onSetDisposition={(input) =>
-              setDisposition.mutate(input, mutationCallbacks("set-disposition"))
-            }
-            onGrantGateApproval={(input) =>
-              grantGateApproval.mutate(
-                { ...input, gate: "delivery" },
-                mutationCallbacks("grant-gate-approval"),
-              )
-            }
-            onCaptureScopeAmendment={(input) => {
-              logger.info("spec_studio.discovery.capture_requested", {
+    <div className="grid gap-xl">
+      <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
+      <RenameSpecControl
+        currentSlug={detail.spec.slug}
+        currentName={detail.spec.name}
+        pending={rename.isPending}
+        error={rename.error?.message ?? null}
+        onRename={(input) =>
+          rename.mutate(input, {
+            onSuccess: () =>
+              logger.info("spec_studio.identity.changed", {
                 specId: detail.spec.id,
-                executionId: input.executionId ?? null,
-                blocking: input.blockingReason !== undefined,
-              });
-              captureScopeAmendment.mutate(input, {
-                onSuccess: (receipt) => {
-                  setActionFailure(null);
-                  logger.info("spec_studio.discovery.capture_completed", {
-                    specId: detail.spec.id,
-                    executionId: receipt.discovery.executionId,
-                    discoveryId: receipt.discovery.id,
-                    restartRequired: receipt.restartRequired,
-                    replacementAttemptId:
-                      receipt.replacement?.replacementAttemptId ?? null,
-                  });
-                },
-                onError: (mutationError) => {
-                  logger.warn("spec_studio.discovery.capture_failed", {
-                    specId: detail.spec.id,
-                    executionId: input.executionId ?? null,
-                    blocking: input.blockingReason !== undefined,
-                    error: mutationError.message,
-                  });
-                },
-              });
-            }}
-            onAbandonExecution={(input) =>
-              abandonExecution.mutate(
-                input,
-                mutationCallbacks("abandon-execution"),
-              )
-            }
-            postLaunch={{
-              captureOutcomePath,
-              captureReceipt: captureScopeAmendment.data ?? null,
-              captureFailure: postLaunchFailure(captureScopeAmendment.error),
-              onCaptureIntent: (path) => {
-                captureScopeAmendment.reset();
-                setCaptureOutcomePath(path);
-              },
-            }}
-          />
-          <div className="mx-auto max-w-[1000px]">
-            <AbandonSpecPanel
-              slug={detail.spec.slug}
-              abandonedAt={detail.spec.abandonedAt}
-              abandonedReason={detail.spec.abandonedReason}
-              pending={abandonSpec.isPending}
-              error={
-                actionFailure?.action === "abandon-spec"
-                  ? actionFailure.message
-                  : null
-              }
-              onAbandonSpec={(input) =>
-                abandonSpec.mutate(input, mutationCallbacks("abandon-spec"))
-              }
-            />
-          </div>
-        </>
-      )}
+              }),
+          })
+        }
+      />
+      <PolicyDialog
+        key={JSON.stringify(detail.spec.gatePolicy)}
+        currentPolicy={detail.spec.gatePolicy}
+        pending={changePolicy.isPending}
+        error={changePolicy.error?.message ?? null}
+        openDraft={openDraftForPolicyImpact(detail)}
+        onChangePolicy={(input) =>
+          changePolicy.mutate(input, {
+            onSuccess: () =>
+              logger.info("spec_studio.policy.changed", {
+                specId: detail.spec.id,
+              }),
+          })
+        }
+      />
+      <AbandonSpecControl
+        pending={abandon.isPending}
+        error={abandon.error?.message ?? null}
+        onAbandon={(reason) =>
+          abandon.mutate(
+            { reason },
+            {
+              onSuccess: () =>
+                logger.info("spec_studio.spec.abandoned", {
+                  specId: detail.spec.id,
+                }),
+            },
+          )
+        }
+      />
     </div>
   );
-}
-
-function policyOverrides(
-  policy: SpecGatePolicy,
-): Record<SpecGate, GateSelection> {
-  return Object.fromEntries(
-    GATES.map((gate) => [gate, policy.overrides?.[gate] ?? "inherit"]),
-  ) as Record<SpecGate, GateSelection>;
-}
-
-function proposedGatePolicy(
-  preset: SpecGatePreset,
-  selections: Record<SpecGate, GateSelection>,
-): SpecGatePolicy {
-  const overrides = Object.fromEntries(
-    GATES.flatMap((gate) =>
-      selections[gate] === "inherit" ? [] : [[gate, selections[gate]]],
-    ),
-  ) as Partial<Record<SpecGate, SpecGateDial>>;
-  return Object.keys(overrides).length === 0
-    ? specGatePolicySchema.parse({ preset })
-    : specGatePolicySchema.parse({ preset, overrides });
-}
-
-function policyChoiceLoosens(
-  currentPolicy: SpecGatePolicy,
-  proposedPolicy: SpecGatePolicy,
-): boolean {
-  return GATES.some(
-    (gate) =>
-      gateDialStrength(resolveDial(proposedPolicy, gate)) <
-      gateDialStrength(resolveDial(currentPolicy, gate)),
-  );
-}
-
-function gateDialStrength(
-  dial: SpecGateDial | typeof COMBINED_APPROVAL_DIAL,
-): number {
-  switch (dial) {
-    case "off":
-      return 0;
-    case "notify":
-      return 1;
-    case "gate":
-    case COMBINED_APPROVAL_DIAL:
-      return 2;
-  }
-}
-
-function snapshotForExecution(
-  detail: SpecDetailView,
-  execution: SpecExecutionView,
-): SpecRevisionSnapshot | null {
-  return (
-    [
-      detail.currentRevision,
-      detail.baseRevision,
-      detail.currentApprovedRevision,
-      ...detail.executionRevisionSnapshots,
-    ].find((snapshot) => snapshot?.revision.id === execution.revisionId) ?? null
-  );
-}
-
-/**
- * An unreadable stored scope arrives as a null `scope`, which is a different
- * claim than an empty scope: nothing is treated as promised, so no criterion
- * is shown in scope.
- */
-function selectedCriterionIds(
-  scope: SpecExecutionView["scope"],
-): ReadonlySet<string> {
-  return new Set(scope === null ? [] : scope.selectedCriterionIds);
-}
-
-function criterionHandle(
-  snapshot: SpecRevisionSnapshot | null,
-  criterionElementId: string,
-): string | null {
-  if (snapshot === null) return null;
-  const criterion = snapshot.elements.find(
-    (entry) => entry.element.id === criterionElementId,
-  );
-  if (
-    criterion === undefined ||
-    criterion.version.payload.kind !== "criterion" ||
-    criterion.element.number === null ||
-    criterion.element.parentElementId === null
-  ) {
-    return null;
-  }
-  const requirement = snapshot.elements.find(
-    (entry) => entry.element.id === criterion.element.parentElementId,
-  );
-  if (
-    requirement === undefined ||
-    requirement.version.payload.kind !== "requirement" ||
-    requirement.element.number === null
-  ) {
-    return null;
-  }
-  return `R${requirement.element.number}.${criterion.element.number}`;
-}
-
-function executionStateLabel(state: SpecExecutionView["state"]): string {
-  switch (state) {
-    case "definition_review":
-      return "Workflow review";
-    case "running":
-      return "Running";
-    case "delivered":
-      return "Delivered";
-    case "abandoned":
-      return "Abandoned";
-    case "abandoning":
-      // Named for what it is rather than folded into "Abandoned": the cleanup
-      // can be blocked on a live workflow, and a reader who sees "Abandoned"
-      // would not think to retry the command.
-      return "Abandoning (cleanup in progress)";
-  }
 }

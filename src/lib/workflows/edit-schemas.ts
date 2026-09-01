@@ -335,8 +335,9 @@ export type DefinitionEditOperation = z.infer<
 
 export const workflowDefinitionEditRequestSchema = z.object({
   // Optimistic-concurrency guard: the revision the edits were authored against.
-  // The server rejects with `revision_conflict` if the stored revision differs.
-  baseRevision: z.number().int().min(1),
+  // The server rejects with `stale_workflow_definition` if the stored revision
+  // differs.
+  expectedRevision: z.number().int().min(1),
   // Full apply + validate, report the outcome, persist nothing.
   dryRun: z.boolean().optional(),
   operations: z.array(workflowDefinitionEditOperationSchema).min(1),

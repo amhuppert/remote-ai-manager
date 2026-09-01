@@ -18,7 +18,6 @@ import {
   deliveryPlanViewSchema,
   type DeliveryPlanView,
 } from "@/lib/specs/delivery-plan-views";
-import { graphWorkflowLaunchLabel } from "@/lib/workflow-graph/launch-presentation";
 import {
   LINT_SEVERITY_LABEL,
   draftHealth,
@@ -1645,7 +1644,7 @@ export async function runSpecLint(
   );
   if (!response.ok) return response.result;
   // The same projection the propose refusal, the status tier, and Studio's
-  // lint tab read — grouping and what counts as blocking are decided once.
+  // Lint panel read — grouping and what counts as blocking are decided once.
   const health = draftHealth(response.value.findings);
   logger.debug("cli.spec.read_complete", {
     command: "lint",
@@ -2799,11 +2798,10 @@ function planStatusText(view: DeliveryPlanView): string {
 
 function planGetText(view: DeliveryPlanView): string {
   const { document } = view;
-  const launchLabel = graphWorkflowLaunchLabel(document.launch);
   const wholeDocument = `cctl spec plan get ${view.attempt.specSlug} --json`;
   const lines = [
     `${view.attempt.specSlug}  plan attempt ${view.attempt.id} (${view.attempt.status}, draft revision ${view.attempt.draftRevision})`,
-    `graph launch: ${launchLabel}`,
+    `workflow definition: ${view.attempt.workflowDefinitionId}`,
     ...boundedSection(
       "binding dispositions",
       document.binding.dispositions,
@@ -2847,7 +2845,7 @@ export async function runSpecPlanGet(
     command: "plan get",
     slug: read.value.slug,
     attemptId: view.attempt.id,
-    hasLaunch: view.document.launch !== null,
+    workflowDefinitionId: view.attempt.workflowDefinitionId,
     bindingClaimCount: view.document.binding.claims.length,
   });
   return {

@@ -603,7 +603,7 @@ describe("SpecQuestionsAssumptions", () => {
     expect(screen.getByText(instruction)).toBeVisible();
     expect(screen.getByRole("link", { name: "Open Review" })).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=review",
+      "/specs/command-center/native-sdd?view=requirements",
     );
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
   });
@@ -760,7 +760,7 @@ describe("SpecQuestionsAssumptions", () => {
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=questions",
+      "/specs/command-center/native-sdd?view=requirements",
     );
     renderStudio({
       assumptions: [
@@ -1222,7 +1222,7 @@ describe("Spec detail questions and assumptions rail", () => {
       }),
     ).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=questions",
+      "/specs/command-center/native-sdd?view=requirements",
     );
   });
 

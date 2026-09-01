@@ -4,12 +4,8 @@ import {
   _resetPublicationForTesting,
   setPublicationBroadcastForTesting,
 } from "@/lib/events/publication";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 
-import {
-  deliveryPlanDocumentSchema,
-  type DeliveryPlanDocument,
-} from "./delivery-plan";
+import type { DeliveryPlanBinding } from "./delivery-plan";
 import {
   approveAndSignOffSpine,
   authorSpineDraft,
@@ -21,46 +17,30 @@ import {
 
 const SLUG = "spec-spine";
 
-function directPlanDocument(authored: AuthoredSpineSpec): DeliveryPlanDocument {
-  const launch = createWorkflowDefinitionRecord();
-  return deliveryPlanDocumentSchema.parse({
-    schemaVersion: 2,
-    launch: {
-      name: "Agent-authored spine graph",
-      description: "The direct launch preserves this authored canvas.",
-      definition: launch.definition,
-      layout: {
-        workflowId: "spine-activation-boundary",
-        contextPositions: {},
+function planBinding(authored: AuthoredSpineSpec): DeliveryPlanBinding {
+  return {
+    dispositions: [
+      {
+        criterionElementId: authored.criterionOneId,
+        disposition: "in_scope",
+        deliveredByExecutionId: null,
       },
-    },
-    binding: {
-      dispositions: [
-        {
-          criterionElementId: authored.criterionOneId,
-          disposition: "in_scope",
-          deliveredByExecutionId: null,
-        },
-        {
-          criterionElementId: authored.criterionTwoId,
-          disposition: "in_scope",
-          deliveredByExecutionId: null,
-        },
-      ],
-      claims: [
-        {
-          contextId: "context-implement",
-          criterionElementIds: [
-            authored.criterionOneId,
-            authored.criterionTwoId,
-          ],
-        },
-      ],
-    },
-  });
+      {
+        criterionElementId: authored.criterionTwoId,
+        disposition: "in_scope",
+        deliveredByExecutionId: null,
+      },
+    ],
+    claims: [
+      {
+        contextId: "context-implement",
+        criterionElementIds: [authored.criterionOneId, authored.criterionTwoId],
+      },
+    ],
+  };
 }
 
-describe("direct-authored delivery-plan lifecycle", () => {
+describe("managed workflow delivery-plan lifecycle", () => {
   let world: SpecSpineWorld;
 
   beforeEach(() => {
@@ -72,23 +52,20 @@ describe("direct-authored delivery-plan lifecycle", () => {
     _resetPublicationForTesting();
   });
 
-  it("opens and edits a version-2 attempt through production routes", async () => {
+  it("opens a managed definition and edits only its version-3 binding through production routes", async () => {
     const authored = await authorSpineDraft(world, SLUG, "gate");
     await proposeSpineRevision(world, SLUG, authored);
     await approveAndSignOffSpine(world, SLUG, authored);
 
-    const opened = await world.postAction(
-      SLUG,
-      "plan-open",
-      { seedFromLast: false },
-      "agent",
-    );
+    const opened = await world.postAction(SLUG, "plan-open", {}, "agent");
     const openedPayload = (await opened.json()) as {
       attempt?: { status?: string; draftRevision?: number };
+      workflowDefinition?: { id?: string; revision?: number };
     };
     expect(opened.status, JSON.stringify(openedPayload)).toBe(200);
     expect(openedPayload).toMatchObject({
       attempt: { status: "draft", draftRevision: 1 },
+      workflowDefinition: { revision: 1 },
     });
 
     const edited = await world.postAction(
@@ -96,7 +73,7 @@ describe("direct-authored delivery-plan lifecycle", () => {
       "plan-edit",
       {
         expectedDraftRevision: 1,
-        document: directPlanDocument(authored),
+        binding: planBinding(authored),
       },
       "agent",
     );

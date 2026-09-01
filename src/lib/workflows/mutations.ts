@@ -37,6 +37,10 @@ interface WorkflowDefinitionDraftInput {
   layout: WorkflowDefinitionRecord["layout"];
 }
 
+interface WorkflowDefinitionUpdateInput extends WorkflowDefinitionDraftInput {
+  expectedRevision: number;
+}
+
 export function useScopedCreateWorkflowDefinitionMutation(
   scope: WorkflowDefinitionScope,
 ) {
@@ -79,7 +83,7 @@ export function useScopedUpdateWorkflowDefinitionMutation(
   const api = workflowDefinitionScopeApi(scope);
 
   return useMutation({
-    mutationFn: (draft: WorkflowDefinitionDraftInput) =>
+    mutationFn: (draft: WorkflowDefinitionUpdateInput) =>
       mutationFetch(
         api.itemUrl(workflowId),
         "update-workflow-definition",

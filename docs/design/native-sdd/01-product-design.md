@@ -570,6 +570,30 @@ approval banners.
 **Domain-model implications:** lifecycle changes are publishable events with stable names from
 day one.
 
+## 5.13 Post-design delivery simplification (approved 2026-08-31)
+
+Requirements and Design are exclusive checkpoints, not two editable facets of
+one draft. Requirements owns intent, requirements, and criteria. Only after
+that checkpoint settles may Design own narrative and decisions. An extension
+of a delivered spec repeats those checkpoints for the delta. If requirements
+change during Design, returning withdraws that Design attempt and reopens from
+the latest approved Requirements checkpoint; unapproved design choices never
+flow backward into the contract.
+
+A delivery-plan attempt is a binding between an approved Design revision and a
+real project workflow definition. Workflow Builder owns graph configuration,
+review, sign-off, reopening, and launch. A proposal freezes the exact
+definition id, revision, definition hash, binding, and candidate hash. Reopen
+clones the frozen definition. Spec Studio does not embed a second graph,
+approval form, or execution controller.
+
+Spec Studio has one row of five destinations: Overview, Requirements, Design,
+Delivery, and History. Evidence appears on its criterion, lint appears only in
+the authoring stage it can repair, and Delivery is a compact bridge to Workflow
+Builder plus the next-plan delta. Integrity, Lint, Traceability, Tasks, Verify,
+plan-builder, and execution destinations are removed from the UI; their
+non-UI services remain available where they still have independent value.
+
 ## 6. V1 scope
 
 V1 is the full lifecycle spine, B1–B11 (confirmed 2026-07-17 — the reviewed thinning option was

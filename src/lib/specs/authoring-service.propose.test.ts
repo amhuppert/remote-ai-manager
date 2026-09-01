@@ -127,7 +127,7 @@ async function createSpec(
     projectPath: PROJECT_PATH,
     slug: `spec-${preset}`,
     name: `Spec ${preset}`,
-    gatePolicy: { preset: "fast-path" },
+    gatePolicy: { preset: "contract-bearing" },
     initialElement: {
       elementId: "requirement-1",
       kind: "requirement",
@@ -154,6 +154,9 @@ async function createSpec(
 }
 
 async function addCleanContent(specId: string, revisionId: string) {
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+  ).run(revisionId);
   await service.upsertDraftElement({
     specId,
     revisionId,
@@ -169,6 +172,9 @@ async function addCleanContent(specId: string, revisionId: string) {
     baseElementVersion: null,
     actor: ACTOR,
   });
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(revisionId);
   await service.upsertDraftElement({
     specId,
     revisionId,
@@ -543,6 +549,9 @@ describe("AuthoringService propose transaction", () => {
   it("carries unchanged approvals and marks directly modified or removed subjects stale or closed", async () => {
     const created = await createSpec("exploratory");
     await addCleanContent(created.spec.id, created.draft.id);
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+    ).run(created.draft.id);
     await service.upsertDraftElement({
       specId: created.spec.id,
       revisionId: created.draft.id,
@@ -561,6 +570,9 @@ describe("AuthoringService propose transaction", () => {
       baseElementVersion: null,
       actor: ACTOR,
     });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+    ).run(created.draft.id);
     const initial = await service.proposeRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
@@ -599,6 +611,9 @@ describe("AuthoringService propose transaction", () => {
       specId: created.spec.id,
       actor: ACTOR,
     });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'requirements' WHERE id = ?",
+    ).run(amendment.id);
     await service.upsertDraftElement({
       specId: created.spec.id,
       revisionId: amendment.id,
@@ -615,11 +630,37 @@ describe("AuthoringService propose transaction", () => {
       baseElementVersion: 1,
       actor: ACTOR,
     });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+    ).run(amendment.id);
     await service.removeDraftElement({
       specId: created.spec.id,
       revisionId: amendment.id,
       elementId: "decision-1",
       baseElementVersion: 1,
+      actor: ACTOR,
+    });
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+    ).run(amendment.id);
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: amendment.id,
+      elementId: "task-1",
+      kind: "task",
+      parentElementId: null,
+      position: 2,
+      payload: {
+        kind: "task",
+        title: "Implement transition",
+        instructions: "Implement the server predicate.",
+        tracedRequirementElementIds: ["requirement-1"],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: ["criterion-1"],
+        dependsOnTaskElementIds: [],
+      },
+      baseElementVersion: null,
+      reintroduceHistorical: true,
       actor: ACTOR,
     });
 
@@ -635,7 +676,7 @@ describe("AuthoringService propose transaction", () => {
         .map(({ id, validity }) => ({ id, validity })),
     ).toEqual([
       { id: "approval-decision", validity: "closed" },
-      { id: "approval-plan", validity: "stale" },
+      { id: "approval-plan", validity: "valid" },
       { id: "approval-requirement", validity: "stale" },
     ]);
   });

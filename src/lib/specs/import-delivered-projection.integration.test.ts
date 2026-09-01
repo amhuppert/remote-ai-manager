@@ -285,14 +285,14 @@ describe("the spec views expose import provenance without a human approver (R9.1
 
   it("keeps the provenance after an amendment forks the imported revision", async () => {
     await importSpec();
-    const amendment = await postJson<OpenAmendmentResult>(
+    const requirementsCheckpoint = await postJson<OpenAmendmentResult>(
       world.postAction(SLUG, "open-amendment", {}, "agent"),
     );
     await postJson(
       world.postAction(
         SLUG,
         "propose",
-        { revisionId: amendment.revision.id },
+        { revisionId: requirementsCheckpoint.revision.id },
         "agent",
       ),
     );
@@ -300,11 +300,10 @@ describe("the spec views expose import provenance without a human approver (R9.1
       world.postAction(
         SLUG,
         "approve-remaining-and-sign-off",
-        { revisionId: amendment.revision.id },
+        { revisionId: requirementsCheckpoint.revision.id },
         "human",
       ),
     );
-
     // The amendment carries no import admission of its own, but the content it
     // forked entered by import: provenance is read over the approved
     // revision's lineage, so amending a spec cannot launder its origin.
@@ -320,7 +319,26 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
     // Amend through the ordinary authoring path: the amendment forks the
     // imported revision at the next stage, so it carries the content but not
     // the external-delivery claim that was made about the imported content.
-    const amendment = await postJson<OpenAmendmentResult>(
+    const requirementsCheckpoint = await postJson<OpenAmendmentResult>(
+      world.postAction(SLUG, "open-amendment", {}, "agent"),
+    );
+    await postJson(
+      world.postAction(
+        SLUG,
+        "propose",
+        { revisionId: requirementsCheckpoint.revision.id },
+        "agent",
+      ),
+    );
+    await postJson(
+      world.postAction(
+        SLUG,
+        "approve-remaining-and-sign-off",
+        { revisionId: requirementsCheckpoint.revision.id },
+        "human",
+      ),
+    );
+    const designAmendment = await postJson<OpenAmendmentResult>(
       world.postAction(SLUG, "open-amendment", {}, "agent"),
     );
     await postJson(
@@ -328,7 +346,7 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
         SLUG,
         "draft-upsert",
         {
-          revisionId: amendment.revision.id,
+          revisionId: designAmendment.revision.id,
           elementId: "element-amendment-section",
           kind: "section",
           parentElementId: null,
@@ -348,7 +366,7 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
       world.postAction(
         SLUG,
         "propose",
-        { revisionId: amendment.revision.id },
+        { revisionId: designAmendment.revision.id },
         "agent",
       ),
     );
@@ -356,7 +374,7 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
       world.postAction(
         SLUG,
         "approve-remaining-and-sign-off",
-        { revisionId: amendment.revision.id },
+        { revisionId: designAmendment.revision.id },
         "human",
       ),
     );
@@ -377,7 +395,7 @@ describe("the external-delivery record is pinned to the imported revision (R4.3)
       revisions.find(({ id }) => id === receipt.revision.id)?.externalDelivery,
     ).not.toBeNull();
     expect(
-      revisions.find(({ id }) => id === amendment.revision.id)
+      revisions.find(({ id }) => id === designAmendment.revision.id)
         ?.externalDelivery,
     ).toBeNull();
   });

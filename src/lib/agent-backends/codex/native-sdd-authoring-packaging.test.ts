@@ -24,7 +24,8 @@ const GENERATED_REFERENCE_COMMAND = "cctl spec schema guidance";
 const READ_ENVELOPE_REFERENCE_COMMAND = "cctl spec schema read-envelopes";
 const EXPECTED_SECTIONS = [
   "Reading specs without flooding context",
-  "Direct-authored delivery launch",
+  "Exclusive Requirements and Design checkpoints",
+  "Managed delivery workflow",
   "Stable-source claims and dynamic accountability",
   "Finalized proposal, sign-off, and one-off start",
   "Ordinary live edit, capture, and replacement",

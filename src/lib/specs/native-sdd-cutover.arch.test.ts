@@ -15,7 +15,7 @@ import { AUTHORED_WORKFLOW_LAUNCH_ADMISSION_CALLERS } from "@/lib/workflow-graph
  * It also holds the three structural promises the retirement rests on: native
  * SDD declares no mirror of graph structure, its proposal admits the launch
  * through the same service ordinary authoring uses, and its start reaches the
- * same one-off start core without minting a saved workflow definition. A
+ * same shared start core through an immutable managed workflow definition. A
  * search that only proves the old names are gone would pass just as happily
  * against a freshly rebuilt mirror under new names.
  *
@@ -43,6 +43,8 @@ const LEGACY_AWARE_BOUNDARY = [
   "src/lib/state-store/migrations/0028-retire-legacy-spec-executions.test.ts",
   "src/lib/state-store/migrations/0030-native-sdd-v2-cutover.ts",
   "src/lib/state-store/migrations/0030-native-sdd-v2-cutover.test.ts",
+  "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.ts",
+  "src/lib/state-store/migrations/0039-native-sdd-managed-workflow-definitions.test.ts",
   "src/lib/state-store/migrations/README.md",
   "src/lib/specs/native-sdd-cutover.arch.test.ts",
 ];
@@ -103,7 +105,7 @@ const RETIRED_PATHS = [
 ];
 
 /**
- * Retired identifiers. Each is the *name* of a decision the direct-authored
+ * Retired identifiers. Each is the *name* of a decision the managed-workflow
  * design removed, not merely a helper that happened to move.
  */
 const RETIRED_SYMBOLS = [
@@ -290,17 +292,12 @@ const GRAPH_STRUCTURE_FIELDS = [
 ] as const;
 
 /**
- * The one declared collision. Studio's traceability view draws the spec's own
- * requirement/criterion/task lineage; its `edges` are spec elements, and it
- * never sees a launch. Declared rather than pattern-excused so a future
- * `edges` in delivery-plan code still fails.
+ * Native SDD UI no longer declares a graph-shaped traceability projection.
  */
-const GRAPH_STRUCTURE_FIELD_EXEMPTIONS = [
-  {
-    source: "src/features/spec-studio/SpecEvidenceLintTrace.tsx",
-    field: "edges",
-  },
-] as const;
+const GRAPH_STRUCTURE_FIELD_EXEMPTIONS: ReadonlyArray<{
+  source: string;
+  field: string;
+}> = [];
 
 /**
  * The native-SDD modules allowed to name the graph launch schema. Each parses
@@ -308,37 +305,22 @@ const GRAPH_STRUCTURE_FIELD_EXEMPTIONS = [
  */
 const SPEC_LAUNCH_SCHEMA_CONSUMERS = [
   "src/lib/specs/delivery-plan-finalization.ts",
+  "src/lib/specs/delivery-plan-hash.ts",
   "src/lib/specs/delivery-plan-seed.ts",
   "src/lib/specs/delivery-plan-service.ts",
   "src/lib/specs/delivery-plan-views.ts",
-  "src/lib/specs/delivery-plan.ts",
-  "src/lib/specs/execution-service.ts",
+  "src/lib/specs/managed-workflow-definition-service.ts",
 ];
 
 /**
- * Vocabulary that creates or updates a saved workflow definition. Spec start
- * launches a one-off: naming any of these inside native SDD would mean an
- * attempt had grown the persisted-definition intermediary back.
+ * The only native-SDD modules allowed to own workflow-definition storage.
+ * Delivery services depend on the managed port rather than reaching through
+ * it to create a second storage or launch implementation.
  */
-const SAVED_DEFINITION_VOCABULARY = [
-  "createWorkflowStorageService",
-  "WorkflowDefinitionStoragePort",
-  "ExecutionWorkflowDefinitions",
-  "launchGraphWorkflowExecution",
-  "startSaved",
-  "saved-definition",
+const MANAGED_DEFINITION_STORAGE_OWNERS = [
+  "src/lib/specs/managed-workflow-definition-service.ts",
+  "src/lib/specs/service-factory.ts",
 ] as const;
-
-/**
- * The one declared mention, and it is a refusal: a spec execution row carrying
- * a saved-definition seed source is corruption, so the summary reader names
- * that arm of the graph's union only to log and return null. Declared per site
- * so the same word anywhere else still fails.
- */
-const SAVED_DEFINITION_REFUSALS: ReadonlyArray<{
-  source: string;
-  name: string;
-}> = [];
 
 /** The single graph start entry point native SDD is allowed to call. */
 const SPEC_START_ENTRY_POINT = "launchSpecDeliveryGraphWorkflowExecution";
@@ -461,7 +443,7 @@ describe("native SDD legacy retirement", () => {
     );
     expect(
       surviving,
-      `These paths are retired by the direct-authored cutover and must not exist:\n${surviving.join("\n")}`,
+      `These paths are retired by the managed-workflow cutover and must not exist:\n${surviving.join("\n")}`,
     ).toEqual([]);
   });
 
@@ -661,35 +643,12 @@ describe("native SDD start shares the spec-delivery start core", () => {
     expect(callers).toEqual(["src/lib/specs/service-factory.ts"]);
   });
 
-  it("names no vocabulary that could mint a saved workflow definition", () => {
-    const refused = new Set(
-      SAVED_DEFINITION_REFUSALS.map(
-        (refusal) => `${refusal.source}:${refusal.name}`,
-      ),
+  it("limits managed workflow storage ownership to the adapter and composition root", () => {
+    const owners = specProductionFiles().filter((relativePath) =>
+      /\bcreateWorkflowStorageService\b/.test(read(relativePath)),
     );
-    const offenders = specProductionFiles().flatMap((relativePath) => {
-      const source = read(relativePath);
-      return SAVED_DEFINITION_VOCABULARY.filter(
-        (name) =>
-          new RegExp(`\\b${name}\\b`).test(source) &&
-          !refused.has(`${relativePath}:${name}`),
-      ).map((name) => `${relativePath} names ${name}`);
-    });
-    expect(
-      offenders,
-      `Spec start launches a one-off; the persisted-definition intermediary is retired:\n${offenders.join("\n")}`,
-    ).toEqual([]);
-  });
-
-  it("keeps every declared saved-definition refusal real", () => {
-    const stale = SAVED_DEFINITION_REFUSALS.filter(
-      (refusal) =>
-        !existsSync(path.join(REPOSITORY_ROOT, refusal.source)) ||
-        !new RegExp(`\\b${refusal.name}\\b`).test(read(refusal.source)),
+    expect(owners.sort()).toEqual(
+      [...MANAGED_DEFINITION_STORAGE_OWNERS].sort(),
     );
-    expect(
-      stale,
-      `These saved-definition refusals no longer exist, so exempting them proves nothing:\n${stale.map((refusal) => `${refusal.source}:${refusal.name}`).join("\n")}`,
-    ).toEqual([]);
   });
 });

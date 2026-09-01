@@ -5,7 +5,7 @@ import { seedDispositionsFromDelivery } from "./delivery-plan-seed";
 const COMPARED = "execution-last-delivery";
 
 /**
- * The seeding rule `cctl spec plan open --seed-from last` advertises. Each
+ * The default delta-seeding rule. Each
  * class is stated once here so the help text and the derivation cannot drift.
  */
 describe("seedDispositionsFromDelivery", () => {

@@ -643,7 +643,12 @@ describe("ordinary authored-launch callers", () => {
         created.push(draft);
         return { ...stored, ...draft };
       },
-      updateDefinition: async (_projectPath, _workflowId, draft) => {
+      updateDefinition: async (
+        _projectPath,
+        _workflowId,
+        _expectedRevision,
+        draft,
+      ) => {
         updated.push(draft);
         return { ...stored, ...draft, revision: stored.revision + 1 };
       },
@@ -705,7 +710,10 @@ describe("ordinary authored-launch callers", () => {
       { params: Promise.resolve({ name: "repo" }) },
     );
     await projectHandlers.UPDATE(
-      request("/api/projects/repo/workflows/project-workflow", "PUT", launch),
+      request("/api/projects/repo/workflows/project-workflow", "PUT", {
+        ...launch,
+        expectedRevision: 3,
+      }),
       {
         params: Promise.resolve({
           name: "repo",
@@ -718,7 +726,7 @@ describe("ordinary authored-launch callers", () => {
 
     await projectHandlers.EDIT(
       request("/api/projects/repo/workflows/project-workflow", "PATCH", {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           { type: "update-workflow", name: "Edited maximal fixture" },
         ],
@@ -752,7 +760,7 @@ describe("ordinary authored-launch callers", () => {
         return { ...globalStored, ...draft };
       },
       getGlobal: async () => globalStored,
-      updateGlobal: async (_workflowId, draft) => {
+      updateGlobal: async (_workflowId, _expectedRevision, draft) => {
         globalUpdated.push(draft);
         return {
           ...globalStored,
@@ -769,7 +777,10 @@ describe("ordinary authored-launch callers", () => {
       { params: Promise.resolve({}) },
     );
     await templateHandlers.UPDATE(
-      request("/api/workflow-templates/global-template", "PUT", launch),
+      request("/api/workflow-templates/global-template", "PUT", {
+        ...launch,
+        expectedRevision: 3,
+      }),
       { params: Promise.resolve({ workflowId: "global-template" }) },
     );
     expect(globalCreated).toEqual([expectedGlobal.launch]);
@@ -777,7 +788,7 @@ describe("ordinary authored-launch callers", () => {
 
     await templateHandlers.EDIT(
       request("/api/workflow-templates/global-template", "PATCH", {
-        baseRevision: 3,
+        expectedRevision: 3,
         operations: [
           { type: "update-workflow", name: "Edited global fixture" },
         ],
@@ -844,7 +855,12 @@ describe("ordinary authored-launch callers", () => {
         projectPersist.create.push(draft);
         return { ...validRecord, ...draft };
       },
-      updateDefinition: async (_projectPath, _workflowId, draft) => {
+      updateDefinition: async (
+        _projectPath,
+        _workflowId,
+        _expectedRevision,
+        draft,
+      ) => {
         projectPersist.update.push(draft);
         return { ...validRecord, ...draft };
       },
@@ -889,7 +905,7 @@ describe("ordinary authored-launch callers", () => {
         return { ...validRecord, ...draft };
       },
       getGlobal: async () => validRecord,
-      updateGlobal: async (_workflowId, draft) => {
+      updateGlobal: async (_workflowId, _expectedRevision, draft) => {
         globalPersist.update.push(draft);
         return { ...validRecord, ...draft };
       },
@@ -919,12 +935,15 @@ describe("ordinary authored-launch callers", () => {
         { params: Promise.resolve({ name: "repo" }) },
       ),
       projectHandlers.UPDATE(
-        request("/api/projects/repo/workflows/persisted", "PUT", projectLaunch),
+        request("/api/projects/repo/workflows/persisted", "PUT", {
+          ...projectLaunch,
+          expectedRevision: 3,
+        }),
         { params: Promise.resolve({ name: "repo", workflowId: "persisted" }) },
       ),
       projectHandlers.EDIT(
         request("/api/projects/repo/workflows/persisted", "PATCH", {
-          baseRevision: 3,
+          expectedRevision: 3,
           operations: [
             {
               type: "update-workflow-config",
@@ -948,12 +967,15 @@ describe("ordinary authored-launch callers", () => {
         { params: Promise.resolve({}) },
       ),
       templateHandlers.UPDATE(
-        request("/api/workflow-templates/persisted", "PUT", globalLaunch),
+        request("/api/workflow-templates/persisted", "PUT", {
+          ...globalLaunch,
+          expectedRevision: 3,
+        }),
         { params: Promise.resolve({ workflowId: "persisted" }) },
       ),
       templateHandlers.EDIT(
         request("/api/workflow-templates/persisted", "PATCH", {
-          baseRevision: 3,
+          expectedRevision: 3,
           operations: [
             {
               type: "update-workflow-config",

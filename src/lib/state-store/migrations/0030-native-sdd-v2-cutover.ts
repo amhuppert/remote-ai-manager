@@ -25,6 +25,10 @@ import {
   KNOWN_SCHEMA_VERSION,
   SPEC_DELIVERY_PLAN_SCHEMA_DDL,
 } from "../state-db";
+import {
+  hasCurrentCandidateApprovalForeignKey,
+  rebuildCandidateApprovalForeignKey,
+} from "./spec-delivery-plan-candidate-approval-foreign-key";
 import type { MigrationContext, StateMigration } from "./types";
 
 const logger = createLogger("state-store/migrations/native-sdd-v2-cutover");
@@ -1280,27 +1284,42 @@ function dropRetiredDeliveryPlanStorage(context: MigrationContext): void {
     "table_info(spec_delivery_plan_snapshots)",
   ) as Array<{ name: string }>;
   if (!snapshotColumns.some((column) => column.name === "plan_hash")) return;
-  db.exec(`
-    DELETE FROM spec_delivery_plan_snapshots
-     WHERE candidate_id IS NULL OR candidate_hash IS NULL;
-    DROP INDEX IF EXISTS idx_spec_delivery_plan_snapshots_attempt;
-    ALTER TABLE spec_delivery_plan_snapshots
-      RENAME TO spec_delivery_plan_snapshots_pre_v2;
-  `);
-  // The floor owns the shape, so the rebuild replays its DDL verbatim rather
-  // than restating it: a migration with its own copy converges on a schema
-  // that only looks like a fresh install.
-  db.exec(SPEC_DELIVERY_PLAN_SCHEMA_DDL);
-  db.exec(`
-    INSERT INTO spec_delivery_plan_snapshots (
-      id, attempt_id, candidate_id, candidate_hash, draft_revision,
-      content_json, pinned_revision_id, proposed_at, proposed_by_json
-    ) SELECT
-      id, attempt_id, candidate_id, candidate_hash, draft_revision,
-      content_json, pinned_revision_id, proposed_at, proposed_by_json
-    FROM spec_delivery_plan_snapshots_pre_v2;
-    DROP TABLE spec_delivery_plan_snapshots_pre_v2;
-  `);
+  const legacyAlterTable = db.pragma("legacy_alter_table", {
+    simple: true,
+  }) as number;
+  db.pragma("legacy_alter_table = ON");
+  try {
+    db.exec(`
+      DELETE FROM spec_delivery_plan_snapshots
+       WHERE candidate_id IS NULL OR candidate_hash IS NULL;
+      DROP INDEX IF EXISTS idx_spec_delivery_plan_snapshots_attempt;
+      ALTER TABLE spec_delivery_plan_snapshots
+        RENAME TO spec_delivery_plan_snapshots_pre_v2;
+    `);
+    // The floor owns the shape, so the rebuild replays its DDL verbatim rather
+    // than restating it: a migration with its own copy converges on a schema
+    // that only looks like a fresh install.
+    db.exec(SPEC_DELIVERY_PLAN_SCHEMA_DDL);
+    db.exec(`
+      INSERT INTO spec_delivery_plan_snapshots (
+        id, attempt_id, candidate_id, candidate_hash, draft_revision,
+        content_json, pinned_revision_id, proposed_at, proposed_by_json
+      ) SELECT
+        id, attempt_id, candidate_id, candidate_hash, draft_revision,
+        content_json, pinned_revision_id, proposed_at, proposed_by_json
+      FROM spec_delivery_plan_snapshots_pre_v2;
+      DROP TABLE spec_delivery_plan_snapshots_pre_v2;
+    `);
+    if (!hasCurrentCandidateApprovalForeignKey(db)) {
+      const preservedApprovals = rebuildCandidateApprovalForeignKey(db);
+      logger.info(
+        "state-store.native_sdd_v2_cutover_candidate_approval_fk_rebuilt",
+        { preservedApprovals },
+      );
+    }
+  } finally {
+    db.pragma(`legacy_alter_table = ${legacyAlterTable === 1 ? "ON" : "OFF"}`);
+  }
 }
 
 function purgeRelationalArtifacts(

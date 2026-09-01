@@ -18,9 +18,8 @@ import {
   touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
-import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
+import { deliveryPlanEditRequestSchema } from "@/lib/specs/delivery-plan-views";
 import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
-import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost } from "../../shared";
 
@@ -803,27 +802,12 @@ describe("cctl spec schema", () => {
     ).toBe(true);
   });
 
-  it("ships a direct launch envelope for plan edits", async () => {
+  it("ships a binding-only document for plan edits", async () => {
     const documents = await readDocuments();
-    const example = z
-      .object({ document: deliveryPlanDocumentSchema })
-      .parse(documents.find(({ id }) => id === "plan-edit")?.example);
-    expect(example.document.launch).toMatchObject({
-      name: "Workflow Graph Builder",
-      definition: {
-        schemaVersion: 1,
-        executionContexts: expect.arrayContaining([
-          expect.objectContaining({ id: "context-implement" }),
-        ]),
-      },
-      layout: {
-        workflowId: "workflow-1",
-        contextPositions: expect.objectContaining({
-          "context-implement": expect.any(Object),
-        }),
-      },
-    });
-    expect(example.document.binding).toMatchObject({
+    const example = deliveryPlanEditRequestSchema.parse(
+      documents.find(({ id }) => id === "plan-edit")?.example,
+    );
+    expect(example.binding).toMatchObject({
       dispositions: [
         { criterionElementId: "crit-schema-per-kind", disposition: "in_scope" },
       ],
@@ -836,50 +820,14 @@ describe("cctl spec schema", () => {
     });
   });
 
-  it("accepts a maximal ordinary launch without a spec-specific field allowlist", () => {
-    const launch = createMaximalAuthoredWorkflowLaunchFixture();
-    const definition = { ...launch.definition };
-    delete definition.approvalRequired;
-    delete definition.lockedRegions;
-    delete definition.origin;
-
-    const document = deliveryPlanDocumentSchema.parse({
-      schemaVersion: 2,
-      launch: { ...launch, definition },
-      binding: {
-        dispositions: [
-          {
-            criterionElementId: "crit-maximal-launch",
-            disposition: "in_scope",
-            deliveredByExecutionId: null,
-          },
-        ],
-        claims: [
-          {
-            contextId: "context-spawner",
-            criterionElementIds: ["crit-maximal-launch"],
-          },
-        ],
-      },
-    });
-
-    expect(document.launch).toEqual({ ...launch, definition });
-    expect(document.launch.definition).toMatchObject({
-      loopGroups: [expect.objectContaining({ id: "refine" })],
-      parameters: expect.arrayContaining([
-        expect.objectContaining({ name: "ticket", required: true }),
-      ]),
-      executionContexts: expect.arrayContaining([
-        expect.objectContaining({
-          id: "context-spawner",
-          outputSchema: expect.any(Object),
-          circuitBreaker: expect.any(Object),
-        }),
-      ]),
-      edges: expect.arrayContaining([
-        expect.objectContaining({ when: expect.any(Object) }),
-      ]),
-    });
+  it("rejects graph content from the plan-edit document", () => {
+    expect(
+      deliveryPlanEditRequestSchema.safeParse({
+        expectedDraftRevision: 1,
+        binding: { dispositions: [], claims: [] },
+        launch: { name: "not accepted" },
+      }).success,
+    ).toBe(false);
   });
 
   it("states the earliest authoring stage that admits each element kind", async () => {

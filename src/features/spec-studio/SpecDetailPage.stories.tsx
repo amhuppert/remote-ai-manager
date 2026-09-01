@@ -845,24 +845,24 @@ export const History: Story = {
   args: { view: "history" },
 };
 
-export const Execution: Story = {
-  args: { view: "execution", detail: detailFor("executing") },
+export const ActiveDelivery: Story = {
+  args: { view: "delivery", detail: detailFor("executing") },
 };
 
 export const GatePolicy: Story = {
-  args: { view: "gate", detail: detailFor("approved") },
+  args: { view: "overview", detail: detailFor("approved") },
 };
 
 export const QuestionsAndAssumptions: Story = {
   args: {
-    view: "questions",
+    view: "requirements",
     detail: withQuestionsAndAssumptions(detailFor("in_review")),
   },
 };
 
 export const QuestionsAndAssumptionsMobile: Story = {
   args: {
-    view: "questions",
+    view: "requirements",
     detail: withQuestionsAndAssumptions(detailFor("in_review")),
   },
   parameters: { viewport: { defaultViewport: "mobile1" } },

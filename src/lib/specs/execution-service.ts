@@ -7,7 +7,6 @@ import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
-import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphExecutionLifecycleContext } from "@/lib/workflow-graph/execution-lifecycle-port";
 import type {
   GraphWorkflowAbandonment,
@@ -165,7 +164,7 @@ export interface ExecutionServiceDeps {
 
 /**
  * The replacement a blocking capture opens. It goes through the same seeded
- * open `cctl spec plan open --seed-from last` performs, so the discovery is
+ * open `cctl spec plan open` performs, so the discovery is
  * placed by the one seed that knows how (design §11).
  */
 export interface SpecDeliveryPlanCapturePort {
@@ -311,8 +310,8 @@ export interface ExecutionStartGatePort {
   launchApprovedLaunch(input: {
     projectName: string;
     sessionName: string;
-    /** The signed candidate's finalized launch document. */
-    plan: WorkflowDefinitionDraft;
+    definitionId: string;
+    definitionRevision: number;
     specSlug: string;
     candidateId: string;
     ownerConversationId: string | null;
@@ -433,7 +432,7 @@ export type StartSpecExecutionResult =
   | {
       ok: true;
       execution: SpecExecutionRow;
-      launch: WorkflowDefinitionDraft;
+      workflowDefinition: { id: string; revision: number };
       /** The pinned revision's number, so the receipt needs no second read. */
       revisionNumber: number;
       /**
@@ -1818,8 +1817,8 @@ export function notRunningCaptureRefusal(
 ): LifecycleResult<never> {
   const remedy =
     execution.state === "abandoning"
-      ? `Nothing was captured. Execution ${execution.id} is mid-abandon: resume its cleanup with \`cctl spec abandon --execution ${execution.id} --reason <why>\` (it continues from the phase it reached), then open the replacement with \`cctl spec plan open ${slug} --seed-from last\` — any discovery already captured against it is durable and the seed places it.`
-      : `Nothing was captured. Plan the work directly instead: \`cctl spec plan open ${slug} --seed-from last\`.`;
+      ? `Nothing was captured. Execution ${execution.id} is mid-abandon: resume its cleanup with \`cctl spec abandon --execution ${execution.id} --reason <why>\` (it continues from the phase it reached), then open the replacement with \`cctl spec plan open ${slug}\` — any discovery already captured against it is durable and the seed places it.`
+      : `Nothing was captured. Plan the work directly instead: \`cctl spec plan open ${slug}\`.`;
   return lifecycleRefused(
     "gate_blocked",
     [
@@ -1876,7 +1875,7 @@ async function captureScopeAmendment(
     return lifecycleRefused(
       "gate_blocked",
       ["This spec has no delivery plan attempt and no execution was named."],
-      `Nothing was captured. Open a plan with \`cctl spec plan open ${spec.slug} --seed-from last\`, or name the run with \`cctl spec capture ${spec.slug} --execution <execution-id> --file <task.json>\`.`,
+      `Nothing was captured. Open a plan with \`cctl spec plan open ${spec.slug}\`, or name the run with \`cctl spec capture ${spec.slug} --execution <execution-id> --file <task.json>\`.`,
     );
   }
 
@@ -1997,7 +1996,7 @@ async function captureScopeAmendment(
             ...abandoned.refusal.unmetConditions,
             `Discovery ${discovery.id} is already durable against execution ${execution.id}, so the work is not lost.`,
           ],
-          instruction: `${abandoned.refusal.instruction} Then finish this capture's two remaining acts, in order: resume the abandon with \`cctl spec abandon --execution ${execution.id} --reason ${JSON.stringify(blockingReason)}\`, then open the replacement with \`cctl spec plan open ${spec.slug} --seed-from last\` — it places discovery ${discovery.id}. Do not re-run \`cctl spec capture\`: it would record the same work twice.`,
+          instruction: `${abandoned.refusal.instruction} Then finish this capture's two remaining acts, in order: resume the abandon with \`cctl spec abandon --execution ${execution.id} --reason ${JSON.stringify(blockingReason)}\`, then open the replacement with \`cctl spec plan open ${spec.slug}\` — it places discovery ${discovery.id}. Do not re-run \`cctl spec capture\`: it would record the same work twice.`,
         },
       };
     }
@@ -2008,7 +2007,7 @@ async function captureScopeAmendment(
         [
           `Execution ${execution.id} was abandoned, but this composition cannot open its replacement plan.`,
         ],
-        `The discovery is durable. Open the replacement yourself with \`cctl spec plan open ${spec.slug} --seed-from last\` — the seed places it.`,
+        `The discovery is durable. Open the replacement yourself with \`cctl spec plan open ${spec.slug}\` — the seed places it.`,
       );
     }
     const retiredAttempt = await capturePort.abandonLaunchedAttempt({
@@ -2077,7 +2076,7 @@ async function captureScopeAmendment(
 interface PreparedDeliveryPlanLaunch {
   spec: Spec;
   attachment: SpecExecutionStartAttachment;
-  launch: WorkflowDefinitionDraft;
+  workflowDefinition: { id: string; revision: number };
   revisionNumber: number;
   attemptId: string;
   candidate: FinalizedDeliveryPlanCandidateIdentity;
@@ -2302,12 +2301,11 @@ async function startFromDeliveryPlan(
         unmetConditions: [
           `Delivery plan attempt ${launch.attemptId} pins revision ${launch.pinnedRevisionId}, which cannot be read.`,
         ],
-        instruction: `Nothing was started. Inspect the pin with \`cctl spec plan status ${spec.slug}\`, then open a fresh attempt with \`cctl spec plan open ${spec.slug} --seed-from last\`.`,
+        instruction: `Nothing was started. Inspect the pin with \`cctl spec plan status ${spec.slug}\`, then open a fresh attempt with \`cctl spec plan open ${spec.slug}\`.`,
       },
     });
   }
 
-  const definitionDraft = launch.launch;
   const origin: GraphWorkflowExecutionOrigin = {
     kind: "spec_delivery",
     specSlug: spec.slug,
@@ -2359,6 +2357,7 @@ async function startFromDeliveryPlan(
       scope: launch.scope,
       origin,
       binding,
+      workflowDefinition: launch.workflowDefinition,
       actor: input.actor,
       createdAt,
     },
@@ -2371,7 +2370,10 @@ async function startFromDeliveryPlan(
     pending: {
       spec,
       attachment,
-      launch: definitionDraft,
+      workflowDefinition: {
+        id: launch.workflowDefinition.id,
+        revision: launch.workflowDefinition.revision,
+      },
       revisionNumber: pinned.revision.number,
       attemptId: launch.attemptId,
       candidate: launch.candidate,
@@ -2421,7 +2423,8 @@ async function completeDeliveryPlanLaunch(
   const launched = await gate.launchApprovedLaunch({
     projectName: pending.projectName,
     sessionName: pending.sessionName,
-    plan: pending.launch,
+    definitionId: pending.workflowDefinition.id,
+    definitionRevision: pending.workflowDefinition.revision,
     specSlug: pending.spec.slug,
     candidateId: pending.candidate.candidateId,
     ownerConversationId: pending.ownerConversationId,
@@ -2469,7 +2472,7 @@ async function completeDeliveryPlanLaunch(
   return {
     ok: true,
     execution,
-    launch: pending.launch,
+    workflowDefinition: pending.workflowDefinition,
     revisionNumber: pending.revisionNumber,
     deliveryPlan: {
       attemptId: pending.attemptId,
@@ -2635,7 +2638,7 @@ async function seededDeliveryPlanInstruction(
     abandonExecutionId === undefined
       ? ""
       : `Abandon execution ${abandonExecutionId} with \`cctl spec abandon ${target} --execution ${abandonExecutionId} --reason <reason>\`, then `;
-  return `${abandon}open a seeded attempt with \`cctl spec plan open ${target} --seed-from last\`, propose and sign its candidate off, then launch it with \`cctl spec start ${target}\`.`;
+  return `${abandon}open a seeded attempt with \`cctl spec plan open ${target}\`, propose and sign its candidate off, then launch it with \`cctl spec start ${target}\`.`;
 }
 
 function abandonReasonRefusal(): LifecycleResult<never> {

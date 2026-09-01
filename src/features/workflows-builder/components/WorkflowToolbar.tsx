@@ -67,6 +67,8 @@ interface WorkflowToolbarProps {
    */
   saveBlocked?: boolean;
   isMobile?: boolean;
+  readOnly?: boolean;
+  hideDelete?: boolean;
 }
 
 export default function WorkflowToolbar({
@@ -86,6 +88,8 @@ export default function WorkflowToolbar({
   hasValidationErrors,
   saveBlocked = false,
   isMobile,
+  readOnly = false,
+  hideDelete = false,
 }: WorkflowToolbarProps) {
   // Save is refused for two different reasons and the button has to say which:
   // an unacceptable schema text the store never saw, or errors the validator
@@ -202,6 +206,24 @@ export default function WorkflowToolbar({
     />
   );
 
+  if (readOnly) {
+    return (
+      <div className="z-10 flex min-h-[44px] items-center gap-sm border-b border-solid border-border-dim bg-bg-surface px-md py-[8px]">
+        <span className="min-w-0 truncate text-[0.88rem] font-semibold text-text-primary">
+          {workflowName}
+        </span>
+        {revision != null && (
+          <span className="flex-shrink-0 rounded-[3px] bg-bg-raised px-[8px] py-[2px] text-[0.7rem] font-medium text-text-tertiary">
+            r{revision}
+          </span>
+        )}
+        <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+          Read-only graph
+        </span>
+      </div>
+    );
+  }
+
   if (isMobile) {
     return (
       <div className="z-10 flex min-h-[44px] flex-col items-center gap-[6px] border-b border-solid border-border-dim bg-bg-surface px-md py-[8px]">
@@ -308,22 +330,24 @@ export default function WorkflowToolbar({
                     Workflow settings
                   </button>
                 )}
-                <button
-                  className={cn(
-                    MENU_ITEM_BASE,
-                    "text-red hover:bg-[var(--cc-red-a08)] hover:text-red",
-                  )}
-                  onClick={() => {
-                    setOverflowOpen(false);
-                    setConfirmingDelete(true);
-                  }}
-                  disabled={deleting}
-                  aria-busy={deleting || undefined}
-                  type="button"
-                >
-                  <TrashIcon size={12} />
-                  {deleting ? "Deleting…" : "Delete"}
-                </button>
+                {!hideDelete && (
+                  <button
+                    className={cn(
+                      MENU_ITEM_BASE,
+                      "text-red hover:bg-[var(--cc-red-a08)] hover:text-red",
+                    )}
+                    onClick={() => {
+                      setOverflowOpen(false);
+                      setConfirmingDelete(true);
+                    }}
+                    disabled={deleting}
+                    aria-busy={deleting || undefined}
+                    type="button"
+                  >
+                    <TrashIcon size={12} />
+                    {deleting ? "Deleting…" : "Delete"}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -405,19 +429,22 @@ export default function WorkflowToolbar({
 
       {statusElement}
 
-      <div className="mx-xs h-[20px] w-px flex-shrink-0 bg-border-default" />
-
-      <button
-        className={cn(WB_BTN_BASE, WB_BTN_SM, WB_BTN_DANGER)}
-        onClick={() => setConfirmingDelete(true)}
-        disabled={deleting}
-        aria-busy={deleting || undefined}
-        type="button"
-      >
-        <TrashIcon size={11} />
-        {deleting ? "Deleting…" : "Delete"}
-      </button>
-      {deleteConfirmDialog}
+      {!hideDelete && (
+        <>
+          <div className="mx-xs h-[20px] w-px flex-shrink-0 bg-border-default" />
+          <button
+            className={cn(WB_BTN_BASE, WB_BTN_SM, WB_BTN_DANGER)}
+            onClick={() => setConfirmingDelete(true)}
+            disabled={deleting}
+            aria-busy={deleting || undefined}
+            type="button"
+          >
+            <TrashIcon size={11} />
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+          {deleteConfirmDialog}
+        </>
+      )}
     </div>
   );
 }

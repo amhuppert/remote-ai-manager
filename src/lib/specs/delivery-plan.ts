@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { stableStringify } from "@/lib/state-store/serialization";
-import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 import {
   actorProvenanceSchema,
   specCriterionDispositionSchema,
@@ -14,14 +13,6 @@ const elementIdSchema = z.string().min(1);
 const timestampSchema = z.string().min(1);
 export const NATIVE_SDD_PINNED_SPEC_SOURCE_ID = "native-sdd-pinned-spec";
 export const NATIVE_SDD_CLAIMS_SOURCE_ID = "native-sdd-claims";
-const RESERVED_SOURCE_IDS = new Set([
-  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
-  NATIVE_SDD_CLAIMS_SOURCE_ID,
-]);
-const RESERVED_SOURCE_LOCATOR_PREFIXES = [
-  ".cc/graph-workflow-docs/spec/",
-  ".cc/graph-workflow-docs/spec-bindings/",
-] as const;
 
 export const DELIVERY_PLAN_ENVELOPE_MAX_BYTES = 1_048_576;
 
@@ -82,6 +73,63 @@ export const deliveryPlanBindingSchema = z
   .strict();
 export type DeliveryPlanBinding = z.infer<typeof deliveryPlanBindingSchema>;
 
+export const deliveryPlanV3DocumentSchema = z
+  .object({
+    schemaVersion: z.literal(3),
+    binding: deliveryPlanBindingSchema,
+  })
+  .strict()
+  .superRefine((document, context) => {
+    const byteLength = new TextEncoder().encode(
+      stableStringify(document),
+    ).byteLength;
+    if (byteLength > DELIVERY_PLAN_ENVELOPE_MAX_BYTES) {
+      context.addIssue({
+        code: "custom",
+        path: [],
+        message: `Delivery plan binding is ${byteLength} bytes; the whole-document limit is ${DELIVERY_PLAN_ENVELOPE_MAX_BYTES} bytes.`,
+      });
+    }
+  });
+export type DeliveryPlanV3Document = z.infer<
+  typeof deliveryPlanV3DocumentSchema
+>;
+
+const sha256HashSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+
+export const deliveryPlanCandidateManifestV3Schema = z
+  .object({
+    protocol: z.literal("native-sdd-delivery-candidate/v3"),
+    schemaVersion: z.literal(3),
+    specId: elementIdSchema,
+    attemptId: elementIdSchema,
+    candidateId: elementIdSchema,
+    pinnedRevisionId: elementIdSchema,
+    draftRevision: z.number().int().positive(),
+    workflowDefinition: z
+      .object({
+        id: elementIdSchema,
+        revision: z.number().int().positive(),
+        definitionHash: sha256HashSchema,
+      })
+      .strict(),
+    binding: deliveryPlanBindingSchema,
+    bindingHash: sha256HashSchema,
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.candidateId !== manifest.workflowDefinition.id) {
+      context.addIssue({
+        code: "custom",
+        path: ["candidateId"],
+        message: "candidateId must equal workflowDefinition.id",
+      });
+    }
+  });
+export type DeliveryPlanCandidateManifestV3 = z.infer<
+  typeof deliveryPlanCandidateManifestV3Schema
+>;
+
 export function canonicalDeliveryPlanEnvelopeBytes(
   document: DeliveryPlanDocument,
 ): string {
@@ -95,113 +143,15 @@ export function deliveryPlanEnvelopeByteLength(
     .byteLength;
 }
 
-/**
- * A native-SDD attempt carries the graph-owned launch verbatim and the thin
- * spec-owned accountability binding paired with it. Graph structure, layout,
- * runtime settings, and dynamic behavior belong exclusively to `launch`.
- */
-export const finalizedDeliveryPlanDocumentSchema = z
-  .object({
-    schemaVersion: z.literal(2),
-    launch: workflowDefinitionMutationSchema,
-    binding: deliveryPlanBindingSchema,
-  })
-  .strict();
-export type FinalizedDeliveryPlanDocument = z.infer<
-  typeof finalizedDeliveryPlanDocumentSchema
->;
+export const deliveryPlanDocumentSchema = deliveryPlanV3DocumentSchema;
+export type DeliveryPlanDocument = DeliveryPlanV3Document;
 
-export const deliveryPlanDocumentSchema =
-  finalizedDeliveryPlanDocumentSchema.superRefine((document, context) => {
-    const definition = document.launch.definition;
-    if (definition.origin !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["launch", "definition", "origin"],
-        message: "definition.origin is reserved for server finalization.",
-      });
-    }
-    if (definition.lockedRegions !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["launch", "definition", "lockedRegions"],
-        message:
-          "definition.lockedRegions is reserved for server finalization.",
-      });
-    }
-    if (definition.approvalRequired !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["launch", "definition", "approvalRequired"],
-        message:
-          "definition.approvalRequired is reserved for server finalization.",
-      });
-    }
-
-    for (const [index, source] of definition.charter.sourcesOfTruth.entries()) {
-      if (RESERVED_SOURCE_IDS.has(source.id)) {
-        context.addIssue({
-          code: "custom",
-          path: [
-            "launch",
-            "definition",
-            "charter",
-            "sourcesOfTruth",
-            index,
-            "id",
-          ],
-          message: `Source id ${JSON.stringify(source.id)} is reserved for server finalization.`,
-        });
-      }
-      if (
-        RESERVED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
-          source.locator.startsWith(prefix),
-        )
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: [
-            "launch",
-            "definition",
-            "charter",
-            "sourcesOfTruth",
-            index,
-            "locator",
-          ],
-          message: `Source locator ${JSON.stringify(source.locator)} is reserved for server finalization.`,
-        });
-      }
-    }
-
-    const byteLength = deliveryPlanEnvelopeByteLength(document);
-    if (byteLength > DELIVERY_PLAN_ENVELOPE_MAX_BYTES) {
-      context.addIssue({
-        code: "custom",
-        path: [],
-        message: `Delivery plan envelope is ${byteLength} bytes; the whole-envelope limit is ${DELIVERY_PLAN_ENVELOPE_MAX_BYTES} bytes.`,
-      });
-    }
-  });
-export type DeliveryPlanDocument = z.infer<typeof deliveryPlanDocumentSchema>;
-
-export const deliveryPlanCandidateRecordSchema = z
-  .object({
-    protocol: z.literal("native-sdd-delivery-candidate/v2"),
-    schemaVersion: z.literal(2),
-    specId: elementIdSchema,
-    attemptId: elementIdSchema,
-    candidateId: elementIdSchema,
-    pinnedRevisionId: elementIdSchema,
-    draftRevision: z.number().int().positive(),
-    document: finalizedDeliveryPlanDocumentSchema,
-  })
-  .strict();
-export type DeliveryPlanCandidateRecord = z.infer<
-  typeof deliveryPlanCandidateRecordSchema
->;
+export const deliveryPlanCandidateRecordSchema =
+  deliveryPlanCandidateManifestV3Schema;
+export type DeliveryPlanCandidateRecord = DeliveryPlanCandidateManifestV3;
 
 export function canonicalDeliveryPlanCandidateBytes(
-  candidate: DeliveryPlanCandidateRecord,
+  candidate: DeliveryPlanCandidateManifestV3,
 ): string {
   return stableStringify(candidate);
 }
@@ -275,7 +225,7 @@ export function isTerminalSpecExecutionState(
  *
  * Without this, a spec could plan exactly one delivery: nothing retires a
  * launched attempt on success, so `open` refused forever and
- * `--seed-from last` was unreachable in the very case it exists for.
+ * Explicit seed selection was unreachable in the very case it existed for.
  *
  * An unresolvable execution keeps blocking. Failing closed beats forking a
  * second plan over a run that may still be live.

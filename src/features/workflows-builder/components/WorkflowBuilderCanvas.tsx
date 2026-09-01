@@ -81,6 +81,7 @@ interface WorkflowBuilderCanvasProps {
    * too little of the graph to read its shape.
    */
   isMobile?: boolean;
+  readOnly?: boolean;
 }
 
 /**
@@ -126,6 +127,7 @@ export default function WorkflowBuilderCanvas({
   onSelectContext,
   globalDefaults,
   isMobile = false,
+  readOnly = false,
 }: WorkflowBuilderCanvasProps) {
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (s) => s.draftDefinition,
@@ -143,6 +145,12 @@ export default function WorkflowBuilderCanvas({
   );
   const selectedContextId = _useGraphWorkflowBuilderStore(
     (s) => s.selectedContextId,
+  );
+  const highlightedContextIds = _useGraphWorkflowBuilderStore(
+    (s) => s.highlightedContextIds,
+  );
+  const setHighlightedContextIds = _useGraphWorkflowBuilderStore(
+    (s) => s.setHighlightedContextIds,
   );
   const ephemeralLanes = _useGraphWorkflowBuilderStore((s) => s.ephemeralLanes);
   const renameEphemeralLane = _useGraphWorkflowBuilderStore(
@@ -179,10 +187,17 @@ export default function WorkflowBuilderCanvas({
     // The authored draft is what says which fields were set on the context
     // itself, so the set-here marker is exact here rather than inferred from
     // the resolved definition's per-field provenance.
+    const highlighted = new Set(highlightedContextIds);
     return deriveNodes(resolved, draftLayout, null, {
       authoredDefinition: draftDefinition,
-    });
-  }, [draftDefinition, draftLayout, globalDefaults]);
+    }).map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        scopeHighlighted: highlighted.has(node.id),
+      },
+    }));
+  }, [draftDefinition, draftLayout, globalDefaults, highlightedContextIds]);
 
   const derivedEdges = useMemo(() => {
     if (!draftDefinition) return [];
@@ -623,8 +638,12 @@ export default function WorkflowBuilderCanvas({
           selectedContextId={selectedContextId}
           onSelectContext={handleSelectMobileContext}
           emptyLaneNames={emptyLanes.map((lane) => lane.name)}
-          onLongPressContext={setMovingContextId}
-          renderMemberActions={renderMemberMoveAction}
+          {...(!readOnly
+            ? {
+                onLongPressContext: setMovingContextId,
+                renderMemberActions: renderMemberMoveAction,
+              }
+            : {})}
         />
         {callout}
         {lanePicker}
@@ -639,15 +658,18 @@ export default function WorkflowBuilderCanvas({
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={handleConnect}
-        onNodeDragStart={handleNodeDragStart}
-        onNodeDrag={handleNodeDrag}
-        onNodeDragStop={handleNodeDragStop}
+        onConnect={readOnly ? undefined : handleConnect}
+        onNodeDragStart={readOnly ? undefined : handleNodeDragStart}
+        onNodeDrag={readOnly ? undefined : handleNodeDrag}
+        onNodeDragStop={readOnly ? undefined : handleNodeDragStop}
         onSelectionChange={handleSelectionChange}
-        onNodesDelete={handleNodesDelete}
-        onEdgesDelete={handleEdgesDelete}
-        onNodeContextMenu={handleNodeContextMenu}
-        onEdgeContextMenu={handleEdgeContextMenu}
+        onPaneClick={() => setHighlightedContextIds([])}
+        onNodesDelete={readOnly ? undefined : handleNodesDelete}
+        onEdgesDelete={readOnly ? undefined : handleEdgesDelete}
+        onNodeContextMenu={readOnly ? undefined : handleNodeContextMenu}
+        onEdgeContextMenu={readOnly ? undefined : handleEdgeContextMenu}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: "contextEdge" }}
@@ -658,7 +680,7 @@ export default function WorkflowBuilderCanvas({
         minZoom={0.3}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
-        deleteKeyCode={["Backspace", "Delete"]}
+        deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
       >
         {/* The draft layout wins: mounting the canvas measures cards, it does
             not re-place contexts the author already positioned. Regenerating
@@ -666,7 +688,7 @@ export default function WorkflowBuilderCanvas({
         <AutoLayout
           definition={draftDefinition}
           existingLayout={draftLayout}
-          onLayout={updateLayout}
+          onLayout={readOnly ? () => {} : updateLayout}
         />
         <LaneBandLayer
           bands={bands}
@@ -686,8 +708,12 @@ export default function WorkflowBuilderCanvas({
               : null
           }
           ephemeralLanes={emptyLanes}
-          onRenameEphemeralLane={renameEphemeralLane}
-          onMergeEphemeralLane={handleMergeEphemeralLane}
+          {...(!readOnly
+            ? {
+                onRenameEphemeralLane: renameEphemeralLane,
+                onMergeEphemeralLane: handleMergeEphemeralLane,
+              }
+            : {})}
           onRemoveEphemeralLane={removeEphemeralLane}
         />
         {laneDrag?.targetLane && (

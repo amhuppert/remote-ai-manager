@@ -54,6 +54,7 @@ function resetStore() {
     refusedEdits: [],
     pendingOutputSchemaText: {},
     ephemeralLanes: [],
+    highlightedContextIds: [],
   });
 }
 
@@ -103,6 +104,38 @@ describe("WorkflowBuilderCanvas — context menu", () => {
     await waitFor(() =>
       expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
     );
+  });
+});
+
+describe("WorkflowBuilderCanvas — scope highlights", () => {
+  beforeEach(resetStore);
+
+  it("highlights every claimant context and clears the set on blank canvas", async () => {
+    loadDraft();
+    act(() => {
+      _useGraphWorkflowBuilderStore
+        .getState()
+        .setHighlightedContextIds(["context-plan", "context-implement"]);
+    });
+    const { container } = renderCanvas();
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(
+          '.react-flow__node[data-id="context-plan"] [data-scope-highlighted="true"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        container.querySelector(
+          '.react-flow__node[data-id="context-implement"] [data-scope-highlighted="true"]',
+        ),
+      ).not.toBeNull();
+    });
+
+    fireEvent.click(container.querySelector(".react-flow__pane")!);
+    expect(
+      _useGraphWorkflowBuilderStore.getState().highlightedContextIds,
+    ).toEqual([]);
   });
 });
 

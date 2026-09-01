@@ -251,13 +251,15 @@ describe("spec-delivery legacy seed filler", () => {
 });
 
 describe("launch-source provenance", () => {
-  it("pairs a spec-delivery origin with its seed filler in one derivation", () => {
+  it("pairs a spec-delivery origin with its saved definition identity", () => {
     expect(
       buildExecutionProvenance(
         {
           kind: "spec_delivery",
           specSlug: "conversation-compaction",
           candidateId: "cand-42",
+          definitionId: "definition-42",
+          definitionRevision: 7,
         },
         "exec-9",
       ),
@@ -267,8 +269,8 @@ describe("launch-source provenance", () => {
         specSlug: "conversation-compaction",
         candidateId: "cand-42",
       },
-      seedDefinitionId: "spec-delivery:exec-9",
-      seedDefinitionRevision: 1,
+      seedDefinitionId: "definition-42",
+      seedDefinitionRevision: 7,
       launchedTier: "project",
     });
   });
@@ -279,11 +281,15 @@ describe("launch-source provenance", () => {
         kind: "spec_delivery",
         specSlug: "conversation-compaction",
         candidateId: "cand-42",
+        definitionId: "definition-42",
+        definitionRevision: 7,
       }),
     ).toEqual({
       origin: "spec_delivery",
       specSlug: "conversation-compaction",
       candidateId: "cand-42",
+      definitionId: "definition-42",
+      definitionRevision: 7,
     });
   });
 });

@@ -518,9 +518,6 @@ function SpecRowActions({
         <DropdownMenuItem onSelect={copyReference}>
           Copy spec reference
         </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href={`${href}?view=gate`}>Gate policy</Link>
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
