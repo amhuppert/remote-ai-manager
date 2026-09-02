@@ -65,8 +65,8 @@ import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { toSdkModelReasoningEffort, toStringEnv } from "./shared";
 import {
-  projectSchemaForCodex,
-  restoreCodexOptionalOmissions,
+  resolveCodexStructuredOutput,
+  type CodexStructuredOutputDispatch,
 } from "./output-schema";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
@@ -177,6 +177,9 @@ export class CodexConversationRuntime
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
+  // Resolved once: the output format is fixed for the runtime's lifetime, so
+  // every turn (including a repair turn) dispatches the contract the same way.
+  private readonly structuredOutputDispatch: CodexStructuredOutputDispatch | null;
   readonly alignmentVersion: number | null;
   /** The write envelope this runtime's turns execute under; undefined when unrestricted. */
   readonly fsWritePolicy: FsWritePolicy | undefined;
@@ -257,6 +260,9 @@ export class CodexConversationRuntime
     );
     this.modelSelection = this.resolvedModelSelection.modelSelection;
     this.outputFormat = input.outputFormat;
+    this.structuredOutputDispatch = input.outputFormat
+      ? resolveCodexStructuredOutput(input.outputFormat.schema)
+      : null;
     this.alignmentVersion = input.alignmentVersion ?? null;
     this.fsWritePolicy = input.fsWritePolicy;
     this.deps = deps;
@@ -306,7 +312,16 @@ export class CodexConversationRuntime
         );
       }
 
-      const promptInput = this.buildPromptInput(input);
+      const authoredInput = this.buildPromptInput(input);
+      const promptInput = this.structuredOutputDispatch
+        ? this.structuredOutputDispatch.prepareInput(authoredInput)
+        : authoredInput;
+      if (this.structuredOutputDispatch?.transport === "prompt_contract") {
+        logger.info("codex-runtime.structured_output_prompt_contract", {
+          conversationId: this.conversationId,
+          reason: this.structuredOutputDispatch.reason,
+        });
+      }
 
       // Reconcile the managed skill bundle link before every turn so resumed
       // sessions, lane worktrees, and project-scoped conversations self-heal.
@@ -356,8 +371,8 @@ export class CodexConversationRuntime
       // nothing about the prompt reaching the agent.
       const streamed = await thread.runStreamed(promptInput, {
         signal: input.signal,
-        ...(this.outputFormat
-          ? { outputSchema: projectSchemaForCodex(this.outputFormat.schema) }
+        ...(this.structuredOutputDispatch?.outputSchema
+          ? { outputSchema: this.structuredOutputDispatch.outputSchema }
           : {}),
       });
 
@@ -540,10 +555,9 @@ export class CodexConversationRuntime
 
     // Build structured output from last agent_message text
     let structuredOutput: unknown;
-    if (this.outputFormat && acc.lastAgentMessageText) {
+    if (this.structuredOutputDispatch && acc.lastAgentMessageText) {
       try {
-        structuredOutput = restoreCodexOptionalOmissions(
-          this.outputFormat.schema,
+        structuredOutput = this.structuredOutputDispatch.restore(
           JSON.parse(acc.lastAgentMessageText),
         );
       } catch {

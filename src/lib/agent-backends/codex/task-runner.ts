@@ -39,8 +39,8 @@ import {
   toStringEnv,
 } from "./shared";
 import {
-  projectSchemaForCodex,
-  restoreCodexOptionalOmissions,
+  resolveCodexStructuredOutput,
+  type CodexPromptInput,
 } from "./output-schema";
 import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -141,11 +141,7 @@ interface CodexTaskThread {
   ): Promise<{ events: AsyncIterable<unknown> }>;
 }
 
-type CodexTaskInput =
-  | string
-  | Array<
-      { type: "text"; text: string } | { type: "local_image"; path: string }
-    >;
+type CodexTaskInput = CodexPromptInput;
 
 interface CodexTaskRunnerClient {
   startThread(options?: ThreadOptions): CodexTaskThread;
@@ -624,7 +620,19 @@ export class CodexTaskRunner implements AgentTaskRunner {
       ),
     };
 
-    const prompt = buildPrompt(input, restricted !== null);
+    const authoredPrompt = buildPrompt(input, restricted !== null);
+    const structured = input.outputSchema
+      ? resolveCodexStructuredOutput(input.outputSchema)
+      : null;
+    if (structured?.transport === "prompt_contract") {
+      logger.info("codex-task-runner.structured_output_prompt_contract", {
+        workingDirectory: input.workingDirectory,
+        reason: structured.reason,
+      });
+    }
+    const prompt = structured
+      ? structured.prepareInput(authoredPrompt)
+      : authoredPrompt;
 
     let timedOut = false;
 
@@ -687,8 +695,8 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
 
       const turn = await runCodexTurn(thread, prompt, {
-        ...(input.outputSchema
-          ? { outputSchema: projectSchemaForCodex(input.outputSchema) }
+        ...(structured?.outputSchema
+          ? { outputSchema: structured.outputSchema }
           : {}),
         signal: abortController.signal,
         onActivity: () => stallWatchdog.touch(),
@@ -713,10 +721,9 @@ export class CodexTaskRunner implements AgentTaskRunner {
       if (turn.finalResponse) {
         text = turn.finalResponse;
 
-        if (input.outputSchema && !turn.error) {
+        if (structured && !turn.error) {
           try {
-            structuredOutput = restoreCodexOptionalOmissions(
-              input.outputSchema,
+            structuredOutput = structured.restore(
               JSON.parse(turn.finalResponse),
             );
           } catch {

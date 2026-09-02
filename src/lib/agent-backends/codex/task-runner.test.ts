@@ -37,6 +37,7 @@ vi.mock("@/lib/shared/child-env", () => ({
 
 import { Codex } from "@openai/codex-sdk";
 import { CodexTaskRunner, type CodexTaskRunnerDeps } from "./task-runner";
+import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type { AgentTaskRequest } from "../task";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
@@ -866,6 +867,29 @@ describe("CodexTaskRunner", () => {
     );
 
     expect(result.structuredOutput).toEqual({ summary: "clean" });
+  });
+
+  it("routes a schema the strict dialect cannot express through the prompt contract instead of the provider wire", async () => {
+    runMock.mockResolvedValue({
+      finalResponse: JSON.stringify({ anything: 1, note: null }),
+    });
+    const schema = { type: "object" };
+
+    const result = await runner.run(makeRequest({ outputSchema: schema }));
+
+    const [prompt, runOptions] = runMock.mock.calls[0] as [
+      string,
+      { outputSchema?: unknown },
+    ];
+    expect(runOptions.outputSchema).toBeUndefined();
+    expect(prompt).toContain(renderStructuredOutputInstruction(schema));
+    expect(result.structuredOutput).toEqual({ anything: 1, note: null });
+    expect(
+      logState.entries.some(
+        (entry) =>
+          entry.event === "codex-task-runner.structured_output_prompt_contract",
+      ),
+    ).toBe(true);
   });
 
   it("aborts the running thread when an external signal fires", async () => {

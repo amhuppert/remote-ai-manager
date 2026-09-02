@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import {
   projectSchemaForCodex,
+  resolveCodexStructuredOutput,
   restoreCodexOptionalOmissions,
 } from "./output-schema";
 
@@ -164,13 +166,14 @@ describe("projectSchemaForCodex", () => {
           items: { const: "entry", type: "string" },
         },
         choice: {
-          oneOf: [
+          anyOf: [
             { const: "first", type: "string" },
             { const: 2, type: "number" },
           ],
         },
       },
       required: ["text", "count", "flag", "empty", "list", "choice"],
+      additionalProperties: false,
     });
     expect(schema.properties.text).toEqual({ const: "fixed" });
     expect(schema.properties.list.items).toEqual({ const: "entry" });
@@ -190,7 +193,10 @@ describe("projectSchemaForCodex", () => {
       required: ["marker", "const"],
     };
 
-    expect(projectSchemaForCodex(schema)).toEqual(schema);
+    expect(projectSchemaForCodex(schema)).toEqual({
+      ...schema,
+      additionalProperties: false,
+    });
   });
 
   it("leaves non-primitive const values unchanged", () => {
@@ -203,7 +209,178 @@ describe("projectSchemaForCodex", () => {
       required: ["objectValue", "arrayValue"],
     };
 
-    expect(projectSchemaForCodex(schema)).toEqual(schema);
+    expect(projectSchemaForCodex(schema)).toEqual({
+      ...schema,
+      additionalProperties: false,
+    });
+  });
+
+  it("rewrites a nested oneOf as anyOf, the only union the provider permits", () => {
+    const projected = projectSchemaForCodex({
+      type: "object",
+      properties: {
+        choice: { oneOf: [{ type: "string" }, { type: "number" }] },
+      },
+      required: ["choice"],
+      additionalProperties: false,
+    });
+
+    expect(projected).toEqual({
+      type: "object",
+      properties: {
+        choice: { anyOf: [{ type: "string" }, { type: "number" }] },
+      },
+      required: ["choice"],
+      additionalProperties: false,
+    });
+  });
+
+  it("declares type object on a node that only lists properties", () => {
+    const projected = projectSchemaForCodex({
+      properties: { a: { type: "string" } },
+      required: ["a"],
+    });
+
+    expect(projected).toEqual({
+      type: "object",
+      properties: { a: { type: "string" } },
+      required: ["a"],
+      additionalProperties: false,
+    });
+  });
+
+  it("spells out an explicitly closed object with no properties as the empty closed object the provider accepts", () => {
+    const projected = projectSchemaForCodex({
+      type: "object",
+      properties: {
+        placeholder: { type: "object", additionalProperties: false },
+      },
+      required: ["placeholder"],
+      additionalProperties: false,
+    });
+
+    expect(projected).toEqual({
+      type: "object",
+      properties: {
+        placeholder: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
+      },
+      required: ["placeholder"],
+      additionalProperties: false,
+    });
+  });
+});
+
+describe("resolveCodexStructuredOutput", () => {
+  it("dispatches an expressible schema natively, closed and fully required, and leaves the prompt alone", () => {
+    const structured = resolveCodexStructuredOutput(
+      measurePayloadMaximaSchema(),
+    );
+
+    expect(structured.transport).toBe("native");
+    expect(structured.reason).toBeNull();
+    expect(objectNodesNotClosed(structured.outputSchema)).toEqual([]);
+    expect(objectNodesMissingRequiredKeys(structured.outputSchema)).toEqual([]);
+    expect(structured.prepareInput("Measure the payload")).toBe(
+      "Measure the payload",
+    );
+  });
+
+  it("reads a projected null back as the omission the author described on the native path", () => {
+    const structured = resolveCodexStructuredOutput(blockingVerdictSchema());
+
+    expect(
+      structured.restore({ summary: "clean", issues: [], planDefects: null }),
+    ).toEqual({ summary: "clean", issues: [] });
+  });
+
+  describe("a shape the strict dialect cannot express rides the prompt instead", () => {
+    const closedBranch = (marker: string): Record<string, unknown> => ({
+      type: "object",
+      properties: { kind: { type: "string", const: marker } },
+      required: ["kind"],
+      additionalProperties: false,
+    });
+
+    it.each<[string, Record<string, unknown>, string]>([
+      [
+        "a free-form object with no declared properties",
+        { type: "object" },
+        "$",
+      ],
+      [
+        "an explicitly open object",
+        {
+          type: "object",
+          properties: { a: { type: "string" } },
+          required: ["a"],
+          additionalProperties: true,
+        },
+        "$",
+      ],
+      [
+        "a nested free-form object",
+        {
+          type: "object",
+          properties: { extra: { type: "object" } },
+          required: ["extra"],
+          additionalProperties: false,
+        },
+        "$.properties.extra",
+      ],
+      [
+        "a free-form object inside array items",
+        {
+          type: "object",
+          properties: { rows: { type: "array", items: { type: "object" } } },
+          required: ["rows"],
+          additionalProperties: false,
+        },
+        "$.properties.rows.items",
+      ],
+      ["a oneOf root", { oneOf: [closedBranch("a"), closedBranch("b")] }, "$"],
+    ])("%s", (_, schema, path) => {
+      const structured = resolveCodexStructuredOutput(schema);
+
+      expect(structured.transport).toBe("prompt_contract");
+      expect(structured.outputSchema).toBeUndefined();
+      expect(structured.reason).toContain(path);
+    });
+
+    it("appends the rendered contract to a string prompt and to the text item of an image prompt", () => {
+      const schema = { type: "object" };
+      const structured = resolveCodexStructuredOutput(schema);
+      const instruction = renderStructuredOutputInstruction(schema);
+
+      expect(structured.prepareInput("Describe it")).toBe(
+        `Describe it\n\n${instruction}`,
+      );
+      expect(
+        structured.prepareInput([
+          { type: "text", text: "Describe it" },
+          { type: "local_image", path: "/tmp/a.png" },
+        ]),
+      ).toEqual([
+        { type: "text", text: `Describe it\n\n${instruction}` },
+        { type: "local_image", path: "/tmp/a.png" },
+      ]);
+      expect(
+        structured.prepareInput([{ type: "local_image", path: "/tmp/a.png" }]),
+      ).toEqual([
+        { type: "local_image", path: "/tmp/a.png" },
+        { type: "text", text: instruction },
+      ]);
+    });
+
+    it("does not read nulls back as omissions, since nothing was projected", () => {
+      const structured = resolveCodexStructuredOutput({ type: "object" });
+
+      expect(structured.restore({ note: null })).toEqual({ note: null });
+    });
   });
 });
 
@@ -289,5 +466,129 @@ describe("restoreCodexOptionalOmissions", () => {
       summary: "clean",
       issues: [{ taskId: "t2", title: "t", description: "d" }],
     });
+  });
+});
+
+/**
+ * The rule the provider stated when it refused execution cc44014e with HTTP
+ * 400: "'additionalProperties' is required to be supplied and to be false".
+ * Walked over the whole projected schema, since the provider reports only the
+ * first offending node.
+ */
+function objectNodesNotClosed(schema: unknown, path = "$"): string[] {
+  if (Array.isArray(schema)) {
+    return schema.flatMap((entry, index) =>
+      objectNodesNotClosed(entry, `${path}[${index}]`),
+    );
+  }
+  if (typeof schema !== "object" || schema === null) return [];
+
+  const node = schema as Record<string, unknown>;
+  const violations: string[] = [];
+  if (node.type === "object" && node.additionalProperties !== false) {
+    violations.push(path);
+  }
+  for (const [key, child] of Object.entries(node)) {
+    if (key === "properties" && typeof child === "object" && child !== null) {
+      for (const [name, property] of Object.entries(
+        child as Record<string, unknown>,
+      )) {
+        violations.push(
+          ...objectNodesNotClosed(property, `${path}.properties.${name}`),
+        );
+      }
+      continue;
+    }
+    violations.push(...objectNodesNotClosed(child, `${path}.${key}`));
+  }
+  return violations;
+}
+
+/**
+ * The authored shape that halted execution cc44014e: every object node declares
+ * its properties and required keys but none says `additionalProperties`.
+ */
+function measurePayloadMaximaSchema(): Record<string, unknown> {
+  const observation = {
+    type: "object",
+    properties: { file: { type: "string" }, max: { type: "integer" } },
+    required: ["max", "file"],
+  };
+  return {
+    type: "object",
+    properties: {
+      notes: { type: "string" },
+      observed: {
+        type: "object",
+        properties: {
+          manifestNodes: observation,
+          manifestDepth: observation,
+        },
+        required: ["manifestNodes", "manifestDepth"],
+      },
+      recommendedCaps: {
+        type: "object",
+        properties: {
+          manifestNodes: { type: "integer" },
+          manifestDepth: { type: "integer" },
+        },
+        required: ["manifestNodes", "manifestDepth"],
+      },
+    },
+    required: ["observed", "recommendedCaps"],
+  };
+}
+
+describe("projectSchemaForCodex closes every object node", () => {
+  it("supplies additionalProperties: false on every object the authored schema left open", () => {
+    const schema = measurePayloadMaximaSchema();
+
+    expect(objectNodesNotClosed(schema)).not.toEqual([]);
+    expect(objectNodesNotClosed(projectSchemaForCodex(schema))).toEqual([]);
+  });
+
+  it("closes an object nested under an authored-optional key, inside array items, and inside oneOf branches", () => {
+    const projected = projectSchemaForCodex({
+      type: "object",
+      properties: {
+        maybe: {
+          type: "object",
+          properties: { a: { type: "string" } },
+          required: ["a"],
+        },
+        list: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { b: { type: "string" } },
+            required: ["b"],
+          },
+        },
+        choice: {
+          oneOf: [
+            {
+              type: "object",
+              properties: { k: { const: "x" } },
+              required: ["k"],
+            },
+            {
+              type: "object",
+              properties: { k: { const: "y" } },
+              required: ["k"],
+            },
+          ],
+        },
+      },
+      required: ["list", "choice"],
+    });
+
+    expect(objectNodesNotClosed(projected)).toEqual([]);
+  });
+
+  it("leaves the authored schema untouched", () => {
+    const schema = measurePayloadMaximaSchema();
+    const before = JSON.stringify(schema);
+    projectSchemaForCodex(schema);
+    expect(JSON.stringify(schema)).toBe(before);
   });
 });

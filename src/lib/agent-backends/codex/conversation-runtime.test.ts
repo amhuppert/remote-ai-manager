@@ -35,6 +35,7 @@ import {
   type CodexConversationRuntimeDeps,
   type CodexThreadLike,
 } from "./conversation-runtime";
+import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type {
   ConversationBackendCreateInput,
   ConversationBackendTurnInput,
@@ -1728,7 +1729,37 @@ describe("CodexConversationRuntime", () => {
       await runtime.sendTurn(makeTurnInput());
 
       expect(thread.capturedTurnOptions).toBeDefined();
-      expect(thread.capturedTurnOptions!.outputSchema).toEqual(schema);
+      expect(thread.capturedTurnOptions!.outputSchema).toEqual({
+        ...schema,
+        additionalProperties: false,
+      });
+    });
+
+    it("routes a schema the strict dialect cannot express through the prompt contract instead of the provider wire", async () => {
+      const schema = { type: "object" };
+      const thread = makeCapturingThread([
+        threadStarted(),
+        agentMessageCompleted('{"free": "form"}'),
+        turnCompleted(),
+      ]);
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ outputFormat: { type: "json_schema", schema } }),
+        deps,
+      );
+      const result = await runtime.sendTurn(
+        makeTurnInput({ promptText: "Describe it" }),
+      );
+
+      expect(thread.capturedTurnOptions?.outputSchema).toBeUndefined();
+      expect(typeof thread.capturedInput).toBe("string");
+      expect(
+        String(thread.capturedInput).endsWith(
+          `Describe it\n\n${renderStructuredOutputInstruction(schema)}`,
+        ),
+      ).toBe(true);
+      expect(result.structuredOutput).toEqual({ free: "form" });
     });
 
     it("adds the provider-required type to const-only schema nodes while retaining the authored output format", async () => {
