@@ -8,6 +8,7 @@ import type {
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import {
@@ -7041,6 +7042,106 @@ describe("awaiting-user-input park after an implementer turn", () => {
     expect(contextState?.iterationCount).toBe(iterationCountBeforeTurn);
     expect(contextState?.consecutiveFailureCount).toBe(1);
     expect(persisted.activeContextIds).not.toContain("context-plan");
+  });
+
+  it("parks an asking turn before honoring a sibling's pending halt", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    execution.contextStates["context-plan"]!.iterationCount = 3;
+    const repository = createRepository(execution);
+    const iterationCountBeforeTurn =
+      repository.read().contextStates["context-plan"]!.iterationCount;
+
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => NOW,
+    });
+    repository.deliver = eventPublisher.deliver;
+    const gate = createGate(repository, eventPublisher);
+    const enterSpy = vi.spyOn(gate, "enterAwaitingUserInput");
+
+    const questions = [question("q1")];
+    const pendingHaltReason: GraphWorkflowHaltReason = {
+      type: "agent_turn_failed",
+      contextId: "sibling-context",
+      engine: "codex",
+      cause: "sdk_error",
+      message: "Sibling turn failed",
+    };
+    const readLaneConversation = vi.fn(async () => ({
+      pendingQuestionId: "batch-1",
+      pendingQuestions: questions,
+    }));
+    const runAgentIteration = vi.fn(async () => {
+      await repository.mutateActive("/repo", "session-1", (current) => {
+        current.pendingHaltReason = pendingHaltReason;
+        return current;
+      });
+      return {
+        conversationId: "conversation-ask",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: GraphWorkflowHaltReason;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason = input.reason;
+        current.pendingHaltReason = null;
+        await repository.mutateActive("/repo", "session-1", () => current);
+        return current;
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      signalHalt,
+      userInputGateService: gate,
+      readLaneConversation,
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runAgentIteration).toHaveBeenCalledTimes(1);
+    expect(enterSpy).toHaveBeenCalledTimes(1);
+    expect(signalHalt).not.toHaveBeenCalled();
+    expect(result.execution.status).toBe("running");
+    expect(result.execution.pendingHaltReason).toEqual(pendingHaltReason);
+    expect(result.execution.contextStates["context-plan"]?.status).toBe(
+      "awaiting_user_input",
+    );
+    expect(
+      result.execution.contextStates["context-plan"]?.pendingUserInputs[
+        "implementer"
+      ],
+    ).toMatchObject({
+      conversationId: "conversation-ask",
+      questionBatchId: "batch-1",
+      questions,
+      answers: null,
+    });
+    expect(result.execution.contextStates["context-plan"]?.iterationCount).toBe(
+      iterationCountBeforeTurn,
+    );
   });
 
   it("parks the context when an ask-ended turn surfaces a sessionDiedMidTurn error (park wins over the transient error)", async () => {

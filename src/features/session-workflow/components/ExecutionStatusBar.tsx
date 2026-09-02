@@ -173,16 +173,17 @@ export default function ExecutionStatusBar({
   const [pendingConfirm, setPendingConfirm] =
     useState<ExecutionControlDescriptor | null>(null);
 
-  const haltReason = execution.haltReason;
+  const displayedHaltReason =
+    execution.haltReason ?? execution.pendingHaltReason;
   const secondaryHaltReasons = execution.secondaryHaltReasons;
   const outputSchemaEvidence = useMemo(
     () =>
       deriveOutputSchemaHaltEvidenceByContext({
         execution,
-        haltReasons: [haltReason, ...secondaryHaltReasons],
+        haltReasons: [displayedHaltReason, ...secondaryHaltReasons],
         validationEvents: collectValidationResults(events ?? []),
       }),
-    [execution, haltReason, secondaryHaltReasons, events],
+    [execution, displayedHaltReason, secondaryHaltReasons, events],
   );
 
   /**
@@ -194,7 +195,7 @@ export default function ExecutionStatusBar({
    */
   const resumeBlockedReason = useMemo(
     () =>
-      [haltReason, ...secondaryHaltReasons].some(
+      [displayedHaltReason, ...secondaryHaltReasons].some(
         (reason) =>
           reason !== null &&
           outputSchemaEvidenceForReason(outputSchemaEvidence, reason)
@@ -202,7 +203,7 @@ export default function ExecutionStatusBar({
       )
         ? "blocked until the contract is accepted"
         : null,
-    [haltReason, secondaryHaltReasons, outputSchemaEvidence],
+    [displayedHaltReason, secondaryHaltReasons, outputSchemaEvidence],
   );
 
   // Halted is a lifecycle state, not an answer to "is anything happening?" —
@@ -265,8 +266,8 @@ export default function ExecutionStatusBar({
     [execution, allowActions],
   );
 
-  const haltHeadline = haltReason
-    ? formatGraphWorkflowHaltReason(haltReason).headline
+  const haltHeadline = displayedHaltReason
+    ? formatGraphWorkflowHaltReason(displayedHaltReason).headline
     : null;
 
   // The status question alone. Whether a resume may be TAKEN is
@@ -392,7 +393,7 @@ export default function ExecutionStatusBar({
   }
 
   const haltRow =
-    haltReason !== null && haltHeadline !== null ? (
+    displayedHaltReason !== null && haltHeadline !== null ? (
       // One line, truncated: the bar's height never depends on the size of the
       // failure. The full output lives in the details dialog.
       <div
@@ -449,16 +450,16 @@ export default function ExecutionStatusBar({
         />
       )}
 
-      {haltReason && (
+      {displayedHaltReason && (
         <HaltDetailsDialog
           open={haltDetailsOpen}
           onOpenChange={setHaltDetailsOpen}
-          primary={haltReason}
+          primary={displayedHaltReason}
           secondary={secondaryHaltReasons}
           conflictAnalysis={
-            haltReason.type === "join_failure"
-              ? (execution.joins[haltReason.joinId]?.conflicts?.analysis ??
-                null)
+            displayedHaltReason.type === "join_failure"
+              ? (execution.joins[displayedHaltReason.joinId]?.conflicts
+                  ?.analysis ?? null)
               : null
           }
           canResume={canResumeFromDialog}
@@ -471,7 +472,10 @@ export default function ExecutionStatusBar({
           {...(onViewRepairConversation !== undefined
             ? { onViewRepairConversation }
             : {})}
-          joinConflict={deriveJoinConflictSummary(execution, haltReason)}
+          joinConflict={deriveJoinConflictSummary(
+            execution,
+            displayedHaltReason,
+          )}
           {...(allowActions && onEditSchema !== undefined
             ? { onEditSchema }
             : {})}

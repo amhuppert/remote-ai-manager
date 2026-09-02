@@ -488,7 +488,34 @@ describe("ExecutionStatusBar halt display", () => {
     expect(onResume).toHaveBeenCalledWith();
   });
 
-  it("does not render a halt summary when haltReason is null", () => {
+  it("shows the pending halt reason while a running execution drains", async () => {
+    const user = userEvent.setup();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({
+          status: "running",
+          haltReason: null,
+          pendingHaltReason: resumableHalt,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Agent turn failed in context-plan (claude)",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("SDK stream ended unexpectedly"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: "Resume" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render a halt summary without a current or pending halt", () => {
     render(
       <ExecutionStatusBar
         {...baseProps}

@@ -5134,11 +5134,12 @@ export function createGraphWorkflowIterationOrchestrator(
       //      in the same turn cannot mutate workflow state while the
       //      collaboration is running.
       //
-      //   2. After every agent turn the orchestrator inspects
-      //      `pendingHaltReason` and, if set, terminates the iteration with
-      //      `IterationHaltedError`. This guarantees R5.3 ("no further tool
-      //      calls in the iteration") at the iteration boundary regardless of
-      //      whether the agent intended a follow-up turn.
+      //   2. After every agent turn the orchestrator first preserves any
+      //      question the turn registered, then inspects `pendingHaltReason`.
+      //      A parked question ends the iteration while retaining the halt for
+      //      the outer drain; otherwise the halt terminates with
+      //      `IterationHaltedError`. Either path guarantees R5.3 ("no further
+      //      tool calls in the iteration") at the turn boundary.
       async function checkPendingHaltOrThrow(
         turnLabel: "initial_turn" | "follow_up_turn",
         attempt: number,
@@ -5161,6 +5162,38 @@ export function createGraphWorkflowIterationOrchestrator(
         );
         await haltIteration(latest.pendingHaltReason);
         throw new IterationHaltedError(latest.pendingHaltReason);
+      }
+
+      async function parkQuestionBeforePendingHalt(
+        turnLabel: "initial_turn" | "follow_up_turn",
+        attempt: number,
+      ): Promise<GraphWorkflowIterationResult | null> {
+        const result = await parkContextIfQuestionPending();
+        if (result === null || result.execution.pendingHaltReason === null) {
+          return result;
+        }
+        const pendingHaltReason = result.execution.pendingHaltReason;
+
+        execLogger?.iteration(
+          input.contextId,
+          "iteration.question_parked_during_halt_drain",
+          {
+            haltReasonType: pendingHaltReason.type,
+            turnLabel,
+            attempt,
+          },
+        );
+        logger.info(
+          "graph-workflow.iteration.question_parked_during_halt_drain",
+          {
+            executionId: result.execution.id,
+            contextId: input.contextId,
+            haltReasonType: pendingHaltReason.type,
+            turnLabel,
+            attempt,
+          },
+        );
+        return result;
       }
 
       async function hasPendingCollaboration(
@@ -5274,19 +5307,25 @@ export function createGraphWorkflowIterationOrchestrator(
         backgroundWait: agentResult.backgroundWait,
       });
 
-      // Post-turn enforcement of the Same-Turn Tool Dispatch Contract
-      // (part 2 above). Fires immediately after the initial agent turn so the
-      // orchestrator halts even when the agent does not request a follow-up.
-      await checkPendingHaltOrThrow("initial_turn", 0);
-      stoppedForCollaboration = await hasPendingCollaboration(
-        "initial_turn",
-        0,
-      );
+      // Preserve a registered question before enforcing a halt written by a
+      // sibling during this turn. The parked record survives the outer loop's
+      // drain-and-halt transition, while the pending halt still prevents any
+      // follow-up turn from being dispatched.
+      parkedResult = await parkQuestionBeforePendingHalt("initial_turn", 0);
+      if (parkedResult === null) {
+        await checkPendingHaltOrThrow("initial_turn", 0);
+        stoppedForCollaboration = await hasPendingCollaboration(
+          "initial_turn",
+          0,
+        );
+      }
 
       // Follow-up loop: re-message if there are still incomplete tasks
       for (
         let attempt = 1;
-        !stoppedForCollaboration && attempt <= MAX_FOLLOW_UPS;
+        parkedResult === null &&
+        !stoppedForCollaboration &&
+        attempt <= MAX_FOLLOW_UPS;
         attempt++
       ) {
         // Pre-dispatch halt check before sending the next follow-up turn.
@@ -5358,21 +5397,6 @@ export function createGraphWorkflowIterationOrchestrator(
           }
         }
 
-        // Park before dispatching the next follow-up. The conversation
-        // machine's waitingForInput state accepts SUBMIT_PROMPT by wiping the
-        // pending question (any claimed turn supersedes it), so a follow-up
-        // sent onto an ask-ended conversation destroys the batch the user is
-        // being asked to answer — the post-loop check would then find nothing
-        // and the ask would be lost (design "Park detection": the check runs
-        // after every agent turn). Runs after the other break conditions so a
-        // loop that is exiting anyway leaves the question to the post-loop
-        // check. `answers_ready` (fast answer, 5.4) falls through and the
-        // follow-up proceeds.
-        parkedResult = await parkContextIfQuestionPending();
-        if (parkedResult !== null) {
-          break;
-        }
-
         const baseFollowUpPrompt = buildFollowUpPrompt({
           remainingTasks: remaining,
           taskStates: midExecution.taskStates,
@@ -5439,19 +5463,19 @@ export function createGraphWorkflowIterationOrchestrator(
           backgroundWait: agentResult.backgroundWait,
         });
 
+        parkedResult = await parkQuestionBeforePendingHalt(
+          "follow_up_turn",
+          attempt,
+        );
+        if (parkedResult !== null) {
+          break;
+        }
+
         await checkPendingHaltOrThrow("follow_up_turn", attempt);
         stoppedForCollaboration = await hasPendingCollaboration(
           "follow_up_turn",
           attempt,
         );
-      }
-
-      if (!stoppedForCollaboration && parkedResult === null) {
-        // Park before validation/continue so a question-ending turn skips both
-        // (design "Park detection": the check runs before finalize evaluates
-        // continue/validate). Covers the final turn of an exhausted follow-up
-        // loop, which the pre-dispatch check inside the loop never sees.
-        parkedResult = await parkContextIfQuestionPending();
       }
 
       if (!stoppedForCollaboration && parkedResult === null) {

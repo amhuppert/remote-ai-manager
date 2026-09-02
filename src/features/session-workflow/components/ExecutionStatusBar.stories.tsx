@@ -111,6 +111,17 @@ export const Running: Story = {
   },
 };
 
+/** A sibling failure is visible while active turns finish draining. */
+export const RunningWithPendingHalt: Story = {
+  args: {
+    execution: createWorkflowExecution({
+      status: "running",
+      haltReason: null,
+      pendingHaltReason: resumableHalt,
+    }),
+  },
+};
+
 /** The state chip is the only pulsing element, and only while running. */
 export const RunningWithWaitingGates: Story = {
   args: {
