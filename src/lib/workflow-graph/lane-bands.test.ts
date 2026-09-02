@@ -343,6 +343,94 @@ describe("deriveExecutionLaneBands", () => {
     });
   });
 
+  // The production shape behind ticket #103: `workflow-gate` was forked from
+  // `cli-contract` after `recovery-strings` landed there, so its lane record
+  // lists that context among the output its branch carries. The band must keep
+  // the context under the lane it is placed on — the lane the card's chip names
+  // and the layout positions it in — rather than let the fork claim it.
+  it("keeps a landed context in its placed lane when a downstream lane forked from it", () => {
+    const bands = deriveExecutionLaneBands({
+      workingDefinition: {
+        executionContexts: [
+          {
+            id: "id-boundary-validation",
+            placement: { lane: "cli-contract", mode: "owned" },
+          },
+          {
+            id: "recovery-strings",
+            placement: { lane: "cli-contract", mode: "owned" },
+          },
+          {
+            id: "doctor-and-coverage-help",
+            placement: { lane: "cli-contract", mode: "full" },
+          },
+          {
+            id: "gate-single-evaluation",
+            placement: { lane: "workflow-gate", mode: "full" },
+          },
+        ],
+        edges: [
+          {
+            sourceContextId: "id-boundary-validation",
+            targetContextId: "doctor-and-coverage-help",
+          },
+          {
+            sourceContextId: "recovery-strings",
+            targetContextId: "doctor-and-coverage-help",
+          },
+          {
+            sourceContextId: "recovery-strings",
+            targetContextId: "gate-single-evaluation",
+          },
+        ],
+      },
+      contextStates: {
+        "id-boundary-validation": { status: "ready", laneId: "cli-contract" },
+        "recovery-strings": { status: "completed", laneId: "cli-contract" },
+        "doctor-and-coverage-help": { status: "pending" },
+        "gate-single-evaluation": {
+          status: "completed",
+          laneId: "workflow-gate",
+        },
+      },
+      executionLanes: {
+        "cli-contract": {
+          laneId: "cli-contract",
+          kind: "worktree",
+          status: "active",
+          branchName: "csm/audit-cli-contract",
+          includedContextIds: ["recovery-strings"],
+        },
+        "workflow-gate": {
+          laneId: "workflow-gate",
+          kind: "worktree",
+          status: "active",
+          branchName: "csm/audit-workflow-gate",
+          includedContextIds: ["recovery-strings", "gate-single-evaluation"],
+        },
+      },
+    });
+
+    expect(
+      bands.find((band) => band.laneName === "cli-contract"),
+    ).toMatchObject({
+      memberContextIds: [
+        "id-boundary-validation",
+        "recovery-strings",
+        "doctor-and-coverage-help",
+      ],
+      membershipLabel: "3 members",
+      gradeSummary: "2 owning · 1 full",
+    });
+    expect(
+      bands.find((band) => band.laneName === "workflow-gate"),
+    ).toMatchObject({
+      memberContextIds: ["gate-single-evaluation"],
+      membershipLabel: "1 member",
+      gradeSummary: "1 full",
+    });
+  });
+
   // The band fixtures above hand-write `status: "merged"`, so they cannot catch
   // an engine that never produces it. This one starts from the real transition
   // owner: a lane whose work the join runner has just landed must read as
@@ -410,9 +498,9 @@ describe("deriveExecutionLaneBands", () => {
       state: "merged",
       runtime: { status: "merged" },
     });
-    expect(
-      bands.find((band) => band.laneName === "delivery")?.state,
-    ).toBe("active");
+    expect(bands.find((band) => band.laneName === "delivery")?.state).toBe(
+      "active",
+    );
   });
 });
 

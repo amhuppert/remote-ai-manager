@@ -38,6 +38,11 @@ interface LaneActivityExecution {
         laneId: string;
         kind: "session" | "worktree";
         status: string;
+        /**
+         * Part of the lane record, so accepted — but never read here. It names
+         * whose landed output the lane's BRANCH carries, which a lane forked
+         * from another lane inherits wholesale; it is not who runs on the lane.
+         */
         includedContextIds?: readonly string[];
       }
     | undefined
@@ -62,6 +67,22 @@ function displayLaneId(runtimeId: string): string {
   return runtimeId === SESSION_LANE_ID ? SESSION_LANE_NAME : runtimeId;
 }
 
+/**
+ * The one owner of "which contexts are in which lane" for every read surface —
+ * the canvas bands, the mobile lane list, the status bar, the config panel and
+ * the CLI status table all derive from this.
+ *
+ * Every context is a member of exactly ONE lane. The authored placement is the
+ * answer wherever there is one; the lane the engine admitted the context to
+ * covers the rest — a run seeded before placement existed, or a context an
+ * expansion admitted to a lane it created. A lane record's
+ * `includedContextIds` is deliberately not read: it records whose landed output
+ * the lane's branch carries, and a lane forked from another lane is seeded with
+ * that lane's landed contexts so upstream-visibility checks recognise the copied
+ * history. Reading it as membership reports an upstream context inside every
+ * lane forked from its own, and the band, its header count and the layout —
+ * which positions by placement — then disagree about where the context is.
+ */
 export function deriveExecutionLaneActivities(
   execution: LaneActivityExecution,
 ): ExecutionLaneActivity[] {
@@ -83,9 +104,11 @@ export function deriveExecutionLaneActivities(
     return created;
   };
 
+  const placedContextIds = new Set<string>();
   for (const context of execution.workingDefinition.executionContexts) {
     if (!context.placement) continue;
     ensureLane(context.placement.lane).memberContextIds.add(context.id);
+    placedContextIds.add(context.id);
   }
 
   for (const [key, runtimeLane] of Object.entries(
@@ -99,13 +122,10 @@ export function deriveExecutionLaneActivities(
     );
     lane.kind = runtimeLane.kind;
     lane.runtimeStatus = runtimeLane.status;
-    for (const contextId of runtimeLane.includedContextIds ?? []) {
-      lane.memberContextIds.add(contextId);
-    }
   }
 
   for (const [contextId, state] of Object.entries(execution.contextStates)) {
-    if (!state?.laneId) continue;
+    if (!state?.laneId || placedContextIds.has(contextId)) continue;
     ensureLane(displayLaneId(state.laneId), state.laneId).memberContextIds.add(
       contextId,
     );

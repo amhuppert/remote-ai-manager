@@ -46,9 +46,11 @@ export const LAYOUT_ROW_GAP = 40;
  * chain starts deep therefore opens deep, and the empty run before its first
  * member is the wait it depicts.
  *
- * The band ordering and membership come from {@link deriveDefinitionLaneBands}
- * — the same model the band layer renders — so the generated geometry and the
- * drawn bands cannot disagree about which lane a context is in.
+ * The band ordering and membership come from {@link deriveDefinitionLaneBands},
+ * which reads each context's authored placement. The band layer reads the same
+ * placement — directly in the builder, and through the execution lane model on
+ * a live run — so the generated geometry and the drawn bands cannot disagree
+ * about which lane a context is in.
  */
 export function generateWorkflowLayout(
   definition: LayoutInputDefinition,
