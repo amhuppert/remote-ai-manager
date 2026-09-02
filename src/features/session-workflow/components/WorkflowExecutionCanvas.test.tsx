@@ -12,8 +12,15 @@ import type {
   GraphWorkflowResolvedContext,
   ResolvedWorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import {
+  DEFAULT_NODE_WIDTH,
+  generateWorkflowLayout,
+} from "@/lib/workflow-graph/layout";
+import { LANE_BAND_GAP } from "@/lib/workflow-graph/lane-band-geometry";
 
-import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
+import WorkflowExecutionCanvas, {
+  mergeMeasuredExecutionLayout,
+} from "./WorkflowExecutionCanvas";
 
 function planCard(): HTMLElement {
   const card = screen
@@ -273,6 +280,39 @@ describe("WorkflowExecutionCanvas — layout follows the selected execution", ()
     );
 
     expect(planNodeTransform()).toContain("translate(10px,20px)");
+  });
+});
+
+describe("WorkflowExecutionCanvas — measured live layout", () => {
+  it("keeps a tall context clear of the following lane", () => {
+    const definition = createWorkflowDefinition();
+    const launchLayout = generateWorkflowLayout(definition);
+    const tallContextHeight = 500;
+    const measuredLayout = generateWorkflowLayout(
+      definition,
+      null,
+      new Map([
+        [
+          "context-plan",
+          { width: DEFAULT_NODE_WIDTH, height: tallContextHeight },
+        ],
+      ]),
+    );
+
+    const effectiveLayout = mergeMeasuredExecutionLayout(
+      launchLayout,
+      measuredLayout.contextPositions,
+    );
+    const tallContext = effectiveLayout.contextPositions["context-plan"];
+    const followingContext =
+      effectiveLayout.contextPositions["context-implement"];
+
+    if (tallContext === undefined || followingContext === undefined) {
+      throw new Error("expected both contexts to have layout positions");
+    }
+    expect(followingContext.y).toBeGreaterThanOrEqual(
+      tallContext.y + tallContextHeight + LANE_BAND_GAP,
+    );
   });
 });
 

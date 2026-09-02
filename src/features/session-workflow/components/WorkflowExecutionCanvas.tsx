@@ -41,6 +41,20 @@ const edgeTypes = { contextEdge: ContextEdge } as unknown as EdgeTypes;
 /** Stable empty map, so the merge memo below does not re-run every render. */
 const NO_MEASURED_POSITIONS: GraphWorkflowVisualLayout["contextPositions"] = {};
 
+export function mergeMeasuredExecutionLayout(
+  layout: GraphWorkflowVisualLayout,
+  measuredPositions: GraphWorkflowVisualLayout["contextPositions"],
+): GraphWorkflowVisualLayout {
+  if (Object.keys(measuredPositions).length === 0) return layout;
+  return {
+    ...layout,
+    contextPositions: {
+      ...layout.contextPositions,
+      ...measuredPositions,
+    },
+  };
+}
+
 // `min-h-0` is load-bearing below 768px: the row becomes a column there, and a
 // flex child without it grows past the viewport, carrying the stacked list's
 // floating controls off-screen with it.
@@ -83,14 +97,9 @@ export default function WorkflowExecutionCanvas({
 }: WorkflowExecutionCanvasProps) {
   // Positions AutoLayout generated from measured cards, tagged with the
   // execution they were measured for so another execution's geometry can never
-  // be drawn. This holds ONLY the measurement results — the incoming layout is
-  // never copied into state, because a copy is what goes stale: the panel
-  // re-merges the layout both when another execution is selected and when a
-  // runtime expansion adds a context mid-run, and a canvas holding its own copy
-  // would keep drawing the pre-expansion geometry with the new context stranded
-  // at the origin. AutoLayout cannot repair that, since it is handed the new
-  // layout as `existingLayout`, regenerates identical positions, and correctly
-  // stays silent.
+  // be drawn. The incoming layout remains a prop so a runtime-added context can
+  // use its server-provided position until the next measurement pass reflows
+  // the complete live graph.
   const [measured, setMeasured] = useState<{
     executionId: string;
     contextPositions: GraphWorkflowVisualLayout["contextPositions"];
@@ -101,23 +110,13 @@ export default function WorkflowExecutionCanvas({
       ? measured.contextPositions
       : NO_MEASURED_POSITIONS;
 
-  // The incoming layout WINS wherever it places a context; measurement only
-  // fills the gaps it leaves. Nothing is lost by that precedence — generation
-  // already preserves an explicit position verbatim, so a measured position for
-  // an explicitly placed context is that same position.
-  const effectiveLayout = useMemo<GraphWorkflowVisualLayout>(() => {
-    const gaps = Object.entries(measuredPositions).filter(
-      ([contextId]) => layout.contextPositions[contextId] === undefined,
-    );
-    if (gaps.length === 0) return layout;
-    return {
-      ...layout,
-      contextPositions: {
-        ...Object.fromEntries(gaps),
-        ...layout.contextPositions,
-      },
-    };
-  }, [layout, measuredPositions]);
+  // Live cards change height as their execution state changes, so measured
+  // positions win wherever they exist. The incoming layout still supplies the
+  // first frame and any runtime-added context that has not been measured yet.
+  const effectiveLayout = useMemo(
+    () => mergeMeasuredExecutionLayout(layout, measuredPositions),
+    [layout, measuredPositions],
+  );
 
   const setEffectiveLayout = useCallback(
     (next: GraphWorkflowVisualLayout) => {
@@ -222,13 +221,12 @@ export default function WorkflowExecutionCanvas({
         proOptions={{ hideAttribution: true }}
       >
         {!preserveLayout && (
-          // The launch layout — not the measured one this component then holds
-          // — is what wins: a context positioned at launch keeps that position,
-          // and only a context the layout never placed (a runtime expansion)
-          // takes generated band geometry.
+          // The builder owns authored positions, but a live execution owns
+          // dynamic card heights. Recompute every live position from measured
+          // geometry so a growing card also moves every lane beneath it.
           <AutoLayout
             definition={execution.workingDefinition}
-            existingLayout={layout}
+            existingLayout={null}
             onLayout={setEffectiveLayout}
           />
         )}
