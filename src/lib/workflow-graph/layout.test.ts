@@ -257,6 +257,45 @@ describe("workflow-graph layout", () => {
     });
   });
 
+  it("keeps appended mid-chain contexts distinct from cards positioned under the old topology", () => {
+    const original = definitionWithLanes({
+      "context-plan": "delivery",
+      "context-implement": "delivery",
+      "context-verify": "delivery",
+    });
+    const oldLayout = generateWorkflowLayout(original);
+    const contextTemplate = original.executionContexts[1]!;
+    const expanded: WorkflowSemanticDefinition = {
+      ...original,
+      executionContexts: [
+        ...original.executionContexts,
+        {
+          ...contextTemplate,
+          id: "context-capture",
+          title: "Capture writes",
+        },
+        {
+          ...contextTemplate,
+          id: "context-freshness",
+          title: "Freshness engine",
+        },
+      ],
+      edges: [
+        edge("context-plan", "context-capture"),
+        edge("context-capture", "context-freshness"),
+        edge("context-freshness", "context-implement"),
+        edge("context-implement", "context-verify"),
+      ],
+    };
+
+    const layout = generateWorkflowLayout(expanded, oldLayout);
+    const positionKeys = Object.values(layout.contextPositions).map(
+      ({ x, y }) => `${x}:${y}`,
+    );
+
+    expect(new Set(positionKeys).size).toBe(expanded.executionContexts.length);
+  });
+
   it("regenerates band-aware positions when re-layout discards the old ones", () => {
     const stale = createWorkflowLayout({
       workflowId: "workflow-1",

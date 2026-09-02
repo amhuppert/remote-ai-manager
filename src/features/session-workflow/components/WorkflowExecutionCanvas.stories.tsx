@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { fn, waitFor, within, userEvent } from "storybook/test";
+import { expect, fn, waitFor, within, userEvent } from "storybook/test";
 import { z } from "zod";
 // The canvas takes React Flow's base stylesheet from its host panel, so a story
 // rendering it directly has to supply it — without the vendor rules a node is a
@@ -18,6 +18,7 @@ import type {
   GraphWorkflowExecutionLaneState,
 } from "@/lib/workflow-graph/schemas";
 import type { ResolvedWorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 
 /**
@@ -122,6 +123,67 @@ const DEFINITION: ResolvedWorkflowSemanticDefinition = {
   edges: EDGES,
 };
 
+const MID_CHAIN_CONTEXTS = [
+  context("memory-foundation", "Memory foundation", {
+    lane: "memory",
+    mode: "full",
+  }),
+  context("memory-recall", "Recall pipeline", {
+    lane: "memory",
+    mode: "full",
+  }),
+  context("memory-capture", "Capture writes", {
+    lane: "memory",
+    mode: "full",
+  }),
+];
+const definitionBeforeMidChainAppend: ResolvedWorkflowSemanticDefinition = {
+  ...DEFINITION,
+  executionContexts: MID_CHAIN_CONTEXTS.slice(0, 2),
+  tasks: MID_CHAIN_CONTEXTS.slice(0, 2).map((member) => ({
+    id: `task-${member.id}`,
+    contextId: member.id,
+    order: 1,
+    title: member.title,
+    instructions: `Carry out: ${member.title.toLowerCase()}.`,
+    source: "user" as const,
+  })),
+  edges: [
+    {
+      id: "e-foundation-recall",
+      sourceContextId: "memory-foundation",
+      targetContextId: "memory-recall",
+    },
+  ],
+};
+const definitionAfterMidChainAppend: ResolvedWorkflowSemanticDefinition = {
+  ...DEFINITION,
+  executionContexts: MID_CHAIN_CONTEXTS,
+  tasks: MID_CHAIN_CONTEXTS.map((member) => ({
+    id: `task-${member.id}`,
+    contextId: member.id,
+    order: 1,
+    title: member.title,
+    instructions: `Carry out: ${member.title.toLowerCase()}.`,
+    source: "user" as const,
+  })),
+  edges: [
+    {
+      id: "e-foundation-capture",
+      sourceContextId: "memory-foundation",
+      targetContextId: "memory-capture",
+    },
+    {
+      id: "e-capture-recall",
+      sourceContextId: "memory-capture",
+      targetContextId: "memory-recall",
+    },
+  ],
+};
+const layoutBeforeMidChainAppend = generateWorkflowLayout(
+  definitionBeforeMidChainAppend,
+);
+
 function contextState(
   contextId: string,
   overrides: Partial<GraphWorkflowExecutionContextState> = {},
@@ -191,6 +253,44 @@ function join(
     completedAt: null,
     ...overrides,
   };
+}
+
+function midChainExecution(): GraphWorkflowExecution {
+  const contextIds = MID_CHAIN_CONTEXTS.map((member) => member.id);
+  return createWorkflowExecution({
+    id: "execution-mid-chain-append",
+    status: "running",
+    workingDefinition: definitionAfterMidChainAppend,
+    activeContextIds: [],
+    contextStates: Object.fromEntries(
+      contextIds.map((contextId) => [
+        contextId,
+        contextState(contextId, { laneId: "memory" }),
+      ]),
+    ),
+    taskStates: Object.fromEntries(
+      contextIds.map((contextId) => [
+        `task-${contextId}`,
+        {
+          taskId: `task-${contextId}`,
+          contextId,
+          order: 1,
+          status: "completed" as const,
+          summary: null,
+          startedAt: NOW,
+          completedAt: NOW,
+          lastConversationId: null,
+          failureMessage: null,
+          failureHistory: [],
+        },
+      ]),
+    ),
+    executionLanes: {
+      memory: lane("memory", { includedContextIds: contextIds }),
+    },
+    joins: {},
+    contextOutputs: {},
+  });
 }
 
 const SESSION_LANE = lane(SESSION_LANE_ID, {
@@ -306,6 +406,26 @@ const refitAfterLayout: NonNullable<Story["play"]> = async ({
       if (transforms.size < 2) {
         throw new Error("auto-layout has not placed the nodes yet");
       }
+    },
+    { timeout: 5000 },
+  );
+  await userEvent.click(
+    await within(canvasElement).findByRole("button", { name: "Fit view" }),
+  );
+};
+
+const refitAfterEveryCardIsVisible: NonNullable<Story["play"]> = async ({
+  canvasElement,
+}) => {
+  await waitFor(
+    () => {
+      const nodes = [
+        ...canvasElement.querySelectorAll(".react-flow__node"),
+      ] as HTMLElement[];
+      expect(nodes).toHaveLength(MID_CHAIN_CONTEXTS.length);
+      expect(new Set(nodes.map((node) => node.style.transform)).size).toBe(
+        MID_CHAIN_CONTEXTS.length,
+      );
     },
     { timeout: 5000 },
   );
@@ -431,6 +551,19 @@ export const AwaitingPublish = {
     ),
   },
   play: refitAfterLayout,
+} satisfies Story;
+
+/**
+ * A topology edit inserts `Capture writes` ahead of a card whose position was
+ * saved for the shorter chain. The appended context and every preserved card
+ * remain individually reachable instead of sharing a React Flow transform.
+ */
+export const AppendedMidChainContext = {
+  args: {
+    execution: midChainExecution(),
+    layout: layoutBeforeMidChainAppend,
+  },
+  play: refitAfterEveryCardIsVisible,
 } satisfies Story;
 
 /**

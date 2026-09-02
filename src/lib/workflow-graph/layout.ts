@@ -98,6 +98,12 @@ export function generateWorkflowLayout(
     const columnCursorY = new Map<number, number>();
     const nextY = (column: number): number =>
       columnCursorY.get(column) ?? bandContentTop;
+    const occupied: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }[] = [];
     let contentBottom = bandContentTop;
 
     const preserved = band.memberContextIds.filter(
@@ -115,6 +121,12 @@ export function generateWorkflowLayout(
       contextPositions[contextId] = position;
       const column = columnOfContext.get(contextId) ?? 0;
       const bottom = position.y + nodeHeight(contextId);
+      occupied.push({
+        x: position.x,
+        y: position.y,
+        width: nodeWidth(contextId),
+        height: nodeHeight(contextId),
+      });
       columnCursorY.set(
         column,
         Math.max(nextY(column), bottom + LAYOUT_ROW_GAP),
@@ -124,8 +136,28 @@ export function generateWorkflowLayout(
 
     for (const contextId of generated) {
       const column = columnOfContext.get(contextId) ?? 0;
-      const y = nextY(column);
-      contextPositions[contextId] = { x: columnX.get(column) ?? 0, y };
+      const x = columnX.get(column) ?? 0;
+      const width = nodeWidth(contextId);
+      const height = nodeHeight(contextId);
+      let y = nextY(column);
+
+      // A persisted position can occupy a different canonical column after a
+      // topology edit changes its dependency depth. Check physical rectangles
+      // as well as depth cursors so a generated card cannot land beneath it.
+      while (true) {
+        const collision = occupied.find(
+          (box) =>
+            x < box.x + box.width &&
+            x + width > box.x &&
+            y < box.y + box.height &&
+            y + height > box.y,
+        );
+        if (!collision) break;
+        y = collision.y + collision.height + LAYOUT_ROW_GAP;
+      }
+
+      contextPositions[contextId] = { x, y };
+      occupied.push({ x, y, width, height });
       const bottom = y + nodeHeight(contextId);
       columnCursorY.set(column, bottom + LAYOUT_ROW_GAP);
       contentBottom = Math.max(contentBottom, bottom);
