@@ -49,6 +49,8 @@ import type {
   AbortStaleMergeOutput,
   ClassifyWorktreeInput,
   ClassifyWorktreeOutput,
+  CommitResolutionInput,
+  CommitResolutionOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -120,6 +122,7 @@ const mockAbortMergeCleanup = vi.fn();
 const mockCheckUncommitted = vi.fn();
 const mockGetCurrentBranch = vi.fn();
 const mockCommitChangesActor = vi.fn();
+const mockCommitResolutionActor = vi.fn();
 const mockMergeMain = vi.fn();
 const mockResolveConflictsActor = vi.fn();
 const mockAnalyzeConflictsActor = vi.fn();
@@ -155,6 +158,10 @@ const testMachine = mergeMachine.provide({
     commitChanges: fromPromise<CommitChangesOutput, CommitChangesInput>(
       async ({ input }) => mockCommitChangesActor(input),
     ),
+    commitResolution: fromPromise<
+      CommitResolutionOutput,
+      CommitResolutionInput
+    >(async ({ input }) => mockCommitResolutionActor(input)),
     mergeMain: fromPromise<MergeMainOutput, MergeMainInput>(async ({ input }) =>
       mockMergeMain(input),
     ),
@@ -416,6 +423,12 @@ describe("background-jobs", () => {
     notificationsRepo = createNotificationsRepo(testDb);
 
     releaseSession = vi.fn();
+
+    // The resolution commit succeeds unless a test says otherwise.
+    mockCommitResolutionActor.mockResolvedValue({
+      hash: "resolution_hash",
+      committedBy: "orchestrator",
+    });
 
     // Default: session lock acquired successfully
     mockAcquireSessionLock.mockReturnValue(releaseSession);
@@ -785,13 +798,11 @@ describe("background-jobs", () => {
           worktreePath: BASE_MERGE_PARAMS.worktreePath,
         }),
       );
-      expect(mockCommitChangesActor).toHaveBeenCalledWith(
-        expect.objectContaining({
-          worktreePath: BASE_MERGE_PARAMS.worktreePath,
-          message: "resolve merge conflicts",
-          skipHooks: true,
-        }),
-      );
+      expect(mockCommitResolutionActor).toHaveBeenCalledWith({
+        worktreePath: BASE_MERGE_PARAMS.worktreePath,
+        targetBranch: "main",
+        message: "resolve merge conflicts",
+      });
       expect(mockRunValidation).toHaveBeenCalledWith(
         expect.objectContaining({
           projectPath: BASE_MERGE_PARAMS.projectPath,
@@ -1730,13 +1741,11 @@ describe("background-jobs", () => {
           worktreePath: BASE_RESOLVE_PARAMS.worktreePath,
         }),
       );
-      expect(mockCommitChangesActor).toHaveBeenCalledWith(
-        expect.objectContaining({
-          worktreePath: BASE_RESOLVE_PARAMS.worktreePath,
-          message: "resolve merge conflicts",
-          skipHooks: true,
-        }),
-      );
+      expect(mockCommitResolutionActor).toHaveBeenCalledWith({
+        worktreePath: BASE_RESOLVE_PARAMS.worktreePath,
+        targetBranch: "main",
+        message: "resolve merge conflicts",
+      });
       expect(mockRunValidation).toHaveBeenCalled();
       expect(mockPrepareActor).toHaveBeenCalledWith(
         expect.objectContaining({

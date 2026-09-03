@@ -29,6 +29,8 @@ import type {
   AbortStaleMergeOutput,
   ClassifyWorktreeInput,
   ClassifyWorktreeOutput,
+  CommitResolutionInput,
+  CommitResolutionOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -50,6 +52,7 @@ import {
   abortMergeCleanupActor,
   abortStaleMergeActor,
   classifyWorktreeActor,
+  commitResolutionActor,
   getCurrentBranchActor,
   mergeMain,
   resolveConflictsActor,
@@ -163,6 +166,9 @@ export const mergeMachine = setup({
     >,
     commitChanges: commitChangesActor as ReturnType<
       typeof fromPromise<CommitChangesOutput, CommitChangesInput>
+    >,
+    commitResolution: commitResolutionActor as ReturnType<
+      typeof fromPromise<CommitResolutionOutput, CommitResolutionInput>
     >,
     getCurrentBranch: getCurrentBranchActor as ReturnType<
       typeof fromPromise<GetCurrentBranchOutput, GetCurrentBranchInput>
@@ -638,13 +644,17 @@ export const mergeMachine = setup({
       },
     },
 
+    // Concludes the merge the resolver staged. The target branch travels with
+    // the request because a resolver that committed the merge itself leaves
+    // nothing to commit, and only the target identifies that finished merge
+    // as the one this run wanted rather than a failure.
     committingResolution: {
       invoke: {
-        src: "commitChanges",
+        src: "commitResolution",
         input: ({ context }) => ({
           worktreePath: context.worktreePath,
+          targetBranch: context.targetBranch,
           message: "resolve merge conflicts",
-          skipHooks: true,
         }),
         onDone: "validationRouting",
         onError: { target: "failed", actions: errorAssign() },

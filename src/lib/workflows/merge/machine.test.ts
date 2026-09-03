@@ -9,6 +9,8 @@ import type {
   AbortStaleMergeOutput,
   ClassifyWorktreeInput,
   ClassifyWorktreeOutput,
+  CommitResolutionInput,
+  CommitResolutionOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -50,6 +52,14 @@ function mockCheckUncommitted(
   fn: (input: CheckUncommittedInput) => Promise<CheckUncommittedOutput>,
 ) {
   return fromPromise<CheckUncommittedOutput, CheckUncommittedInput>(
+    async ({ input }) => fn(input),
+  );
+}
+
+function mockCommitResolution(
+  fn: (input: CommitResolutionInput) => Promise<CommitResolutionOutput>,
+) {
+  return fromPromise<CommitResolutionOutput, CommitResolutionInput>(
     async ({ input }) => fn(input),
   );
 }
@@ -210,6 +220,7 @@ type ActorOverrides = {
   abortMergeCleanup?: ReturnType<typeof mockAbortMergeCleanup>;
   checkUncommitted?: ReturnType<typeof mockCheckUncommitted>;
   commitChanges?: ReturnType<typeof mockCommitChanges>;
+  commitResolution?: ReturnType<typeof mockCommitResolution>;
   getCurrentBranch?: ReturnType<typeof mockGetCurrentBranch>;
   mergeMain?: ReturnType<typeof mockMergeMain>;
   resolveConflicts?: ReturnType<typeof mockResolveConflicts>;
@@ -243,6 +254,12 @@ function createTestMachine(overrides: ActorOverrides = {}) {
       commitChanges:
         overrides.commitChanges ??
         mockCommitChanges(async () => ({ hash: "abc123" })),
+      commitResolution:
+        overrides.commitResolution ??
+        mockCommitResolution(async () => ({
+          hash: "res123",
+          committedBy: "orchestrator",
+        })),
       getCurrentBranch:
         overrides.getCurrentBranch ??
         mockGetCurrentBranch(async () => ({
@@ -533,9 +550,9 @@ describe("mergeMachine", () => {
           resolutionCalls += 1;
           return { status: "resolved", conflicts: [] };
         }),
-        commitChanges: mockCommitChanges(async () => {
+        commitResolution: mockCommitResolution(async () => {
           commitCalls += 1;
-          return { hash: "resolution-hash" };
+          return { hash: "resolution-hash", committedBy: "orchestrator" };
         }),
         runValidation: mockRunValidation(async () => {
           throw new Error("validation must not run in skip mode");
@@ -939,6 +956,59 @@ describe("mergeMachine", () => {
       expect(output.conflictAnalysis).toHaveLength(1);
       expect(states).toContain("resolvingConflicts");
       expect(states).toContain("committingResolution");
+    });
+  });
+
+  describe("resolver concluded the merge itself", () => {
+    const conflictedMerge = mockMergeMain(async () => ({
+      status: "conflicts",
+      conflictFiles: ["src/index.ts"],
+    }));
+
+    it("hands committingResolution the target branch so a finished merge can be recognized", async () => {
+      const commitResolutionCalls: CommitResolutionInput[] = [];
+      const machine = createTestMachine({
+        mergeMain: conflictedMerge,
+        commitResolution: mockCommitResolution(async (input) => {
+          commitResolutionCalls.push(input);
+          return { hash: "res123", committedBy: "orchestrator" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, targetBranch: "lane/cli-contract" },
+      });
+      actor.start();
+      await toPromise(actor);
+
+      expect(commitResolutionCalls).toEqual([
+        {
+          worktreePath: defaultInput.worktreePath,
+          targetBranch: "lane/cli-contract",
+          message: "resolve merge conflicts",
+        },
+      ]);
+    });
+
+    it("proceeds to preparing when the resolver, not the machine, committed the merge", async () => {
+      const states: string[] = [];
+      const machine = createTestMachine({
+        mergeMain: conflictedMerge,
+        commitResolution: mockCommitResolution(async () => ({
+          hash: "b160176",
+          committedBy: "resolver",
+        })),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.subscribe((s) => states.push(String(s.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(output.error).toBeNull();
+      expect(states).toContain("committingResolution");
+      expect(states).toContain("preparing");
+      expect(states).not.toContain("failed");
     });
   });
 

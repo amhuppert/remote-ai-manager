@@ -99,6 +99,16 @@ export interface MergeMainOutput {
   conflictFiles: string[];
 }
 
+export interface CommitResolutionInput {
+  worktreePath: string;
+  targetBranch: string;
+  message: string;
+}
+export interface CommitResolutionOutput {
+  hash: string;
+  committedBy: "orchestrator" | "resolver";
+}
+
 export interface ResolveConflictsInput {
   worktreePath: string;
   projectPath: string;
@@ -415,6 +425,30 @@ export const mergeMain = fromPromise<MergeMainOutput, MergeMainInput>(
     };
   },
 );
+
+/**
+ * Commit the resolver's staged resolution, or accept the merge commit a
+ * resolver wrote itself (`git/commits.ts` explains the shape it recognizes).
+ * Like `commitChangesActor`, a commit git has begun cannot be recalled, so the
+ * abort is honored only before staging starts.
+ */
+export const commitResolutionActor = fromPromise<
+  CommitResolutionOutput,
+  CommitResolutionInput
+>(async ({ input, signal }) => {
+  const { commitMergeResolution } = await import("@/lib/git/commits");
+  if (signal.aborted) {
+    throw new Error(
+      `Commit in ${input.worktreePath} was stopped before it started`,
+    );
+  }
+  return commitMergeResolution(
+    input.worktreePath,
+    input.targetBranch,
+    input.message,
+    { skipHooks: true },
+  );
+});
 
 /** Resolve merge conflicts via the conversation actor. */
 export const resolveConflictsActor = fromPromise<

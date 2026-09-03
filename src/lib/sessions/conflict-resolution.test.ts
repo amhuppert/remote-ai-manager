@@ -1211,3 +1211,24 @@ describe("fresh-run dispatch (#78)", () => {
     expect(input.prompt).toContain("Resolve all merge conflicts");
   });
 });
+
+describe("resolver prompt leaves the commit to the orchestrator", () => {
+  it("forbids the resolver from committing the merge it stages", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: [] }));
+
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.systemInstructions).toContain("NEVER run git commit");
+    expect(input.systemInstructions).toContain("the orchestrator commits it");
+  });
+});

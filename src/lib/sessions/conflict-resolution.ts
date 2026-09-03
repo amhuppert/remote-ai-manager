@@ -206,6 +206,7 @@ IMPORTANT:
 - Stage every resolved file with git add.
 - Work ONLY in the current working directory — never cd into another worktree or repository.
 - NEVER initiate a merge yourself: do not run git merge, git pull, git rebase, or git cherry-pick. The orchestrator has already started the merge you are resolving.
+- NEVER run git commit. Leave the merge in progress with every resolved file staged; the orchestrator commits it.
 - If git reports no conflicted files and no merge is in progress, there is nothing to resolve: return an empty conflicts array as the structured output. Do NOT infer an intended merge from history and start it.`;
 
 const CONFLICT_ANALYSIS_INSTRUCTIONS = `You are a merge conflict analysis specialist. Your task is to analyze all git merge conflicts in this worktree and describe them, WITHOUT resolving them.

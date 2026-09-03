@@ -1025,3 +1025,116 @@ describe("targetBranch parameter", () => {
     ]);
   });
 });
+
+describe("commitMergeResolution (real git repo)", () => {
+  let repoPath: string;
+
+  async function gitIn(args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoPath,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  async function head(): Promise<string> {
+    return (await gitIn(["rev-parse", "HEAD"])).trim();
+  }
+
+  /**
+   * `feature` and `main` edit the same line, and the worktree is left with
+   * `git merge main` in progress on `feature` — exactly where the machine
+   * hands the tree to the resolver.
+   */
+  beforeEach(async () => {
+    repoPath = await mkdtemp(join(tmpdir(), "cc-merge-resolution-"));
+    await gitIn(["init", "-b", "main"]);
+    await gitIn(["config", "user.email", "test@example.com"]);
+    await gitIn(["config", "user.name", "Test"]);
+    await writeFile(join(repoPath, "shared.txt"), "base\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "base", "--no-verify"]);
+    await gitIn(["checkout", "-b", "feature"]);
+    await writeFile(join(repoPath, "shared.txt"), "feature\n");
+    await gitIn(["commit", "-am", "feature change", "--no-verify"]);
+    await gitIn(["checkout", "main"]);
+    await writeFile(join(repoPath, "shared.txt"), "main\n");
+    await gitIn(["commit", "-am", "main change", "--no-verify"]);
+    await gitIn(["checkout", "feature"]);
+    await expect(gitIn(["merge", "main"])).rejects.toThrow();
+  });
+
+  afterEach(async () => {
+    await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("commits a staged resolution as the orchestrator and concludes the merge", async () => {
+    await writeFile(join(repoPath, "shared.txt"), "feature+main\n");
+    await gitIn(["add", "shared.txt"]);
+
+    const result = await realOps.commitMergeResolution(
+      repoPath,
+      "main",
+      "resolve merge conflicts",
+    );
+
+    expect(result.committedBy).toBe("orchestrator");
+    expect(result.hash).toBe((await head()).slice(0, result.hash.length));
+    expect((await gitIn(["log", "-1", "--format=%s"])).trim()).toBe(
+      "resolve merge conflicts",
+    );
+    await expect(
+      gitIn(["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+    ).rejects.toThrow();
+  });
+
+  it("accepts a merge the resolver already committed instead of failing on the clean tree", async () => {
+    await writeFile(join(repoPath, "shared.txt"), "feature+main\n");
+    await gitIn(["add", "shared.txt"]);
+    // The resolver concluding the merge itself, with git's default message.
+    await gitIn(["commit", "--no-edit", "--no-verify"]);
+    const resolverCommit = await head();
+    const mainTip = (await gitIn(["rev-parse", "main"])).trim();
+    expect((await gitIn(["rev-parse", "HEAD^2"])).trim()).toBe(mainTip);
+
+    const result = await realOps.commitMergeResolution(
+      repoPath,
+      "main",
+      "resolve merge conflicts",
+    );
+
+    expect(result).toEqual({ hash: resolverCommit, committedBy: "resolver" });
+    expect(await head()).toBe(resolverCommit);
+  });
+
+  it("still refuses a clean tree whose HEAD does not conclude a merge of the target", async () => {
+    await gitIn(["merge", "--abort"]);
+
+    await expect(
+      realOps.commitMergeResolution(
+        repoPath,
+        "main",
+        "resolve merge conflicts",
+      ),
+    ).rejects.toThrow("No uncommitted changes to commit");
+  });
+
+  it("refuses a resolver commit that merged something other than the target", async () => {
+    await gitIn(["merge", "--abort"]);
+    await gitIn(["checkout", "-b", "other", "main~1"]);
+    await writeFile(join(repoPath, "other.txt"), "other\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "other change", "--no-verify"]);
+    await gitIn(["checkout", "feature"]);
+    // A merge commit at HEAD, but of `other`, so the target tip is still absent.
+    await gitIn(["merge", "--no-edit", "--no-verify", "other"]);
+
+    await expect(
+      realOps.commitMergeResolution(
+        repoPath,
+        "main",
+        "resolve merge conflicts",
+      ),
+    ).rejects.toThrow("No uncommitted changes to commit");
+  });
+});

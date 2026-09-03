@@ -203,6 +203,17 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     }
   }
 
+  /**
+   * Whether `git add -A && git commit` has anything to record. A conflict
+   * resolution that keeps HEAD's content for every conflicted file leaves
+   * `git status --porcelain` empty while MERGE_HEAD still exists — `git
+   * commit` is still required to conclude the merge.
+   */
+  async function hasWorkToCommit(worktreePath: string): Promise<boolean> {
+    if (await hasUncommittedChanges(worktreePath)) return true;
+    return isMergeInProgress(worktreePath, client);
+  }
+
   /** Stage all changes and commit with the given message.
    *  When `skipHooks` is true, passes `--no-verify` to skip pre-commit hooks. */
   async function commitChanges(
@@ -213,15 +224,17 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     if (!message.trim()) {
       throw new Error("Commit message cannot be empty");
     }
-
-    // A conflict resolution that keeps HEAD's content for every conflicted
-    // file leaves `git status --porcelain` empty while MERGE_HEAD still
-    // exists — `git commit` is still required to conclude the merge.
-    const hasChanges = await hasUncommittedChanges(worktreePath);
-    if (!hasChanges && !(await isMergeInProgress(worktreePath, client))) {
+    if (!(await hasWorkToCommit(worktreePath))) {
       throw new Error("No uncommitted changes to commit");
     }
+    return stageAndCommit(worktreePath, message, options);
+  }
 
+  async function stageAndCommit(
+    worktreePath: string,
+    message: string,
+    options?: { skipHooks?: boolean },
+  ): Promise<{ hash: string }> {
     await assertNoConflictArtifacts(worktreePath);
 
     logger.info("git.commit", { worktreePath, messageLength: message.length });
@@ -241,6 +254,87 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     logger.info("git.commit.success", { worktreePath, hash });
 
     return { hash };
+  }
+
+  /**
+   * The merge commit at HEAD that already brought `targetBranch` in, or null
+   * when HEAD is not a merge commit or the target's tip is not among its
+   * ancestors. Ancestry rather than second-parent identity is the test because
+   * it is the same question a retried `git merge <target>` answers with
+   * "already up to date" — the state the machine needs to continue from.
+   */
+  async function findConcludedMergeOfTarget(
+    worktreePath: string,
+    targetBranch: string,
+  ): Promise<{ hash: string; mergedParent: string } | null> {
+    let mergedParent: string;
+    try {
+      const { stdout } = await git(worktreePath, [
+        "rev-parse",
+        "-q",
+        "--verify",
+        "HEAD^2",
+      ]);
+      mergedParent = stdout.trim();
+    } catch {
+      return null;
+    }
+    if (!mergedParent) return null;
+    try {
+      await git(worktreePath, [
+        "merge-base",
+        "--is-ancestor",
+        targetBranch,
+        "HEAD",
+      ]);
+    } catch {
+      return null;
+    }
+    const { stdout } = await git(worktreePath, ["rev-parse", "HEAD"]);
+    return { hash: stdout.trim(), mergedParent };
+  }
+
+  /**
+   * Conclude the merge of `targetBranch` the conflict resolver was handed.
+   *
+   * The resolver is asked to stage its resolution and leave the merge in
+   * progress, and the ordinary outcome is that this commits it. But a resolver
+   * that runs `git commit` itself leaves a clean tree with no MERGE_HEAD and
+   * the finished merge already at HEAD — a state `commitChanges` can only
+   * read as "nothing to commit", which failed a join twice over a merge that
+   * was in fact complete. That case is recognized by its git shape rather than
+   * refused: a clean tree whose HEAD is a merge commit containing the target
+   * tip is the result the caller wanted, whoever wrote it. The warning keeps
+   * the prompt regression visible without failing the run on it.
+   */
+  async function commitMergeResolution(
+    worktreePath: string,
+    targetBranch: string,
+    message: string,
+    options?: { skipHooks?: boolean },
+  ): Promise<{ hash: string; committedBy: "orchestrator" | "resolver" }> {
+    if (!message.trim()) {
+      throw new Error("Commit message cannot be empty");
+    }
+    if (await hasWorkToCommit(worktreePath)) {
+      const { hash } = await stageAndCommit(worktreePath, message, options);
+      return { hash, committedBy: "orchestrator" };
+    }
+    const concluded = await findConcludedMergeOfTarget(
+      worktreePath,
+      targetBranch,
+    );
+    if (concluded === null) {
+      throw new Error("No uncommitted changes to commit");
+    }
+    logger.warn("git.commit.resolution_already_concluded", {
+      worktreePath,
+      targetBranch,
+      hash: concluded.hash,
+      mergedParent: concluded.mergedParent,
+      committedBy: "resolver",
+    });
+    return { hash: concluded.hash, committedBy: "resolver" };
   }
 
   /** Get the list of commits since the branch diverged from the target branch */
@@ -382,6 +476,7 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     getHeadCommit,
     commitContainsPath,
     commitChanges,
+    commitMergeResolution,
     getCommitLog,
     getCommitDiff,
   };
@@ -399,5 +494,6 @@ export const getCurrentBranch = defaultOps.getCurrentBranch;
 export const getHeadCommit = defaultOps.getHeadCommit;
 export const commitContainsPath = defaultOps.commitContainsPath;
 export const commitChanges = defaultOps.commitChanges;
+export const commitMergeResolution = defaultOps.commitMergeResolution;
 export const getCommitLog = defaultOps.getCommitLog;
 export const getCommitDiff = defaultOps.getCommitDiff;

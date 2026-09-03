@@ -8,6 +8,8 @@ import type {
   AnalyzeConflictsOutput,
   ClassifyWorktreeInput,
   ClassifyWorktreeOutput,
+  CommitResolutionInput,
+  CommitResolutionOutput,
   GetCurrentBranchInput,
   GetCurrentBranchOutput,
   MergeMainInput,
@@ -63,6 +65,10 @@ function buildCapturingMachine(
       commitChanges: fromPromise<CommitChangesOutput, CommitChangesInput>(
         async () => ({ hash: "h" }),
       ),
+      commitResolution: fromPromise<
+        CommitResolutionOutput,
+        CommitResolutionInput
+      >(async () => ({ hash: "h", committedBy: "orchestrator" })),
       mergeMain: fromPromise<MergeMainOutput, MergeMainInput>(async () => ({
         status: "conflicts",
         conflictFiles: ["src/a.ts"],
