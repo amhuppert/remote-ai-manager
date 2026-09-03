@@ -693,12 +693,17 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
         true,
       );
     }
+    // The example invariant is outcome-shaped on purpose: invariants are
+    // validator-checked, and a process rule there ("start with a failing
+    // test") fails correct work for lacking proof (#80, FM-11). Process
+    // guidance belongs in `conventions`, which the example also carries.
     expect(charter.invariants).toEqual([
       {
-        id: "tests-first",
-        statement: "Behavior changes start with a failing test.",
+        id: "server-side-enforcement",
+        statement: "Every gate is enforced server-side, never only in the UI.",
       },
     ]);
+    expect(charter.conventions).toContain("Use red-green-refactor.");
     expect(charter.sourcesOfTruth).toEqual([
       {
         rank: 1,

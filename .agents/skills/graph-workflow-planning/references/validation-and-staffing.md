@@ -160,6 +160,8 @@ Unknown command names and costs above the global limit fail preflight rather tha
 
 Validators also actively check every charter invariant rendered into their prompt — global invariants plus those scoped to the context under review — and cite invariant ids in issues. Sources of truth are filtered the same way, so a validator sees only the references its context was scoped to and is never asked to arbitrate a conflict between two of them: that resolution happened while planning (see [The Charter](../SKILL.md#the-charter)). Scope both honestly at planning time, so a validator is never held to a rule the plan did not mean it to enforce or asked to check material its context cannot read.
 
+Both seats judge the candidate as it stands. An invariant or criterion that describes a process (a failing test first, a command order) is unverifiable after the fact; the validator contract treats it as satisfied whenever the outcome it protects holds, and never fails a context for missing process evidence. Author process rules as `conventions`, never as validator-checked text.
+
 ### What each seat cites
 
 Every seat in a cohort receives the context's acceptance criteria as a numbered record list — the criteria are the context's scope contract, and each seat needs them to respect scope boundaries and honor deferrals whatever else it judges. What differs is the **basis a blocking finding must cite**:

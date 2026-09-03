@@ -431,7 +431,7 @@ export function buildContextValidationPrompt(
   const invariantGuidanceLines =
     input.charter?.invariants && input.charter.invariants.length > 0
       ? [
-          "- **Check every applicable charter invariant.** The charter above declares the invariants that apply to this context's changes. Verify each one actually holds in the implementation; when one is violated, raise an issue and cite the invariant id in the issue description.",
+          "- **Check every applicable charter invariant.** The charter above declares the invariants that apply to this context's changes. Verify each one actually holds in the implementation; when one is violated, raise an issue and cite the invariant id in the issue description. An invariant that describes how the work was produced (a failing test written first, a command order) rather than what must be true of the result is satisfied whenever the outcome it protects holds: never raise an issue for missing process evidence.",
         ]
       : [];
 

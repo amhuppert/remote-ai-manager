@@ -1159,6 +1159,28 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("server-side-enforcement");
   });
 
+  it("tells the validator a process-shaped invariant is satisfied by its outcome, never by proof of process", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+      charter: {
+        ...charter,
+        invariants: [
+          {
+            id: "tests-first",
+            statement: "Behavior changes start with a failing test.",
+          },
+        ],
+      },
+    });
+
+    const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
+    expect(guidance).toContain("how the work was produced");
+    expect(guidance).toContain("never raise an issue for missing process evidence");
+  });
+
   it("renders no amendment log or access-policy text in the charter section", () => {
     // The prompt diet (change 3): the validator reads the current rules from
     // its prompt; amendment history and access bookkeeping live only in
