@@ -1178,7 +1178,9 @@ describe("buildContextValidationPrompt", () => {
 
     const guidance = prompt.slice(prompt.indexOf("## Evaluation Guidance"));
     expect(guidance).toContain("how the work was produced");
-    expect(guidance).toContain("never raise an issue for missing process evidence");
+    expect(guidance).toContain(
+      "never raise an issue for missing process evidence",
+    );
   });
 
   it("renders no amendment log or access-policy text in the charter section", () => {
