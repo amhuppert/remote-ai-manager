@@ -12,6 +12,7 @@ import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentTaskRunner } from "../task";
 import type { AgentFailureClassifier } from "../errors";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { BackendNativeMemory } from "../native-memory";
 import {
   getDefaultCodexModel,
   getCodexReasoningLevelsForModel,
@@ -137,6 +138,24 @@ export const codexTaskFsWriteRestriction = "enforced" as const;
  */
 export const codexConversationFsWriteRestriction = "enforced" as const;
 
+/**
+ * Codex's memories are off in every environment Command Center launches. The
+ * `memories` config table was already blanked for the profiles that must carry
+ * no ambient instruction at all (the isolated one-shot, the restricted lane's
+ * hermetic envelope); the same three switches now pin ordinary conversations
+ * and task runs, where a `~/.codex/config.toml` on the machine would otherwise
+ * decide. `dedicated_tools` is included because leaving the memory TOOLS
+ * reachable would let a turn write to a store CC never reads back.
+ *
+ * Exported as a literal (not read off the descriptor) because the descriptor
+ * carries the server-only runner while the catalog projection is
+ * client-imported.
+ */
+export const codexNativeMemory: BackendNativeMemory = {
+  mechanism: "disabled",
+  lever: "config memories.use_memories/generate_memories/dedicated_tools=false",
+};
+
 export interface CodexDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
   /** `createCodexContinuityAdapter(...)` in production; injected so the
@@ -184,6 +203,7 @@ export function createCodexBackendDescriptor(
       tasks: "bundled",
       prepareCheckout: deps.prepareManagedSkillsCheckout,
     },
+    nativeMemory: codexNativeMemory,
     mcp: deps.mcp,
     errors: deps.failureClassifier,
   };

@@ -121,6 +121,7 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
     async readFileBytes() {
       return null;
     },
+    async writeTextFile() {},
     async sleep() {},
     platform: "darwin",
     homedir: "/Users/test",
@@ -149,6 +150,41 @@ const COMMENT_REPLY_BODY = {
   body: "answered",
   authorKind: "agent",
   authorConversationId: "conv-1",
+  createdAt: "2026-08-01T00:00:00.000Z",
+};
+
+/** A note the memory group's response parsing accepts, for the route sweep below. */
+const MEMORY_NOTE_BODY = {
+  id: "mem-1",
+  slug: "turbopack-build-memory",
+  scope: "project",
+  projectPath: "/repos/cc",
+  sessionName: null,
+  sessionCreatedAt: null,
+  kind: "lesson",
+  hook: "an unpruned turbopack cache builds far slower than a pruned one",
+  body: "",
+  statusNote: null,
+  aliases: [],
+  indexMode: "auto",
+  lifecycle: "active",
+  reviewAfter: null,
+  expiresAt: null,
+  supersedesId: null,
+  supersededById: null,
+  createdBy: "agent",
+  authorConversationId: "conv-1",
+  revision: 1,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+};
+
+/** A link row the link and unlink verbs parse. */
+const MEMORY_LINK_BODY = {
+  id: "memlink-1",
+  memoryId: "mem-1",
+  kind: "about",
+  artifact: { kind: "ticket", ticketId: "ticket-74" },
   createdAt: "2026-08-01T00:00:00.000Z",
 };
 
@@ -246,6 +282,125 @@ const PROJECT_SCOPE_INVOCATIONS: {
       "answered",
     ],
     body: { reply: COMMENT_REPLY_BODY },
+  },
+  // The memory group reads no session env either — it resolves a PROJECT
+  // conversation and lets the server derive scope from it — so, like notepad,
+  // its routes are covered here rather than by a session-env inventory entry.
+  { name: "memory list", argv: ["memory", "list"], body: { notes: [] } },
+  {
+    name: "memory get",
+    argv: ["memory", "get", "turbopack-build-memory"],
+    body: { note: MEMORY_NOTE_BODY, links: [] },
+  },
+  {
+    name: "memory create",
+    argv: ["memory", "create", "--hook", "something worth keeping"],
+    body: {
+      note: MEMORY_NOTE_BODY,
+      advisories: { overlapCandidates: [], hookWarnings: [] },
+    },
+  },
+  {
+    name: "memory update",
+    argv: [
+      "memory",
+      "update",
+      "turbopack-build-memory",
+      "--if-revision",
+      "1",
+      "--hook",
+      "a sharper hook",
+    ],
+    body: { note: MEMORY_NOTE_BODY },
+  },
+  {
+    name: "memory link",
+    argv: [
+      "memory",
+      "link",
+      "turbopack-build-memory",
+      "--artifact",
+      "ticket:ticket-74",
+    ],
+    body: { link: MEMORY_LINK_BODY },
+  },
+  {
+    name: "memory unlink",
+    argv: [
+      "memory",
+      "unlink",
+      "turbopack-build-memory",
+      "--artifact",
+      "ticket:ticket-74",
+    ],
+    body: { link: MEMORY_LINK_BODY },
+  },
+  {
+    name: "memory mark-reviewed",
+    argv: ["memory", "mark-reviewed", "turbopack-build-memory"],
+    body: {
+      note: MEMORY_NOTE_BODY,
+      refreshedWatches: [],
+      unresolvedWatches: [],
+    },
+  },
+  {
+    name: "memory observe-rederivation",
+    argv: [
+      "memory",
+      "observe-rederivation",
+      "turbopack-build-memory",
+      "--artifact",
+      "context:exec-7/validate-lane",
+    ],
+    body: {
+      observed: {
+        memoryId: "mem-1",
+        slug: "turbopack-build-memory",
+        conversationId: "conv-1",
+        executionId: "exec-7",
+        contextId: "validate-lane",
+      },
+    },
+  },
+  {
+    name: "memory promote",
+    argv: ["memory", "promote", "turbopack-build-memory"],
+    body: { promoted: MEMORY_NOTE_BODY, superseded: MEMORY_NOTE_BODY },
+  },
+  {
+    name: "memory archive",
+    argv: ["memory", "archive", "turbopack-build-memory"],
+    body: { note: MEMORY_NOTE_BODY },
+  },
+  {
+    name: "memory delete",
+    argv: ["memory", "delete", "turbopack-build-memory", "--confirm"],
+    body: { note: MEMORY_NOTE_BODY },
+  },
+  {
+    name: "memory recall",
+    argv: ["memory", "recall", "turbopack cache"],
+    body: {
+      pack: {
+        mode: "query",
+        text: "no matching notes",
+        showing: 0,
+        total: 0,
+        narrowCommand: null,
+      },
+    },
+  },
+  { name: "memory index", argv: ["memory", "index"], body: { block: null } },
+  { name: "memory review", argv: ["memory", "review"], body: { entries: [] } },
+  {
+    name: "memory export",
+    argv: ["memory", "export", "--output", "/tmp/memory-archive.md"],
+    body: {
+      archive: '---\narchive: "command-center-memory"\n---\n',
+      noteCount: 0,
+      generatedAt: "2026-08-01T00:00:00.000Z",
+    },
   },
   {
     name: "agent list",

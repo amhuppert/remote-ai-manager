@@ -307,3 +307,143 @@ locality); domain terms name the concepts the code is about.
   id is equally new to a client whether it was created for a pending submission,
   created by another tab, reopened after being closed, or simply absent from a
   first fetch that had not resolved.
+
+- **Memory Note** — a markdown record the state store owns (`src/lib/memory/`,
+  spec `memory`): a one-line fact-bearing `hook`, a byte-capped `body`, and on
+  durable kinds one separately leased `statusNote`. Scoped `global | project |
+  session`, where a session note binds to the exact incarnation (name plus
+  created-at), never the reusable name. Addressed by agents through a
+  scope-local `slug` (plus aliases); the internal id is canonical in link rows,
+  revisions, watermarks, and `--json` envelopes only.
+- **Memory actor** — who is writing and what they can see: `user` or `agent`
+  (with its conversation id), each carrying its own visibility union
+  (`projectPath`, session incarnation). The visibility bounds handle
+  resolution and IS the scope authority: a note's scope owner is taken from the
+  actor, never from the request, so a conversation writes only where it stands.
+  The kinds differ only where the spec says so — an agent's global create lands
+  as a `proposed` note, and proposal approval or rejection is a human act.
+- **Memory service** — the single owner of memory write decisions
+  (`src/lib/memory/service.ts`, reached through `getMemoryService()`): slug
+  collision-safety within a scope owner (generated slugs suffix, explicit ones
+  refuse), compare-and-swap edits over full-snapshot revisions, rename keeps
+  the old slug as an alias, supersession archives the predecessor in the same
+  transaction, archive before separately confirmed delete, and the global
+  proposal lifecycle, whose approve and reject each name the proposed revision
+  the human reviewed and refuse a stale one. Advisory assists (overlap candidates, vague-hook warning)
+  ride beside a successful create and never refuse one. Every accepted
+  mutation publishes one `memory-changed` frame (a `change` discriminator,
+  identity, scope owner, lifecycle, head revision — never prose) through the
+  SSE publication seam from inside the service; a refused mutation publishes
+  nothing, and the route layer publishes nothing of its own.
+- **Memory delivery policy** — what a conversation reads unasked and whether
+  it may write (`src/lib/memory/delivery-policy.ts`, spec R10/D7): per role
+  (`conversation`, `implementer`, `validator`) a `read` of `off | linked-only |
+  ambient` and a `contribute` of `on | off`, each half resolving independently
+  through the configuration cascade. Ordinary conversations read
+  `memory.conversations` in global settings; workflow lanes read the per-role
+  snapshot frozen on their execution context at seed time
+  (`workflowDefaults.memory` → `workflowConfig.memory` → the context's
+  `memory`, with provenance; `null` on the definition edit ops is the reset),
+  falling back to the global role default when the row predates the snapshot.
+  Shipped: conversations and implementers ambient+on, validators off+off.
+  Read governs only what arrives unasked — the retrieval verbs are never gated
+  — and is enforced by the per-turn index provider through its required
+  `resolveReadPolicy` dep; contribution is enforced inside the memory service
+  through its required `contributionGate` dep, which places an agent by its
+  conversation id (and a lane by the execution's own binding) and refuses every
+  mutation verb with `policy_refused` naming the verb, role, value, and tier.
+  Linked-only is exact to the context under validation: a lane's block carries
+  only the notes about-linked to its own execution context (the
+  `workflow_context` artifact reference), never the run's or the ticket's.
+  Hermetic profiles are excluded by surface: an isolated one-shot gets no CC
+  identity even when a scope is attached, and no task-dispatch path composes
+  the block.
+  The index budget is `memory.indexBudget` in global settings and has no other
+  home; a contract test walks every config schema to keep it that way.
+- **Memory freshness engine** — the one owner of staleness decisions
+  (`src/lib/memory/freshness.ts`, reached through `getMemoryFreshnessEngine()`).
+  Two levels: a stale `statusNote` (its lease passed, or a statusNote-target
+  watch drifted) withholds only the line while hook and body keep flowing; a
+  stale note (its own `reviewAfter` passed, or a note-target watch drifted) is
+  withheld from ambient delivery entirely; a passed `expiresAt` excludes
+  unconditionally. Freshness gates AMBIENT delivery only — search and get never
+  consult it. Two cadences: `check(candidates)` is the lazy comparison for notes
+  a delivery build already selected (the per-turn hot path reads only their
+  links); `buildReviewQueue(filter)` scans every non-archived note's leases and
+  watch tokens (optionally narrowed to a visibility or a session incarnation),
+  so a note never delivered still surfaces, each entry attributed to what went
+  stale (`lease | watch | expiry`, by target). Delivery composers call the
+  engine; they never compare leases or tokens themselves. Lease arithmetic and
+  the age vocabulary (`renderMemoryStatusLine`, `describeMemoryAge`) live here
+  too, so every surface renders one age.
+- **Memory watch-token registry** — the per-artifact-kind resolvers behind
+  watch links (`src/lib/memory/watch-resolvers.ts`): a ticket's token is its
+  status (never `updatedAt`, so comments and field edits cannot fire a watch);
+  a session's token is its exact incarnation's completion (`active` until
+  `finished`, then `completed`; archival alone never moves it), and a later
+  session reusing the name resolves to nothing. Kinds
+  without an entry (spec, workflow execution) have no token, so a watch on them
+  is refused at link time rather than recorded blind. A status line carries at
+  most one watched artifact and a status watch needs a line to guard; both
+  rules are decided inside the repository's serialized link write (never from
+  a caller's earlier read), and a write that clears the status line drops its
+  watches. The note level may carry several watches.
+- **Memory review act** — `markReviewed(handle, { target })` on the memory
+  service: `note` refreshes the note's lease (state notes short, durable notes
+  the status period; never earlier than the lease it replaces; an unleased note
+  stays unleased) and re-records its note-target watch tokens; `statusNote`
+  refreshes the status line's lease and its watched token while leaving the
+  claim's own `updatedAt` — its rendered age — untouched. Each restores the
+  corresponding delivery, states an optional compare-and-swap base, and
+  publishes `reviewed`.
+- **Memory session-end** — session completion's memory step (`finishSession` on
+  the memory service, reached from the merge publish actor through
+  `finalizeSessionMemory` in `src/lib/memory/session-end.ts`, which resolves the
+  incarnation from the session the lifecycle just marked finished). It archives
+  the incarnation's wholly perishable `state` notes and reports the durable ones
+  as promotion candidates. It is server-initiated: no actor, and the archives
+  state no compare-and-swap base, so a session never fails to close on a
+  concurrent edit. Archival is gated on the incarnation actually being over,
+  never on the caller's say-so, so calling it early no-ops rather than retiring
+  a live session's working state. It runs after the finished row is written and
+  never blocks the merge on failure — and a failure is deferred, not lost, on
+  three levels: the finalizer retries, `finishSession` reconciles every over
+  incarnation of its project (so a later completion heals an earlier one, in
+  `reconciled`), and `reconcileSessionMemory` sweeps EVERY project at server
+  startup, which is what covers a project whose last session has already
+  completed. No queued work item is needed: an active `state` note whose
+  incarnation is over IS the durable record of the outstanding work, so any
+  later sweep finds it, and the sweep is idempotent.
+- **Memory promotion candidate** — a durable, active, session-scoped note whose
+  incarnation is OVER. Candidacy is DERIVED, never stored, so it cannot drift
+  from the session lifecycle: `isPromotableSessionNote` is the shape half and
+  `isSessionIncarnationOver` is the other. "Over" includes an incarnation whose
+  session row is gone or whose name a later session has taken — those notes are
+  orphaned, which is exactly when a promotion decision is still owed, so
+  candidacy does not evaporate with the row. The review queue is the one
+  contract that carries it — `buildReviewQueue({ session, promotionCandidates })`
+  narrows to candidates and every entry carries `promotionCandidate`, while
+  `countPromotionCandidates` (the Library badge and the session-completion
+  count) is that queue's length by construction. Both take a
+  `MemoryProjectSessionRef`: a name and a created-at identify an incarnation
+  only WITHIN a project, and the queue scans every scope owner. An entry is
+  queued because it went stale, because it is a candidate, or both; there is no
+  third membership rule.
+- **Memory promotion** — `promote(handle, request, actor)`: one act creating the
+  project-scope successor of a session note by superseding it, optionally
+  rewriting hook, body, status line, slug, aliases, or index mode in the same
+  act (an unstated status line carries forward WITH its lease and age, because
+  promoting a claim is not re-verifying it). The handle resolves in session
+  scope first, so a project note holding the same slug is the collision rather
+  than a second candidate for the read. Every handle the promoted note would
+  claim — slug and aliases — must be free among the project's active notes, and
+  a collision is refused naming the holder: no suffixing, no overwrite. The
+  compare-and-swap base is checked inside the repository's create transaction
+  (`supersedes.baseRevision`), because the content is carried forward and a
+  pre-read comparison would let an intervening edit be dropped silently; an
+  unstated base defaults to the revision the act resolved rather than to no
+  check, and only an explicit null opts out. The handle check is equally
+  in-transaction (`requireFreeHandles`): a service-level precheck refuses early
+  with the collision named, but only the transaction can promise that no writer
+  claimed the slug or alias between the check and the insert. Both
+  revision histories survive; the act publishes `promoted` and `superseded`.

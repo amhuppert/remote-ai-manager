@@ -232,6 +232,10 @@ const fullyConfiguredConfig: GlobalConfig = {
       strategy: "final-only",
       commands: { mode: "project" },
     },
+    memory: {
+      implementer: { read: "ambient", contribute: "on" },
+      validator: { read: "off", contribute: "off" },
+    },
   },
   compaction: {
     backend: "claude",

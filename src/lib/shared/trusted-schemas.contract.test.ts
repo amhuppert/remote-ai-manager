@@ -8,6 +8,7 @@ import "@/lib/state-store/reference-documents-repo";
 import "@/lib/jobs/repo";
 import "@/lib/notifications/repo";
 import "@/lib/state-store/projects-repo";
+import "@/lib/state-store/memory-repo";
 
 import { getTrustedSchemaRegistry } from "./parse-trusted";
 import { isEffectFree } from "./testing/effect-free";

@@ -75,6 +75,12 @@ export interface StartupDeps {
    */
   collectOrphanedParkedRefs?(): Promise<ParkedRefGcSummary>;
   /**
+   * Archives the state notes of session incarnations that ended without their
+   * memory step landing (memory spec R10). Optional so a test that is not
+   * about memory need not supply it.
+   */
+  reconcileSessionMemory?(): Promise<number>;
+  /**
    * Starts the event-loop stall sampler. Optional so a test that is not about
    * runtime instrumentation need not supply it.
    */
@@ -133,6 +139,11 @@ const defaultStartupDeps: StartupDeps = {
       now: () => new Date().toISOString(),
     }),
   collectOrphanedParkedRefs: () => collectOrphanedParkedRefs(),
+  reconcileSessionMemory: async () => {
+    const { reconcileSessionMemoryAtStartup } =
+      await import("./lib/memory/session-end");
+    return reconcileSessionMemoryAtStartup();
+  },
   startEventLoopStallSentinel,
   installRuntimeShutdownHook: () => {
     installRuntimeShutdownHook();
@@ -401,6 +412,22 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.parked_ref_sweep_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // A session completes whether or not its memory step lands, and the step
+    // is deliberately non-blocking so memory bookkeeping can never fail a
+    // merge. This is the other half of that trade: the sweep finishes any
+    // archival a completion dropped, so a lost one is deferred rather than
+    // lost — including for a project whose last session has already completed.
+    try {
+      const archived = await deps.reconcileSessionMemory?.();
+      if (archived !== undefined && archived > 0) {
+        logger.info("startup.session_memory_reconciled", { archived });
+      }
+    } catch (err) {
+      logger.error("startup.session_memory_reconcile_failed", {
         error: getErrorMessage(err),
       });
     }

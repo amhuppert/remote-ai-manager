@@ -319,6 +319,43 @@ describe("cctl at project conversation scope — project-supported commands", ()
     expect(pathOf(onlyRequest(host).url)).not.toContain("/sessions/");
   });
 
+  /**
+   * The memory group is deliberately absent from the inventory: it routes
+   * through `resolveProjectConversationContext`, the session-agnostic resolver
+   * the inventory's markers exclude, so an entry here would fail the stale-entry
+   * assertion. Its scope contract still needs covering — the server derives
+   * project, incarnation, and visible union from the caller conversation, so a
+   * project agent must reach every verb without a session and without the
+   * neutralized one leaking into a URL.
+   */
+  it("memory verbs route at project scope, naming no session in any URL", async () => {
+    for (const argv of [
+      ["memory", "index"],
+      ["memory", "recall", "a query"],
+      ["memory", "list"],
+      ["memory", "get", "a-slug"],
+      ["memory", "create", "--hook", "something learned"],
+      ["memory", "review"],
+    ]) {
+      const host = makeHost();
+      const result = await runCli(argv, projectEnv, host);
+
+      expect(result.stderr, argv.join(" ")).not.toContain("CC_SESSION");
+      expect(host.requests.length, argv.join(" ")).toBeGreaterThan(0);
+      for (const request of host.requests) {
+        expect(pathOf(request.url)).toMatch(/^\/api\/memory\//);
+        expect(request.url).not.toContain("__project__");
+        expect(request.url).not.toContain("/sessions/");
+        // Scope authority rides the caller conversation header, not the path.
+        expect(
+          (request.init.headers as Record<string, string> | undefined)?.[
+            "x-cc-conversation-id"
+          ],
+        ).toBe("conv-1");
+      }
+    }
+  });
+
   it("never puts the sentinel or an empty session segment in any request URL", async () => {
     for (const argv of [
       ["notify", "done"],

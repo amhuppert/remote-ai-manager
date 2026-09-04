@@ -6,10 +6,29 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 
 const queryMock = vi.hoisted(() => vi.fn());
+const resolveSettingsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
+  resolveSettings: resolveSettingsMock,
 }));
+
+/** A resolved cascade carrying only what the managed policy tier supplied. */
+function managedPolicyTier(settings: Record<string, unknown>) {
+  return {
+    effective: settings,
+    provenance: Object.fromEntries(
+      Object.keys(settings).map((key) => [
+        key,
+        { source: "managed", policyOrigin: "file" },
+      ]),
+    ),
+    sources:
+      Object.keys(settings).length > 0
+        ? [{ source: "managed", settings, policyOrigin: "file" }]
+        : [],
+  };
+}
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
@@ -20,6 +39,7 @@ import {
 } from "./conversation-runtime";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./runtime-config/agent-suppression";
+import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import type {
   ConversationBackendCreateInput,
   ConversationBackendEvent,
@@ -200,6 +220,9 @@ function createControllableMockQuery() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The ordinary host: no managed policy has an opinion about auto-memory, so
+  // the flag layer the runtime writes is the effective value.
+  resolveSettingsMock.mockResolvedValue(managedPolicyTier({}));
 });
 
 describe("resolveIdleTtlMs", () => {
@@ -272,6 +295,142 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       effort: "max",
     });
     expect(runtime.modelSelection).toEqual(selectedModel);
+    await runtime.close();
+  });
+
+  it("disables Claude's native auto-memory on every launched conversation", async () => {
+    // The declaration on the descriptor claims a mechanism; this is the claim
+    // being true. Auto-memory reads and writes a store Command Center never
+    // sees, so a launch that left it on would run two memory systems against
+    // the same turn — the exact thing memory-crit-native-disclosure forbids.
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-native-memory",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(queryMock.mock.calls[0]?.[0]?.options?.settings).toMatchObject({
+      autoMemoryEnabled: false,
+      autoDreamEnabled: false,
+    });
+    await runtime.close();
+  });
+
+  it("refuses to launch a conversation when managed policy forces auto-memory back on", async () => {
+    // `Options.settings` is the flag tier, which loses to managed policy. On
+    // such a host the descriptor's `disabled` claim cannot be honoured, and a
+    // session that started anyway would run Claude's own memory store next to
+    // the Command Center library — so no session is started at all.
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    resolveSettingsMock.mockResolvedValue(
+      managedPolicyTier({ autoMemoryEnabled: true }),
+    );
+
+    await expect(
+      createRuntimeWithFakeDeps({
+        conversationId: "conv-native-memory-policy",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      }),
+    ).rejects.toThrow(/managed policy/i);
+
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to launch a conversation when an unverifiable policy helper is configured", async () => {
+    // The SDK's resolver does not execute the admin `policyHelper`, but the
+    // launched CLI does — so a cascade that looks clean here can still have
+    // auto-memory turned back on by the helper's output, at a tier that
+    // outranks everything CC passes. Unverifiable is not off.
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    resolveSettingsMock.mockResolvedValue(
+      managedPolicyTier({
+        autoMemoryEnabled: false,
+        autoDreamEnabled: false,
+        policyHelper: { path: "/opt/corp/policy-helper" },
+      }),
+    );
+
+    await expect(
+      createRuntimeWithFakeDeps({
+        conversationId: "conv-native-memory-helper",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      }),
+    ).rejects.toThrow(/policy helper/i);
+
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to launch a conversation when a forced remote settings refresh is configured", async () => {
+    // The resolved cascade is the CACHED remote policy. This key makes the
+    // launched CLI block startup for a fresh fetch whose payload CC has never
+    // seen, so a clean-looking cascade proves nothing about the launch.
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    resolveSettingsMock.mockResolvedValue(
+      managedPolicyTier({
+        autoMemoryEnabled: false,
+        autoDreamEnabled: false,
+        forceRemoteSettingsRefresh: true,
+      }),
+    );
+
+    await expect(
+      createRuntimeWithFakeDeps({
+        conversationId: "conv-native-memory-refresh",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      }),
+    ).rejects.toThrow(/forceRemoteSettingsRefresh/);
+
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves the policy tier for the conversation's own worktree", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-native-memory-cwd",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(resolveSettingsMock).toHaveBeenCalledWith({
+      cwd: "/project/.worktrees/sess",
+      settingSources: [],
+    });
     await runtime.close();
   });
 
@@ -2675,5 +2834,80 @@ describe("ClaudeConversationRuntime — agent profile delivery", () => {
     expect(deliveredProfileLayer(attacked.append)).toBe(
       attacked.snapshot.renderedInstructionBlock,
     );
+  });
+});
+
+// Spec `memory` R5.4/D4: the static advisory contract rides Claude's
+// privileged channel — the system-prompt append, built once when the runtime
+// is created — and the changing block (a full <memory-index> on the first
+// turn, a <memory-index-delta> on later ones) rides the user message.
+describe("ClaudeConversationRuntime — memory advisory contract delivery", () => {
+  it("delivers the contract in the system-prompt append and keeps the per-turn index in the user channel", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockClear();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-memory-contract",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [MEMORY_ADVISORY_CONTRACT],
+      tooling: {},
+    });
+
+    const [call] = queryMock.mock.calls;
+    if (call === undefined) throw new Error("claude query was never called");
+    const parsedCall = call[0] as { prompt: AsyncGenerator<SDKUserMessage> };
+    const append = firstQuerySystemPromptSchema.parse(call[0]).options
+      .systemPrompt.append;
+
+    const indexBlock = [
+      "<memory-index>",
+      "visibility: global + project + session sess",
+      "- first-lesson [project, just now] The first turn's hook",
+      "showing 1 of 1 hooks",
+      "</memory-index>",
+    ].join("\n");
+    const promptText = `${indexBlock}\n\nDo the thing`;
+    const turnPromise = runtime.sendTurn({
+      promptText,
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    expect(append).toContain(MEMORY_ADVISORY_CONTRACT);
+    expect(append).not.toContain("first-lesson");
+
+    // The index travels as the turn's user message, never in the append.
+    const delivered = await parsedCall.prompt.next();
+    if (delivered.done === true) throw new Error("no user message delivered");
+    expect(delivered.value.message.content).toEqual([
+      { type: "text", text: promptText },
+    ]);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-memory",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "done",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+
+    // The append is built exactly once per runtime, so no later turn's index
+    // can ever reach the privileged channel.
+    expect(queryMock).toHaveBeenCalledTimes(1);
+
+    runtime.close();
   });
 });

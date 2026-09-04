@@ -605,6 +605,16 @@ function maximalResolvedContext(): Record<string, unknown> {
         commands: ["test"],
       },
     },
+    memory: {
+      implementer: {
+        read: { value: "linked-only", source: "workflow" },
+        contribute: { value: "off", source: "per-node" },
+      },
+      validator: {
+        read: { value: "linked-only", source: "workflow" },
+        contribute: { value: "on", source: "per-node" },
+      },
+    },
     charter: makeMaximalCharter(),
   };
 }
@@ -905,6 +915,16 @@ function buildMaximalExecution(): unknown {
               value: { mode: "only", commands: ["test"] },
               source: "per-node",
               commands: ["test"],
+            },
+          },
+          memory: {
+            implementer: {
+              read: { value: "linked-only", source: "workflow" },
+              contribute: { value: "off", source: "per-node" },
+            },
+            validator: {
+              read: { value: "linked-only", source: "workflow" },
+              contribute: { value: "on", source: "per-node" },
             },
           },
           charter: makeMaximalCharter(),

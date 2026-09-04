@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { elementAt } from "@/lib/shared/testing/element-at";
+import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import type {
   ConversationBackendCreateInput,
   ConversationBackendEvent,
@@ -663,6 +664,55 @@ describe("turn configuration", () => {
     ).input.promptText;
     expect(dispatched).toContain(renderStructuredOutputInstruction(schema));
     expect(result.structuredOutput).toBeUndefined();
+  });
+
+  // Spec `memory` R5.4/D4: the static advisory contract rides Cursor's
+  // privileged channel — the first-turn governing-instructions block — and
+  // the changing block — a full <memory-index> on the first turn, a
+  // <memory-index-delta> on later ones — rides the prompt outside it.
+  it("delivers the memory advisory contract in the first-turn governing block and keeps the per-turn index outside it", async () => {
+    const harness = createHarness({
+      create: { sessionInstructions: [MEMORY_ADVISORY_CONTRACT] },
+    });
+    const indexTurnOne = [
+      "<memory-index>",
+      "visibility: global + project",
+      "- first-lesson [project, just now] The first turn's hook",
+      "showing 1 of 1 hooks",
+      "</memory-index>",
+    ].join("\n");
+    const indexTurnTwo = [
+      "<memory-index-delta>",
+      "since: 2026-09-04T00:00:00.000Z",
+      "- second-lesson [project, just now] A hook written in another session",
+      "</memory-index-delta>",
+    ].join("\n");
+
+    await harness.send({ promptText: `${indexTurnOne}\n\nDo the thing` });
+    await harness.send({ promptText: `${indexTurnTwo}\n\nDo the next thing` });
+
+    const dispatched = harness.transport.workers
+      .flatMap((worker) => worker.turns)
+      .map((turn) => turn.input.promptText);
+    expect(dispatched).toHaveLength(2);
+    const first = elementAt(dispatched, 0);
+    const instructionsStart = first.indexOf("## System Instructions");
+    const instructionsEnd = first.indexOf("\n```", instructionsStart);
+    expect(instructionsStart).toBeGreaterThanOrEqual(0);
+    expect(first.slice(instructionsStart, instructionsEnd)).toContain(
+      MEMORY_ADVISORY_CONTRACT,
+    );
+    expect(first.slice(instructionsStart, instructionsEnd)).not.toContain(
+      "first-lesson",
+    );
+    expect(
+      first.indexOf("- first-lesson [project, just now]", instructionsEnd),
+    ).toBeGreaterThan(instructionsEnd);
+
+    const second = elementAt(dispatched, 1);
+    expect(second).not.toContain("## System Instructions");
+    expect(second).not.toContain(MEMORY_ADVISORY_CONTRACT);
+    expect(second).toContain("- second-lesson [project, just now]");
   });
 
   it("declares next-turn queueing by exposing no live delivery method", () => {

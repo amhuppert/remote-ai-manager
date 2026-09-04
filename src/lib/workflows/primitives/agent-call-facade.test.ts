@@ -1347,6 +1347,11 @@ describe("executeAgentCall — structured-output repair", () => {
       artifacts: [
         { kind: "design_doc", relativePath: "memory-bank/already-written.md" },
       ],
+      ccSessionScope: {
+        project: "example",
+        session: "sess-1",
+        conversationId: "conv-originating",
+      },
     });
 
     const result = await executeAgentCall(
@@ -1396,6 +1401,14 @@ describe("executeAgentCall — structured-output repair", () => {
     expect(requests[1]?.systemInstructions).toEqual(["use the project tools"]);
     expect(requests[1]?.tooling).toBeUndefined();
     expect(requests[1]?.imagePaths).toBeUndefined();
+    // The governed call may act as its originating conversation; its repair is
+    // a hermetic one-shot and must not (spec memory R10).
+    expect(requests[0]?.ccSessionScope).toEqual({
+      project: "example",
+      session: "sess-1",
+      conversationId: "conv-originating",
+    });
+    expect(requests[1]?.ccSessionScope).toBeUndefined();
     expect(result.backendRef).toEqual({
       backend: "codex",
       ref: "thread-original",

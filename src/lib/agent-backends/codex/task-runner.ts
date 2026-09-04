@@ -45,6 +45,7 @@ import {
 import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
+import { CODEX_NATIVE_MEMORY_CONFIG } from "./native-memory";
 import { withCodexFastMode } from "./fast-mode-config";
 import {
   ensureCodexManagedSkillsBridgeForLaunch,
@@ -447,8 +448,17 @@ export class CodexTaskRunner implements AgentTaskRunner {
       ...(restricted ? { TMPDIR: restricted.envelope.tmpDir } : {}),
     };
 
+    if (isolatedOneShot && input.ccSessionScope !== undefined) {
+      // The hermetic profile has no CC identity by contract (spec `memory`
+      // R10): a scope attached to it is a caller contradiction the profile
+      // wins, so `cctl` — memory verbs included — stays unreachable.
+      logger.warn("codex-task-runner.session_scope_dropped", {
+        workingDirectory: input.workingDirectory,
+        executionProfile: "isolated-one-shot",
+      });
+    }
     let sessionEnv = neutralizedEnv;
-    if (input.ccSessionScope !== undefined) {
+    if (input.ccSessionScope !== undefined && !isolatedOneShot) {
       const scope = ccTaskSessionScopeSchema.safeParse(input.ccSessionScope);
       if (!scope.success) {
         // Field paths only — a scope value could be any string the caller
@@ -547,8 +557,13 @@ export class CodexTaskRunner implements AgentTaskRunner {
       });
     }
 
+    // Native memories are off for every profile below, so the neutralization is
+    // spread over each branch rather than sitting in one of them: an ordinary
+    // task run is a launched environment too, and the descriptor's `disabled`
+    // claim covers it (see ./native-memory.ts).
     const baseConfig = isolatedOneShot
       ? {
+          ...CODEX_NATIVE_MEMORY_CONFIG,
           apps: { _default: { enabled: false } },
           developer_instructions: "",
           features: ISOLATED_ONE_SHOT_CODEX_FEATURES,
@@ -557,11 +572,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
           include_collaboration_mode_instructions: false,
           include_environment_context: false,
           include_permissions_instructions: false,
-          memories: {
-            dedicated_tools: false,
-            generate_memories: false,
-            use_memories: false,
-          },
           mcp_servers: mcpServersConfig ?? {},
           project_doc_fallback_filenames: [],
           project_doc_max_bytes: 0,
@@ -572,12 +582,16 @@ export class CodexTaskRunner implements AgentTaskRunner {
         }
       : restricted
         ? {
+            ...CODEX_NATIVE_MEMORY_CONFIG,
             ...restricted.envelope.config,
             mcp_servers: mcpServersConfig ?? {},
           }
-        : mcpServersConfig !== undefined
-          ? { mcp_servers: mcpServersConfig }
-          : undefined;
+        : {
+            ...CODEX_NATIVE_MEMORY_CONFIG,
+            ...(mcpServersConfig !== undefined
+              ? { mcp_servers: mcpServersConfig }
+              : {}),
+          };
     // Managed skill bundle bridge: standard task runs reconcile the same
     // namespaced link as conversations; the isolated one-shot profile is
     // hermetic by contract. A conflict degrades to skill-less, never a

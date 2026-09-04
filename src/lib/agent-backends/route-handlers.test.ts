@@ -87,6 +87,10 @@ describe("GET /api/agent-backends", () => {
           "id",
           "label",
           "models",
+          // A declaration, not a provider payload: two enum-ish fields saying
+          // whether CC disables this backend's own memory, which the Memory
+          // Library has to disclose.
+          "nativeMemory",
           "skillTriggerPrefix",
           "toneToken",
         ].sort(),

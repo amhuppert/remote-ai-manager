@@ -449,8 +449,11 @@ function makeFakeBackendActorDeps(
     getActiveAlignmentInjection: async () => null,
     getActiveAlignmentVersion: async () => null,
     getLiveTicketBlock: async () => null,
+    getMemoryIndexBlock: async () => null,
     readNotepadForInjection: async () => null,
     recordNotepadDeliveries: async () => {},
+    recordMemoryIndexDeliveries: async () => {},
+    resetMemoryIndexDelivery: async () => {},
     prepareNotepadChangeNotice: async (conversationId: string) => ({
       conversationId,
       block: null,

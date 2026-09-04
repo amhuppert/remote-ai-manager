@@ -34,6 +34,7 @@ import { claudeConversationBackendFactory } from "./claude/conversation-runtime"
 import { createClaudeContinuityAdapter } from "./claude/continuity";
 import { createClaudeRuntimeConfigAdapter } from "./claude/runtime-config/adapter";
 import { ClaudeTaskRunner } from "./claude/task-runner";
+import { _setClaudeSettingsResolverForTesting } from "./claude/native-memory";
 import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { _setSdkQueryForTesting } from "./claude/query-session";
 import { createCodexBackendDescriptor } from "./codex/descriptor";
@@ -151,8 +152,18 @@ const claudeSdk = createFakeClaudeSdkController({
   structuredOutput: STRUCTURED_OUTPUT_VALUE,
 });
 _setSdkQueryForTesting(claudeSdk.createSdkQuery);
+// The Claude launch paths refuse to start unless they can confirm no managed
+// policy re-enables native auto-memory. Stub the cascade so conformance does
+// not read the host's real MDM policy — which would make these pass or fail by
+// machine (see claude/native-memory.ts).
+_setClaudeSettingsResolverForTesting(async () => ({
+  effective: {},
+  provenance: {},
+  sources: [],
+}));
 afterAll(() => {
   _setSdkQueryForTesting(null);
+  _setClaudeSettingsResolverForTesting(null);
 });
 
 const claudeTaskPort = createFakeClaudeTaskPort({

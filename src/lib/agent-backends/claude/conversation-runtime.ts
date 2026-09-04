@@ -36,6 +36,10 @@ import {
 import { readClaudePluginNativeRecords } from "./runtime-config/plugin-native-records";
 import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
 import {
+  assertClaudeNativeMemoryNeutralized,
+  CLAUDE_NATIVE_MEMORY_SETTINGS,
+} from "./native-memory";
+import {
   createQuerySession,
   type BackgroundWaitOutcome,
   type QuerySession,
@@ -820,9 +824,13 @@ const claudeConversationBackendFactory = {
     // Build initial SDK Settings from the translated capability config so the
     // SDK applies plugin/skill overrides natively at session start. Without
     // this, capability seeding for a brand-new runtime would be a no-op.
-    const initialSettings: Settings | undefined = (() => {
+    //
+    // The native-memory neutralization seeds the object, so these settings are
+    // never undefined: a conversation with no capability overrides at all still
+    // launches with Claude's own auto-memory off (see ./native-memory.ts).
+    const initialSettings: Settings = (() => {
       const cfg = capabilityConfig;
-      const settings: Settings = {};
+      const settings: Settings = { ...CLAUDE_NATIVE_MEMORY_SETTINGS };
       const enabledPlugins: Record<string, boolean> = {
         ...(cfg?.enabledPlugins ?? {}),
       };
@@ -846,7 +854,7 @@ const claudeConversationBackendFactory = {
       if (cfg && Object.keys(cfg.skillOverrides).length > 0) {
         settings.skillOverrides = cfg.skillOverrides;
       }
-      return Object.keys(settings).length > 0 ? settings : undefined;
+      return settings;
     })();
 
     // Determine resume session ID from persisted ref
@@ -935,8 +943,15 @@ const claudeConversationBackendFactory = {
       onBackgroundTasksLost: input.onBackgroundTasksLost,
       onBackgroundActivity: input.onBackgroundActivity,
       ...(idleTtlMs !== undefined ? { idleTtlMs } : {}),
-      ...(initialSettings ? { settings: initialSettings } : {}),
+      settings: initialSettings,
     };
+
+    // `settings` above is the SDK's FLAG tier, which managed policy outranks.
+    // Confirm the neutralization actually survives the cascade before starting
+    // a session: on a host whose policy forces auto-memory back on there is no
+    // higher lever to pull, so CC refuses the launch rather than run Claude's
+    // memory store alongside its own (see ./native-memory.ts).
+    await assertClaudeNativeMemoryNeutralized({ cwd: input.worktreePath });
 
     const querySession = createQuerySession(sessionOptions);
 

@@ -23,7 +23,13 @@ import { WHOLE_TREE_CANDIDATE_SCOPE } from "@/lib/git/diff";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const claudeQueryMock = vi.hoisted(() => vi.fn());
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: claudeQueryMock }));
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: claudeQueryMock,
+  // The Claude launch path refuses to start unless it can confirm no managed
+  // policy re-enables native auto-memory; an ordinary host's policy tier is
+  // silent on it.
+  resolveSettings: async () => ({ effective: {}, provenance: {}, sources: [] }),
+}));
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
 /**

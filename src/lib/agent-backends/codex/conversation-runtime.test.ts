@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
 import type {
   ThreadEvent,
   ThreadStartedEvent,
@@ -472,6 +473,62 @@ describe("CodexConversationRuntime", () => {
       expect(forkSeedIdx).toBeLessThan(promptIdx);
     });
 
+    // Spec `memory` R5.4/D4: the static advisory contract rides Codex's
+    // privileged channel — the first-turn governing-instructions block — and
+    // the changing block — a full <memory-index> on the first turn, a
+    // <memory-index-delta> on later ones — rides the prompt outside it.
+    it("delivers the memory advisory contract in the first-turn governing block and keeps the per-turn index outside it", async () => {
+      const thread = makeCapturingThread(minimalSuccessEvents());
+      startThreadFn.mockReturnValue(thread);
+      const indexTurnOne = [
+        "<memory-index>",
+        "visibility: global + project",
+        "- first-lesson [project, just now] The first turn's hook",
+        "showing 1 of 1 hooks",
+        "</memory-index>",
+      ].join("\n");
+      const indexTurnTwo = [
+        "<memory-index-delta>",
+        "since: 2026-09-04T00:00:00.000Z",
+        "- second-lesson [project, just now] A hook written in another session",
+        "</memory-index-delta>",
+      ].join("\n");
+
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({ sessionInstructions: [MEMORY_ADVISORY_CONTRACT] }),
+        deps,
+      );
+
+      await runtime.sendTurn(
+        makeTurnInput({ promptText: `${indexTurnOne}\n\nDo the thing` }),
+      );
+      const first = thread.capturedInput as string;
+      const instructionsStart = first.indexOf("## System Instructions");
+      const instructionsEnd = first.indexOf("\n```", instructionsStart);
+      expect(instructionsStart).toBeGreaterThanOrEqual(0);
+      expect(first.slice(instructionsStart, instructionsEnd)).toContain(
+        MEMORY_ADVISORY_CONTRACT,
+      );
+      expect(first.slice(instructionsStart, instructionsEnd)).not.toContain(
+        "first-lesson",
+      );
+      expect(
+        first.indexOf("- first-lesson [project, just now]", instructionsEnd),
+      ).toBeGreaterThan(instructionsEnd);
+
+      const resumedThread = makeCapturingThread(
+        minimalSuccessEvents("thread-123"),
+      );
+      resumeThreadFn.mockReturnValue(resumedThread);
+      await runtime.sendTurn(
+        makeTurnInput({ promptText: `${indexTurnTwo}\n\nDo the next thing` }),
+      );
+      const second = resumedThread.capturedInput as string;
+      expect(second).not.toContain("## System Instructions");
+      expect(second).not.toContain(MEMORY_ADVISORY_CONTRACT);
+      expect(second).toContain("- second-lesson [project, just now]");
+    });
+
     it("passes thread options matching the task runner defaults", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(
@@ -505,6 +562,27 @@ describe("CodexConversationRuntime", () => {
       const threadOpts = startThreadFn.mock.calls[0]![0];
       expect(threadOpts.model).toBe("gpt-5.4");
       expect(threadOpts.modelReasoningEffort).toBe("high");
+    });
+
+    it("disables Codex's native memories on every launched conversation", async () => {
+      // The `memories` table was already blanked for the hermetic profiles;
+      // an ordinary conversation is where a `~/.codex/config.toml` on the
+      // machine would otherwise decide, so the descriptor's `disabled` claim
+      // has to be pinned per launch here too.
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      expect(codexCall.config).toMatchObject({
+        memories: {
+          dedicated_tools: false,
+          generate_memories: false,
+          use_memories: false,
+        },
+      });
     });
 
     it("requests detailed reasoning summaries for conversation thinking blocks", async () => {
@@ -2199,6 +2277,11 @@ describe("CodexConversationRuntime", () => {
       expect(codexCall.config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        memories: {
+          dedicated_tools: false,
+          generate_memories: false,
+          use_memories: false,
+        },
         mcp_servers: {},
         service_tier: "default",
         features: { fast_mode: false },
@@ -2269,6 +2352,11 @@ describe("CodexConversationRuntime", () => {
       expect(codexCall.config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        memories: {
+          dedicated_tools: false,
+          generate_memories: false,
+          use_memories: false,
+        },
         mcp_servers: {
           "external-tools": { url: "http://localhost/mcp" },
           "next-devtools-project": { command: "npx", args: ["next"] },
@@ -2302,6 +2390,11 @@ describe("CodexConversationRuntime", () => {
       expect(codexCall.config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        memories: {
+          dedicated_tools: false,
+          generate_memories: false,
+          use_memories: false,
+        },
         service_tier: "default",
         features: { fast_mode: false },
       });
@@ -2326,6 +2419,11 @@ describe("CodexConversationRuntime", () => {
       expect(createCodexCalls[0]![0].config).toEqual({
         model_reasoning_summary: "detailed",
         hide_agent_reasoning: false,
+        memories: {
+          dedicated_tools: false,
+          generate_memories: false,
+          use_memories: false,
+        },
         service_tier: "fast",
         features: { fast_mode: true },
       });

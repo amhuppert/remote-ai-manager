@@ -387,6 +387,7 @@ const inertActorWriteSeams: ActorDurableWriteSeams = {
   markQueuedPending: async () => {},
   markQueuedFailed: async () => {},
   recordNotepadDeliveries: async () => {},
+  recordMemoryIndexDeliveries: async () => {},
   settleNotepadChangeNotice: async () => {},
   claimWorkflowResults: async () => [],
   settleWorkflowResults: async () => 0,

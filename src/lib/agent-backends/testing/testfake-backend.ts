@@ -608,6 +608,12 @@ export function createTestFakeBackend(
       fsWriteRestriction: "unsupported",
     },
     managedSkills: { conversations: "hermetic", tasks: "hermetic" },
+    // The fake launches no provider, so there is no native memory to leave
+    // running — the claim it makes is trivially true rather than unexamined.
+    nativeMemory: {
+      mechanism: "disabled",
+      lever: "the test fake launches no provider process",
+    },
     mcp: testfakeMcpCapabilities,
     errors,
   };

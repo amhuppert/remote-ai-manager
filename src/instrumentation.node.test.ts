@@ -663,4 +663,90 @@ describe("createStartupRegistrar", () => {
     await expect(register()).resolves.not.toThrow();
     expect(calls).toEqual(["rehydrate", "config-reader"]);
   });
+
+  // Session completion's memory step is deliberately non-blocking, so an
+  // archival it drops has to be recoverable without another session ever
+  // completing (memory spec R10).
+  it("reconciles session memory on every startup", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      reconcileSessionMemory: async () => {
+        calls.push("memory-reconcile");
+        return 3;
+      },
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {},
+      setConfigReader: () => {
+        calls.push("config-reader");
+      },
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await expect(register()).resolves.not.toThrow();
+    expect(calls).toEqual(["rehydrate", "memory-reconcile", "config-reader"]);
+  });
+
+  it("survives a failing session-memory reconciliation without breaking startup", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationRehydration: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      reconcileSessionMemory: async () => {
+        throw new Error("database is locked");
+      },
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {},
+      setConfigReader: () => {
+        calls.push("config-reader");
+      },
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      verifyServerBaseUrl: () => {},
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+      sweepInterruptedCompactions: () => 0,
+      recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
+      recoverInterruptedConversationSnapshots: async () => 0,
+    });
+
+    await expect(register()).resolves.not.toThrow();
+    expect(calls).toEqual(["rehydrate", "config-reader"]);
+  });
 });

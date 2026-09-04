@@ -1106,6 +1106,10 @@ function createWorkflowDefaults() {
       strategy: "final-only",
       commands: { mode: "project" },
     },
+    memory: {
+      implementer: { read: "ambient", contribute: "on" },
+      validator: { read: "linked-only", contribute: "off" },
+    },
   };
 }
 
@@ -1118,6 +1122,7 @@ describe("workflowDefaultsSchema", () => {
       expect(result.data.scriptValidator.commands).toEqual([]);
       expect(result.data.askUserQuestions.enabled).toBe(false);
       expect(result.data.collaboration.negotiationRounds).toBe(3);
+      expect(result.data.memory.validator.read).toBe("linked-only");
     }
   });
 

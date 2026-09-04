@@ -9,6 +9,7 @@ import {
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneMergeValidationConfigSchema,
   graphWorkflowLaneMergeValidationOverrideSchema,
+  graphWorkflowMemoryPolicyOverrideSchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
@@ -27,6 +28,7 @@ import {
   parameterDeclarationSchema,
   prerequisiteSchema,
   resolvedAgentValidationConfigSchema,
+  resolvedMemoryPolicyConfigSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 // The prose-or-records union (#69 change 4 stage 1). Every edit vocabulary
 // replaces the WHOLE value — there are no per-criterion operations at this
@@ -110,6 +112,7 @@ const definitionEditAddContextConfigShape = {
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
   agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
+  memory: graphWorkflowMemoryPolicyOverrideSchema.optional(),
 };
 
 // Per-context config override blocks on `update-context` — `null` CLEARS the
@@ -136,6 +139,7 @@ const definitionEditUpdateContextConfigShape = {
   agentValidation: graphWorkflowAgentValidationOverrideSchema
     .nullable()
     .optional(),
+  memory: graphWorkflowMemoryPolicyOverrideSchema.nullable().optional(),
 };
 
 // Workflow-level cascade blocks on `update-workflow-config` — `null` CLEARS the
@@ -163,6 +167,7 @@ const definitionEditWorkflowConfigShape = {
   agentValidation: graphWorkflowAgentValidationOverrideSchema
     .nullable()
     .optional(),
+  memory: graphWorkflowMemoryPolicyOverrideSchema.nullable().optional(),
   // Workflow tier only, mirroring the definition schema: the lane-merge gate
   // guards the shared fan-in target, so it has no per-context counterpart.
   laneMergeValidation: graphWorkflowLaneMergeValidationOverrideSchema
@@ -423,6 +428,11 @@ const liveEditContextConfigShape = {
   // the project registry at the edit boundary; a live edit affects future
   // submissions only — in-flight validation runs keep their snapshot.
   agentValidation: resolvedAgentValidationConfigSchema.optional(),
+  // The RESOLVED per-role memory delivery policy with provenance (spec
+  // `memory` R10, D7), same contract as `agentValidation`: absent on an add
+  // inherits the config source (or the global defaults); present replaces the
+  // context's snapshot, which the policy resolver reads on the lane's next turn.
+  memory: resolvedMemoryPolicyConfigSchema.optional(),
 };
 
 /**

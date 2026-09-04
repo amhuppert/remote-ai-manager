@@ -8,6 +8,7 @@ import {
   materializeGlobalConfig,
   resolveConfigDir,
 } from "./loader";
+import { resolveMemoryConfig } from "./schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 const tempDirs: string[] = [];
@@ -627,5 +628,35 @@ describe("resolveConfigDir", () => {
     expect(resolveConfigDir()).toBe(
       path.join(FAKE_HOME, "Library", "Application Support", "cc-dev"),
     );
+  });
+});
+
+describe("memory index budget default (spec memory R10.3)", () => {
+  it("parses to 20480 bytes and 120 hooks when memory.indexBudget is absent", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(path.join(configDir, "config.json"), "{}", "utf-8");
+
+    const config = await createConfigReader(configDir).readConfig();
+
+    expect(resolveMemoryConfig(config).indexBudget).toEqual({
+      bytes: 20480,
+      hooks: 120,
+    });
+  });
+
+  it("keeps the same default when a memory section states only its policy", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ memory: { conversations: { read: "off" } } }),
+      "utf-8",
+    );
+
+    const config = await createConfigReader(configDir).readConfig();
+
+    expect(resolveMemoryConfig(config).indexBudget).toEqual({
+      bytes: 20480,
+      hooks: 120,
+    });
   });
 });

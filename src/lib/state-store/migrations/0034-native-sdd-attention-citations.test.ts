@@ -420,6 +420,9 @@ describe("0034-native-sdd-attention-citations", () => {
       "0037-add-notepad-delivery-watermarks",
       "0038-ticket-relationships-and-status-updates",
       "0039-native-sdd-managed-workflow-definitions",
+      "0040-add-memory-notes",
+      "0041-add-memory-search-index",
+      "0042-add-memory-telemetry",
     ]);
   });
 

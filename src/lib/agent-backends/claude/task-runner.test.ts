@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // vi.mock is allowed for external packages and infrastructure with module-level side effects
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn(),
+  resolveSettings: vi.fn(),
 }));
 
 // Records every emitted event so the secrets-discipline checks can read the
@@ -33,7 +34,7 @@ vi.mock("@/lib/shared/child-env", () => ({
   buildChildEnv: () => ({ ...childEnvState.env }),
 }));
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, resolveSettings } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeTaskRunner } from "./task-runner";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import type { AgentTaskRequest } from "../task";
@@ -41,6 +42,24 @@ import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import { CONVERSATION_CAPABILITY_ENV_VAR } from "@/lib/agent-gateway/conversation-capability";
 
 const mockQuery = vi.mocked(query);
+const mockResolveSettings = vi.mocked(resolveSettings);
+
+/** A resolved cascade carrying only what the managed policy tier supplied. */
+function managedPolicyTier(settings: Record<string, unknown>) {
+  return {
+    effective: settings,
+    provenance: Object.fromEntries(
+      Object.keys(settings).map((key) => [
+        key,
+        { source: "managed", policyOrigin: "file" },
+      ]),
+    ),
+    sources:
+      Object.keys(settings).length > 0
+        ? [{ source: "managed", settings, policyOrigin: "file" }]
+        : [],
+  } as unknown as Awaited<ReturnType<typeof resolveSettings>>;
+}
 
 function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
   return {
@@ -90,6 +109,8 @@ describe("ClaudeTaskRunner", () => {
     vi.clearAllMocks();
     logState.entries = [];
     childEnvState.env = {};
+    // The ordinary host: no managed policy has an opinion about auto-memory.
+    mockResolveSettings.mockResolvedValue(managedPolicyTier({}));
     runner = new ClaudeTaskRunner();
   });
 
@@ -111,6 +132,84 @@ describe("ClaudeTaskRunner", () => {
       CC_SERVER_URL: "",
       CC_API_TOKEN: "",
       PATH: "/usr/bin",
+    });
+  });
+
+  it("disables Claude's native auto-memory on every launched task run", async () => {
+    // Task runs are launched environments too, so the descriptor's
+    // `disabled` claim has to hold here as well — an ordinary (non-hermetic)
+    // run left with auto-memory on would read and write a store Command
+    // Center never sees.
+    mockQuery.mockReturnValue(
+      makeStream([successResultMessage()]) as ReturnType<typeof query>,
+    );
+
+    await runner.run(makeRequest());
+
+    expect(mockQuery.mock.calls[0]?.[0]?.options?.settings).toMatchObject({
+      autoMemoryEnabled: false,
+      autoDreamEnabled: false,
+    });
+  });
+
+  it("refuses to launch a task run when managed policy forces auto-memory back on", async () => {
+    // The settings the runner passes are the SDK's flag tier, which managed
+    // policy outranks. With no higher lever available, a run that started
+    // anyway would contradict the descriptor's `disabled` claim, so the run
+    // fails without ever reaching the SDK.
+    mockResolveSettings.mockResolvedValue(
+      managedPolicyTier({ autoDreamEnabled: true }),
+    );
+
+    const result = await runner.run(makeRequest());
+
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(result.error).toMatch(/managed policy/i);
+    expect(result.error).toContain("autoDreamEnabled");
+  });
+
+  it("refuses to launch a task run when an unverifiable policy helper is configured", async () => {
+    // Same omitted policy source as the conversation path: the resolver does
+    // not run the admin helper that the launched CLI does.
+    mockResolveSettings.mockResolvedValue(
+      managedPolicyTier({
+        autoMemoryEnabled: false,
+        autoDreamEnabled: false,
+        policyHelper: { path: "/opt/corp/policy-helper" },
+      }),
+    );
+
+    const result = await runner.run(makeRequest());
+
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(result.error).toContain("/opt/corp/policy-helper");
+  });
+
+  it("refuses to launch a task run when a forced remote settings refresh is configured", async () => {
+    mockResolveSettings.mockResolvedValue(
+      managedPolicyTier({
+        autoMemoryEnabled: false,
+        autoDreamEnabled: false,
+        forceRemoteSettingsRefresh: true,
+      }),
+    );
+
+    const result = await runner.run(makeRequest());
+
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(result.error).toContain("forceRemoteSettingsRefresh");
+  });
+
+  it("resolves the policy tier for the run's own working directory", async () => {
+    mockQuery.mockReturnValue(
+      makeStream([successResultMessage()]) as ReturnType<typeof query>,
+    );
+
+    await runner.run(makeRequest({ workingDirectory: "/test/elsewhere" }));
+
+    expect(mockResolveSettings).toHaveBeenCalledWith({
+      cwd: "/test/elsewhere",
+      settingSources: [],
     });
   });
 
@@ -224,6 +323,54 @@ describe("ClaudeTaskRunner", () => {
         CC_WORKFLOW_EXECUTION_ID: "",
         CC_WORKFLOW_CONTEXT_ID: "",
       });
+    });
+
+    it("gives an isolated one-shot no memory surface: no CC session identity, no credentials, no MCP servers", async () => {
+      // The hermetic profile (spec `memory` R10): `cctl memory` needs the CC
+      // session env contract and an MCP surface needs a server list; an
+      // isolated one-shot dispatched without a scope receives neither, so no
+      // memory verb — ambient or explicit — is reachable from it.
+      await makeScopedRunner().run(
+        makeRequest({ executionProfile: "isolated-one-shot" }),
+      );
+
+      const options = mockQuery.mock.calls[0]?.[0]?.options;
+      expect(options?.env).toEqual({
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "",
+        CC_API_TOKEN: "",
+        CC_CONVERSATION_ID: "",
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+        CLAUDECODE: "",
+      });
+      expect(options?.mcpServers).toEqual({});
+    });
+
+    it("never applies a session scope to an isolated one-shot: the hermetic profile has no CC identity", async () => {
+      // A scope attached to a hermetic run is a caller contradiction (spec
+      // memory R10): the profile wins, so no memory verb — ambient or
+      // explicit — is reachable from the child even when a scope arrives.
+      await makeScopedRunner().run(
+        makeRequest({
+          executionProfile: "isolated-one-shot",
+          ccSessionScope: { ...SCOPE },
+        }),
+      );
+
+      const options = mockQuery.mock.calls[0]?.[0]?.options;
+      expect(options?.env).toEqual({
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "",
+        CC_API_TOKEN: "",
+        CC_CONVERSATION_ID: "",
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+        CLAUDECODE: "",
+      });
+      expect(options?.mcpServers).toEqual({});
     });
 
     it("fails the run without dispatching when the scope is malformed", async () => {

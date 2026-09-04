@@ -117,6 +117,10 @@ const workflowDefaults: WorkflowDefaults = {
     strategy: "final-only",
     commands: { mode: "project" },
   },
+  memory: {
+    implementer: { read: "ambient", contribute: "on" },
+    validator: { read: "off", contribute: "off" },
+  },
 };
 
 const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {

@@ -205,6 +205,7 @@ function definitionEditTouchedPaths(
         "humanApprovalGate",
         "askUserQuestions",
         "agentValidation",
+        "memory",
         "laneMergeValidation",
       ]);
     case "add-context":
@@ -231,6 +232,7 @@ function definitionEditTouchedPaths(
           "humanApprovalGate",
           "askUserQuestions",
           "agentValidation",
+          "memory",
         ],
       );
     case "remove-context": {
@@ -386,6 +388,7 @@ function applyOperation(
         operation.askUserQuestions,
       );
       applyOptionalBlock(config, "agentValidation", operation.agentValidation);
+      applyOptionalBlock(config, "memory", operation.memory);
       applyOptionalBlock(
         config,
         "laneMergeValidation",
@@ -454,6 +457,7 @@ function applyOperation(
         ...(operation.agentValidation !== undefined
           ? { agentValidation: operation.agentValidation }
           : {}),
+        ...(operation.memory !== undefined ? { memory: operation.memory } : {}),
       };
       definition.executionContexts.push(context);
       return null;
@@ -504,6 +508,7 @@ function applyOperation(
         operation.askUserQuestions,
       );
       applyOptionalBlock(context, "agentValidation", operation.agentValidation);
+      applyOptionalBlock(context, "memory", operation.memory);
       return null;
     }
 

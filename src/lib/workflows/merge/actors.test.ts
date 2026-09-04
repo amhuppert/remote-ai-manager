@@ -191,6 +191,8 @@ function makePublishDeps(
       overrides.getActiveGraphWorkflowExecution ?? vi.fn(async () => null),
     reconcileTicketSessionLifecycle:
       overrides.reconcileTicketSessionLifecycle ?? vi.fn(async () => {}),
+    finalizeSessionMemory:
+      overrides.finalizeSessionMemory ?? vi.fn(async () => {}),
     retargetOrphanedChildren:
       overrides.retargetOrphanedChildren ?? vi.fn(async () => {}),
     stopAllForSession: overrides.stopAllForSession ?? vi.fn(async () => {}),
@@ -585,6 +587,43 @@ describe("runPublish", () => {
     );
   });
 
+  it("finalizes the session's memory after marking the merged session finished", async () => {
+    const setFinished = vi.fn(async () => {});
+    const finalizeSessionMemory = vi.fn(async () => {});
+    const deps = makePublishDeps({
+      setSessionFinished: setFinished,
+      finalizeSessionMemory,
+    });
+
+    await runPublish(deps, basePublishInput);
+
+    expect(finalizeSessionMemory).toHaveBeenCalledWith({
+      projectPath: "/proj",
+      sessionName: "feature",
+    });
+    // Candidacy reads the session's completion, so the memory step cannot run
+    // before the row that records it.
+    expect(setFinished.mock.invocationCallOrder[0]).toBeLessThan(
+      finalizeSessionMemory.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  // Memory bookkeeping never fails a merge. The archival is not lost when it
+  // throws: the finalizer retries, and `finishSession` reconciles every over
+  // incarnation of the project, so the next completion archives what this one
+  // could not (covered in memory/session-end.test.ts).
+  it("completes the merge when session-end memory finalization throws", async () => {
+    const deps = makePublishDeps({
+      finalizeSessionMemory: vi.fn(async () => {
+        throw new Error("memory boom");
+      }),
+    });
+
+    const out = await runPublish(deps, basePublishInput);
+
+    expect(out).toEqual({ status: "completed", mergeHash: "merge-abc" });
+  });
+
   it("holds the session lifecycle gate across finish and ticket reconciliation", async () => {
     const phases: string[] = [];
     const deps = makePublishDeps({
@@ -600,6 +639,9 @@ describe("runPublish", () => {
       reconcileTicketSessionLifecycle: vi.fn(async () => {
         phases.push("reconciled");
       }),
+      finalizeSessionMemory: vi.fn(async () => {
+        phases.push("memory");
+      }),
     });
 
     await runPublish(deps, basePublishInput);
@@ -608,6 +650,7 @@ describe("runPublish", () => {
       "gate:/proj:feature:start",
       "finished",
       "reconciled",
+      "memory",
       "gate:/proj:feature:end",
     ]);
   });

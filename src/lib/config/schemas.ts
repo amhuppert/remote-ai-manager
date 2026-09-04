@@ -22,12 +22,21 @@ import {
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneMergeValidationConfigSchema,
+  graphWorkflowMemoryPolicyConfigSchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
   validatorCohortSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import { devServerConfigSchema } from "@/lib/dev-server/schemas";
+import {
+  MEMORY_CONVERSATION_POLICY_DEFAULT,
+  MEMORY_INDEX_BUDGET_DEFAULT_BYTES,
+  MEMORY_INDEX_BUDGET_DEFAULT_HOOKS,
+  MEMORY_INDEX_BUDGET_MIN_BYTES,
+  memoryDeliveryPolicyOverrideSchema,
+  memoryDeliveryPolicySettingSchema,
+} from "@/lib/memory/schemas";
 import {
   globalValidationConfigSchema,
   repoValidationConfigSchema,
@@ -50,6 +59,10 @@ export const workflowDefaultsSchema = z.object({
   collaboration: workflowCollaborationConfigSchema,
   agentValidation: graphWorkflowAgentValidationConfigSchema,
   laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema,
+  // The global tier of the memory delivery cascade for workflow roles (spec
+  // `memory` R10): the implementer and validator defaults every execution
+  // context inherits unless its workflow or the context itself overrides them.
+  memory: graphWorkflowMemoryPolicyConfigSchema,
 });
 export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
 
@@ -66,6 +79,10 @@ const rawWorkflowDefaultsSchema = z.object({
   collaboration: workflowCollaborationConfigSchema.optional(),
   agentValidation: graphWorkflowAgentValidationConfigSchema.optional(),
   laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.optional(),
+  // Same schema as the effective tier, like every other block here: each role
+  // and each half defaults independently, and the block is strict, so a
+  // misspelled role or half is refused rather than silently left at default.
+  memory: graphWorkflowMemoryPolicyConfigSchema.optional(),
 });
 
 // ============================================================
@@ -162,6 +179,55 @@ export const resolveConversationNamingConfig = (
   conversationNamingConfigSchema.parse(config.conversationNaming ?? {});
 
 // ============================================================
+// Memory Config
+// ============================================================
+
+/**
+ * The shared memory system's global settings (spec `memory`, R5, R10). The
+ * generated-index budget lives HERE AND ONLY HERE: the spec forbids any
+ * per-project, per-workflow, or per-conversation budget override, so no
+ * per-repo or workflow schema carries a counterpart (`delivery-policy.test.ts`
+ * walks every config schema to prove it). `conversations` is the delivery
+ * policy of ordinary — human-addressed — conversations; workflow roles resolve
+ * through `workflowDefaults.memory` and the cascade instead.
+ */
+export const memoryConfigSchema = z.object({
+  conversations: memoryDeliveryPolicySettingSchema(
+    MEMORY_CONVERSATION_POLICY_DEFAULT,
+  ),
+  indexBudget: z
+    .object({
+      bytes: z
+        .number()
+        .int()
+        .min(MEMORY_INDEX_BUDGET_MIN_BYTES)
+        .default(MEMORY_INDEX_BUDGET_DEFAULT_BYTES),
+      hooks: z.number().int().min(1).default(MEMORY_INDEX_BUDGET_DEFAULT_HOOKS),
+    })
+    .default({
+      bytes: MEMORY_INDEX_BUDGET_DEFAULT_BYTES,
+      hooks: MEMORY_INDEX_BUDGET_DEFAULT_HOOKS,
+    }),
+});
+export type MemoryConfig = z.infer<typeof memoryConfigSchema>;
+
+const rawMemoryConfigSchema = z
+  .object({
+    conversations: memoryDeliveryPolicyOverrideSchema.optional(),
+    indexBudget: z
+      .object({
+        bytes: z.number().int().min(MEMORY_INDEX_BUDGET_MIN_BYTES).optional(),
+        hooks: z.number().int().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export const resolveMemoryConfig = (config: GlobalConfig): MemoryConfig =>
+  memoryConfigSchema.parse(config.memory ?? {});
+
+// ============================================================
 // Global Config
 // ============================================================
 
@@ -189,6 +255,7 @@ export const globalConfigSchema = z.object({
   compaction: compactionConfigSchema.optional(),
   validation: globalValidationConfigSchema.optional(),
   conversationNaming: conversationNamingConfigSchema.optional(),
+  memory: memoryConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -328,6 +395,7 @@ export const rawGlobalConfigSchema = z.object({
   compaction: rawCompactionConfigSchema.optional(),
   validation: rawValidationConfigSchema.optional(),
   conversationNaming: rawConversationNamingConfigSchema.optional(),
+  memory: rawMemoryConfigSchema.optional(),
 });
 export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 

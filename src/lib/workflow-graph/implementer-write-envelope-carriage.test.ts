@@ -19,7 +19,7 @@ import type {
   ExecutePromptInput,
   PromptActorResult,
 } from "@/lib/workflows/conversation/types";
-import { shouldRecreateRuntime } from "@/lib/workflows/conversation/actor-implementations";
+import { shouldRecreateRuntime } from "@/lib/workflows/conversation/pre-turn/runtime-recreate";
 import type { SessionState } from "@/lib/sessions/schemas";
 
 const POLICY: FsWritePolicy = {

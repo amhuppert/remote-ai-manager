@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  memoryContributionPolicySchema,
+  memoryReadPolicySchema,
+} from "@/lib/memory/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
@@ -7,6 +11,7 @@ import {
   DEFAULT_PLAN_REPAIR_POLICY,
   agentAssignmentSchema,
   graphWorkflowAgentValidationOverrideSchema,
+  graphWorkflowMemoryPolicyOverrideSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowCommandSelectorSchema,
@@ -40,6 +45,7 @@ export const workflowConfigOverrideSchema = z.object({
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
   agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
+  memory: graphWorkflowMemoryPolicyOverrideSchema.optional(),
   // Workflow tier only — deliberately absent from the execution-context
   // definition: the lane-merge gate guards the shared fan-in target, so a
   // per-context override would be ambiguous (validation-concurrency §6).
@@ -253,6 +259,11 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
   agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
+  // Per-role memory delivery override (spec `memory` R10): `implementer` and
+  // `validator` each state only the halves they change; an absent block
+  // inherits the workflow tier, and clearing it (null on `update-context`) is
+  // the reset that returns the context to the cascade value.
+  memory: graphWorkflowMemoryPolicyOverrideSchema.optional(),
   origin: workflowOriginSchema.optional(),
   // Machine-readable provenance from whatever compiled this context, in the
   // same shape a task already carries. It never reaches an agent prompt: prose
@@ -557,6 +568,32 @@ export const resolvedAgentValidationConfigSchema = z.object({
   implementer: resolvedAgentValidationSelectorSchema,
   contextValidator: resolvedAgentValidationSelectorSchema,
 });
+
+// Resolved memory delivery policy (spec `memory` R10, D7) with the same
+// per-field provenance contract: each role's read and contribute halves
+// resolve independently (per-node → workflow → global), so one resolved role
+// can carry two distinct sources and a UI can say which tier set each half.
+const resolvedMemoryDeliveryPolicySchema = z.object({
+  read: z.object({
+    value: memoryReadPolicySchema,
+    source: collaborationConfigSourceSchema,
+  }),
+  contribute: z.object({
+    value: memoryContributionPolicySchema,
+    source: collaborationConfigSourceSchema,
+  }),
+});
+export type ResolvedMemoryDeliveryPolicy = z.infer<
+  typeof resolvedMemoryDeliveryPolicySchema
+>;
+
+export const resolvedMemoryPolicyConfigSchema = z.object({
+  implementer: resolvedMemoryDeliveryPolicySchema,
+  validator: resolvedMemoryDeliveryPolicySchema,
+});
+export type ResolvedMemoryPolicyConfig = z.infer<
+  typeof resolvedMemoryPolicyConfigSchema
+>;
 export type ResolvedAgentValidationConfig = z.infer<
   typeof resolvedAgentValidationConfigSchema
 >;
@@ -626,6 +663,12 @@ export const graphWorkflowResolvedContextSchema = z.object({
   // before the field existed have no snapshot; policy enforcement treats
   // absence as the seeded defaults.
   agentValidation: resolvedAgentValidationConfigSchema.optional(),
+  // Resolved per-role memory delivery policy (with provenance), snapshotted at
+  // seed time like collaboration so a later settings or saved-definition edit
+  // cannot change what a running lane reads or may write. `.optional()`
+  // because executions seeded before the field existed carry none; delivery
+  // and the contribution gate then fall back to the global role default.
+  memory: resolvedMemoryPolicyConfigSchema.optional(),
   charter: workflowCharterSchema.optional(),
 });
 export type GraphWorkflowResolvedContext = z.infer<

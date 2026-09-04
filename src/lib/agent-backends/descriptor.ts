@@ -12,6 +12,7 @@ import type {
   EffortLevel,
 } from "./schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
+import type { BackendNativeMemory } from "./native-memory";
 
 export const queueDeliveryTimingSchema = z.enum(["in_turn", "next_turn"]);
 export type QueueDeliveryTiming = z.infer<typeof queueDeliveryTimingSchema>;
@@ -237,6 +238,12 @@ export interface AgentBackendDescriptor {
   conversation?: AgentBackendConversationFacet;
   tasks?: AgentBackendTaskFacet;
   managedSkills: AgentBackendManagedSkills;
+  /**
+   * What Command Center does about the provider's own memory system. Required
+   * so a backend cannot register while quietly running a second memory beside
+   * the Command Center library; see `./native-memory.ts`.
+   */
+  nativeMemory: BackendNativeMemory;
   mcp: McpBackendCapabilities;
   errors: AgentFailureClassifier;
 }

@@ -17,6 +17,7 @@ import {
 import { showBrowserNotification } from "@/lib/notifications/browser-notification";
 import { registerNotificationSseReactions } from "@/lib/notifications/sse-reactions";
 import { registerMcpSseReactions } from "@/lib/mcp/sse-reactions";
+import { registerMemorySseReactions } from "@/lib/memory/sse-reactions";
 import { registerNotepadSseReactions } from "@/lib/notepads/sse-reactions";
 import { registerSessionAlignmentSseReactions } from "@/lib/session-alignment/sse-reactions";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
@@ -112,6 +113,7 @@ export default function NotificationListener(): null {
       recordNotepadExternalWrite: (write) =>
         actionsRef.current.recordNotepadExternalWrite(write),
     });
+    registerMemorySseReactions(es, { queryClient });
     registerAgentCapabilitySseReactions(es, { queryClient });
     registerAgentProfileSseReactions(es, { queryClient });
     registerSessionAlignmentSseReactions(es, { queryClient });

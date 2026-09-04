@@ -717,6 +717,52 @@ describe("applyDefinitionEdits", () => {
     expect(clearedContext?.agentValidation).toBeUndefined();
   });
 
+  it("sets and clears the memory delivery policy blocks at both tiers (memory R10)", () => {
+    const record = createWorkflowDefinitionRecord();
+
+    const set = applyDefinitionEdits(
+      record,
+      ops(
+        {
+          type: "update-workflow-config",
+          memory: { validator: { read: "linked-only" } },
+        },
+        {
+          type: "update-context",
+          contextId: "context-plan",
+          memory: { implementer: { contribute: "off" } },
+        },
+      ),
+    );
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(set.record.definition.workflowConfig.memory).toEqual({
+      validator: { read: "linked-only" },
+    });
+    expect(
+      set.record.definition.executionContexts.find(
+        (c) => c.id === "context-plan",
+      )?.memory,
+    ).toEqual({ implementer: { contribute: "off" } });
+
+    // `null` is the reset: the override is removed, so the tier above governs.
+    const cleared = applyDefinitionEdits(
+      set.record,
+      ops(
+        { type: "update-workflow-config", memory: null },
+        { type: "update-context", contextId: "context-plan", memory: null },
+      ),
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.record.definition.workflowConfig.memory).toBeUndefined();
+    expect(
+      cleared.record.definition.executionContexts.find(
+        (c) => c.id === "context-plan",
+      )?.memory,
+    ).toBeUndefined();
+  });
+
   it("clears a per-context override with null on update-context", () => {
     const record = createWorkflowDefinitionRecord();
     const result = applyDefinitionEdits(

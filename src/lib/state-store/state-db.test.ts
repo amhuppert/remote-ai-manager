@@ -903,13 +903,32 @@ describe("truncateAllTables", () => {
 
       truncateAllTables(db);
 
+      // A virtual table's shadow tables (`memory_notes_fts_data` and friends)
+      // hold SQLite's own structural records, never application rows, and
+      // refuse direct modification: the reset clears the virtual table and
+      // leaves its shadows to SQLite.
+      const shadowTables = new Set(
+        (
+          db.pragma("table_list") as Array<{
+            schema: string;
+            name: string;
+            type: string;
+          }>
+        )
+          .filter((row) => row.schema === "main" && row.type === "shadow")
+          .map((row) => row.name),
+      );
       const remaining = tableNames(db).filter(
-        (n) => n !== "schema_migrations" && !n.startsWith("sqlite_"),
+        (n) =>
+          n !== "schema_migrations" &&
+          !n.startsWith("sqlite_") &&
+          !shadowTables.has(n),
       );
       for (const t of remaining) {
         expect(countRows(db, t)).toBe(0);
       }
       expect(remaining).toContain("temp_extra_app_table");
+      expect(remaining).toContain("memory_notes_fts");
     } finally {
       db.close();
     }

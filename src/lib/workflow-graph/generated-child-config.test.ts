@@ -338,6 +338,10 @@ describe("generated-child config compiler — protected blocks (R7.2)", () => {
     expect(config.collaboration).toEqual(invoker.collaboration);
     expect(config.planRepair).toEqual(invoker.planRepair);
     expect(config.agentValidation).toEqual(invoker.agentValidation);
+    // Memory delivery is an independence gate (spec `memory` D7): a generated
+    // child can never widen what its lanes read or may write.
+    expect(config.memory).toEqual(invoker.memory);
+    expect(config.memory).not.toBe(invoker.memory);
   });
 
   for (const block of PROTECTED_CHILD_CONFIG_BLOCKS) {

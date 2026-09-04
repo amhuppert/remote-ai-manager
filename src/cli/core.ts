@@ -10,6 +10,7 @@ import { runDocs } from "./commands/docs";
 import { runExitCodes } from "./commands/exit-codes";
 import { runFixture } from "./commands/fixture";
 import { runLogs } from "./commands/logs";
+import { runMemory } from "./commands/memory";
 import { runNotepad } from "./commands/notepad";
 import { runNotify } from "./commands/notify";
 import { runSpec } from "./commands/spec";
@@ -306,6 +307,7 @@ async function dispatchCli(
         runValidate(rest, passthrough, flags, values, env, host),
       conversation: (rest) => runConversation(rest, flags, values, env, host),
       ticket: (rest) => runTicket(rest, flags, values, lists, env, host),
+      memory: (rest) => runMemory(rest, flags, values, lists, env, host),
       notepad: (rest) => runNotepad(rest, flags, values, env, host),
       spec: (rest) => runSpec(rest, flags, values, lists, env, host),
       logs: (rest) => runLogs(rest, flags, values, env, host),

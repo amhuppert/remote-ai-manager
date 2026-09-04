@@ -49,6 +49,9 @@ import { addNotepadComments } from "./0036-add-notepad-comments";
 import { addNotepadDeliveryWatermarks } from "./0037-add-notepad-delivery-watermarks";
 import { ticketRelationshipsAndStatusUpdates } from "./0038-ticket-relationships-and-status-updates";
 import { nativeSddManagedWorkflowDefinitions } from "./0039-native-sdd-managed-workflow-definitions";
+import { addMemoryNotes } from "./0040-add-memory-notes";
+import { addMemorySearchIndex } from "./0041-add-memory-search-index";
+import { addMemoryTelemetry } from "./0042-add-memory-telemetry";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -115,6 +118,9 @@ export const migrations: readonly StateMigration[] = [
   addNotepadDeliveryWatermarks,
   ticketRelationshipsAndStatusUpdates,
   nativeSddManagedWorkflowDefinitions,
+  addMemoryNotes,
+  addMemorySearchIndex,
+  addMemoryTelemetry,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

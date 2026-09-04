@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { memoryNoteSchema } from "@/lib/memory/schemas";
 import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
 import { specExecutionBindingSnapshotV2Schema } from "@/lib/specs/execution-binding";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -445,6 +446,14 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       "claims[].criterionElementIds":
         "bounded: copied once from the same size-limited finalized candidate and never appended to after execution creation.",
     },
+  },
+  {
+    // `memory_note_revisions.snapshot_json` holds one whole Memory Note per
+    // revision. Its only collection is the alias list, which the domain schema
+    // caps statically, so the snapshot cannot grow a column-rewriting tail.
+    label: "memory_note_revisions snapshot",
+    schema: memoryNoteSchema,
+    discharges: {},
   },
 ];
 

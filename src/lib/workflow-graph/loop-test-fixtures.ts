@@ -101,6 +101,16 @@ export const RESOLVED_DEFAULTS: ResolvedContextConfig = {
       commands: [],
     },
   },
+  memory: {
+    implementer: {
+      read: { value: "ambient", source: "global" },
+      contribute: { value: "on", source: "global" },
+    },
+    validator: {
+      read: { value: "off", source: "global" },
+      contribute: { value: "off", source: "global" },
+    },
+  },
 };
 
 export function makeLiveEditDeps(): LiveEditDeps {

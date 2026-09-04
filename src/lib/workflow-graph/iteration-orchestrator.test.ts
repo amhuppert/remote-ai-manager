@@ -138,6 +138,16 @@ const LIVE_EDIT_RESOLVED_DEFAULTS: ResolvedContextConfig = {
       source: "global",
     },
   },
+  memory: {
+    implementer: {
+      read: { value: "ambient", source: "global" },
+      contribute: { value: "on", source: "global" },
+    },
+    validator: {
+      read: { value: "off", source: "global" },
+      contribute: { value: "off", source: "global" },
+    },
+  },
 };
 
 function makeLiveEditDeps(): LiveEditDeps {

@@ -496,6 +496,39 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl ticket attachment remove` — remove an attachment
   - `cctl ticket attachment remove <number | project#number> <attachmentId>`
 
+- `cctl memory` — recall, capture, and maintain Command Center's shared memory
+  - `cctl memory <recall|index|list|get|create|update|link|unlink|mark-reviewed|observe-rederivation|promote|review|archive|delete|export>`
+- `cctl memory recall` — read a bounded pack of the memory most relevant to a question
+  - `cctl memory recall ["<query>"] [--related <handle>] [--scope <scope>] [--budget <chars>]`
+- `cctl memory index` — render the memory block a conversation is due on its next turn
+  - `cctl memory index [--conversation <id>] [--full]`
+- `cctl memory list` — list the notes visible to this conversation with their slugs
+  - `cctl memory list [--scope <scope>] [--lifecycle <lifecycle>] [--archived] [--limit <n>]`
+- `cctl memory get` — read one note in full, with its links and current revision
+  - `cctl memory get <slug> [--scope <scope>] [--archived]`
+- `cctl memory create` — capture a new note in global, project, or session scope
+  - `cctl memory create --hook "<one line>" [--body "<markdown>"] [--scope <scope>] [--kind <kind>] [--slug <slug>] [--alias <text>] [--status-note "<line>"] [--index-mode <mode>] [--review-after <iso>] [--expires-at <iso>] [--supersedes <slug>]`
+- `cctl memory update` — correct a note under compare-and-swap
+  - `cctl memory update <slug> --if-revision <n> [--hook "<line>"] [--body "<markdown>"] [--slug <new-slug>] [--alias <text>] [--status-note "<line>"] [--index-mode <mode>] [--review-after <iso>] [--expires-at <iso>] [--scope <scope>]`
+- `cctl memory link` — bind a note to the ticket, spec, session, or lane it concerns
+  - `cctl memory link <slug> --artifact <handle> [--kind <about|source>] [--scope <scope>]`
+- `cctl memory unlink` — remove a note's link to an artifact
+  - `cctl memory unlink <slug> --artifact <handle> [--kind <about|source>] [--scope <scope>]`
+- `cctl memory mark-reviewed` — confirm a note is still true and re-lease it
+  - `cctl memory mark-reviewed <slug> [--status] [--if-revision <n>] [--scope <scope>]`
+- `cctl memory promote` — carry a session note up to project scope before the session ends
+  - `cctl memory promote <slug> [--slug <new-slug>] [--hook "<line>"] [--body "<markdown>"] [--status-note "<line>"] [--index-mode <mode>] [--if-revision <n>]`
+- `cctl memory review` — list the notes that have gone stale or await promotion
+  - `cctl memory review [--promotable] [--limit <n>]`
+- `cctl memory observe-rederivation` — record that a round re-derived what a note already held
+  - `cctl memory observe-rederivation <slug> [--artifact <handle>] [--scope <scope>]`
+- `cctl memory archive` — retire a note without destroying it
+  - `cctl memory archive <slug> [--if-revision <n>] [--scope <scope>]`
+- `cctl memory delete` — permanently destroy a note and its whole history
+  - `cctl memory delete <slug> --confirm [--scope <scope>]`
+- `cctl memory export` — write every visible note to a portable markdown archive
+  - `cctl memory export --output <path> [--scope <scope>]`
+
 - `cctl notepad` — list, read, create, update, and append to notepads
   - `cctl notepad <list|get|create|update|append|comment>`
 - `cctl notepad list` — list notepads in scope with their ids and revisions
@@ -923,6 +956,124 @@ cctl ticket update 12 --status in_progress
 Related: `cctl conversation compaction get` reads a compaction directly once a
 conversation attachment names it; `cctl ticket relation get` and `cctl ticket
 status-update get` are the full-content drill-down commands emitted by outlines.
+
+## cctl memory
+
+Read and write the **memory Command Center shares** across Claude, Codex, and
+Cursor. Your first turn is given the full `<memory-index>` block of one-line
+hooks; every later turn is given only a `<memory-index-delta>` of what changed
+since. The always-injected `<memory-contract>` states the rules in one
+paragraph each; this section is the worked version. The verbs and their exact
+shapes are in the command reference above (`cctl memory --help` for the live
+node).
+
+**Capturing a lesson.** The hook is the whole index entry — it is the only part
+most conversations ever see — so state a fact that stands alone, not a topic.
+Open a body only for the mechanism or the exact command a reader would come for.
+
+```
+cctl memory create --hook 'next build opens the LIVE db, so a main-branch schema bump breaks older branches' --body-file .cc/temp/note.md
+# → shared-state-db-across-branches  project  lesson  active
+#   revision: 1  index-mode: auto  updated: just now
+```
+
+A hook that names the symptom and the mechanism in one line beats a titled one:
+`turbopack .next/cache balloons to 8.4GB and the build stalls at 99% CPU on one
+core` is found by the agent hitting the stall; `turbopack cache notes` is not.
+Skip the note entirely when a live artifact answers the question — ticket,
+merge, and spec status are read live and are never recorded.
+
+**Linking it to the artifact it is about.** This is the multiplier: an `about`
+link makes the note lead the index of every conversation working that ticket,
+spec, or workflow. Do it in the same breath as the capture.
+
+```
+cctl memory link shared-state-db-across-branches --artifact ticket:105
+cctl memory link shared-state-db-across-branches --artifact spec:memory --kind source
+cctl memory recall --related ticket:105
+```
+
+`--artifact ticket:105` is the ticket's number in **this** project;
+`ticket:command-center#105` names one in another. `--kind source` records
+provenance and never affects selection, so use it for where a lesson came from
+and `about` (the default) for what it is about.
+
+**Choosing an index mode.** `auto` competes for the block on recency and
+quotas; `always` reserves a slot; `search-only` never competes and is reached
+only by recall.
+
+```
+cctl memory create --hook 'the git stash stack is shared across every worktree — never bare stash/pop' --index-mode always
+cctl memory create --hook 'GPT-5.6 reasoning tiers are low/medium/high/xhigh; the CLI picker is the source of truth' --index-mode search-only
+```
+
+Reach for `always` only when the trap bites regardless of what the task is —
+one that costs everyone an hour, not one that costs a ticket. Reach for
+`search-only` for reference material (catalogues, matrices, tables) that would
+otherwise crowd out lessons: it is the pruning lever when the block is over
+budget.
+
+**Recalling.** The block is budgeted, so hooks are omitted from it. If a turn
+touches something the block does not list, recall before you conclude — the
+omission line at the bottom of the block is asking for exactly this.
+
+```
+cctl memory recall 'turbopack build is slow'
+# → showing 3 of 3 — narrow with: cctl memory recall 'turbopack build is slow' --scope project
+cctl memory get turbopack-build-memory-balloon
+```
+
+Quote the query with **single** quotes. A double-quoted query carrying a
+backtick is substituted by the shell before `cctl` ever sees it. `recall`
+returns a bounded pack of hooks with what fits of each body; `get` prints one
+note in full with its links and the revision a later `update` passes to
+`--if-revision`.
+
+**Maintaining a status line.** The `statusNote` is the perishable half: a caveat
+that **no live artifact answers** ("never live-tested", "evals not done",
+"awaiting a decision"), leased for 14 days and withheld on its own when the
+lease runs out. A perishable caveat goes there, never in the hook. What a live
+artifact does answer — whether a branch merged, what state a ticket is in,
+whether a spec is approved — is not a status line and is not recorded at all;
+read it live instead.
+
+```
+cctl memory create --hook 'collab resume after error re-admits the prompt under a new turn generation' --status-note 'never live-tested'
+cctl memory update ticket81-collab-resume-after-error --if-revision 4 --status-note none
+cctl memory mark-reviewed ticket81-collab-resume-after-error --status
+# → status: never live-tested (status as of 21 days ago)
+```
+
+`mark-reviewed --status` prints the claim it re-asserts before the line is
+eligible to ride the note again, so read that line: re-leasing a status you have
+not checked is how a false claim gets a fresh 14 days. Eligible is not
+delivered — the line travels only where the note itself does, which its scope,
+its index mode, and the block's budget decide. When the claim is no longer what
+you would write today, `update --status-note` rewrites it and `--status-note
+none` clears it. `mark-reviewed` without `--status` re-leases the durable note
+instead; `cctl memory review` lists everything whose lease has run out.
+
+**Reading a delta.** After turn one you are given a `<memory-index-delta>`
+rather than the whole block. It carries only what changed since your last turn —
+hooks created or revised elsewhere, status lines withheld or restored, and the
+current withheld and omitted counts — so a quiet turn is one line, not a defect.
+It closes with the full-index command, which is the one-call recovery when your
+context lost the block (a backend compaction Command Center cannot observe).
+
+```
+cctl memory index
+cctl memory index --full
+```
+
+`index` renders what your own next turn is due; `--full` renders the whole
+index whatever you are due. Neither settles anything, so previewing never
+spends the block the turn is owed.
+
+Related: `cctl memory review` is the maintenance queue (expired leases, stale
+status lines, session notes offered for promotion); `cctl memory promote`
+carries a session note up to project scope before the session ends; `cctl
+memory archive` retires a note that stopped being true without destroying the
+evidence of what was believed.
 
 ## cctl conversation
 

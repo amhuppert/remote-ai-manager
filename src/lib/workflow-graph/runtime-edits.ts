@@ -371,6 +371,7 @@ export type ResolvedContextConfig = Pick<
 > & {
   collaboration: NonNullable<GraphWorkflowResolvedContext["collaboration"]>;
   agentValidation: NonNullable<GraphWorkflowResolvedContext["agentValidation"]>;
+  memory: NonNullable<GraphWorkflowResolvedContext["memory"]>;
 };
 
 /**
@@ -621,6 +622,7 @@ function liveEditTouchedPaths(
           "planRepair",
           "collaboration",
           "agentValidation",
+          "memory",
         ],
       );
     case "add-context":
@@ -1929,6 +1931,7 @@ function applyLiveConfigBlocks(
   if (op.agentValidation !== undefined) {
     context.agentValidation = op.agentValidation;
   }
+  if (op.memory !== undefined) context.memory = op.memory;
 }
 
 /**
@@ -2629,6 +2632,9 @@ function resolvedConfigFromContext(
     ...resolvedContextConfig(source, defaults.collaboration),
     scriptValidatorSource: source.scriptValidatorSource ?? "global",
     agentValidation: source.agentValidation ?? defaults.agentValidation,
+    // A source seeded before the memory snapshot existed inherits the live
+    // global role defaults, the same fallback enforcement applies to it.
+    memory: source.memory ?? defaults.memory,
   };
 }
 
@@ -2729,6 +2735,11 @@ function applyAddContext(
     planRepair: op.planRepair ?? base.planRepair,
     collaboration: op.collaboration ?? base.collaboration,
     agentValidation: op.agentValidation ?? base.agentValidation,
+    // Persisted on the context like every other resolved block: the policy
+    // resolver reads a lane's snapshot off the working definition, so a
+    // live-added context without one would silently fall back to the global
+    // role defaults and lose whatever its invoker inherited (memory R10, D7).
+    memory: op.memory ?? base.memory,
     charter: next.charter,
   };
   // A config copied from a source context keeps that context's frozen

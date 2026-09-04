@@ -36,6 +36,7 @@ import {
   type AgentBackendConversationFacet,
 } from "./descriptor";
 import { effortLevelSchema } from "./schemas";
+import { backendNativeMemorySchema } from "./native-memory";
 import { agentFailureClassificationSchema } from "./errors";
 import type {
   ContinuityContext,
@@ -609,6 +610,16 @@ export function describeBackendConformance(
       if (!descriptor.tasks) {
         expect(descriptor.managedSkills.tasks).toBe("hermetic");
       }
+    });
+
+    it("declares what Command Center does about the provider's native memory", () => {
+      // Two states only, and neither is silence: a backend that cannot be
+      // neutralized has to say so in the shape the disclosure surfaces read,
+      // because the alternative is running two memory systems unannounced.
+      const parsed = backendNativeMemorySchema.safeParse(
+        descriptor.nativeMemory,
+      );
+      expect(parsed.success).toBe(true);
     });
 
     it("rejects a resolved cascade with an undeclared capability kind — never a silent drop", async () => {

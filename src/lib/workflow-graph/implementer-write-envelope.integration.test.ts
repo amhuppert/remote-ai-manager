@@ -32,7 +32,13 @@ import os from "node:os";
 import path from "node:path";
 
 const claudeQueryMock = vi.hoisted(() => vi.fn());
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: claudeQueryMock }));
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: claudeQueryMock,
+  // The Claude launch path refuses to start unless it can confirm no managed
+  // policy re-enables native auto-memory; an ordinary host's policy tier is
+  // silent on it.
+  resolveSettings: async () => ({ effective: {}, provenance: {}, sources: [] }),
+}));
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
 /** The `ThreadOptions` and `CodexOptions` the fake Codex SDK was constructed with. */

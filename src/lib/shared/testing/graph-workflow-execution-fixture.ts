@@ -187,6 +187,16 @@ function maximalResolvedContext(): Record<string, unknown> {
         commands: ["test"],
       },
     },
+    memory: {
+      implementer: {
+        read: { value: "linked-only", source: "workflow" },
+        contribute: { value: "off", source: "per-node" },
+      },
+      validator: {
+        read: { value: "linked-only", source: "workflow" },
+        contribute: { value: "on", source: "per-node" },
+      },
+    },
     charter: makeMaximalCharter(),
   };
 }
@@ -336,6 +346,10 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
     agentValidation: {
       implementer: { mode: "all", except: ["format"] },
       contextValidator: { mode: "only", commands: ["test"] },
+    },
+    memory: {
+      implementer: { read: "linked-only", contribute: "on" },
+      validator: { read: "linked-only", contribute: "off" },
     },
   };
 
@@ -833,6 +847,16 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               value: { mode: "only", commands: ["test"] },
               source: "per-node",
               commands: ["test"],
+            },
+          },
+          memory: {
+            implementer: {
+              read: { value: "linked-only", source: "workflow" },
+              contribute: { value: "off", source: "per-node" },
+            },
+            validator: {
+              read: { value: "linked-only", source: "workflow" },
+              contribute: { value: "on", source: "per-node" },
             },
           },
           charter: makeMaximalCharter(),

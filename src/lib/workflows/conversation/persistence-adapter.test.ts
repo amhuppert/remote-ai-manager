@@ -424,6 +424,7 @@ describe("conversation persistence facet", () => {
       "markQueuedPending",
       "markQueuedFailed",
       "recordNotepadDeliveries",
+      "recordMemoryIndexDeliveries",
       "settleNotepadChangeNotice",
       "claimWorkflowResults",
       "settleWorkflowResults",
@@ -462,6 +463,9 @@ describe("conversation persistence facet", () => {
         }),
         recordNotepadDeliveries: vi.fn(async () => {
           reached.push("recordNotepadDeliveries");
+        }),
+        recordMemoryIndexDeliveries: vi.fn(async () => {
+          reached.push("recordMemoryIndexDeliveries");
         }),
         settleNotepadChangeNotice: vi.fn(async () => {
           reached.push("settleNotepadChangeNotice");

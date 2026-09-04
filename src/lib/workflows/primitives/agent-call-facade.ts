@@ -617,6 +617,10 @@ async function executeTaskRun(
         resumeRef: null,
         executionProfile: "isolated-one-shot",
         imagePaths: undefined,
+        // A repair is a hermetic formatting turn (spec `memory` R10): it never
+        // inherits the governed call's CC identity, so no `cctl` verb —
+        // memory included — is reachable from it.
+        ccSessionScope: undefined,
       });
     },
   );

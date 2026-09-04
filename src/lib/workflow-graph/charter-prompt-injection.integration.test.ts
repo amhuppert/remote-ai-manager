@@ -94,6 +94,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
     strategy: "final-only",
     commands: { mode: "project" },
   },
+  memory: {
+    implementer: { read: "ambient", contribute: "on" },
+    validator: { read: "off", contribute: "off" },
+  },
 };
 
 const EMPTY_VALIDATION_SELECTIONS = {

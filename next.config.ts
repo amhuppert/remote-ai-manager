@@ -27,7 +27,16 @@ const nextConfig: NextConfig = {
       "@react-hookz/web",
     ],
   },
-  serverExternalPackages: ["@openai/codex-sdk"],
+  // Both agent SDKs must load from node_modules rather than through the
+  // Turbopack server bundle. Turbopack's dead-code elimination drops the tail
+  // of the Claude SDK's managed-settings loader (its final `return` compiles
+  // to a `//TURBOPACK unreachable` marker), so `resolveSettings` resolves to
+  // undefined inside the bundle and the native-memory launch guard refuses
+  // every Claude launch.
+  serverExternalPackages: [
+    "@openai/codex-sdk",
+    "@anthropic-ai/claude-agent-sdk",
+  ],
 };
 
 export default nextConfig;

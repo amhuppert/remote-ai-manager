@@ -5,6 +5,7 @@ import {
   resolveAgentValidationWithProvenance,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
+  resolveMemoryPolicyWithProvenance,
 } from "../resolve-config";
 import type { LiveEditDeps } from "../runtime-edits";
 import { makeProfileSnapshot, seedAssignment } from "../test-fixtures";
@@ -66,6 +67,7 @@ export function harnessLiveEditDeps(): LiveEditDeps {
           commands: [],
         },
       },
+      memory: resolveMemoryPolicyWithProvenance(defaults, {}, synthetic),
     }),
     validationCommandPreflight: () => ({
       commandCosts: {},

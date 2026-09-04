@@ -6,9 +6,9 @@
  * into two classes:
  *
  * - **PROTECTED** — `contextValidator`, `humanApprovalGate`, `askUserQuestions`,
- *   `collaboration`, `planRepair`, `mutability`, `agentValidation`. These always
- *   derive from the INVOKER's resolved config, and a payload override of one is
- *   refused.
+ *   `collaboration`, `planRepair`, `mutability`, `agentValidation`, `memory`.
+ *   These always derive from the INVOKER's resolved config, and a payload
+ *   override of one is refused.
  *   Deriving them from the invoker (rather than from the payload's
  *   `configFromContextId`) is what closes the laundering hole: pointing a
  *   generated child's seed at a validator-disabled context would otherwise let a
@@ -47,6 +47,7 @@ import type {
   GraphWorkflowResolvedContext,
   WorkflowGraphValidationError,
 } from "@/lib/workflow-graph/definition-schemas";
+import { DEFAULT_MEMORY_POLICY_CONFIG } from "./config-schemas";
 import type { ResolvedContextConfig } from "./runtime-edits";
 
 /**
@@ -62,6 +63,9 @@ export const PROTECTED_CHILD_CONFIG_BLOCKS = [
   "planRepair",
   "mutability",
   "agentValidation",
+  // Memory delivery is an independence gate (spec `memory` D7): a generated
+  // child's validator must not be primed with what its invoker chose to read.
+  "memory",
 ] as const;
 
 /** Blocks a generating agent may seed from another context and override. */
@@ -98,6 +102,7 @@ export const generatedChildConfigOverrideSchema = z
     planRepair: z.unknown().optional(),
     mutability: z.unknown().optional(),
     agentValidation: z.unknown().optional(),
+    memory: z.unknown().optional(),
   })
   .strict();
 
@@ -151,6 +156,28 @@ export function resolvedContextConfig(
       source: "global",
     },
   },
+  fallbackMemory: ResolvedContextConfig["memory"] = {
+    implementer: {
+      read: {
+        value: DEFAULT_MEMORY_POLICY_CONFIG.implementer.read,
+        source: "global",
+      },
+      contribute: {
+        value: DEFAULT_MEMORY_POLICY_CONFIG.implementer.contribute,
+        source: "global",
+      },
+    },
+    validator: {
+      read: {
+        value: DEFAULT_MEMORY_POLICY_CONFIG.validator.read,
+        source: "global",
+      },
+      contribute: {
+        value: DEFAULT_MEMORY_POLICY_CONFIG.validator.contribute,
+        source: "global",
+      },
+    },
+  },
 ): ResolvedContextConfig {
   return {
     implementer: context.implementer,
@@ -165,6 +192,7 @@ export function resolvedContextConfig(
     planRepair: context.planRepair,
     collaboration: context.collaboration ?? fallbackCollaboration,
     agentValidation: context.agentValidation ?? fallbackAgentValidation,
+    memory: context.memory ?? fallbackMemory,
   };
 }
 
@@ -279,6 +307,7 @@ export function compileGeneratedChildConfig(
       // Give the pure compiler result its own container so a caller inspecting
       // or transforming it cannot rewrite the invoker's durable snapshot.
       agentValidation: structuredClone(invoker.agentValidation),
+      memory: structuredClone(invoker.memory),
       // Stamped LAST, touching one key: authority never propagates down a
       // generated subgraph, and every sibling flag survives exactly as
       // inherited (R7.1).

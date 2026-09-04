@@ -20,6 +20,8 @@ export interface ExternalTurnHandlerDeps {
     conversationId: string,
     entry: TranscriptEntry,
   ): Promise<void>;
+  /** Clear delivery state when this external turn compacted backend context. */
+  onBackendCompaction?(): Promise<void>;
   /**
    * Drain any `staged-idle` capability cascades when an external/background
    * turn finishes (running → idle). Optional: the actor wires it only for
@@ -103,6 +105,12 @@ export function createExternalTurnHandler(
           error: event.result.failure?.message ?? null,
           continuationDisposition: event.result.continuationDisposition,
         };
+        if (event.result.compacted && deps.onBackendCompaction) {
+          enqueue(
+            () => deps.onBackendCompaction?.(),
+            "external_turn.compaction_handler_failed",
+          );
+        }
         enqueue(
           () => {
             runtime.sendToMachine({ type: "EXTERNAL_TURN_COMPLETED", result });

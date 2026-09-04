@@ -11,6 +11,12 @@ import {
   type AgentProfileRef,
 } from "@/lib/agent-profiles/schemas";
 import { backendFacetRefusalFor } from "@/lib/agent-backends/facet-gating";
+import {
+  MEMORY_IMPLEMENTER_POLICY_DEFAULT,
+  MEMORY_VALIDATOR_POLICY_DEFAULT,
+  memoryDeliveryPolicyOverrideSchema,
+  memoryDeliveryPolicySettingSchema,
+} from "@/lib/memory/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
@@ -486,6 +492,42 @@ export type GraphWorkflowAgentValidationOverride = z.infer<
  */
 export const DEFAULT_AGENT_VALIDATION_CONFIG: GraphWorkflowAgentValidationConfig =
   graphWorkflowAgentValidationConfigSchema.parse({});
+
+// Per-role memory delivery policy (spec `memory` R10, D7): what a lane reads
+// unasked and whether it may write, resolved independently for the implementer
+// and the validator and — within a role — independently per half, so a
+// workflow can narrow a validator's read to linked-only without touching its
+// contribution. Mirrors the agent-validation per-leaf cascade for the same
+// reason: whole-block replacement would let one tier silently erase another's
+// setting of the other role.
+export const graphWorkflowMemoryPolicyConfigSchema = z
+  .object({
+    implementer: memoryDeliveryPolicySettingSchema(
+      MEMORY_IMPLEMENTER_POLICY_DEFAULT,
+    ),
+    validator: memoryDeliveryPolicySettingSchema(
+      MEMORY_VALIDATOR_POLICY_DEFAULT,
+    ),
+  })
+  .strict();
+export type GraphWorkflowMemoryPolicyConfig = z.infer<
+  typeof graphWorkflowMemoryPolicyConfigSchema
+>;
+
+// Override tiers keep omitted roles and omitted halves absent (inherit).
+export const graphWorkflowMemoryPolicyOverrideSchema = z
+  .object({
+    implementer: memoryDeliveryPolicyOverrideSchema.optional(),
+    validator: memoryDeliveryPolicyOverrideSchema.optional(),
+  })
+  .strict();
+export type GraphWorkflowMemoryPolicyOverride = z.infer<
+  typeof graphWorkflowMemoryPolicyOverrideSchema
+>;
+
+/** The one canonical memory-policy default, derived from the schema's own field defaults. */
+export const DEFAULT_MEMORY_POLICY_CONFIG: GraphWorkflowMemoryPolicyConfig =
+  graphWorkflowMemoryPolicyConfigSchema.parse({});
 
 // `{mode:"project"}` resolves to the project's validation.laneMerge list when
 // configured, else its preMerge list — resolved at merge submission against

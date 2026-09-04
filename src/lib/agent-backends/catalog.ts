@@ -36,19 +36,26 @@ import {
   claudeBackendMetadata,
   claudeConversationCapabilities,
   claudeConversationFsWriteRestriction,
+  claudeNativeMemory,
   claudeTaskFsWriteRestriction,
 } from "./claude/descriptor";
 import {
   codexBackendMetadata,
   codexConversationCapabilities,
   codexConversationFsWriteRestriction,
+  codexNativeMemory,
   codexTaskFsWriteRestriction,
 } from "./codex/descriptor";
 import {
   cursorBackendMetadata,
   cursorConversationCapabilities,
   cursorConversationFsWriteRestriction,
+  cursorNativeMemory,
 } from "./cursor/descriptor";
+import {
+  backendNativeMemorySchema,
+  type BackendNativeMemory,
+} from "./native-memory";
 
 // ---------------------------------------------------------------------------
 // Wire shape — served by GET /api/agent-backends and parsed by the UI hook.
@@ -104,6 +111,13 @@ export const backendCatalogEntrySchema = z.object({
   facets: backendCatalogFacetsSchema,
   /** Null for a backend without a conversation facet. */
   capabilities: backendCatalogCapabilitiesSchema.nullable(),
+  /**
+   * What Command Center does about the provider's own memory. Client-safe for
+   * the same reason the facets are: the Memory Library has to disclose a
+   * backend running a second memory system, and the descriptor that owns the
+   * answer is server-only.
+   */
+  nativeMemory: backendNativeMemorySchema,
 });
 export type BackendCatalogEntry = z.infer<typeof backendCatalogEntrySchema>;
 
@@ -119,6 +133,7 @@ function buildCatalogEntry(
   metadata: AgentBackendMetadata,
   capabilities: BackendConversationCapabilities | null,
   facets: BackendCatalogEntry["facets"],
+  nativeMemory: BackendNativeMemory,
 ): BackendCatalogEntry {
   return backendCatalogEntrySchema.parse({
     id,
@@ -135,6 +150,7 @@ function buildCatalogEntry(
     defaultTimeoutMs: metadata.defaultTimeoutMs,
     facets,
     capabilities,
+    nativeMemory,
   });
 }
 
@@ -150,6 +166,7 @@ export function catalogEntryFromDescriptor(
       conversation: descriptor.conversation !== undefined,
       tasks: descriptor.tasks !== undefined,
     },
+    descriptor.nativeMemory,
   );
 }
 
@@ -165,12 +182,14 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     claudeBackendMetadata,
     claudeConversationCapabilities,
     { conversation: true, tasks: true },
+    claudeNativeMemory,
   ),
   codex: buildCatalogEntry(
     "codex",
     codexBackendMetadata,
     codexConversationCapabilities,
     { conversation: true, tasks: true },
+    codexNativeMemory,
   ),
   cursor: buildCatalogEntry(
     "cursor",
@@ -178,6 +197,7 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     cursorConversationCapabilities,
     // Conversation only: Cursor registers no task facet in Phase 1.
     { conversation: true, tasks: false },
+    cursorNativeMemory,
   ),
 };
 

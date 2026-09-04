@@ -75,6 +75,7 @@ import {
   type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
 import { withCodexFastMode } from "./fast-mode-config";
+import { CODEX_NATIVE_MEMORY_CONFIG } from "./native-memory";
 import {
   ensureCodexManagedSkillsBridgeForLaunch,
   type CodexManagedSkillsBridgeResult,
@@ -869,6 +870,11 @@ export class CodexConversationRuntime
     if (writeEnvelope) {
       Object.assign(configMerged, writeEnvelope.config);
     }
+
+    // After the envelope, and touching none of the keys it pins: Command
+    // Center's memory library is a replacement for Codex's own store, so no
+    // layer above may hand the turn a second memory system back.
+    Object.assign(configMerged, CODEX_NATIVE_MEMORY_CONFIG);
 
     options.config = withCodexFastMode(
       configMerged as CodexOptions["config"],

@@ -42,3 +42,34 @@ export function resolveBoundConversationId(
 
   return null;
 }
+
+/**
+ * The inverse: which execution context a conversation is driving right now.
+ * Reads the same records as {@link resolveBoundConversationId} — a running
+ * task's `lastConversationId`, else a lane record's `workflowConversationId` —
+ * so the two can never disagree about a binding. The memory contribution gate
+ * uses it to place a lane's writes under its context's seeded policy from the
+ * execution's own state, never from an id the caller supplies. `null` when
+ * nothing in the execution names the conversation.
+ */
+export function findLaneBindingForConversation(
+  execution: GraphWorkflowExecution,
+  conversationId: string,
+): { executionId: string; contextId: string } | null {
+  for (const taskState of Object.values(execution.taskStates)) {
+    if (
+      taskState.status === "running" &&
+      taskState.lastConversationId === conversationId
+    ) {
+      return { executionId: execution.id, contextId: taskState.contextId };
+    }
+  }
+  for (const [contextId, laneByKind] of Object.entries(execution.laneStates)) {
+    for (const lane of Object.values(laneByKind)) {
+      if (lane.workflowConversationId === conversationId) {
+        return { executionId: execution.id, contextId };
+      }
+    }
+  }
+  return null;
+}

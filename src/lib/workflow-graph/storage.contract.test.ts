@@ -189,6 +189,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         implementer: { mode: "all", except: ["format"] },
         contextValidator: { mode: "only", commands: ["test"] },
       },
+      memory: {
+        implementer: { read: "linked-only", contribute: "on" },
+        validator: { read: "linked-only", contribute: "off" },
+      },
       laneMergeValidation: {
         strategy: "every-merge",
         commands: { mode: "only", commands: ["typecheck"] },
@@ -373,6 +377,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         agentValidation: {
           implementer: { mode: "only", commands: ["typecheck", "test"] },
           contextValidator: { mode: "all", except: ["format"] },
+        },
+        memory: {
+          implementer: { read: "off", contribute: "off" },
+          validator: { read: "ambient", contribute: "on" },
         },
         // `taskValidation` is a removed CC config field name reused here as an
         // ordinary output property: the cutover guard runs on every definition

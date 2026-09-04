@@ -67,6 +67,10 @@ describe("capabilityViewFromDescriptor", () => {
         fsWriteRestriction: "enforced",
       },
       managedSkills: { conversations: "hermetic", tasks: "hermetic" },
+      nativeMemory: {
+        mechanism: "disabled",
+        lever: "test fixture launches no provider",
+      },
       mcp: claudeMcpCapabilities,
       errors: createStubFailureClassifier(),
     };

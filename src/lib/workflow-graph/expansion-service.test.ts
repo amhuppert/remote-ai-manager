@@ -40,6 +40,17 @@ import { prepareLiveEditAssignmentSnapshots } from "./live-edit-preparation";
 const PROJECT_PATH = "/projects/demo";
 const SESSION_NAME = "session-1";
 const INVOKER = "context-plan";
+/** A resolved memory policy no tier ships by default, so inheritance is provable. */
+const INVOKER_MEMORY = {
+  implementer: {
+    read: { value: "linked-only" as const, source: "workflow" as const },
+    contribute: { value: "off" as const, source: "per-node" as const },
+  },
+  validator: {
+    read: { value: "linked-only" as const, source: "workflow" as const },
+    contribute: { value: "on" as const, source: "per-node" as const },
+  },
+};
 const CONVERSATION_ID = "conversation-7";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
@@ -82,6 +93,16 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
       value: { mode: "only", commands: [] },
       source: "global",
       commands: [],
+    },
+  },
+  memory: {
+    implementer: {
+      read: { value: "ambient", source: "global" },
+      contribute: { value: "on", source: "global" },
+    },
+    validator: {
+      read: { value: "off", source: "global" },
+      contribute: { value: "off", source: "global" },
     },
   },
 };
@@ -381,6 +402,7 @@ describe("compileExpansionBatch — handle → deterministic id compilation", ()
       expect(operation).not.toHaveProperty("collaboration");
       expect(operation).not.toHaveProperty("planRepair");
       expect(operation).not.toHaveProperty("agentValidation");
+      expect(operation).not.toHaveProperty("memory");
     }
   });
 });
@@ -1336,6 +1358,7 @@ describe("graph expansion — generated child config (R7.2)", () => {
             commands: ["lint"],
           },
         };
+        plan.memory = structuredClone(INVOKER_MEMORY);
       }
       mutate(execution);
     });
@@ -1366,6 +1389,40 @@ describe("graph expansion — generated child config (R7.2)", () => {
       ],
     });
   }
+
+  it("carries the invoker's resolved memory policy onto a generated child, never the seed's (memory R10, D7)", async () => {
+    const harness = makeHarness(gatedExecution());
+
+    const outcome = await expandWith(
+      harness,
+      requestWithChildConfig({ configFromContextId: "context-implement" }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    // The seed context carries no memory snapshot; the child still gets the
+    // invoker's workflow/per-node provenance, not the global role default.
+    expect(childOf(harness, outcome)?.memory).toEqual(INVOKER_MEMORY);
+  });
+
+  it("gives a generated child of an unoverridden invoker the global memory defaults, persisted on the context", async () => {
+    const harness = makeHarness(runningExecution());
+
+    const outcome = await expandWith(harness, requestWithChildConfig({}));
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(childOf(harness, outcome)?.memory).toMatchObject({
+      implementer: {
+        read: { value: "ambient", source: "global" },
+        contribute: { value: "on", source: "global" },
+      },
+      validator: {
+        read: { value: "off", source: "global" },
+        contribute: { value: "off", source: "global" },
+      },
+    });
+  });
 
   it("derives protected blocks from the invoker even when seeding from a weaker context", async () => {
     const harness = makeHarness(gatedExecution());

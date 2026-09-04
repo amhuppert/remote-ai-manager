@@ -11,6 +11,7 @@ import type { BackendRuntimeConfigAdapter } from "../runtime-config";
 import type { AgentTaskRunner } from "../task";
 import type { AgentFailureClassifier } from "../errors";
 import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
+import type { BackendNativeMemory } from "../native-memory";
 import { getDefaultClaudeModel, getEffortLevelsForModel } from "../schemas";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 
@@ -100,6 +101,26 @@ export const claudeTaskFsWriteRestriction = "enforced" as const;
  */
 export const claudeConversationFsWriteRestriction = "enforced" as const;
 
+/**
+ * Claude's auto-memory is off in every environment Command Center launches.
+ * The Agent SDK exposes the lever on the `Settings` layer CC already supplies,
+ * which outranks the machine's `~/.claude/settings.json` — but NOT the managed
+ * policy tier, so the claim is only true because each launch also verifies the
+ * effective cascade and refuses both when policy overrides it and when a policy
+ * source is present that the resolver cannot read (see `./native-memory.ts`).
+ * `autoDreamEnabled` is the same switch for the background consolidation pass
+ * — leaving it on would keep a writer running against a store nothing reads.
+ *
+ * Exported as a literal (not read off the descriptor) because the descriptor
+ * carries the server-only runner while the catalog projection is
+ * client-imported.
+ */
+export const claudeNativeMemory: BackendNativeMemory = {
+  mechanism: "disabled",
+  lever:
+    "SDK Settings autoMemoryEnabled=false, autoDreamEnabled=false; launch refused when the effective policy tier cannot be proven off",
+};
+
 export interface ClaudeDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
   /** `createClaudeContinuityAdapter(...)` in production; injected so the
@@ -142,6 +163,7 @@ export function createClaudeBackendDescriptor(
       fsWriteRestriction: claudeTaskFsWriteRestriction,
     },
     managedSkills: { conversations: "bundled", tasks: "bundled" },
+    nativeMemory: claudeNativeMemory,
     mcp: deps.mcp,
     errors: deps.failureClassifier,
   };

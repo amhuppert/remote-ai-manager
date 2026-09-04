@@ -160,6 +160,10 @@ function makeDescriptor(
       fsWriteRestriction: "enforced",
     },
     managedSkills: { conversations: "bundled", tasks: "bundled" },
+    nativeMemory: {
+      mechanism: "disabled",
+      lever: "test fixture launches no provider",
+    },
     mcp: fakeMcp(backend),
     errors: createStubFailureClassifier(),
     ...overrides,

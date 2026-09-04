@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PrepareTurnInput, ExecutePromptInput } from "./types";
 import type { ActorImplementationDeps } from "./actor-implementations";
+import { shouldRecreateRuntime } from "./pre-turn/runtime-recreate";
 import type {
+  ConversationBackendCreateInput,
+  ConversationBackendEvent,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
@@ -51,7 +54,6 @@ import {
   runTaskRunTurnForMachine,
   setActorDeps,
   _resetActorDepsForTesting,
-  shouldRecreateRuntime,
   buildEffectivePrompt,
 } from "./actor-implementations";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -73,9 +75,28 @@ import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createLiveTicketContextProvider } from "@/lib/tickets/live-context";
+import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
+import { createMemoryFreshnessEngine } from "@/lib/memory/freshness";
+import {
+  createMemoryIndexComposer,
+  type MemoryIndexEntry,
+} from "@/lib/memory/index-composer";
+import {
+  createMemoryIndexContextProvider,
+  type PreparedMemoryIndexDelivery,
+} from "@/lib/memory/index-live-context";
+import { createMemoryService } from "@/lib/memory/service";
+import { openMemoryContributionGate } from "@/lib/memory/testing/contribution-gate";
+import { resolveBoundSpecExecution } from "@/lib/specs/execution-service";
+import { createMemoryTelemetryService } from "@/lib/memory/telemetry";
+import { createMemoryRepo } from "@/lib/state-store/memory-repo";
+import { createMemoryTelemetryRepo } from "@/lib/state-store/memory-telemetry-repo";
+import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import {
   createActorImplementationDepsFixture,
@@ -5165,6 +5186,1593 @@ describe("executePromptForMachine", () => {
           deliveryAttemptId: "att-1",
         }),
       );
+    });
+  });
+
+  // Spec `memory` R5/R6/D4: the `<memory-index>` block is a per-turn
+  // live-context source beside the ticket block, for session AND project
+  // conversations, and the static advisory contract is the only memory
+  // content in the governing instruction layer.
+  describe("memory index injection", () => {
+    const TICKET_BLOCK = [
+      "<active-ticket>",
+      "identifier: repo#1",
+      "attachments: none",
+      "</active-ticket>",
+    ].join("\n");
+
+    function memoryBlock(
+      text: string | null,
+      entries: readonly MemoryIndexEntry[] = [],
+      mode: PreparedMemoryIndexDelivery["mode"] = "full",
+      composedAt = "2026-07-05T00:00:00.000Z",
+    ): PreparedMemoryIndexDelivery {
+      return {
+        mode,
+        composedAt,
+        entries,
+        block: text,
+        rendered: null,
+      };
+    }
+
+    function indexEntry(
+      memoryId: string,
+      revision: number,
+      statusDelivered = true,
+    ): MemoryIndexEntry {
+      return {
+        memoryId,
+        revision,
+        slug: `slug-${memoryId}`,
+        scope: "project",
+        section: "auto",
+        statusDelivered,
+      };
+    }
+
+    /** One claimed workflow result, enough to make the turn settle them. */
+    function claimedWorkflowResults(): GraphWorkflowResultDelivery[] {
+      return [
+        {
+          executionId: "exec-alpha",
+          boundarySeq: 11,
+          projectPath: "/projects/repo",
+          sessionName: "test-session",
+          originConversationId: "conv-1",
+          payload: { status: "halted", output: "first" },
+          recordedAt: "2026-08-14T12:00:01.000Z",
+          state: "delivering",
+          attemptId: "stream-1",
+          attemptCount: 1,
+          deliveredAt: null,
+          effectsDeliveredAt: null,
+        },
+      ];
+    }
+
+    const MEMORY_BLOCK = [
+      "<memory-index>",
+      "visibility: global + project",
+      "- a-lesson [project, just now] A hook",
+      "showing 1 of 1 hooks",
+      "</memory-index>",
+    ].join("\n");
+
+    function registerRuntime(input: ExecutePromptInput): void {
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+    }
+
+    function lastTurnInput(): ConversationBackendTurnInput {
+      const call = mockSendTurn.mock.calls.at(-1)! as unknown[];
+      return call[0] as ConversationBackendTurnInput;
+    }
+
+    function createdRuntimeInstructions(): string {
+      const createRuntimeCall = (
+        mockFactory.createRuntime as ReturnType<typeof vi.fn>
+      ).mock.calls.at(-1)! as unknown[];
+      const runtimeArgs = createRuntimeCall[0] as {
+        sessionInstructions: string[];
+      };
+      return runtimeArgs.sessionInstructions.join("\n\n");
+    }
+
+    type TestDb = ReturnType<typeof _createTestDb>;
+
+    function seedSessionRows(db: TestDb): void {
+      db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
+        "/projects/repo",
+      );
+      db.prepare(
+        `INSERT INTO sessions
+           (project_path, session_name, worktree_path, branch_name, created_at, last_activity_at, finished)
+         VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      ).run(
+        "/projects/repo",
+        "test-session",
+        "/projects/repo/.worktrees/test-session",
+        "csm/test-session",
+        "2026-07-04T00:00:00.000Z",
+        "2026-07-04T00:00:00.000Z",
+      );
+    }
+
+    /**
+     * The production memory delivery over a real store: the real service,
+     * composer, freshness engine, and the same spec-binding resolver the
+     * spec lifecycle uses, so a lane's bound spec reaches the composer the
+     * way it does in production.
+     */
+    function createRealMemoryDelivery(db: TestDb) {
+      const memoryRepo = createMemoryRepo(db, createWriteQueue());
+      let currentNow = "2026-07-05T00:00:00.000Z";
+      const now = (): string => currentNow;
+      const sessions = {
+        async isSessionIncarnationOver() {
+          return false;
+        },
+      };
+      let idSeq = 0;
+      const memoryService = createMemoryService({
+        repo: memoryRepo,
+        publish: () => ({ delivered: true }),
+        contributionGate: openMemoryContributionGate(),
+        sessions,
+        now,
+        generateId: () => `mem-${(idSeq += 1)}`,
+      });
+      const bindingRepo = createSpecExecutionBindingRepo(db);
+      const deliveryRepo = createSpecDeliveryRepo(db);
+      const telemetry = createMemoryTelemetryService({
+        repo: createMemoryTelemetryRepo(db, createWriteQueue()),
+        now,
+      });
+      const provider = createMemoryIndexContextProvider({
+        // The shipped cascade in miniature; the real resolver is proven in
+        // delivery-policy.test.ts and wired in service-factory.ts.
+        resolveReadPolicy: async (subject) =>
+          subject.role === "validator" ? "off" : "ambient",
+        composer: createMemoryIndexComposer({
+          repo: memoryRepo,
+          freshness: createMemoryFreshnessEngine({
+            repo: memoryRepo,
+            sessions,
+            now,
+          }),
+          now,
+        }),
+        async findSessionCreatedAt(projectPath, sessionName) {
+          const row = db
+            .prepare(
+              "SELECT created_at FROM sessions WHERE project_path = ? AND session_name = ?",
+            )
+            .get(projectPath, sessionName);
+          return typeof row === "object" &&
+            row !== null &&
+            "created_at" in row &&
+            typeof row.created_at === "string"
+            ? row.created_at
+            : null;
+        },
+        async findLinkedTicketId() {
+          return null;
+        },
+        async findBoundSpecId(workflowExecutionId) {
+          return (
+            resolveBoundSpecExecution(
+              { bindingRepo, deliveryRepo },
+              workflowExecutionId,
+            )?.spec_id ?? null
+          );
+        },
+        async readBudget() {
+          return { bytes: 12288, hooks: 80 };
+        },
+        readIndexDelivery: (conversationId) =>
+          telemetry.readIndexDelivery(conversationId),
+        resetIndexDelivery: (conversationId) =>
+          telemetry.resetIndexDelivery(conversationId),
+        now,
+      });
+      return {
+        memoryService,
+        provider,
+        telemetry,
+        setNow(value: string) {
+          currentNow = value;
+        },
+      };
+    }
+
+    it("prepends the block to a session turn's effective prompt below the ticket block, never to sessionInstructions", async () => {
+      const getMemoryIndexBlock = vi.fn(async () => memoryBlock(MEMORY_BLOCK));
+      setActorDeps(
+        createMockDeps({
+          getLiveTicketBlock: vi.fn(async () => TICKET_BLOCK),
+          getMemoryIndexBlock,
+        }),
+      );
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(getMemoryIndexBlock).toHaveBeenCalledWith({
+        projectPath: "/projects/repo",
+        conversationId: "conv-1",
+        conversation: { kind: "session", sessionName: "test-session" },
+        role: null,
+        workflowExecutionId: null,
+        workflowContextId: null,
+        runtimeCreatedWithoutResume: false,
+        backendReportedCompactionLastTurn: false,
+      });
+      const prompt = lastTurnInput().promptText;
+      expect(prompt.indexOf(TICKET_BLOCK)).toBeGreaterThanOrEqual(0);
+      expect(prompt.indexOf(MEMORY_BLOCK)).toBeGreaterThan(
+        prompt.indexOf(TICKET_BLOCK),
+      );
+      expect(prompt.indexOf("do the work")).toBeGreaterThan(
+        prompt.indexOf(MEMORY_BLOCK),
+      );
+      // The contract may NAME the block; the block's changing content — its
+      // hook lines and counts — never enters the frozen instruction layer.
+      const instructions = createdRuntimeInstructions();
+      expect(instructions).toContain(MEMORY_ADVISORY_CONTRACT);
+      expect(instructions).not.toContain(MEMORY_BLOCK);
+      expect(instructions).not.toContain("- a-lesson [project, just now]");
+    });
+
+    it("prepends the block to a project conversation's turn as well", async () => {
+      const getMemoryIndexBlock = vi.fn(async () => memoryBlock(MEMORY_BLOCK));
+      setActorDeps(createMockDeps({ getMemoryIndexBlock }));
+      const input = makeProjectExecutePromptInput({
+        promptText: "project turn",
+      });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(getMemoryIndexBlock).toHaveBeenCalledWith({
+        projectPath: "/projects/repo",
+        conversationId: "conv-1",
+        conversation: { kind: "project" },
+        role: null,
+        workflowExecutionId: null,
+        workflowContextId: null,
+        runtimeCreatedWithoutResume: false,
+        backendReportedCompactionLastTurn: false,
+      });
+      expect(lastTurnInput().promptText).toBe(
+        `${MEMORY_BLOCK}\n\nproject turn`,
+      );
+    });
+
+    /** Emit backend acceptance the way a live runtime does mid-turn. */
+    function acceptTurnOnSend(): void {
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+    }
+
+    // Spec R15: what a turn actually injected is recorded per conversation,
+    // following the notepad delivery-watermark precedent — at the seam where
+    // the block reaches the agent, never at composition, so a preview of the
+    // same block records nothing and a turn rejected before acceptance
+    // reports nothing as delivered.
+    it("records a watermark for every note revision the injected block carried", async () => {
+      const recordMemoryIndexDeliveries = vi.fn(async () => {});
+      const log = createCapturingLogger();
+      setActorDeps(
+        createMockDeps({
+          log,
+          getMemoryIndexBlock: vi.fn(async () =>
+            memoryBlock(MEMORY_BLOCK, [
+              indexEntry("mem-1", 3),
+              indexEntry("mem-2", 1, false),
+            ]),
+          ),
+          recordMemoryIndexDeliveries,
+        }),
+      );
+      acceptTurnOnSend();
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordMemoryIndexDeliveries).toHaveBeenCalledWith({
+        conversationId: "conv-1",
+        kind: "full",
+        composedAt: "2026-07-05T00:00:00.000Z",
+        // Per note, not per block: the second entry's status line was withheld
+        // and the watermark the seam hands on has to say so.
+        notes: [
+          { memoryId: "mem-1", revision: 3, statusDelivered: true },
+          { memoryId: "mem-2", revision: 1, statusDelivered: false },
+        ],
+      });
+      expect(
+        log.entries.find(
+          (entry) => entry.message === "prompt.memory_delivery_settled",
+        )?.fields,
+      ).toEqual({
+        conversationId: "conv-1",
+        mode: "full",
+        entryCount: 2,
+        omittedCount: 0,
+        bytes: Buffer.byteLength(MEMORY_BLOCK, "utf8"),
+      });
+      expect(log.allFieldValues()).not.toContain(MEMORY_BLOCK);
+      expect(log.allFieldValues()).not.toContain("A hook");
+    });
+
+    it("records the watermark only once the backend accepts the message", async () => {
+      const recordMemoryIndexDeliveries = vi.fn(async () => {});
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () =>
+            memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
+          ),
+          recordMemoryIndexDeliveries,
+        }),
+      );
+      // Read outside the mock: an assertion thrown inside it would be caught
+      // by the turn's own failure handling and never reach the reporter.
+      let callsBeforeAcceptance = -1;
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          // Composition, capability setup, MCP apply and dispatch have all run
+          // by now; none of them proves the agent read the block.
+          callsBeforeAcceptance = recordMemoryIndexDeliveries.mock.calls.length;
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(callsBeforeAcceptance).toBe(0);
+      expect(recordMemoryIndexDeliveries).toHaveBeenCalledTimes(1);
+    });
+
+    it("records nothing when the turn fails before the backend accepts it", async () => {
+      const recordMemoryIndexDeliveries = vi.fn(async () => {});
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () =>
+            memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
+          ),
+          recordMemoryIndexDeliveries,
+        }),
+      );
+      mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordMemoryIndexDeliveries).not.toHaveBeenCalled();
+    });
+
+    it("records the delivery once when acceptance fires repeatedly", async () => {
+      const recordMemoryIndexDeliveries = vi.fn(async () => {});
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () =>
+            memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
+          ),
+          recordMemoryIndexDeliveries,
+        }),
+      );
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordMemoryIndexDeliveries).toHaveBeenCalledTimes(1);
+    });
+
+    // Once the backend has taken the message the agent has read the block, so
+    // what the turn delivered is settled fact. A neighbouring post-acceptance
+    // write failing must not cost the observation.
+    it("records the watermark even when another post-acceptance write fails", async () => {
+      const recordMemoryIndexDeliveries = vi.fn(async () => {});
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () =>
+            memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
+          ),
+          recordMemoryIndexDeliveries,
+          claimWorkflowResults: vi.fn(async () => claimedWorkflowResults()),
+          settleWorkflowResults: vi.fn(async () => {
+            throw new Error("workflow settle unavailable");
+          }),
+        }),
+      );
+      acceptTurnOnSend();
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordMemoryIndexDeliveries).toHaveBeenCalledWith({
+        conversationId: "conv-1",
+        kind: "full",
+        composedAt: "2026-07-05T00:00:00.000Z",
+        notes: [{ memoryId: "mem-1", revision: 3, statusDelivered: true }],
+      });
+    });
+
+    // The counter half of the same seam, against the REAL counter rather than a
+    // spy: a rejected prompt showed the agent nothing, so it must leave the
+    // retrieval count where it was.
+    it("counts a retrieval only for a prompt the backend accepted", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider } = createRealMemoryDelivery(db);
+        const telemetry = createMemoryTelemetryService({
+          repo: createMemoryTelemetryRepo(db, createWriteQueue()),
+          now: () => "2026-07-05T00:00:00.000Z",
+        });
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "counted-once-per-delivery",
+            hook: "A lesson the turn is about to carry",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            // The production wiring in miniature: the turn seam hands what it
+            // delivered straight to the telemetry service on the index channel.
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({
+                conversationId: input.conversationId,
+                channel: "index",
+                kind: input.kind,
+                composedAt: input.composedAt,
+                notes: input.notes,
+              }),
+          }),
+        );
+
+        mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
+        const rejected = makeExecutePromptInput({
+          promptText: "rejected turn",
+        });
+        registerRuntime(rejected);
+        await executePromptForMachine(rejected);
+
+        expect(
+          await telemetry.listObservations({ kind: "retrieval_index" }),
+        ).toEqual([]);
+        expect((await telemetry.readIndexDelivery("conv-1")).state).toBeNull();
+
+        acceptTurnOnSend();
+        const delivered = makeExecutePromptInput({
+          promptText: "delivered turn",
+        });
+        registerRuntime(delivered);
+        await executePromptForMachine(delivered);
+
+        expect(
+          await telemetry.listObservations({ kind: "retrieval_index" }),
+        ).toEqual([
+          expect.objectContaining({
+            kind: "retrieval_index",
+            memoryId: created.value.note.id,
+            count: 1,
+          }),
+        ]);
+        // The whole path, through the real store: the accepted turn left the
+        // conversation with a delivery state naming the full block it now
+        // holds and an index watermark for the note that block carried, while
+        // the rejected turn above left neither.
+        const read = await telemetry.readIndexDelivery("conv-1");
+        expect(read.state?.lastFullAt).toBe(read.state?.lastDeliveryAt);
+        expect(read.watermarks.map((watermark) => watermark.memoryId)).toEqual([
+          created.value.note.id,
+        ]);
+      } finally {
+        db.close();
+      }
+    });
+
+    // Same isolation demand as the watermark, read off the real counter: the
+    // agent got the notes, so the count exists whatever a neighbouring
+    // post-acceptance write does.
+    it("counts the retrieval when another post-acceptance write fails", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider } = createRealMemoryDelivery(db);
+        const telemetry = createMemoryTelemetryService({
+          repo: createMemoryTelemetryRepo(db, createWriteQueue()),
+          now: () => "2026-07-05T00:00:00.000Z",
+        });
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "counted-despite-neighbour",
+            hook: "A lesson the turn is about to carry",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({
+                conversationId: input.conversationId,
+                channel: "index",
+                kind: input.kind,
+                composedAt: input.composedAt,
+                notes: input.notes,
+              }),
+            claimWorkflowResults: vi.fn(async () => claimedWorkflowResults()),
+            settleWorkflowResults: vi.fn(async () => {
+              throw new Error("workflow settle unavailable");
+            }),
+          }),
+        );
+
+        acceptTurnOnSend();
+        const delivered = makeExecutePromptInput({
+          promptText: "delivered turn",
+        });
+        registerRuntime(delivered);
+        await executePromptForMachine(delivered);
+
+        expect(
+          await telemetry.listObservations({ kind: "retrieval_index" }),
+        ).toEqual([
+          expect.objectContaining({
+            kind: "retrieval_index",
+            memoryId: created.value.note.id,
+            count: 1,
+          }),
+        ]);
+      } finally {
+        db.close();
+      }
+    });
+
+    it("records nothing when the conversation has no block to be shown", async () => {
+      const recordMemoryIndexDeliveries = vi.fn(async () => {});
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () => null),
+          recordMemoryIndexDeliveries,
+        }),
+      );
+      acceptTurnOnSend();
+      const input = makeExecutePromptInput({ promptText: "do the work" });
+      registerRuntime(input);
+
+      await executePromptForMachine(input);
+
+      expect(recordMemoryIndexDeliveries).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        case: "an empty first full delivery",
+        delivery: memoryBlock(null),
+        expectedKind: "full",
+      },
+      {
+        case: "a quiet delta",
+        delivery: memoryBlock(
+          "<memory-index-delta>no memory changes</memory-index-delta>",
+          [],
+          "delta",
+          "2026-07-05T00:01:00.000Z",
+        ),
+        expectedKind: "delta",
+      },
+    ] as const)(
+      "settles $case even with zero entries",
+      async ({ delivery, expectedKind }) => {
+        const recordMemoryIndexDeliveries = vi.fn(async () => {});
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: vi.fn(async () => delivery),
+            recordMemoryIndexDeliveries,
+          }),
+        );
+        acceptTurnOnSend();
+        const input = makeExecutePromptInput({ promptText: "zero-entry turn" });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        expect(recordMemoryIndexDeliveries).toHaveBeenCalledOnce();
+        expect(recordMemoryIndexDeliveries).toHaveBeenCalledWith({
+          conversationId: "conv-1",
+          kind: expectedKind,
+          composedAt: delivery.composedAt,
+          notes: [],
+        });
+      },
+    );
+
+    it("completes the turn when the watermark write fails", async () => {
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () =>
+            memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 1)]),
+          ),
+          recordMemoryIndexDeliveries: vi.fn(async () => {
+            throw new Error("watermark store unavailable");
+          }),
+        }),
+      );
+      acceptTurnOnSend();
+      const input = makeExecutePromptInput({ promptText: "resilient turn" });
+      registerRuntime(input);
+
+      const result = await executePromptForMachine(input);
+
+      expect(result.error).toBeNull();
+      expect(lastTurnInput().promptText).toContain(MEMORY_BLOCK);
+    });
+
+    it("proceeds without the block when the memory read fails", async () => {
+      setActorDeps(
+        createMockDeps({
+          getMemoryIndexBlock: vi.fn(async () => {
+            throw new Error("memory store unavailable");
+          }),
+        }),
+      );
+      const input = makeExecutePromptInput({ promptText: "resilient turn" });
+      registerRuntime(input);
+
+      const result = await executePromptForMachine(input);
+
+      expect(result.error).toBeNull();
+      expect(lastTurnInput().promptText).toBe("resilient turn");
+    });
+
+    it.each(["claude", "codex", "cursor"] as const)(
+      "delivers the static advisory contract in %s's governing instructions and keeps the changing index out of them",
+      async (agentBackend) => {
+        const getMemoryIndexBlock = vi.fn(async () =>
+          memoryBlock(MEMORY_BLOCK),
+        );
+        setActorDeps(createMockDeps({ getMemoryIndexBlock }));
+        const input = makeExecutePromptInput({
+          agentBackend,
+          promptText: "first turn",
+          modelSelection:
+            agentBackend === "codex"
+              ? {
+                  modelId: "gpt-5.4",
+                  parameters: { reasoning: "high", fast: "false" },
+                }
+              : agentBackend === "cursor"
+                ? { modelId: "composer-2.5", parameters: { fast: "true" } }
+                : null,
+        });
+        registerRuntime(input);
+
+        await executePromptForMachine(input);
+
+        const instructions = createdRuntimeInstructions();
+        expect(instructions).toContain(MEMORY_ADVISORY_CONTRACT);
+        expect(instructions).not.toContain(MEMORY_BLOCK);
+        expect(instructions).not.toContain("- a-lesson [project, just now]");
+        expect(lastTurnInput().promptText).toContain(MEMORY_BLOCK);
+      },
+    );
+
+    it("delivers a note created after turn N in turn N+1 and drops it after archival, through the real composer, for session and project conversations", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider } = createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+          }),
+        );
+
+        for (const [label, makeInput] of [
+          ["session", makeExecutePromptInput],
+          ["project", makeProjectExecutePromptInput],
+        ] as const) {
+          // A persistent runtime is already alive — its instructions are frozen.
+          const existingRuntime = createMockBackendRuntime({
+            modelSelection: {
+              modelId: "opus",
+              parameters: { effort: "high" },
+            },
+          });
+          (
+            existingRuntime.sendTurn as ReturnType<typeof vi.fn>
+          ).mockResolvedValue(defaultTurnResult);
+          const first = makeInput({ promptText: `${label} turn one` });
+          registerConversationRuntime(
+            conversationRuntimeKey(
+              first.projectPath,
+              first.sessionName,
+              first.conversationId,
+            ),
+            {
+              abortController: new AbortController(),
+              backendRuntime: existingRuntime,
+            },
+          );
+
+          await executePromptForMachine(first);
+          expect(lastTurnInput().promptText).not.toContain("<memory-index>");
+
+          const created = await memoryService.create(
+            {
+              scope: "project",
+              kind: "lesson",
+              slug: `captured-after-${label}-turn-one`,
+              hook: `A lesson captured after the ${label} conversation's first turn`,
+            },
+            {
+              kind: "agent",
+              conversationId: "elsewhere",
+              visibility: { projectPath: "/projects/repo", session: null },
+            },
+          );
+          if (!created.ok) throw new Error(created.error.code);
+
+          await executePromptForMachine(
+            makeInput({ promptText: `${label} turn two` }),
+          );
+          const second = lastTurnInput().promptText;
+          expect(second).toContain("<memory-index>");
+          expect(second).toContain(
+            `- captured-after-${label}-turn-one [project, `,
+          );
+          expect(second).toContain(`${label} turn two`);
+
+          const archived = await memoryService.archive(
+            created.value.note.slug,
+            { baseRevision: created.value.note.revision },
+            {
+              kind: "user",
+              visibility: { projectPath: "/projects/repo", session: null },
+            },
+          );
+          expect(archived.ok).toBe(true);
+
+          await executePromptForMachine(
+            makeInput({ promptText: `${label} turn three` }),
+          );
+          expect(lastTurnInput().promptText).not.toContain(
+            `captured-after-${label}-turn-one`,
+          );
+          expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+        }
+      } finally {
+        db.close();
+      }
+    });
+
+    it("delivers a revision written after composition in the following turn's delta", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+            resetMemoryIndexDelivery: (conversationId) =>
+              telemetry.resetIndexDelivery(conversationId),
+          }),
+        );
+        const actor = {
+          kind: "agent" as const,
+          conversationId: "elsewhere",
+          visibility: { projectPath: "/projects/repo", session: null },
+        };
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "revised-in-flight",
+            hook: "Revision one was composed",
+          },
+          actor,
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        mockSendTurn.mockImplementationOnce(
+          async (turnInput: ConversationBackendTurnInput) => {
+            setNow("2026-07-05T00:01:00.000Z");
+            const revised = await memoryService.update(
+              created.value.note.slug,
+              {
+                baseRevision: created.value.note.revision,
+                hook: "Revision two landed before acceptance",
+              },
+              actor,
+            );
+            if (!revised.ok) throw new Error(revised.error.code);
+            await turnInput.onEvent({ type: "input_accepted" });
+            return defaultTurnResult;
+          },
+        );
+        const first = makeExecutePromptInput({ promptText: "racing turn" });
+        registerRuntime(first);
+
+        await executePromptForMachine(first);
+
+        const afterFirst = await telemetry.readIndexDelivery("conv-1");
+        expect(afterFirst.state?.lastDeliveryAt).toBe(
+          "2026-07-05T00:00:00.000Z",
+        );
+        expect(afterFirst.watermarks).toEqual([
+          expect.objectContaining({
+            memoryId: created.value.note.id,
+            revision: 1,
+          }),
+        ]);
+        setNow("2026-07-05T00:02:00.000Z");
+        acceptTurnOnSend();
+        await executePromptForMachine(
+          makeExecutePromptInput({ promptText: "next turn", promptCount: 1 }),
+        );
+
+        const nextPrompt = lastTurnInput().promptText;
+        expect(nextPrompt).toContain("<memory-index-delta>");
+        expect(nextPrompt).toContain("revised-in-flight");
+        expect(nextPrompt).toContain("Revision two landed before acceptance");
+      } finally {
+        db.close();
+      }
+    });
+
+    it("keeps delta mode when a Command Center conversation-compaction artifact is created between turns", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+            resetMemoryIndexDelivery: (conversationId) =>
+              telemetry.resetIndexDelivery(conversationId),
+          }),
+        );
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "held-across-cc-compaction",
+            hook: "CC artifacts do not describe backend context loss",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        acceptTurnOnSend();
+        const first = makeExecutePromptInput({ promptText: "first turn" });
+        registerRuntime(first);
+        await executePromptForMachine(first);
+        const before = (await telemetry.readIndexDelivery("conv-1")).state;
+        expect(before?.lastFullAt).toBe("2026-07-05T00:00:00.000Z");
+
+        const artifacts = createContextArtifactsRepo(db);
+        artifacts.upsert({
+          id: "cc-compaction-1",
+          kind: "conversation_compaction",
+          scope: "session",
+          projectPath: "/projects/repo",
+          sessionName: "test-session",
+          conversationId: "conv-1",
+          messageId: null,
+          messageIndex: null,
+          coveredStartSeq: 0,
+          coveredEndSeq: 4,
+          sourceHash: "test-source-hash",
+          status: "pending",
+          error: null,
+          backend: "claude",
+          modelSelection: {
+            modelId: "opus",
+            parameters: { effort: "high" },
+          },
+          schemaVersion: 1,
+          promptVersion: "test-prompt",
+          normalizerVersion: "test-normalizer",
+          createdBy: "user",
+          createdByConversationId: null,
+          payload: null,
+          createdAt: "2026-07-05T00:01:00.000Z",
+          updatedAt: "2026-07-05T00:01:00.000Z",
+        });
+        setNow("2026-07-05T00:02:00.000Z");
+        await executePromptForMachine(
+          makeExecutePromptInput({ promptText: "second turn", promptCount: 1 }),
+        );
+
+        expect(artifacts.findById("cc-compaction-1")?.kind).toBe(
+          "conversation_compaction",
+        );
+        expect(lastTurnInput().promptText).toContain("<memory-index-delta>");
+        expect(lastTurnInput().promptText).not.toContain("<memory-index>");
+        const after = (await telemetry.readIndexDelivery("conv-1")).state;
+        expect(after?.lastFullAt).toBe(before?.lastFullAt);
+        expect(after?.lastDeliveryAt).toBe("2026-07-05T00:02:00.000Z");
+      } finally {
+        db.close();
+      }
+    });
+
+    it("delivers a full block on the first accepted turn and only the new note in the next delta", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+          }),
+        );
+        const actor = {
+          kind: "agent" as const,
+          conversationId: "elsewhere",
+          visibility: { projectPath: "/projects/repo", session: null },
+        };
+        const baseline = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "already-in-full",
+            hook: "This note belongs only in the full block",
+          },
+          actor,
+        );
+        if (!baseline.ok) throw new Error(baseline.error.code);
+        acceptTurnOnSend();
+        const first = makeExecutePromptInput({ promptText: "first turn" });
+        registerRuntime(first);
+
+        await executePromptForMachine(first);
+
+        const firstPrompt = lastTurnInput().promptText;
+        expect(firstPrompt).toContain("<memory-index>");
+        expect(firstPrompt).toContain("already-in-full");
+        setNow("2026-07-05T00:01:00.000Z");
+        const added = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "added-for-delta",
+            hook: "This note was captured after the full block",
+          },
+          actor,
+        );
+        if (!added.ok) throw new Error(added.error.code);
+
+        await executePromptForMachine(
+          makeExecutePromptInput({ promptText: "second turn", promptCount: 1 }),
+        );
+
+        const secondPrompt = lastTurnInput().promptText;
+        expect(secondPrompt).toContain("<memory-index-delta>");
+        expect(secondPrompt).toContain("added-for-delta");
+        expect(secondPrompt).not.toContain("already-in-full");
+        const read = await telemetry.readIndexDelivery("conv-1");
+        expect(read.state?.lastFullAt).toBe("2026-07-05T00:00:00.000Z");
+        expect(read.state?.lastDeliveryAt).toBe("2026-07-05T00:01:00.000Z");
+      } finally {
+        db.close();
+      }
+    });
+
+    it("settles an empty first full delivery so a later note arrives as a delta", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+          }),
+        );
+        acceptTurnOnSend();
+        const first = makeExecutePromptInput({
+          promptText: "empty first turn",
+        });
+        registerRuntime(first);
+
+        await executePromptForMachine(first);
+
+        expect(lastTurnInput().promptText).not.toContain("<memory-index>");
+        expect(
+          (await telemetry.readIndexDelivery("conv-1")).state?.lastFullAt,
+        ).toBe("2026-07-05T00:00:00.000Z");
+        setNow("2026-07-05T00:01:00.000Z");
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "after-empty-full",
+            hook: "This note was captured after an empty full delivery",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+
+        await executePromptForMachine(
+          makeExecutePromptInput({ promptText: "second turn", promptCount: 1 }),
+        );
+
+        expect(lastTurnInput().promptText).toContain("<memory-index-delta>");
+        expect(lastTurnInput().promptText).toContain("after-empty-full");
+      } finally {
+        db.close();
+      }
+    });
+
+    it("settles a quiet delta and advances last delivery without moving last full", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+          }),
+        );
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "unchanged-note",
+            hook: "This note does not change between turns",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        acceptTurnOnSend();
+        const first = makeExecutePromptInput({ promptText: "first turn" });
+        registerRuntime(first);
+        await executePromptForMachine(first);
+
+        setNow("2026-07-05T00:02:00.000Z");
+        await executePromptForMachine(
+          makeExecutePromptInput({ promptText: "quiet turn", promptCount: 1 }),
+        );
+
+        const quietBlock = lastTurnInput()
+          .promptText.split("\n\n")
+          .find((part) => part.startsWith("<memory-index-delta>"));
+        expect(quietBlock?.split("\n")).toHaveLength(1);
+        const state = (await telemetry.readIndexDelivery("conv-1")).state;
+        expect(state?.lastFullAt).toBe("2026-07-05T00:00:00.000Z");
+        expect(state?.lastDeliveryAt).toBe("2026-07-05T00:02:00.000Z");
+      } finally {
+        db.close();
+      }
+    });
+
+    it("resets a continuing conversation when its runtime is created without a resume handle", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+            resetMemoryIndexDelivery: (conversationId) =>
+              telemetry.resetIndexDelivery(conversationId),
+          }),
+        );
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "survives-runtime-loss",
+            hook: "This note must be sent in full after runtime context loss",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        acceptTurnOnSend();
+        const first = makeExecutePromptInput({ promptText: "first turn" });
+        registerRuntime(first);
+        await executePromptForMachine(first);
+        expect(lastTurnInput().promptText).toContain("<memory-index>");
+
+        setNow("2026-07-05T00:01:00.000Z");
+        registerRuntime(
+          makeExecutePromptInput({
+            promptText: "runtime restarted",
+            promptCount: 1,
+            backendRef: null,
+          }),
+        );
+        await executePromptForMachine(
+          makeExecutePromptInput({
+            promptText: "runtime restarted",
+            promptCount: 1,
+            backendRef: null,
+          }),
+        );
+
+        const restartedPrompt = lastTurnInput().promptText;
+        expect(restartedPrompt).toContain("<memory-index>");
+        expect(restartedPrompt).not.toContain("<memory-index-delta>");
+        expect(restartedPrompt).toContain("survives-runtime-loss");
+        expect(
+          (await telemetry.readIndexDelivery("conv-1")).state?.lastFullAt,
+        ).toBe("2026-07-05T00:01:00.000Z");
+      } finally {
+        db.close();
+      }
+    });
+
+    it("resets after a Claude turn reports compaction so the next turn receives a full block", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+            resetMemoryIndexDelivery: (conversationId) =>
+              telemetry.resetIndexDelivery(conversationId),
+          }),
+        );
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "resend-after-claude-compaction",
+            hook: "This note must return after backend compaction",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        mockSendTurn.mockImplementation(
+          async (turnInput: ConversationBackendTurnInput) => {
+            await turnInput.onEvent({ type: "input_accepted" });
+            return { ...defaultTurnResult, compacted: true };
+          },
+        );
+        const first = makeExecutePromptInput({ promptText: "compacting turn" });
+        registerRuntime(first);
+
+        await executePromptForMachine(first);
+
+        expect((await telemetry.readIndexDelivery("conv-1")).state).toBeNull();
+        setNow("2026-07-05T00:01:00.000Z");
+        acceptTurnOnSend();
+        await executePromptForMachine(
+          makeExecutePromptInput({
+            promptText: "after compaction",
+            promptCount: 1,
+          }),
+        );
+
+        expect(lastTurnInput().promptText).toContain("<memory-index>");
+        expect(lastTurnInput().promptText).not.toContain(
+          "<memory-index-delta>",
+        );
+        expect(lastTurnInput().promptText).toContain(
+          "resend-after-claude-compaction",
+        );
+      } finally {
+        db.close();
+      }
+    });
+
+    it("resets after an external Claude turn reports compaction so the next user turn receives a full block", async () => {
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        const { memoryService, provider, telemetry, setNow } =
+          createRealMemoryDelivery(db);
+        let externalTurnEvent:
+          | ((event: ConversationBackendEvent) => void)
+          | undefined;
+        setActorDeps(
+          createMockDeps({
+            getConversationBackendFactory: vi.fn(() => ({
+              ...mockFactory,
+              async createRuntime(input: ConversationBackendCreateInput) {
+                externalTurnEvent = input.onExternalTurnEvent;
+                return mockBackendRuntime;
+              },
+            })),
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+            recordMemoryIndexDeliveries: (input) =>
+              telemetry.recordDelivery({ ...input, channel: "index" }),
+            resetMemoryIndexDelivery: (conversationId) =>
+              telemetry.resetIndexDelivery(conversationId),
+          }),
+        );
+        const created = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "resend-after-external-compaction",
+            hook: "This note must return after an external backend compaction",
+          },
+          {
+            kind: "agent",
+            conversationId: "elsewhere",
+            visibility: { projectPath: "/projects/repo", session: null },
+          },
+        );
+        if (!created.ok) throw new Error(created.error.code);
+        acceptTurnOnSend();
+        const first = makeExecutePromptInput({ promptText: "first user turn" });
+        registerRuntime(first);
+
+        await executePromptForMachine(first);
+
+        expect(
+          (await telemetry.readIndexDelivery("conv-1")).state,
+        ).not.toBeNull();
+        const emitExternalTurn = externalTurnEvent;
+        if (emitExternalTurn === undefined) {
+          throw new Error(
+            "Claude runtime did not receive an external-turn handler",
+          );
+        }
+        emitExternalTurn({
+          type: "external_turn_completed",
+          result: { ...defaultTurnResult, compacted: true },
+        });
+        await vi.waitFor(async () => {
+          expect(
+            (await telemetry.readIndexDelivery("conv-1")).state,
+          ).toBeNull();
+        });
+
+        setNow("2026-07-05T00:01:00.000Z");
+        await executePromptForMachine(
+          makeExecutePromptInput({
+            promptText: "after external compaction",
+            promptCount: 1,
+          }),
+        );
+
+        expect(lastTurnInput().promptText).toContain("<memory-index>");
+        expect(lastTurnInput().promptText).not.toContain(
+          "<memory-index-delta>",
+        );
+        expect(lastTurnInput().promptText).toContain(
+          "resend-after-external-compaction",
+        );
+      } finally {
+        db.close();
+      }
+    });
+
+    it.each<{
+      backend: "codex" | "cursor";
+      modelSelection: BackendModelSelection;
+    }>([
+      {
+        backend: "codex" as const,
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { reasoning: "high", fast: "false" },
+        },
+      },
+      {
+        backend: "cursor" as const,
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      },
+    ])(
+      "does not reset after a $backend result reports no compaction",
+      async ({ backend, modelSelection }) => {
+        const db = _createTestDb({ inMemory: true });
+        try {
+          seedSessionRows(db);
+          const { memoryService, provider, telemetry, setNow } =
+            createRealMemoryDelivery(db);
+          setActorDeps(
+            createMockDeps({
+              getMemoryIndexBlock: (request) =>
+                provider.getForConversation(request),
+              recordMemoryIndexDeliveries: (input) =>
+                telemetry.recordDelivery({ ...input, channel: "index" }),
+              resetMemoryIndexDelivery: (conversationId) =>
+                telemetry.resetIndexDelivery(conversationId),
+            }),
+          );
+          const created = await memoryService.create(
+            {
+              scope: "project",
+              kind: "lesson",
+              slug: `retained-on-${backend}`,
+              hook: `This note remains in the ${backend} context`,
+            },
+            {
+              kind: "agent",
+              conversationId: "elsewhere",
+              visibility: { projectPath: "/projects/repo", session: null },
+            },
+          );
+          if (!created.ok) throw new Error(created.error.code);
+          mockSendTurn.mockImplementation(
+            async (turnInput: ConversationBackendTurnInput) => {
+              await turnInput.onEvent({ type: "input_accepted" });
+              return { ...defaultTurnResult, compacted: false };
+            },
+          );
+          const first = makeExecutePromptInput({
+            agentBackend: backend,
+            modelSelection,
+            promptText: "first turn",
+          });
+          registerConversationRuntime(
+            conversationRuntimeKey(
+              first.projectPath,
+              first.sessionName,
+              first.conversationId,
+            ),
+            {
+              abortController: new AbortController(),
+              backendRuntime: createMockBackendRuntime({
+                backend,
+                modelSelection,
+              }),
+            },
+          );
+
+          await executePromptForMachine(first);
+
+          expect(
+            (await telemetry.readIndexDelivery("conv-1")).state,
+          ).not.toBeNull();
+          setNow("2026-07-05T00:01:00.000Z");
+          await executePromptForMachine(
+            makeExecutePromptInput({
+              agentBackend: backend,
+              modelSelection,
+              promptText: "second turn",
+              promptCount: 1,
+            }),
+          );
+
+          expect(lastTurnInput().promptText).toContain("<memory-index-delta>");
+          expect(lastTurnInput().promptText).not.toContain("<memory-index>");
+        } finally {
+          db.close();
+        }
+      },
+    );
+
+    // Quota reservation (R5.3) through production: the spec a native-SDD run
+    // delivers is an active artifact of its lanes, resolved from the typed
+    // spec↔graph binding, so a note about-linked only to that spec is cued
+    // into the about section instead of competing as an auto hook.
+    it("cues a note about-linked only to the run's bound spec into the about section, resolved through the real spec binding", async () => {
+      const SPEC_ID = "spec-memory";
+      const REVISION_ID = "revision-memory-5";
+      const SPEC_EXECUTION_ID = "spec-execution-memory";
+      const WORKFLOW_EXECUTION_ID = "wf-exec-memory";
+      const db = _createTestDb({ inMemory: true });
+      try {
+        seedSessionRows(db);
+        db.prepare(
+          `INSERT INTO specs (id, project_path, slug, name, gate_policy_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          SPEC_ID,
+          "/projects/repo",
+          "memory",
+          "Memory",
+          '{"preset":"contract-bearing"}',
+          "2026-07-04T00:00:00.000Z",
+          "2026-07-04T00:00:00.000Z",
+        );
+        db.prepare(
+          `INSERT INTO spec_revisions (id, spec_id, number, state, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).run(REVISION_ID, SPEC_ID, 5, "approved", "2026-07-04T00:00:00.000Z");
+        db.prepare(
+          `INSERT INTO spec_executions
+             (id, spec_id, revision_id, scope_json, state, workflow_execution_id, session_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          SPEC_EXECUTION_ID,
+          SPEC_ID,
+          REVISION_ID,
+          "{}",
+          "running",
+          WORKFLOW_EXECUTION_ID,
+          "test-session",
+          "2026-07-04T00:00:00.000Z",
+          "2026-07-04T00:00:00.000Z",
+        );
+        createSpecExecutionBindingRepo(db).insert({
+          specExecutionId: SPEC_EXECUTION_ID,
+          workflowExecutionId: WORKFLOW_EXECUTION_ID,
+          binding: {
+            schemaVersion: 2,
+            candidateId: "candidate-memory",
+            candidateHash: `sha256:${"a".repeat(64)}`,
+            pinnedRevisionId: REVISION_ID,
+            dispositions: [],
+            claims: [],
+          },
+          createdAt: "2026-07-04T00:00:00.000Z",
+        });
+        const { memoryService, provider } = createRealMemoryDelivery(db);
+        setActorDeps(
+          createMockDeps({
+            getMemoryIndexBlock: (request) =>
+              provider.getForConversation(request),
+          }),
+        );
+
+        const agent = {
+          kind: "agent" as const,
+          conversationId: "elsewhere",
+          visibility: { projectPath: "/projects/repo", session: null },
+        };
+        const linkedNote = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "about-the-bound-spec",
+            hook: "A lesson about the spec this run delivers",
+          },
+          agent,
+        );
+        if (!linkedNote.ok) throw new Error(linkedNote.error.code);
+        const link = await memoryService.link(
+          linkedNote.value.note.slug,
+          { kind: "about", artifact: { kind: "spec", specId: SPEC_ID } },
+          agent,
+        );
+        expect(link.ok).toBe(true);
+        const unlinked = await memoryService.create(
+          {
+            scope: "project",
+            kind: "lesson",
+            slug: "an-unlinked-lesson",
+            hook: "A lesson about nothing this run is bound to",
+          },
+          agent,
+        );
+        if (!unlinked.ok) throw new Error(unlinked.error.code);
+
+        const laneRuntime = createMockBackendRuntime({
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        });
+        (laneRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+          defaultTurnResult,
+        );
+        const input = makeExecutePromptInput({
+          conversationId: "conv-lane",
+          promptText: "lane turn",
+        });
+        registerConversationRuntime(
+          conversationRuntimeKey(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+          ),
+          {
+            abortController: new AbortController(),
+            backendRuntime: laneRuntime,
+            workflowContext: {
+              executionId: WORKFLOW_EXECUTION_ID,
+              contextId: "memory-index-delivery",
+            },
+          },
+        );
+
+        await executePromptForMachine(input);
+        const prompt = lastTurnInput().promptText;
+        // A lane's own execution context is an active artifact too (memory
+        // R10.1): it is the unit linked-only delivery is exact to.
+        expect(prompt).toContain(
+          `## about spec:${SPEC_ID}, execution:${WORKFLOW_EXECUTION_ID}, context:${WORKFLOW_EXECUTION_ID}/memory-index-delivery (1 of 1)`,
+        );
+        expect(prompt).toContain("- about-the-bound-spec [project, ");
+        expect(prompt).toContain("## auto (1 of 1)");
+        expect(prompt).toContain("- an-unlinked-lesson [project, ");
+        expect(prompt.indexOf("## about")).toBeLessThan(
+          prompt.indexOf("## auto"),
+        );
+      } finally {
+        db.close();
+      }
     });
   });
 });

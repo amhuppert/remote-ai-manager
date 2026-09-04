@@ -54,6 +54,7 @@ import { classifyExecutionEditability } from "./lifecycle-classifier";
 import {
   coerceGlobalDefaults,
   resolveAgentValidationWithProvenance,
+  resolveMemoryPolicyWithProvenance,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
 } from "./resolve-config";
@@ -163,6 +164,11 @@ export async function buildDefaultLiveEditDeps(
     {},
     syntheticContext,
   );
+  const memory = resolveMemoryPolicyWithProvenance(
+    defaults,
+    {},
+    syntheticContext,
+  );
   const resolvedGlobalDefaults: ResolvedContextConfig = {
     implementer: {
       ...resolved.implementer,
@@ -185,6 +191,7 @@ export async function buildDefaultLiveEditDeps(
     planRepair: resolved.planRepair,
     collaboration,
     agentValidation,
+    memory,
   };
 
   return {

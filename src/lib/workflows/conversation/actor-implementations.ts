@@ -93,6 +93,18 @@ import {
   PROJECT_CC_CONTEXT,
   PROJECT_SPAWN_INSTRUCTIONS,
 } from "@/lib/project-conversations/system-prompt";
+import { MEMORY_ADVISORY_CONTRACT } from "@/lib/memory/advisory-contract";
+import {
+  fsWritePolicyChanged,
+  shouldRecreateRuntime,
+} from "./pre-turn/runtime-recreate";
+import { isRuntimeCreatedWithoutResume } from "@/lib/memory/delivery-decision";
+import type {
+  MemoryIndexContextRequest,
+  PreparedMemoryIndexDelivery,
+} from "@/lib/memory/index-live-context";
+import type { MemoryIndexDeliveryKind } from "@/lib/memory/schemas";
+import type { MemoryDeliveredNote } from "@/lib/memory/telemetry";
 import { createExternalTurnHandler } from "./external-turn-handler";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type {
@@ -265,6 +277,33 @@ export interface TurnExecutionDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | null>;
+  // Current <memory-index> block for the conversation (spec `memory` R5/R6),
+  // rebuilt from live rows on every turn for session AND project conversations;
+  // null when the conversation's read policy is off or there is nothing to
+  // deliver. Transient like the ticket block: never baked into session
+  // instructions, so a note captured anywhere is in the next turn everywhere.
+  getMemoryIndexBlock(
+    request: MemoryIndexContextRequest,
+  ): Promise<PreparedMemoryIndexDelivery | null>;
+  // Records which note revisions this turn's `<memory-index>` block actually
+  // carried (spec `memory` R15), following the notepad delivery-watermark
+  // precedent below. Called on backend acceptance, never at composition: the
+  // `cctl memory index` verb and the Library's Index Preview compose the same
+  // block for nobody, and a turn rejected between composing the block and
+  // accepting the message showed it to nobody either — a watermark counting
+  // either would answer a different question than the one R15 asks.
+  recordMemoryIndexDeliveries(input: {
+    conversationId: string;
+    // Which block the turn carried, and the instant it was COMPOSED rather
+    // than the instant it settles here: a note captured while the turn was in
+    // flight belongs to the conversation's next delivery, and dating the
+    // record at settlement would silently swallow it.
+    kind: MemoryIndexDeliveryKind;
+    composedAt: string;
+    notes: readonly MemoryDeliveredNote[];
+  }): Promise<void>;
+  /** Clear the index delivery state after a backend-reported context loss. */
+  resetMemoryIndexDelivery(conversationId: string): Promise<void>;
   // Reads one notepad for the agent-facing expansion pass (D5). Null means the
   // notepad is gone, so the pass reports a dangling reference instead of
   // failing delivery. Ids are global, so no project scope is threaded.
@@ -536,6 +575,7 @@ export type ActorDurableWriteSeams = Pick<
   | "markQueuedPending"
   | "markQueuedFailed"
   | "recordNotepadDeliveries"
+  | "recordMemoryIndexDeliveries"
   | "settleNotepadChangeNotice"
   | "claimWorkflowResults"
   | "settleWorkflowResults"
@@ -584,6 +624,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     notepadServiceFactoryMod,
     agentGatewayTokenMod,
     modelSelectionAdmissionMod,
+    memoryServiceFactoryMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -610,6 +651,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/notepads/service-factory"),
     import("@/lib/agent-gateway/token"),
     import("@/lib/agent-backends/model-selection-admission"),
+    import("@/lib/memory/service-factory"),
   ]);
 
   // The alignment service holds a repo bound to the live DB; construct it once
@@ -698,6 +740,10 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       ticketServiceFactoryMod
         .getLiveTicketContextProvider()
         .getForSession(projectPath, sessionName),
+    getMemoryIndexBlock: (request) =>
+      memoryServiceFactoryMod
+        .getMemoryIndexContextProvider()
+        .getForConversation(request),
     readNotepadForInjection: (notepadId: string) =>
       notepadServiceFactoryMod
         .getNotepadInjectionReader()
@@ -706,6 +752,18 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       notepadServiceFactoryMod
         .getNotepadDeliveryTracker()
         .recordDelivered(input),
+    recordMemoryIndexDeliveries: (input) =>
+      memoryServiceFactoryMod.getMemoryTelemetryService().recordDelivery({
+        conversationId: input.conversationId,
+        channel: "index",
+        kind: input.kind,
+        composedAt: input.composedAt,
+        notes: input.notes,
+      }),
+    resetMemoryIndexDelivery: (conversationId) =>
+      memoryServiceFactoryMod
+        .getMemoryTelemetryService()
+        .resetIndexDelivery(conversationId),
     prepareNotepadChangeNotice: (conversationId) =>
       notepadServiceFactoryMod
         .getNotepadDeliveryTracker()
@@ -790,65 +848,6 @@ export function _resetActorDepsForTesting(): void {
 // ============================================================
 
 /**
- * Determine whether an existing backend runtime should be closed and recreated
- * because the model selection, outputFormat, or baked-in alignment charter
- * version changed. An alignment-version mismatch is the seam that guarantees a
- * charter change propagates to an already-running runtime (R7.3): the new
- * version is baked into the rebuilt session instructions on recreation.
- */
-export function shouldRecreateRuntime(
-  runtime:
-    | {
-        status: string;
-        modelSelection: BackendModelSelection;
-        outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
-        alignmentVersion?: number | null;
-        fsWritePolicy?: FsWritePolicy;
-      }
-    | undefined,
-  effectiveModelSelection: BackendModelSelection,
-  desiredOutputFormat?: {
-    type: "json_schema";
-    schema: Record<string, unknown>;
-  },
-  desiredAlignmentVersion: number | null = null,
-  desiredFsWritePolicy?: FsWritePolicy,
-): boolean {
-  if (!runtime || runtime.status !== "alive") return false;
-  const modelSelectionChanged =
-    modelSelectionKey(runtime.modelSelection) !==
-    modelSelectionKey(effectiveModelSelection);
-  const outputFormatChanged = runtime.outputFormat !== desiredOutputFormat;
-  const alignmentChanged =
-    (runtime.alignmentVersion ?? null) !== desiredAlignmentVersion;
-  return (
-    modelSelectionChanged ||
-    outputFormatChanged ||
-    alignmentChanged ||
-    fsWritePolicyChanged(runtime.fsWritePolicy, desiredFsWritePolicy)
-  );
-}
-
-/**
- * Whether a live runtime's baked-in write envelope differs from the one this
- * turn must run under. Compared by VALUE because the composer builds a fresh
- * policy object per turn, and by content because an ownership change (live edit,
- * plan repair) has to reach an already-running lane: the envelope is established
- * when the backend session starts, so a changed policy needs a new session, and
- * the direction that matters most is a policy appearing where there was none —
- * reusing the unrestricted runtime would run the turn outside its envelope.
- */
-function fsWritePolicyChanged(
-  current: FsWritePolicy | undefined,
-  desired: FsWritePolicy | undefined,
-): boolean {
-  if (current === undefined || desired === undefined) {
-    return current !== desired;
-  }
-  return JSON.stringify(current) !== JSON.stringify(desired);
-}
-
-/**
  * Build the effective prompt, prepending debug mode instructions on the
  * first debug turn and phase-specific context on subsequent turns.
  *
@@ -863,6 +862,11 @@ function fsWritePolicyChanged(
  * `notepadChangeNoticeBlock` is the third: a content-free notice that a notepad
  * this conversation was given has changed (R21). Like the others it is
  * agent-facing only — the durable transcript keeps the user's original text.
+ *
+ * `memoryIndexBlock` is the fourth (spec `memory` R5/D4): the conversation's
+ * generated `<memory-index>`, rebuilt per turn from live rows and placed
+ * directly below the ticket block so the artifact being worked on reads
+ * before the memory about it. Transient like the rest, never baked in.
  */
 export function buildEffectivePrompt(
   promptText: string,
@@ -874,6 +878,7 @@ export function buildEffectivePrompt(
   activeTicketBlock: string | null,
   workflowResultsBlock: string | null = null,
   notepadChangeNoticeBlock: string | null = null,
+  memoryIndexBlock: string | null = null,
 ): string | MessageContentBlock[] {
   let effectivePrompt: string | MessageContentBlock[] = hasImages
     ? userContentBlocks
@@ -910,6 +915,17 @@ export function buildEffectivePrompt(
           ...effectivePrompt,
         ];
       }
+    }
+  }
+
+  if (memoryIndexBlock) {
+    if (typeof effectivePrompt === "string") {
+      effectivePrompt = memoryIndexBlock + "\n\n" + effectivePrompt;
+    } else {
+      effectivePrompt = [
+        { type: "text" as const, text: memoryIndexBlock },
+        ...effectivePrompt,
+      ];
     }
   }
 
@@ -1228,6 +1244,25 @@ function hasStableEntryId(
   return entry.id !== undefined;
 }
 
+async function resetMemoryIndexAfterBackendCompaction(
+  deps: Pick<ActorImplementationDeps, "resetMemoryIndexDelivery" | "log">,
+  conversationId: string,
+): Promise<void> {
+  try {
+    await deps.resetMemoryIndexDelivery(conversationId);
+    deps.log.info("prompt.memory_delivery_reset", {
+      conversationId,
+      reason: "backend_compaction",
+    });
+  } catch (err) {
+    deps.log.warn("prompt.memory_delivery_reset_failed", {
+      conversationId,
+      reason: "backend_compaction",
+      error: getErrorMessage(err),
+    });
+  }
+}
+
 /**
  * Execute a prompt via a backend-neutral conversation runtime.
  *
@@ -1458,6 +1493,8 @@ export async function executePromptForMachine(
   // defined earlier but only ever invoked after dispatch.
   let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
   let notepadChangeNoticeSettled = false;
+  let memoryIndexDelivery: PreparedMemoryIndexDelivery | null = null;
+  let memoryIndexDeliverySettled = false;
 
   // Build the user prompt transcript entry once. For normal turns it is
   // appended immediately. For queued (auto-drained) turns the durable queue —
@@ -1689,6 +1726,12 @@ export async function executePromptForMachine(
       // cctl is on PATH for every CC agent (session env contract), so the
       // CLI nudge applies to session and project conversations alike.
       CC_CLI_INSTRUCTIONS,
+      // The static half of memory delivery (spec `memory` R5.4, D4): advisory
+      // framing, verification duty, and capture bar, delivered once through
+      // each backend's privileged instruction channel. The changing
+      // <memory-index> block is a per-turn prompt prefix and must never be
+      // baked in here — Codex and Cursor read these instructions on turn one only.
+      MEMORY_ADVISORY_CONTRACT,
       // Spawn-proposal convention is a project-conversation-only capability:
       // session agents cannot propose sibling sessions from a conversation.
       isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,
@@ -1762,6 +1805,11 @@ export async function executePromptForMachine(
           },
           {
             safeAppendTranscriptEntry: safeAppendWithMeta,
+            onBackendCompaction: () =>
+              resetMemoryIndexAfterBackendCompaction(
+                deps,
+                input.conversationId,
+              ),
             applyCapabilityWhenIdle: supportsIdleCapabilityDrain
               ? () =>
                   deps.applyCapabilityWhenIdle(
@@ -1983,6 +2031,49 @@ export async function executePromptForMachine(
             });
           }
         }
+        // The notes this turn's <memory-index> block carried are delivered
+        // only now (R15): everything between composing the block and this
+        // event — capability setup, runtime readiness, the MCP apply, the
+        // dispatch itself — can still reject the turn, and a rejected turn
+        // showed the agent nothing. Recorded in its own try so a watermark
+        // failure costs an observation rather than the turn, and once only,
+        // because a backend may repeat the event. Ordered ahead of the
+        // workflow-result settlement for the same reason the notepad notice
+        // is: that settlement can throw, and a delivery the agent has already
+        // read must not go unrecorded because a neighbouring write failed.
+        if (memoryIndexDelivery !== null && !memoryIndexDeliverySettled) {
+          memoryIndexDeliverySettled = true;
+          try {
+            await deps.recordMemoryIndexDeliveries({
+              conversationId: input.conversationId,
+              kind: memoryIndexDelivery.mode,
+              composedAt: memoryIndexDelivery.composedAt,
+              notes: memoryIndexDelivery.entries.map(
+                ({ memoryId, revision, statusDelivered }) => ({
+                  memoryId,
+                  revision,
+                  statusDelivered,
+                }),
+              ),
+            });
+            deps.log.info("prompt.memory_delivery_settled", {
+              conversationId: input.conversationId,
+              mode: memoryIndexDelivery.mode,
+              entryCount: memoryIndexDelivery.entries.length,
+              omittedCount: memoryIndexDelivery.rendered?.omitted ?? 0,
+              bytes: Buffer.byteLength(memoryIndexDelivery.block ?? "", "utf8"),
+            });
+          } catch (err) {
+            deps.log.warn("prompt.memory_delivery_record_failed", {
+              conversationId: input.conversationId,
+              mode: memoryIndexDelivery.mode,
+              entryCount: memoryIndexDelivery.entries.length,
+              omittedCount: memoryIndexDelivery.rendered?.omitted ?? 0,
+              bytes: Buffer.byteLength(memoryIndexDelivery.block ?? "", "utf8"),
+              error: getErrorMessage(err),
+            });
+          }
+        }
         if (claimedWorkflowResultCount > 0 && !workflowResultsSettled) {
           const settled = await deps.settleWorkflowResults({
             projectPath: input.projectPath,
@@ -2114,6 +2205,37 @@ export async function executePromptForMachine(
     }
   }
 
+  // The conversation's current <memory-index> block, for session and project
+  // conversations alike (spec `memory` R5/R6): rebuilt from live rows every
+  // turn, so a note another conversation captured a moment ago is here now.
+  // A read failure degrades to a turn without memory rather than failing it.
+  let memoryIndexBlock: string | null = null;
+  try {
+    memoryIndexDelivery = await deps.getMemoryIndexBlock({
+      projectPath: input.projectPath,
+      conversationId: input.conversationId,
+      conversation: isProjectConversation
+        ? { kind: "project" }
+        : { kind: "session", sessionName: input.sessionName },
+      role: input.role,
+      workflowExecutionId: runtimeState.workflowContext?.executionId ?? null,
+      workflowContextId: runtimeState.workflowContext?.contextId ?? null,
+      runtimeCreatedWithoutResume: isRuntimeCreatedWithoutResume({
+        willCreateRuntime: isNewRuntime,
+        promptCount: input.promptCount,
+        hasResumeHandle: input.backendRef !== null,
+      }),
+      backendReportedCompactionLastTurn: false,
+    });
+    memoryIndexBlock = memoryIndexDelivery?.block ?? null;
+  } catch (err) {
+    deps.log.warn("prompt.memory_index_block_failed", {
+      ...scopeRef,
+      conversationId: input.conversationId,
+      error: getErrorMessage(err),
+    });
+  }
+
   // Prepend debug mode instructions to the rewritten prompt text. Backends
   // receive a single string with `[Image #N]` markers; image data is carried
   // separately on `imageRefs`.
@@ -2211,6 +2333,7 @@ export async function executePromptForMachine(
     activeTicketBlock,
     workflowResultsBlock,
     notepadChangeNotice?.block ?? null,
+    memoryIndexBlock,
   );
 
   const promptText =
@@ -2482,6 +2605,9 @@ export async function executePromptForMachine(
   // Every turnless-failure path returned inside the try (or the catch); a
   // result that reaches this mapping carries an adapter-built outcome.
   const callResult = agentCallResult!;
+  if (callResult.compacted === true) {
+    await resetMemoryIndexAfterBackendCompaction(deps, input.conversationId);
+  }
   const completedOutcome =
     callResult.outcome.kind === "completed" ? callResult.outcome : undefined;
   const failedOutcome =

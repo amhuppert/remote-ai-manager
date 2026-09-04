@@ -1900,6 +1900,334 @@ export const TICKET_RELATIONSHIPS_AND_STATUS_UPDATES_SCHEMA_DDL = `
     ON ticket_relationship_legacy_aliases (anchor_ticket_id, relationship_id);
 `;
 
+/**
+ * Memory Notes: the Command Center-native shared memory the `memory` spec
+ * defines (R1-R4, D1-D3). Four canonical tables — the head note, its flat
+ * aliases, its full-snapshot revision history, and its typed artifact links.
+ * The derived FTS5 index is a SEPARATE constant so its ledger entry stands
+ * alone, matching the notepad recipe of one DDL constant per migration.
+ *
+ * `search_rowid` is an INTEGER PRIMARY KEY — a true rowid alias — because it is
+ * the rowid the contentless FTS5 index joins back on. The implicit rowid of a
+ * TEXT-primary-key table would have served until the first `VACUUM` renumbered
+ * it and silently pointed every search hit at the wrong note. `id` stays the
+ * immutable identity every other table references.
+ *
+ * The CHECK constraints hold the schema-level rules from the other side:
+ * scope pairs with its owner in both directions, session identity is the exact
+ * incarnation (name AND created-at, mirroring `ticket_sessions`), the wholly
+ * perishable `state` kind is session-only, and a `state` note never nests the
+ * perishable status line that exists to keep a DURABLE note deliverable.
+ *
+ * Slug uniqueness is partial — `WHERE lifecycle <> 'archived'` — because
+ * supersession archives a predecessor and the successor commonly takes its
+ * slug. An archived note keeps its slug for history and explicit archived
+ * reads, and never disambiguates a bare one (R4).
+ *
+ * Session identity carries NO foreign key to `sessions`, following
+ * `ticket_sessions`: the incarnation is a recorded value, and a session that is
+ * deleted must not take the durable notes awaiting promotion with it. The
+ * project FK does cascade, because a removed project's memory has no reader.
+ *
+ * Exported so migration 0040 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy. Purely additive, so no
+ * KNOWN_SCHEMA_VERSION bump: an older build sharing `command-center.db` simply
+ * ignores tables it has no reader for.
+ */
+export const MEMORY_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS memory_notes (
+    search_rowid             INTEGER PRIMARY KEY,
+    id                       TEXT NOT NULL UNIQUE,
+    slug                     TEXT NOT NULL,
+    scope                    TEXT NOT NULL CHECK (scope IN (
+      'global', 'project', 'session'
+    )),
+    project_path             TEXT,
+    session_name             TEXT,
+    session_created_at       TEXT,
+    kind                     TEXT NOT NULL CHECK (kind IN (
+      'lesson', 'procedure', 'preference', 'state'
+    )),
+    hook                     TEXT NOT NULL,
+    body                     TEXT NOT NULL,
+    status_note_text         TEXT,
+    status_note_updated_at   TEXT,
+    status_note_review_after TEXT,
+    index_mode               TEXT NOT NULL CHECK (index_mode IN (
+      'auto', 'always', 'search-only'
+    )),
+    lifecycle                TEXT NOT NULL CHECK (lifecycle IN (
+      'proposed', 'active', 'archived'
+    )),
+    review_after             TEXT,
+    expires_at               TEXT,
+    supersedes_id            TEXT,
+    superseded_by_id         TEXT,
+    created_by               TEXT NOT NULL CHECK (created_by IN (
+      'user', 'agent'
+    )),
+    author_conversation_id   TEXT,
+    revision                 INTEGER NOT NULL,
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL,
+    CHECK ((scope = 'global') = (project_path IS NULL)),
+    CHECK ((scope = 'session') = (session_name IS NOT NULL)),
+    CHECK ((session_name IS NULL) = (session_created_at IS NULL)),
+    CHECK (kind <> 'state' OR scope = 'session'),
+    CHECK (kind <> 'state' OR status_note_text IS NULL),
+    CHECK ((status_note_text IS NULL) = (status_note_updated_at IS NULL)),
+    CHECK ((status_note_text IS NULL) = (status_note_review_after IS NULL)),
+    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE,
+    FOREIGN KEY (supersedes_id) REFERENCES memory_notes(id) ON DELETE SET NULL,
+    FOREIGN KEY (superseded_by_id) REFERENCES memory_notes(id) ON DELETE SET NULL
+  );
+
+  -- Slugs are unique per scope owner among the records a bare slug resolves.
+  -- The IFNULLs collapse each scope's NULL owner columns onto one bucket so
+  -- names actually collide there, exactly as the notepad name index does.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_notes_scope_slug
+    ON memory_notes (
+      scope, IFNULL(project_path, ''), IFNULL(session_name, ''),
+      IFNULL(session_created_at, ''), slug
+    )
+    WHERE lifecycle <> 'archived';
+
+  -- The delivery read shape: one conversation's visible scope union, freshest
+  -- first, with the archived tail excluded.
+  CREATE INDEX IF NOT EXISTS idx_memory_notes_scope_listing
+    ON memory_notes (scope, project_path, lifecycle, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS memory_note_aliases (
+    memory_id TEXT NOT NULL,
+    alias     TEXT NOT NULL,
+    position  INTEGER NOT NULL,
+    PRIMARY KEY (memory_id, alias),
+    FOREIGN KEY (memory_id) REFERENCES memory_notes(id) ON DELETE CASCADE
+  );
+
+  -- Resolution reads aliases by value across the visible scopes.
+  CREATE INDEX IF NOT EXISTS idx_memory_note_aliases_alias
+    ON memory_note_aliases (alias);
+
+  CREATE TABLE IF NOT EXISTS memory_note_revisions (
+    id                     TEXT PRIMARY KEY,
+    memory_id              TEXT NOT NULL,
+    revision               INTEGER NOT NULL,
+    -- The WHOLE note as it stood, so restore is a snapshot copy forward.
+    snapshot_json          TEXT NOT NULL,
+    origin                 TEXT NOT NULL CHECK (origin IN (
+      'create', 'edit', 'restore', 'archive'
+    )),
+    base_revision          INTEGER,
+    restored_from_revision INTEGER,
+    author_kind            TEXT NOT NULL CHECK (author_kind IN (
+      'user', 'agent'
+    )),
+    -- Deliberately FK-less, like notepad_revisions: deleting or compacting a
+    -- conversation must not delete the history it authored.
+    author_conversation_id TEXT,
+    created_at             TEXT NOT NULL,
+    UNIQUE (memory_id, revision),
+    FOREIGN KEY (memory_id) REFERENCES memory_notes(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS memory_links (
+    id                          TEXT PRIMARY KEY,
+    memory_id                   TEXT NOT NULL,
+    kind                        TEXT NOT NULL CHECK (kind IN (
+      'about', 'source'
+    )),
+    artifact_kind               TEXT NOT NULL CHECK (artifact_kind IN (
+      'ticket', 'spec', 'session', 'workflow_execution'
+    )),
+    artifact_id                 TEXT,
+    -- Set only beside a workflow_execution id: the row then references one
+    -- execution context of that run rather than the whole run. Added after
+    -- the table shipped, so it also appears in ADDITIVE_COLUMNS.
+    artifact_context_id         TEXT,
+    artifact_project_path       TEXT,
+    artifact_session_name       TEXT,
+    artifact_session_created_at TEXT,
+    created_at                  TEXT NOT NULL,
+    -- A session artifact is its exact incarnation; every other kind is one
+    -- immutable native id.
+    CHECK ((artifact_kind = 'session') = (artifact_id IS NULL)),
+    CHECK ((artifact_kind = 'session') = (artifact_project_path IS NOT NULL)),
+    CHECK ((artifact_kind = 'session') = (artifact_session_name IS NOT NULL)),
+    CHECK ((artifact_kind = 'session') = (artifact_session_created_at IS NOT NULL)),
+    FOREIGN KEY (memory_id) REFERENCES memory_notes(id) ON DELETE CASCADE
+  );
+
+  -- The link identity index lives in MEMORY_LINKS_IDENTITY_INDEX_DDL: it names
+  -- artifact_context_id, which a database created before that column existed
+  -- only gains in the additive-column pass that follows this DDL.
+
+  -- The two link read shapes: one note's links, and every note pointed at one
+  -- artifact (about-ranking).
+  CREATE INDEX IF NOT EXISTS idx_memory_links_memory_kind
+    ON memory_links (memory_id, kind);
+  CREATE INDEX IF NOT EXISTS idx_memory_links_artifact
+    ON memory_links (artifact_kind, artifact_id);
+`;
+
+/**
+ * The memory-link identity index, applied AFTER the additive-column pass
+ * because it names `artifact_context_id`. One row per (note, kind, artifact):
+ * re-linking the same thing lands on the row that already exists rather than
+ * accumulating a duplicate. The v1 index predates the context column and would
+ * collapse two context links of one note into one execution onto a single row,
+ * so it is retired here (a no-op once gone).
+ */
+export const MEMORY_LINKS_IDENTITY_INDEX_DDL = `
+  DROP INDEX IF EXISTS uq_memory_links_identity;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_links_identity_v2
+    ON memory_links (
+      memory_id, kind, artifact_kind, IFNULL(artifact_id, ''),
+      IFNULL(artifact_context_id, ''), IFNULL(artifact_project_path, ''),
+      IFNULL(artifact_session_name, ''), IFNULL(artifact_session_created_at, '')
+    );
+`;
+
+/**
+ * The derived Memory Note search index (spec `memory`, D1 and the
+ * `inv-fts-derived-rebuildable` invariant). Separate from
+ * {@link MEMORY_SCHEMA_DDL} so its ledger entry stands alone, matching the
+ * notepad recipe of one DDL constant per migration.
+ *
+ * `content=''` makes it CONTENTLESS: FTS5 stores the inverted index and no
+ * column values at all, so canonical content cannot come to live here — a
+ * `SELECT` returns NULL for every column. That is the invariant enforced by
+ * construction rather than by convention, and it costs nothing the recall path
+ * wants, since bodies are read from `memory_notes`. `contentless_delete=1`
+ * keeps DELETE and re-INSERT available, which is how a note's row is refreshed
+ * in the same write path as the canonical tables.
+ *
+ * The rowid is `memory_notes.search_rowid` — an INTEGER PRIMARY KEY alias, so
+ * it survives a VACUUM that would renumber an implicit rowid and silently point
+ * every hit at the wrong note.
+ *
+ * `porter unicode61` stems, so a note written about "running" answers a search
+ * for "run"; the corpus-seeded recall evaluation depends on it.
+ *
+ * Exported so migration 0041 applies the identical DDL to pre-floor databases.
+ * Purely additive and fully rebuildable: an older build ignores it, and a build
+ * that never writes it can restore it from the canonical tables at any time.
+ */
+export const MEMORY_SEARCH_SCHEMA_DDL = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS memory_notes_fts USING fts5(
+    slug,
+    hook,
+    aliases,
+    body,
+    content='',
+    contentless_delete=1,
+    tokenize='porter unicode61'
+  );
+`;
+
+/**
+ * Delivery watermarks and observation counters for Memory Notes (spec R15).
+ * All three tables are evaluation instruments and delta inputs: they record
+ * what a conversation was shown and how often a record was retrieved, and
+ * NOTHING reads them back into selection. That separation is structural rather
+ * than conventional — they sit outside `MEMORY_SCHEMA_DDL` and outside
+ * `MemoryRepo`, so the composer and the recall ranker have no route to a
+ * counter to consult (`inv-no-popularity-or-telemetry-rank`).
+ *
+ * `memory_delivery_watermarks` follows the notepad delivery precedent exactly:
+ * an upsert keyed by `(conversation_id, memory_id, channel)` stating where the
+ * conversation stands, not how it got there. `channel` splits the two ways a
+ * record reaches an agent — the ambient `index` block and an `expanded` recall
+ * pack — because R15 names both and an evaluation that could not tell them
+ * apart could not say whether the ambient block is doing the work.
+ *
+ * `status_delivered` records whether that delivery carried the note's status
+ * line, which is what makes a status withheld or restored since the last
+ * delivery detectable as a delta entry rather than only as current state.
+ *
+ * `conversation_id` is deliberately FK-less, like `notepad_delivery_watermarks`
+ * and `memory_note_revisions`: a compacted or deleted conversation must not
+ * take the delivery record with it. The memory side DOES cascade, because a
+ * watermark for a deleted note can never be read again.
+ *
+ * `memory_index_delivery_state` holds a conversation's place in the
+ * once-then-delta delivery: one row, created by its first full block, read
+ * before every ambient composition to decide what the next turn is due, and
+ * deleted on a context loss. Read before composition, yes — but only to decide
+ * what a delta carries, never to order or select a note.
+ *
+ * `memory_observation_counters` is aggregate by construction — one row per
+ * `(kind, memory_id)` carrying a count — never a per-delivery ledger. A ledger
+ * would grow by the whole index block every turn, and no question R15 asks
+ * needs the individual rows. `count` is the number of times the observation was
+ * RECORDED (a note delivered on ten turns counts ten); the number of DISTINCT
+ * notes behind a kind is that kind's row count.
+ *
+ * `memory_id` is nullable so an unattributed observation — a validator round
+ * that re-derived a fact without naming which record held it — still has a
+ * home. That nullability is exactly why identity is carried by a DERIVED `id`
+ * (`<kind>:<memoryId ?? "">`) rather than by a composite primary key: SQLite
+ * treats NULLs in a unique index as distinct, so `(kind, NULL)` would insert a
+ * fresh row on every unattributed observation instead of raising the count.
+ *
+ * Content-free by construction: ids, counts, and timestamps only, never a hook
+ * or a body.
+ *
+ * Exported so migration 0042 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy. Purely additive, so no
+ * KNOWN_SCHEMA_VERSION bump: an older build sharing `command-center.db` simply
+ * ignores tables it has no reader for.
+ */
+export const MEMORY_TELEMETRY_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS memory_delivery_watermarks (
+    conversation_id TEXT NOT NULL,
+    memory_id       TEXT NOT NULL,
+    channel         TEXT NOT NULL CHECK (channel IN ('index', 'expanded')),
+    revision        INTEGER NOT NULL,
+    -- Whether the delivered text carried the note's status line. A delta
+    -- reports a status line withheld or restored since the last delivery, and
+    -- that transition is only visible against what was last delivered.
+    status_delivered INTEGER NOT NULL DEFAULT 0,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, memory_id, channel),
+    FOREIGN KEY (memory_id) REFERENCES memory_notes(id) ON DELETE CASCADE
+  );
+
+  -- Where one conversation stands with the ambient index. Read before
+  -- composition to decide whether the next turn is due the full block or a
+  -- delta, and DELETED on a context loss: an absent row is the conversation
+  -- that holds no block, which is the same state it was in before its first
+  -- turn, so no separate reset marker is needed.
+  --
+  -- conversation_id is FK-less for the same reason the watermark's is, and
+  -- both instants are composition instants supplied by the delivering seam
+  -- rather than write clocks.
+  CREATE TABLE IF NOT EXISTS memory_index_delivery_state (
+    conversation_id  TEXT PRIMARY KEY,
+    last_full_at     TEXT NOT NULL,
+    last_delivery_at TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS memory_observation_counters (
+    -- '<kind>:<memoryId ?? "">' — identity, derived, never displayed.
+    id                TEXT PRIMARY KEY,
+    kind              TEXT NOT NULL CHECK (kind IN (
+      'retrieval_index', 'retrieval_expanded', 'promotion_candidate',
+      'promoted', 'validator_rederivation'
+    )),
+    memory_id         TEXT,
+    count             INTEGER NOT NULL,
+    first_observed_at TEXT NOT NULL,
+    last_observed_at  TEXT NOT NULL,
+    FOREIGN KEY (memory_id) REFERENCES memory_notes(id) ON DELETE CASCADE
+  );
+
+  -- The read shape: one note's whole observation record.
+  CREATE INDEX IF NOT EXISTS idx_memory_observation_counters_memory
+    ON memory_observation_counters (memory_id);
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -2458,6 +2786,12 @@ const SCHEMA_DDL = `
   ${NOTEPAD_COMMENTS_SCHEMA_DDL}
 
   ${NOTEPAD_DELIVERY_WATERMARKS_SCHEMA_DDL}
+
+  ${MEMORY_SCHEMA_DDL}
+
+  ${MEMORY_SEARCH_SCHEMA_DDL}
+
+  ${MEMORY_TELEMETRY_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {
@@ -2491,6 +2825,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   type: string;
 }> = [
   { table: "conversations", column: "pending_prompt_text", type: "TEXT" },
+  { table: "memory_links", column: "artifact_context_id", type: "TEXT" },
   { table: "projects", column: "agent_capability_overrides", type: "TEXT" },
   { table: "sessions", column: "agent_capability_overrides", type: "TEXT" },
   {
@@ -3448,6 +3783,8 @@ function initializeSchema(db: Db, dbPath: string): void {
   // them; the direct-launch rebuild runs after, against the settled shape.
   migrateGraphWorkflowExecutionsSeedProjection(db);
   ensureAdditiveColumns(db);
+  // Names an additive column, so it cannot sit in SCHEMA_DDL above.
+  db.exec(MEMORY_LINKS_IDENTITY_INDEX_DDL);
   migrateSpecDirectLaunchStorage(db);
 }
 
@@ -3568,10 +3905,33 @@ const SCHEMA_VERSION_TABLE = "schema_migrations";
  * Foreign-key enforcement is disabled for the duration of the deletes so order
  * is irrelevant, then restored to its prior state.
  */
+/**
+ * The shadow tables SQLite creates for a virtual table (`memory_notes_fts_data`
+ * and friends). They appear in `sqlite_master` as ordinary tables but refuse
+ * direct modification in better-sqlite3's defensive mode, and emptying them
+ * would corrupt the index the virtual table owns. Deleting from the VIRTUAL
+ * table clears its content properly, so the reset drops the shadows and keeps
+ * the parent.
+ *
+ * `PRAGMA table_list` is the classification SQLite itself publishes, which
+ * beats guessing at name prefixes.
+ */
+function shadowTableNames(db: Db): Set<string> {
+  const names = new Set<string>();
+  for (const row of db.pragma("table_list") as unknown[]) {
+    if (typeof row !== "object" || row === null) continue;
+    const entry = row as { name?: unknown; type?: unknown; schema?: unknown };
+    if (entry.schema !== "main" || entry.type !== "shadow") continue;
+    if (typeof entry.name === "string") names.add(entry.name);
+  }
+  return names;
+}
+
 export function truncateAllTables(db: Db): void {
   const rows = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
     .all();
+  const shadowTables = shadowTableNames(db);
   const tables: string[] = [];
   for (const row of rows) {
     if (typeof row !== "object" || row === null || !("name" in row)) {
@@ -3582,6 +3942,9 @@ export function truncateAllTables(db: Db): void {
       continue;
     }
     if (name.startsWith("sqlite_") || name === SCHEMA_VERSION_TABLE) {
+      continue;
+    }
+    if (shadowTables.has(name)) {
       continue;
     }
     tables.push(name);

@@ -594,6 +594,15 @@ export interface PublishActorDeps {
     sessionName: string;
     endReason: "finished";
   }): Promise<void>;
+  /**
+   * Session completion's memory step (memory spec R10): state notes archive
+   * and durable session notes become promotion candidates. It runs after the
+   * finished row is written, because candidacy is derived from that row.
+   */
+  finalizeSessionMemory(input: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<void>;
   retargetOrphanedChildren(
     projectPath: string,
     sessionName: string,
@@ -635,6 +644,18 @@ async function finalizeSessionSideEffects(
         });
       } catch (err) {
         logger.warn("publishActor.ticket_lifecycle_reconcile_failed", {
+          projectPath,
+          sessionName,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        await deps.finalizeSessionMemory({ projectPath, sessionName });
+      } catch (err) {
+        // Never fails the merge: the memory step is bookkeeping, and the work
+        // is recoverable. `finishSession` reconciles every over incarnation of
+        // the project, so the next completion here archives what this one lost.
+        logger.warn("publishActor.session_memory_finalize_failed", {
           projectPath,
           sessionName,
           err: err instanceof Error ? err.message : String(err),
@@ -877,6 +898,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
     const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
     const { reconcileTicketSessionLifecycle } =
       await import("@/lib/tickets/lifecycle");
+    const { finalizeSessionMemory } = await import("@/lib/memory/session-end");
 
     return runPublish(
       {
@@ -892,6 +914,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
         setSessionFinished,
         getActiveGraphWorkflowExecution,
         reconcileTicketSessionLifecycle,
+        finalizeSessionMemory,
         retargetOrphanedChildren,
         stopAllForSession,
       },

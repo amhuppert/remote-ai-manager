@@ -271,6 +271,7 @@ it protects their shared fan-in target. The list is closed by
 | `collaboration` | Whether implementer agents may request a second opinion, plus the collaborator agent and negotiation policy. `enabled` defaults to `false`; when disabled, collaboration instructions and continuation results are omitted from agent prompts and the collaboration command is unavailable |
 | `agentValidation` | Registered-command access for implementers and context validators. Each role selector cascades independently, and the nearest supplied selector replaces only that role |
 | `laneMergeValidation` | Validation policy for the shared fan-in target. `{ strategy, commands }`; resolves global → workflow only, never per context |
+| `memory` | Memory delivery policy per role (spec `memory` R10, D7): `{ implementer: { read, contribute }, validator: { read, contribute } }` where `read` is `off \| linked-only \| ambient` and `contribute` is `on \| off`. Each role and each half cascades independently (per-node → workflow → global) with provenance snapshotted onto the resolved context; an override states only the halves it changes, and `null` on the edit ops is the reset. Shipped: implementers ambient+on, validators off+off. Ordinary conversations read `memory.conversations` in global settings instead; the index budget has no override tier at all (`memory.indexBudget`, global only) |
 
 **An assignment pairs prompt identity with runtime.** `profile` references the
 agent-profile library (`src/lib/agent-profiles/`, see the adoption matrix row)

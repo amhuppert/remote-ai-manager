@@ -78,6 +78,16 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
       source: "global",
     },
   },
+  memory: {
+    implementer: {
+      read: { value: "ambient", source: "global" },
+      contribute: { value: "on", source: "global" },
+    },
+    validator: {
+      read: { value: "off", source: "global" },
+      contribute: { value: "off", source: "global" },
+    },
+  },
 };
 
 function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
@@ -143,6 +153,86 @@ function apply(
 ) {
   return applyLiveExecutionEdits(execution, { operations }, deps);
 }
+
+describe("applyLiveExecutionEdits — memory delivery policy (memory R10, D7)", () => {
+  const SNAPSHOT_A = {
+    implementer: {
+      read: { value: "linked-only" as const, source: "workflow" as const },
+      contribute: { value: "off" as const, source: "per-node" as const },
+    },
+    validator: {
+      read: { value: "ambient" as const, source: "per-node" as const },
+      contribute: { value: "on" as const, source: "per-node" as const },
+    },
+  };
+  const SNAPSHOT_B = {
+    implementer: {
+      read: { value: "off" as const, source: "per-node" as const },
+      contribute: { value: "off" as const, source: "per-node" as const },
+    },
+    validator: {
+      read: { value: "linked-only" as const, source: "per-node" as const },
+      contribute: { value: "off" as const, source: "per-node" as const },
+    },
+  };
+  const ADD = {
+    type: "add-context" as const,
+    title: "Added live",
+    acceptanceCriteria: "The added context is done",
+  };
+  const contextIn = (result: ReturnType<typeof apply>, id: string) =>
+    result.ok
+      ? result.execution.workingDefinition.executionContexts.find(
+          (entry) => entry.id === id,
+        )
+      : undefined;
+
+  it("seeds a live-added context's memory from its config source, else from the global defaults, and lets an explicit block win", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const source = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    if (!source) throw new Error("fixture has no context-implement");
+    source.memory = structuredClone(SNAPSHOT_A);
+
+    const seeded = apply(execution, [
+      {
+        ...ADD,
+        id: "context-seeded",
+        configFromContextId: "context-implement",
+      },
+    ]);
+    const defaulted = apply(execution, [{ ...ADD, id: "context-defaulted" }]);
+    const explicit = apply(execution, [
+      { ...ADD, id: "context-explicit", memory: SNAPSHOT_B },
+    ]);
+
+    expect(contextIn(seeded, "context-seeded")?.memory).toEqual(SNAPSHOT_A);
+    expect(contextIn(defaulted, "context-defaulted")?.memory).toEqual(
+      makeDeps().resolvedGlobalDefaults().memory,
+    );
+    expect(contextIn(explicit, "context-explicit")?.memory).toEqual(SNAPSHOT_B);
+  });
+
+  it("applies a live memory policy to a context's snapshot without touching in-flight state", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        memory: SNAPSHOT_B,
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(contextIn(result, "context-implement")?.memory).toEqual(SNAPSHOT_B);
+    expect(result.execution.taskStates).toEqual(before.taskStates);
+    expect(result.execution.contextStates).toEqual(before.contextStates);
+  });
+});
 
 describe("applyLiveExecutionEdits — task + context ops", () => {
   it("refuses a locked-path mutation before changing the execution", () => {

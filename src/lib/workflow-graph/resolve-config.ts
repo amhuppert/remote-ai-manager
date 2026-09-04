@@ -10,14 +10,18 @@ import {
   ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF,
   DEFAULT_AGENT_VALIDATION_CONFIG,
   DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
+  DEFAULT_MEMORY_POLICY_CONFIG,
   DEFAULT_PLAN_REPAIR_POLICY,
   type GraphWorkflowCommandSelector,
+  type GraphWorkflowMemoryPolicyConfig,
+  type GraphWorkflowMemoryPolicyOverride,
 } from "@/lib/workflow-graph/config-schemas";
 import type {
   CascadeWorkflowSemanticDefinition,
   GraphWorkflowCascadeContext,
   GraphWorkflowExecutionContextDefinition,
   ResolvedAgentValidationConfig,
+  ResolvedMemoryPolicyConfig,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
@@ -96,6 +100,7 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   },
   agentValidation: DEFAULT_AGENT_VALIDATION_CONFIG,
   laneMergeValidation: DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
+  memory: DEFAULT_MEMORY_POLICY_CONFIG,
 };
 
 export function coerceGlobalDefaults(
@@ -134,6 +139,7 @@ export function coerceGlobalDefaults(
     laneMergeValidation:
       globalDefaults.laneMergeValidation ??
       SEEDED_WORKFLOW_DEFAULTS.laneMergeValidation,
+    memory: globalDefaults.memory ?? SEEDED_WORKFLOW_DEFAULTS.memory,
   };
 }
 
@@ -179,6 +185,30 @@ export function resolveWorkflowConfig(
       commands:
         override.laneMergeValidation?.commands ??
         defaults.laneMergeValidation.commands,
+    },
+    memory: mergeMemoryPolicyOverWithDefaults(override.memory, defaults.memory),
+  };
+}
+
+/**
+ * Per role and per half, like the context-tier memory cascade below: a
+ * workflow that narrows the validator's read keeps the global contribution
+ * value and the implementer untouched.
+ */
+export function mergeMemoryPolicyOverWithDefaults(
+  override: GraphWorkflowMemoryPolicyOverride | undefined,
+  base: GraphWorkflowMemoryPolicyConfig,
+): GraphWorkflowMemoryPolicyConfig {
+  if (!override) return base;
+  return {
+    implementer: {
+      read: override.implementer?.read ?? base.implementer.read,
+      contribute:
+        override.implementer?.contribute ?? base.implementer.contribute,
+    },
+    validator: {
+      read: override.validator?.read ?? base.validator.read,
+      contribute: override.validator?.contribute ?? base.validator.contribute,
     },
   };
 }
@@ -264,6 +294,8 @@ export function resolveContext(
     context,
   );
 
+  const memory = resolveMemoryPolicyWithProvenance(defaults, workflow, context);
+
   return {
     id: context.id,
     title: context.title,
@@ -298,6 +330,7 @@ export function resolveContext(
     planRepair,
     collaboration,
     agentValidation,
+    memory,
   };
 }
 
@@ -475,6 +508,43 @@ export function resolveAgentValidationWithProvenance(
       workflow.contextValidator,
       global.contextValidator,
     ),
+  };
+}
+
+/**
+ * Memory delivery policy cascade (spec `memory` R10.2, D7): per role
+ * (implementer, validator) and per half (read, contribute), each resolving
+ * per-node → workflow → global independently with its own provenance. A
+ * workflow narrowing the validator's read to linked-only leaves the validator's
+ * contribution and the whole implementer policy where the tier above set them;
+ * a cleared override (the reset) is simply absent here, so the context falls
+ * back to the tier above.
+ */
+export function resolveMemoryPolicyWithProvenance(
+  globalDefaults: WorkflowDefaults,
+  workflowConfig: WorkflowConfigOverride,
+  contextConfig: GraphWorkflowExecutionContextDefinition,
+): ResolvedMemoryPolicyConfig {
+  const perNode = contextConfig.memory ?? {};
+  const workflow = workflowConfig.memory ?? {};
+  const global = globalDefaults.memory ?? DEFAULT_MEMORY_POLICY_CONFIG;
+
+  const resolveRole = (role: "implementer" | "validator") => ({
+    read: pickProvenancedField(
+      perNode[role]?.read,
+      workflow[role]?.read,
+      global[role].read,
+    ),
+    contribute: pickProvenancedField(
+      perNode[role]?.contribute,
+      workflow[role]?.contribute,
+      global[role].contribute,
+    ),
+  });
+
+  return {
+    implementer: resolveRole("implementer"),
+    validator: resolveRole("validator"),
   };
 }
 

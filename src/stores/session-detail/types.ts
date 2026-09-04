@@ -26,7 +26,8 @@ export type RightPaneTab =
   | "specs"
   | "alignment"
   | "artifact"
-  | "notepad";
+  | "notepad"
+  | "memory";
 
 /**
  * How an open notepad divides its pane: the editor alone, both halves, the

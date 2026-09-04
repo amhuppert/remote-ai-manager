@@ -81,6 +81,16 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
         source: "global",
       },
     },
+    memory: {
+      implementer: {
+        read: { value: "ambient", source: "global" },
+        contribute: { value: "on", source: "global" },
+      },
+      validator: {
+        read: { value: "off", source: "global" },
+        contribute: { value: "off", source: "global" },
+      },
+    },
   }),
   validationCommandPreflight: () => ({
     commandCosts: {},

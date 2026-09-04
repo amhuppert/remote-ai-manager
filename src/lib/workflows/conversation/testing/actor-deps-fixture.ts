@@ -150,8 +150,11 @@ export function createActorImplementationDepsFixture(
     getActiveAlignmentInjection: vi.fn(async () => null),
     getActiveAlignmentVersion: vi.fn(async () => null),
     getLiveTicketBlock: vi.fn(async () => null),
+    getMemoryIndexBlock: vi.fn(async () => null),
     readNotepadForInjection: vi.fn(async () => null),
     recordNotepadDeliveries: vi.fn(async () => {}),
+    recordMemoryIndexDeliveries: vi.fn(async () => {}),
+    resetMemoryIndexDelivery: vi.fn(async () => {}),
     prepareNotepadChangeNotice: vi.fn(async (conversationId: string) => ({
       conversationId,
       block: null,

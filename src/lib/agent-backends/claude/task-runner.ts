@@ -40,6 +40,10 @@ import { createClaudeFailureClassifier } from "./failure-classifier";
 import { createStallWatchdog } from "../stall-watchdog";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
 import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
+import {
+  assertClaudeNativeMemoryNeutralized,
+  CLAUDE_NATIVE_MEMORY_SETTINGS,
+} from "./native-memory";
 import { mapErrorSubtype } from "./process-message";
 import {
   buildClaudeFsWriteEnvelope,
@@ -150,7 +154,9 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
    * nothing inherited can survive into the child. A run carrying a trusted
    * `ccSessionScope` then gets the full session env contract on top —
    * credentials and paths resolved here, server-side: the scope names an
-   * identity, it never carries the means to act as one.
+   * identity, it never carries the means to act as one. An isolated one-shot
+   * is hermetic by contract (spec `memory` R10) and gets no identity even
+   * when a scope arrives.
    */
   private resolveChildEnv(
     input: AgentTaskRequest,
@@ -164,7 +170,15 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       ...(isolatedOneShot ? { CLAUDECODE: "" } : {}),
     };
 
-    if (input.ccSessionScope === undefined) {
+    if (isolatedOneShot && input.ccSessionScope !== undefined) {
+      // A scope on a hermetic run is a caller contradiction the profile wins:
+      // no memory verb — ambient or explicit — may be reachable from it.
+      logger.warn("claude-task-runner.session_scope_dropped", {
+        workingDirectory: input.workingDirectory,
+        executionProfile: "isolated-one-shot",
+      });
+    }
+    if (input.ccSessionScope === undefined || isolatedOneShot) {
       return {
         kind: "resolved",
         env: neutralizedEnv as Record<string, string>,
@@ -205,8 +219,10 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
   async run(input: AgentTaskRequest): Promise<AgentTaskResult> {
     const isolatedOneShot = input.executionProfile === "isolated-one-shot";
+    // A hermetic run never gets a CC identity, so a scope on it resolves no URL.
     const trustedServerUrl =
-      input.fsWritePolicy !== undefined || input.ccSessionScope !== undefined
+      input.fsWritePolicy !== undefined ||
+      (input.ccSessionScope !== undefined && !isolatedOneShot)
         ? this.deps.getServerUrl()
         : null;
 
@@ -433,6 +449,14 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       : await resolveClaudeManagedSkillsForLaunch();
 
     try {
+      // The `settings` below are the SDK's FLAG tier, which managed policy
+      // outranks. Confirm the native-memory neutralization survives the
+      // cascade before spawning: with no lever above managed policy, a run
+      // that started anyway would contradict the descriptor's `disabled`
+      // claim. The refusal lands in the catch below and is reported as an
+      // ordinary run failure (see ./native-memory.ts).
+      await assertClaudeNativeMemoryNeutralized({ cwd: workingDirectory });
+
       const stream = this.deps.runQuery({
         prompt,
         options: {
@@ -467,20 +491,19 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           ...(managedSkills.plugins.length > 0
             ? { plugins: managedSkills.plugins }
             : {}),
-          ...(restricted ||
-          Object.keys(managedSkills.enabledPluginsOverride).length > 0
-            ? {
-                settings: {
-                  ...(Object.keys(managedSkills.enabledPluginsOverride).length >
-                  0
-                    ? { enabledPlugins: managedSkills.enabledPluginsOverride }
-                    : {}),
-                  ...(restricted
-                    ? { permissions: restricted.envelope.permissions }
-                    : {}),
-                },
-              }
-            : {}),
+          // Unconditional, unlike the keys around it: the native-memory
+          // neutralization is what makes the descriptor's `disabled` claim
+          // true for every launched task run, not only the ones that happen
+          // to carry plugin or permission overrides (see ./native-memory.ts).
+          settings: {
+            ...CLAUDE_NATIVE_MEMORY_SETTINGS,
+            ...(Object.keys(managedSkills.enabledPluginsOverride).length > 0
+              ? { enabledPlugins: managedSkills.enabledPluginsOverride }
+              : {}),
+            ...(restricted
+              ? { permissions: restricted.envelope.permissions }
+              : {}),
+          },
           ...(isolatedOneShot
             ? { maxTurns: 1, tools: [], strictMcpConfig: true }
             : {}),

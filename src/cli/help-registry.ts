@@ -25,6 +25,7 @@ import { exitCodesHelpEntries } from "./commands/exit-codes.help";
 import { fixtureHelpEntries } from "./commands/fixture.help";
 import { logsHelpEntries } from "./commands/logs.help";
 import { metaHelpEntries } from "./commands/meta.help";
+import { memoryHelpEntries } from "./commands/memory.help";
 import { notepadHelpEntries } from "./commands/notepad.help";
 import { notifyHelpEntries } from "./commands/notify.help";
 import { specHelpEntries } from "./commands/spec/spec.help";
@@ -231,6 +232,7 @@ const ENTRIES: CommandHelpEntry[] = [
   ...validateHelpEntries,
   ...conversationHelpEntries,
   ...ticketHelpEntries,
+  ...memoryHelpEntries,
   ...notepadHelpEntries,
   ...specHelpEntries,
   ...logsHelpEntries,

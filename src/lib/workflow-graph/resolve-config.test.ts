@@ -17,6 +17,7 @@ import type {
   GraphWorkflowScriptValidatorConfig,
 } from "@/lib/workflow-graph/config-schemas";
 import type {
+  GraphWorkflowCascadeContext,
   GraphWorkflowExecutionContextDefinition,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
@@ -27,6 +28,7 @@ import {
   expandCommandSelector,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
+  resolveMemoryPolicyWithProvenance,
   resolveWorkflowConfig,
   resolveWorkflowDefinition,
 } from "./resolve-config";
@@ -114,6 +116,10 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
     },
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
+  },
+  memory: {
+    implementer: { read: "ambient", contribute: "on" },
+    validator: { read: "off", contribute: "off" },
   },
 };
 
@@ -569,6 +575,7 @@ describe("resolveWorkflowConfig", () => {
         undefined as unknown as WorkflowDefaults["agentValidation"],
       laneMergeValidation:
         undefined as unknown as WorkflowDefaults["laneMergeValidation"],
+      memory: undefined as unknown as WorkflowDefaults["memory"],
     };
     const global = makeGlobalConfig({ workflowDefaults: partialGlobal });
 
@@ -595,6 +602,184 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.laneMergeValidation).toEqual({
       strategy: "final-only",
       commands: { mode: "project" },
+    });
+    expect(resolved.memory).toEqual(SEEDED_WORKFLOW_DEFAULTS.memory);
+  });
+
+  it("merges a workflow-level memory override per role and per half over the global defaults", () => {
+    const resolved = resolveWorkflowConfig(
+      makeGlobalConfig(),
+      makeDefinition({
+        workflowConfig: { memory: { validator: { read: "linked-only" } } },
+      }),
+    );
+
+    expect(resolved.memory).toEqual({
+      implementer: { read: "ambient", contribute: "on" },
+      validator: { read: "linked-only", contribute: "off" },
+    });
+  });
+});
+
+// Spec `memory` R10.2: read and contribution resolve independently through
+// global → workflow → per-context, per role, and clearing an override returns
+// the context to the cascade value.
+describe("memory delivery policy cascade (memory R10, D7)", () => {
+  it("ships ambient+contribute for implementers and off+no-contribute for validators in the seeded defaults", () => {
+    expect(SEEDED_WORKFLOW_DEFAULTS.memory).toEqual({
+      implementer: { read: "ambient", contribute: "on" },
+      validator: { read: "off", contribute: "off" },
+    });
+  });
+
+  it("resolves both roles entirely from global when no tier overrides, with global provenance on every half", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect(resolved.memory).toEqual({
+      implementer: {
+        read: { value: "ambient", source: "global" },
+        contribute: { value: "on", source: "global" },
+      },
+      validator: {
+        read: { value: "off", source: "global" },
+        contribute: { value: "off", source: "global" },
+      },
+    });
+  });
+
+  // Table-driven over every layer, for read and contribution independently:
+  // each row states which tiers set which half and what the context must see.
+  const CASES: Array<{
+    name: string;
+    workflow: WorkflowConfigOverride;
+    context: Partial<GraphWorkflowExecutionContextDefinition>;
+    expected: GraphWorkflowCascadeContext["memory"];
+  }> = [
+    {
+      name: "workflow tier overrides one validator half; the other half and the implementer stay global",
+      workflow: { memory: { validator: { read: "linked-only" } } },
+      context: {},
+      expected: {
+        implementer: {
+          read: { value: "ambient", source: "global" },
+          contribute: { value: "on", source: "global" },
+        },
+        validator: {
+          read: { value: "linked-only", source: "workflow" },
+          contribute: { value: "off", source: "global" },
+        },
+      },
+    },
+    {
+      name: "per-context override wins over workflow and global for the half it states",
+      workflow: { memory: { validator: { read: "linked-only" } } },
+      context: { memory: { validator: { read: "ambient" } } },
+      expected: {
+        implementer: {
+          read: { value: "ambient", source: "global" },
+          contribute: { value: "on", source: "global" },
+        },
+        validator: {
+          read: { value: "ambient", source: "per-node" },
+          contribute: { value: "off", source: "global" },
+        },
+      },
+    },
+    {
+      name: "contribution resolves independently of read: a context turning implementer contribution off keeps the workflow's read",
+      workflow: { memory: { implementer: { read: "linked-only" } } },
+      context: { memory: { implementer: { contribute: "off" } } },
+      expected: {
+        implementer: {
+          read: { value: "linked-only", source: "workflow" },
+          contribute: { value: "off", source: "per-node" },
+        },
+        validator: {
+          read: { value: "off", source: "global" },
+          contribute: { value: "off", source: "global" },
+        },
+      },
+    },
+    {
+      name: "a role override never touches the other role",
+      workflow: { memory: { implementer: { read: "off", contribute: "off" } } },
+      context: { memory: { validator: { contribute: "on" } } },
+      expected: {
+        implementer: {
+          read: { value: "off", source: "workflow" },
+          contribute: { value: "off", source: "workflow" },
+        },
+        validator: {
+          read: { value: "off", source: "global" },
+          contribute: { value: "on", source: "per-node" },
+        },
+      },
+    },
+  ];
+
+  for (const { name, workflow, context, expected } of CASES) {
+    it(name, () => {
+      const resolved = resolveContext(
+        GLOBAL_DEFAULTS,
+        workflow,
+        makeContext(context),
+      );
+      expect(resolved.memory).toEqual(expected);
+      expect(
+        resolveMemoryPolicyWithProvenance(
+          GLOBAL_DEFAULTS,
+          workflow,
+          makeContext(context),
+        ),
+      ).toEqual(expected);
+    });
+  }
+
+  it("returns the context to the cascade value once its override is reset (cleared)", () => {
+    const workflow: WorkflowConfigOverride = {
+      memory: { validator: { read: "linked-only" } },
+    };
+    const overridden = resolveContext(
+      GLOBAL_DEFAULTS,
+      workflow,
+      makeContext({ memory: { validator: { read: "ambient" } } }),
+    );
+    expect(overridden.memory?.validator.read).toEqual({
+      value: "ambient",
+      source: "per-node",
+    });
+
+    // The reset is the override's absence: `update-context` with `memory: null`
+    // removes the block, and the same context then resolves to the tier above.
+    const reset = resolveContext(GLOBAL_DEFAULTS, workflow, makeContext());
+    expect(reset.memory?.validator.read).toEqual({
+      value: "linked-only",
+      source: "workflow",
+    });
+    const workflowReset = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+    expect(workflowReset.memory?.validator.read).toEqual({
+      value: "off",
+      source: "global",
+    });
+  });
+
+  it("snapshots the resolved memory policy onto every context of the working definition at seed time", () => {
+    const resolved = resolveWorkflowDefinition(
+      makeGlobalConfig(),
+      makeDefinition({
+        workflowConfig: { memory: { implementer: { contribute: "off" } } },
+      }),
+    );
+
+    expect(resolved.executionContexts[0]?.memory).toEqual({
+      implementer: {
+        read: { value: "ambient", source: "global" },
+        contribute: { value: "off", source: "workflow" },
+      },
+      validator: {
+        read: { value: "off", source: "global" },
+        contribute: { value: "off", source: "global" },
+      },
     });
   });
 });

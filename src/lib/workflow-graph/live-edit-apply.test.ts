@@ -58,6 +58,16 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
       source: "global",
     },
   },
+  memory: {
+    implementer: {
+      read: { value: "ambient", source: "global" },
+      contribute: { value: "on", source: "global" },
+    },
+    validator: {
+      read: { value: "off", source: "global" },
+      contribute: { value: "off", source: "global" },
+    },
+  },
 };
 
 /** A hash shaped like the real thing — the execution schema pins the format. */

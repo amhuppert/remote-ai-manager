@@ -666,6 +666,7 @@ export function compileExpansionBatch(input: {
     invoker,
     resolvedGlobalDefaults.collaboration,
     resolvedGlobalDefaults.agentValidation,
+    resolvedGlobalDefaults.memory,
   );
   const contextOperations: WorkflowLiveEditOperation[] = [];
   const inheritedImplementerSnapshots: Record<string, AgentProfileSnapshot> =
@@ -687,6 +688,7 @@ export function compileExpansionBatch(input: {
         source,
         resolvedGlobalDefaults.collaboration,
         resolvedGlobalDefaults.agentValidation,
+        resolvedGlobalDefaults.memory,
       );
     }
 

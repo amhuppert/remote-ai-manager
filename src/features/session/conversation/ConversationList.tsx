@@ -25,6 +25,7 @@ import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
+import SessionPromotionCandidateCount from "./SessionPromotionCandidateCount";
 import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
@@ -446,9 +447,18 @@ export default function ConversationList({
 
             {/* Finished banner */}
             {isFinished && (
-              <div className="finished-banner">
-                This session has been merged into {targetBranch} and is
-                read-only.
+              <div className="finished-banner flex flex-wrap items-center justify-center gap-sm">
+                <span>
+                  This session has been merged into {targetBranch} and is
+                  read-only.
+                </span>
+                {/* Its durable notes now either move up to the project or die
+                    with the session's scope (spec R11); this is the cue that
+                    the decision is owed. */}
+                <SessionPromotionCandidateCount
+                  projectName={projectName}
+                  sessionName={sessionName}
+                />
               </div>
             )}
 

@@ -169,6 +169,42 @@ describe("CodexTaskRunner", () => {
     });
   });
 
+  it("disables Codex's native memories on an ordinary task run", async () => {
+    // Not only the isolated one-shot: an ordinary task run is a launched
+    // environment too, and its config is where `~/.codex/config.toml` would
+    // otherwise decide whether a second memory system joins the turn.
+    const createCodex = vi.fn(
+      (options) =>
+        new Codex(options) as unknown as ReturnType<
+          CodexTaskRunnerDeps["createCodex"]
+        >,
+    );
+    const capturing = new CodexTaskRunner({
+      createCodex,
+      buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
+      listNativeCodexMcpServers,
+      getCodexPricingOverrides: async () => null,
+      getServerUrl: () => null,
+      getApiToken: () => null,
+      getConfigDir: () => "/test/config",
+      ensureManagedSkillsBridge: async () =>
+        ({ status: "skipped", reason: "no_bundle" }) as const,
+    });
+
+    await capturing.run(makeRequest());
+
+    const options = createCodex.mock.calls[0]?.[0] as
+      | { config?: Record<string, unknown> }
+      | undefined;
+    expect(options?.config).toMatchObject({
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
+    });
+  });
+
   describe("opted-in CC session scope", () => {
     const SCOPE = {
       project: "command-center",
@@ -270,6 +306,53 @@ describe("CodexTaskRunner", () => {
       const serializedResult = JSON.stringify(result);
       expect(serializedResult).not.toContain(RESOLVED_TOKEN);
       expect(serializedResult).not.toContain(RESOLVED_SERVER_URL);
+    });
+
+    it("gives an isolated one-shot no memory surface: no CC session identity and no credentials", async () => {
+      // The hermetic profile (spec `memory` R10): `cctl memory` needs the CC
+      // session env contract, and an isolated one-shot dispatched without a
+      // scope never receives it, so no memory verb is reachable from it.
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      await scopedRunner.run(
+        makeRequest({ executionProfile: "isolated-one-shot" }),
+      );
+
+      expect(readEnv()).toEqual({
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "",
+        CC_API_TOKEN: "",
+        CC_CONVERSATION_ID: "",
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+        CLAUDECODE: "",
+      });
+    });
+
+    it("never applies a session scope to an isolated one-shot: the hermetic profile has no CC identity", async () => {
+      // A scope attached to a hermetic run is a caller contradiction (spec
+      // memory R10): the profile wins, so `cctl memory` is unreachable from
+      // the child even when a scope arrives.
+      const { runner: scopedRunner, readEnv } = makeScopedRunner();
+
+      await scopedRunner.run(
+        makeRequest({
+          executionProfile: "isolated-one-shot",
+          ccSessionScope: { ...SCOPE },
+        }),
+      );
+
+      expect(readEnv()).toEqual({
+        NODE_ENV: "development",
+        PATH: "/usr/bin",
+        CC_SERVER_URL: "",
+        CC_API_TOKEN: "",
+        CC_CONVERSATION_ID: "",
+        CC_WORKFLOW_EXECUTION_ID: "",
+        CC_WORKFLOW_CONTEXT_ID: "",
+        CLAUDECODE: "",
+      });
     });
 
     it("leaves a scope-less run's env byte-identical to the neutralized env", async () => {
@@ -388,6 +471,11 @@ describe("CodexTaskRunner", () => {
     const passedOptions = codexCalls[0]![0]!;
     expect(passedOptions).toHaveProperty("config");
     expect(passedOptions.config).toEqual({
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
       mcp_servers: {
         "test-server": {
           command: "node",
@@ -442,6 +530,11 @@ describe("CodexTaskRunner", () => {
     const codexCalls = vi.mocked(Codex).mock.calls;
     const passedOptions = codexCalls[0]![0]!;
     expect(passedOptions.config).toEqual({
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
       mcp_servers: {
         "test-server": {
           command: "node",
@@ -477,6 +570,11 @@ describe("CodexTaskRunner", () => {
     const passedOptions = codexCalls[0]![0]!;
     expect(passedOptions).toHaveProperty("config");
     expect(passedOptions.config).toEqual({
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
       mcp_servers: {},
       service_tier: "default",
       features: { fast_mode: false },
@@ -488,6 +586,11 @@ describe("CodexTaskRunner", () => {
 
     const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
     expect(passedOptions.config).toEqual({
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
       service_tier: "default",
       features: { fast_mode: false },
     });
@@ -502,6 +605,11 @@ describe("CodexTaskRunner", () => {
 
     const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
     expect(passedOptions.config).toEqual({
+      memories: {
+        dedicated_tools: false,
+        generate_memories: false,
+        use_memories: false,
+      },
       service_tier: "fast",
       features: { fast_mode: true },
     });

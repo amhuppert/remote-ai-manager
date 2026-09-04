@@ -29,6 +29,7 @@
 import type { CodexOptions } from "@openai/codex-sdk";
 import type { FsWritePolicy } from "../task";
 import { checkFsWritePolicy } from "../fs-write-policy";
+import { CODEX_NATIVE_MEMORY_CONFIG } from "./native-memory";
 
 type CodexConfig = NonNullable<CodexOptions["config"]>;
 
@@ -54,11 +55,9 @@ const HERMETIC_CONFIG: CodexConfig = {
   apps: { _default: { enabled: false } },
   include_apps_instructions: false,
   include_collaboration_mode_instructions: false,
-  memories: {
-    dedicated_tools: false,
-    generate_memories: false,
-    use_memories: false,
-  },
+  // The same switches every Codex launch now pins; repeated here only because
+  // this profile blanks the whole ambient surface as one object.
+  ...CODEX_NATIVE_MEMORY_CONFIG,
   project_doc_fallback_filenames: [],
   project_doc_max_bytes: 0,
   skills: { bundled: { enabled: false }, include_instructions: false },

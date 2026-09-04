@@ -14,6 +14,10 @@ Claude, Codex, and future providers vary behind one registered composition bound
 
 Command Center's own skills (the bundled `plugins/command-center` plugin) are host environment, not user capabilities: they are published at startup as an immutable content-addressed bundle (`src/lib/managed-skills/`) and attached to every normal launch below the seam. Every descriptor declares `managedSkills` per execution facet (`bundled` or an explicit `hermetic`); a backend cannot register without deciding. Delivery is adapter-owned: Claude attaches the published bundle as an SDK-local plugin (suppressing a non-equivalent user-installed copy via the flag layer only); Codex reconciles one `info/exclude`-hidden `.agents/skills/command-center` link in the launch checkout before each turn (`codex/managed-skills-bridge.ts`) because the exec transport has no skill-root injection — replace the bridge with native process-scoped roots if that changes. Isolated one-shot profiles stay hermetic. Managed skills never enter the user capability cascade and never write backend-owned user configuration.
 
+## Native provider memory
+
+Command Center's memory library replaces the provider's own memory, so every descriptor declares `nativeMemory` (`src/lib/agent-backends/native-memory.ts`) in one of two states and cannot register without deciding: `disabled` with the lever it pulls, applied in every CC-launched environment for that backend, or `none` with the reason no lever exists. There is no third state — "the prompt asks it not to" is not a mechanism. Adapters own the disable (Claude on the SDK `Settings` layer, Codex in the `memories` config table); a new launch path for either backend applies that backend's shared constant, because the claim covers every environment. A payload is not proof: Claude's `Settings` layer is the SDK's *flag* tier and loses to managed policy, so every Claude launch first resolves the policy tier (`assertClaudeNativeMemoryNeutralized`) and refuses to start when the effective value is not off, or when the policy tier names a source whose content the resolver cannot read (`policyHelper`, `forceRemoteSettingsRefresh`). A backend whose lever can be outranked must verify the *effective* value rather than the payload it sent, and must treat a policy source it cannot read as a refusal rather than a pass. Do not hand-survey that source list — `native-memory-policy-surface.test.ts` scans the installed SDK declarations and reds on any untriaged startup-scoped policy key. A `none` declaration is disclosed on both operator surfaces — the `cctl memory index` stderr header and the Memory Library — from the declaration itself, never from a hardcoded backend name.
+
 ## Ownership rules
 
 Provider adapters own:
@@ -62,7 +66,7 @@ Neutral callers carry complete selections and do not interpret provider paramete
 
 ## Adding or extending a backend
 
-1. Add or extend a descriptor and the required facets under that provider's adapter directory.
+1. Add or extend a descriptor and the required facets under that provider's adapter directory, including the `nativeMemory` declaration.
 2. Declare capability and application-timing differences in descriptor data.
 3. Normalize failures and continuation disposition inside the adapter.
 4. Preserve native transcript bytes in the lossless envelope; expose only neutral operational events/results above it.

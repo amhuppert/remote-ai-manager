@@ -15,6 +15,7 @@ import DocsPanel from "@/features/session/conversation/DocsPanel";
 import AlignmentPanel from "@/features/session/conversation/AlignmentPanel";
 import ContextArtifactPanel from "@/features/session/conversation/ContextArtifactPanel";
 import NotepadPanel from "@/features/session/conversation/NotepadPanel";
+import MemoryLibraryPanel from "@/features/session/conversation/MemoryLibraryPanel";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import {
@@ -85,8 +86,8 @@ export default function RightPane({
         }
         layoutClassName="flex min-h-0 flex-1 flex-col"
       >
-        {/* Tab bar — always visible. Horizontally scrollable so all six
-            triggers stay reachable at narrow split-pane widths (~340px),
+        {/* Tab bar — always visible. Horizontally scrollable so every
+            trigger stays reachable at narrow split-pane widths (~340px),
             where the non-wrapping strip would otherwise clip the last tabs;
             arrow-key roving focus scrolls the focused tab into view. */}
         <div className="shrink-0 overflow-x-auto rounded-t-lg border border-b-0 border-solid border-border-subtle bg-bg-surface px-md py-sm max-768:hidden">
@@ -97,6 +98,7 @@ export default function RightPane({
             <TabsTrigger value="specs">Specs</TabsTrigger>
             <TabsTrigger value="artifact">Artifact</TabsTrigger>
             <TabsTrigger value="notepad">Notepad</TabsTrigger>
+            <TabsTrigger value="memory">Memory</TabsTrigger>
           </TabsList>
         </div>
 
@@ -177,6 +179,18 @@ export default function RightPane({
               sessionName={sessionName}
               conversationId={conversationId}
               active={rightPaneTab === "notepad"}
+            />
+          </TabsContent>
+          <TabsContent
+            value="memory"
+            forceMount
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            <MemoryLibraryPanel
+              projectName={projectName}
+              sessionName={sessionName}
+              conversationId={conversationId}
+              active={rightPaneTab === "memory"}
             />
           </TabsContent>
         </div>
