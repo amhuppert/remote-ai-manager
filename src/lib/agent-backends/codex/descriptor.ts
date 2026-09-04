@@ -43,6 +43,7 @@ export const codexBackendMetadata: AgentBackendMetadata = {
   toneToken: "violet",
   skillTriggerPrefix: "$",
   models: [
+    codexModel("gpt-6-astra", "GPT-6 Astra", "Most capable"),
     codexModel("gpt-5.6-sol", "GPT-5.6 Sol", "Flagship"),
     codexModel("gpt-5.6-terra", "GPT-5.6 Terra", "Balanced"),
     codexModel("gpt-5.6-luna", "GPT-5.6 Luna", "Fast & affordable"),

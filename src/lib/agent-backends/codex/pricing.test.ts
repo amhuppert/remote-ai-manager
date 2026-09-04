@@ -65,6 +65,13 @@ describe("estimateCodexCostUsd", () => {
     );
   });
 
+  it("prices GPT-6 Astra at its standard short-context rates", () => {
+    expect(estimateCodexCostUsd(usage, "gpt-6-astra")).toBeCloseTo(
+      (90 * 10 + 10 * 1 + 50 * 50) / 1_000_000,
+      10,
+    );
+  });
+
   it("falls back to the default Codex model when modelId is undefined", () => {
     expect(estimateCodexCostUsd(usage, undefined)).toBe(
       estimateCodexCostUsd(usage, "gpt-5.4"),

@@ -49,7 +49,7 @@
     "@dnd-kit/core": "6.3.1",
     "@floating-ui/react": "^0.27.19",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@openai/codex-sdk": "^0.147.0",
+    "@openai/codex-sdk": "^0.153.3",
     "@react-hookz/web": "^25.2.0",
     "@recogito/react-text-annotator": "4.2.5",
     "@recogito/text-annotator": "4.2.5",

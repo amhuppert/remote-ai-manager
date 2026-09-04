@@ -15,12 +15,16 @@ import {
 } from "@/lib/agent-backends/schemas";
 
 /**
- * Published OpenAI API rates (USD per 1M tokens, standard tier) as of
- * 2026-07. Cached input is billed at 10% of fresh input per OpenAI's
- * prompt-caching discount; the GPT-5.4-family cached rates apply that
- * published discount.
+ * Published OpenAI API standard short-context rates (USD per 1M tokens).
+ * Cached input is billed at 10% of fresh input per OpenAI's prompt-caching
+ * discount; the GPT-5.4-family cached rates apply that published discount.
  */
 export const DEFAULT_CODEX_PRICING: CodexPricingTable = {
+  "gpt-6-astra": {
+    inputPerMillion: 10,
+    cachedInputPerMillion: 1,
+    outputPerMillion: 50,
+  },
   "gpt-5.6-sol": {
     inputPerMillion: 5,
     cachedInputPerMillion: 0.5,

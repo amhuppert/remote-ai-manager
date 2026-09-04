@@ -78,6 +78,10 @@ describe("getEffortLevelsForModel", () => {
 });
 
 describe("codexModelSchema", () => {
+  it("accepts GPT-6 Astra", () => {
+    expect(codexModelSchema.parse("gpt-6-astra")).toBe("gpt-6-astra");
+  });
+
   it("accepts the GPT-5.6 Sol, Terra, and Luna models", () => {
     expect(codexModelSchema.parse("gpt-5.6-sol")).toBe("gpt-5.6-sol");
     expect(codexModelSchema.parse("gpt-5.6-terra")).toBe("gpt-5.6-terra");
@@ -108,6 +112,24 @@ describe("codexReasoningEffortSchema", () => {
     for (const level of ["minimal", "low", "medium", "high", "xhigh"]) {
       expect(codexReasoningEffortSchema.parse(level)).toBe(level);
     }
+  });
+});
+
+describe("getCodexReasoningLevelsForModel (GPT-6 Astra)", () => {
+  it("surfaces Astra's supported reasoning range", () => {
+    expect(getCodexReasoningLevelsForModel("gpt-6-astra")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  it("withholds unsupported minimal and ultra levels from Astra", () => {
+    const levels = getCodexReasoningLevelsForModel("gpt-6-astra");
+    expect(levels).not.toContain("minimal");
+    expect(levels).not.toContain("ultra");
   });
 });
 

@@ -47,6 +47,31 @@ describe("static backend model catalogs", () => {
     ).toBe(true);
   });
 
+  it("offers GPT-6 Astra with only its supported reasoning levels", () => {
+    const catalog = getStaticBackendModelCatalog("codex");
+    const astra = catalog.models.find(({ id }) => id === "gpt-6-astra");
+
+    expect(astra).toEqual(
+      expect.objectContaining({
+        id: "gpt-6-astra",
+        label: "GPT-6 Astra",
+        description: "Most capable",
+      }),
+    );
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6-astra",
+        parameters: { reasoning: "max", fast: "true" },
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6-astra",
+        parameters: { reasoning: "ultra", fast: "false" },
+      }).valid,
+    ).toBe(false);
+  });
+
   it("preserves a configured custom Codex model with generic complete variants", () => {
     const catalog = getStaticBackendModelCatalog("codex", {
       modelId: "o3-pro-custom",
