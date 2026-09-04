@@ -30,10 +30,10 @@ import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
 } from "@/lib/specs/policy-admissions";
+import type { SpecApprovalRequestsClosedNotice } from "@/lib/specs/attention-records";
 import type {
   SpecApprovalGrantNotice,
   SpecApprovalRequestNotice,
-  SpecApprovalRequestsClosedNotice,
   SpecReviewNotifier,
 } from "@/lib/specs/review-service";
 import type { CreateSpecNotificationInput } from "./repo";

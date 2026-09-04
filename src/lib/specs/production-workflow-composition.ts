@@ -110,6 +110,7 @@ export function createProductionSpecWorkflowComposition(): SpecWorkflowCompositi
     deliveryRepo,
     reviewRepo,
     specsRepo,
+    attention: eventsRepo,
     recordIntervention: evidencePublication.recordMutation,
     now: () => new Date().toISOString(),
     newVerdictId: () => randomUUID(),

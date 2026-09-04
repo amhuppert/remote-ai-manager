@@ -50,7 +50,9 @@ import { draftAuthoringSequence } from "./authoring-sequence";
 import {
   assumptionAuditSnapshot,
   assumptionCitationSnapshot,
+  prepareApprovalRequestRetirement,
   questionAuditSnapshot,
+  type SpecApprovalRequestsClosedNotice,
 } from "./attention-records";
 import type {
   PreparedSpecEventPublication,
@@ -645,17 +647,7 @@ export interface SpecApprovalGrantNotice {
   occurredAt: string;
 }
 
-/**
- * Requests that end without ever being answered: the revision they belong to
- * was withdrawn or sent back, or the request predates request scope and has
- * been retired. They close, they do not report a grant.
- */
-export interface SpecApprovalRequestsClosedNotice {
-  specId: string;
-  attentionIds: string[];
-  reason: string;
-  occurredAt: string;
-}
+export type { SpecApprovalRequestsClosedNotice };
 
 /**
  * Review feedback landing on a proposal, addressed to the conversation that
@@ -1404,12 +1396,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     );
   }
 
-  /**
-   * Ends an approval request that will never be answered. The request event
-   * stays as history; this is what takes it out of request identity and out of
-   * every later act's resolution, so a retired ask can neither be reused nor
-   * clear something else.
-   */
   function appendRequestRetirement(
     spec: Spec,
     actor: ActorProvenance,
@@ -1417,25 +1403,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     attentionId: string,
     reason: string,
   ): PreparedSpecEventPublication {
-    return deps.events.appendInTransaction({
+    return prepareApprovalRequestRetirement(deps.events, {
+      spec,
       actor,
-      durableEventType: "spec-attention-changed",
-      durablePayload: {
-        kind: "approval-request-retired",
-        attentionId,
-        reason,
-        active: false,
-      },
-      sseEvent: {
-        type: "spec-attention-changed",
-        kind: "approval-request-retired",
-        projectPath: spec.projectPath,
-        specId: spec.id,
-        specSlug: spec.slug,
-        occurredAt,
-        attentionId,
-        active: false,
-      },
+      occurredAt,
+      attentionId,
+      reason,
     });
   }
 

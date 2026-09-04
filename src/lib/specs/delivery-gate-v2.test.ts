@@ -378,6 +378,7 @@ function createFixture(): GateFixture {
       | "findGateAdmissionsByRevision"
     >,
     specsRepo,
+    attention: { listOpenApprovalRequests: () => [] },
     newVerdictId: () => `delivery-verdict-${++sequence}`,
     newAdmissionId: () => `delivery-admission-${++sequence}`,
     events: {
@@ -397,7 +398,7 @@ function createFixture(): GateFixture {
     runInImmediateTransaction<T>(fn: () => T): T {
       return fn();
     },
-    policyNotifier: { policyAdmitted },
+    policyNotifier: { policyAdmitted, approvalRequestsClosed: vi.fn() },
     recordIntervention: vi.fn(),
     requestDeliveryApproval: vi.fn(async () => undefined),
     getProjectDisplayName: () => "Delivery v2 project",

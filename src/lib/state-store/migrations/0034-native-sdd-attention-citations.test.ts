@@ -423,6 +423,7 @@ describe("0034-native-sdd-attention-citations", () => {
       "0040-add-memory-notes",
       "0041-add-memory-search-index",
       "0042-add-memory-telemetry",
+      "0043-close-policy-admitted-approval-requests",
     ]);
   });
 

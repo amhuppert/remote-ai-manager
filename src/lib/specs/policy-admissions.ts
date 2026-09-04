@@ -1,4 +1,9 @@
+import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
+import {
+  prepareApprovalRequestRetirement,
+  type SpecApprovalRequestsClosedNotice,
+} from "./attention-records";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
@@ -14,6 +19,13 @@ import type { Spec, SpecExecutionRow, SpecGate, SpecGateDial } from "./schemas";
  * (R19.1), and — Notify only — a human-facing notice so the transition is
  * surfaced for post-hoc review (R11.2). This module owns that bundle; the
  * caller provides the transaction and publishes/forwards after commit.
+ *
+ * The admission also answers the run's open approval request at that gate.
+ * A refusal under the Gate dial files a durable Needs You ask; when a human
+ * then relaxes the dial instead of granting, the run proceeds and nothing
+ * else ever touches that ask, so it would sit in the queue demanding an
+ * approval the spec no longer wants (#108). The retirement rides the same
+ * transaction as the admission row, exactly as a grant's retirement does.
  */
 
 export type PolicyAdmittedGate = "execution_start" | "delivery";
@@ -42,13 +54,26 @@ export interface SpecPolicyAdmissionNotifier {
   policyAdmitted(notice: SpecPolicyAdmissionNotice): void;
 }
 
+/**
+ * The port the execution-scoped gates need: besides the post-hoc notice, a
+ * policy admission closes the Needs You entries of the requests it answered.
+ */
+export interface SpecExecutionGateAdmissionNotifier extends SpecPolicyAdmissionNotifier {
+  approvalRequestsClosed(notice: SpecApprovalRequestsClosedNotice): void;
+}
+
 export interface RecordedPolicyAdmission {
   admissionId: string;
   basis: PolicyAdmissionBasis;
-  /** Publish after the surrounding transaction commits. */
-  prepared: PreparedSpecEventPublication;
+  /** Publish after the surrounding transaction commits, in order. */
+  prepared: PreparedSpecEventPublication[];
   /** Forward to the notifier after commit; null under the Off dial. */
   notice: SpecPolicyAdmissionNotice | null;
+  /**
+   * The open requests this admission answered, to forward after commit; null
+   * when the run had none open at this gate.
+   */
+  requestsClosed: SpecApprovalRequestsClosedNotice | null;
 }
 
 export interface PolicyAdmissionDeps {
@@ -56,6 +81,7 @@ export interface PolicyAdmissionDeps {
     SpecReviewRepo,
     "insertGateAdmission" | "findGateAdmissionsByRevision"
   >;
+  attention: Pick<SpecEventsRepo, "listOpenApprovalRequests">;
   events: SpecEventsPublisher;
   newAdmissionId(): string;
   now(): string;
@@ -65,6 +91,37 @@ const GATE_EVENT_KIND: Record<PolicyAdmittedGate, string> = {
   execution_start: "execution-start-policy-admitted",
   delivery: "delivery-policy-admitted",
 };
+
+const GATE_LABEL: Record<PolicyAdmittedGate, string> = {
+  execution_start: "execution start",
+  delivery: "delivery",
+};
+
+const DIAL_LABEL: Record<PolicyAdmissionBasis, string> = {
+  notify_policy: "Notify",
+  off_policy: "Off",
+};
+
+/**
+ * A per-run gate admits the run as a whole, so the admission answers every
+ * ask filed at that gate for that run. Requests written before runs entered
+ * request identity carry no execution id and belong to the only run that
+ * could have opened them — the same reading a human grant applies.
+ */
+function requestsAnsweredByAdmission(
+  deps: PolicyAdmissionDeps,
+  gate: PolicyAdmittedGate,
+  execution: SpecExecutionRow,
+): string[] {
+  return deps.attention
+    .listOpenApprovalRequests(execution.spec_id)
+    .filter(
+      (request) =>
+        request.gate === gate &&
+        (request.executionId === execution.id || request.executionId === null),
+    )
+    .map((request) => request.attentionId);
+}
 
 /**
  * Runs inside the caller's transaction. Returns null when the gate's dial
@@ -109,7 +166,7 @@ export function recordPolicyGateAdmissionInTransaction(
     created_at: occurredAt,
   });
   const kind = GATE_EVENT_KIND[input.gate];
-  const prepared = deps.events.appendInTransaction({
+  const admissionEvent = deps.events.appendInTransaction({
     actor: { kind: "system" },
     durableEventType: "spec-approval-changed",
     durablePayload: {
@@ -131,10 +188,34 @@ export function recordPolicyGateAdmissionInTransaction(
       subjectId: input.execution.id,
     },
   });
+  const answered = requestsAnsweredByAdmission(
+    deps,
+    input.gate,
+    input.execution,
+  );
+  const closeReason = `the ${GATE_LABEL[input.gate]} gate admitted the run under ${DIAL_LABEL[basis]}`;
+  const retirements = answered.map((attentionId) =>
+    prepareApprovalRequestRetirement(deps.events, {
+      spec: input.spec,
+      actor: { kind: "system" },
+      occurredAt,
+      attentionId,
+      reason: closeReason,
+    }),
+  );
   return {
     admissionId,
     basis,
-    prepared,
+    prepared: [admissionEvent, ...retirements],
+    requestsClosed:
+      answered.length === 0
+        ? null
+        : {
+            specId: input.spec.id,
+            attentionIds: answered,
+            reason: closeReason,
+            occurredAt,
+          },
     notice:
       basis === "notify_policy"
         ? {

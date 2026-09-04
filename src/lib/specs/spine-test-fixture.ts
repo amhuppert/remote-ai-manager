@@ -117,15 +117,15 @@ import {
   type SpecWorkflowCleanupTarget,
 } from "./execution-service";
 import { createMeasuresQuery } from "./measures-query";
+import type { SpecApprovalRequestsClosedNotice } from "./attention-records";
 import type {
+  SpecExecutionGateAdmissionNotifier,
   SpecPolicyAdmissionNotice,
-  SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
 import {
   createReviewService,
   type SpecApprovalGrantNotice,
   type SpecApprovalRequestNotice,
-  type SpecApprovalRequestsClosedNotice,
 } from "./review-service";
 import {
   createSpecRouteHandlers,
@@ -560,9 +560,12 @@ export function createSpecSpineWorld(
     closed: [],
     policyAdmitted: [],
   };
-  const policyNotifier: SpecPolicyAdmissionNotifier = {
+  const policyNotifier: SpecExecutionGateAdmissionNotifier = {
     policyAdmitted(notice) {
       reviewNotifications.policyAdmitted.push(notice);
+    },
+    approvalRequestsClosed(notice) {
+      reviewNotifications.closed.push(notice);
     },
   };
   const reviewService = createReviewService({
@@ -993,6 +996,7 @@ export function createSpecSpineWorld(
       deliveryRepo: delivery,
       reviewRepo: review,
       specsRepo: specs,
+      attention: eventsRepo,
       recordIntervention: recordMutation,
       getProjectDisplayName: () => SPINE_PROJECT_NAME,
       // Mirrors production composition: the gate's missing-approval refusal

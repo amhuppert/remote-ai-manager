@@ -191,6 +191,7 @@ beforeEach(() => {
       deliveryRepo: delivery,
       reviewRepo: review,
       specsRepo: fixture.specs,
+      attention: specEvents,
       newVerdictId: () => `delivery-verdict-${++ids}`,
       newAdmissionId: () => `admission-policy-${++ids}`,
       events,

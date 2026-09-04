@@ -52,6 +52,7 @@ import { nativeSddManagedWorkflowDefinitions } from "./0039-native-sdd-managed-w
 import { addMemoryNotes } from "./0040-add-memory-notes";
 import { addMemorySearchIndex } from "./0041-add-memory-search-index";
 import { addMemoryTelemetry } from "./0042-add-memory-telemetry";
+import { closePolicyAdmittedApprovalRequests } from "./0043-close-policy-admitted-approval-requests";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -121,6 +122,7 @@ export const migrations: readonly StateMigration[] = [
   addMemoryNotes,
   addMemorySearchIndex,
   addMemoryTelemetry,
+  closePolicyAdmittedApprovalRequests,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

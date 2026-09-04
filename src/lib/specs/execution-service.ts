@@ -54,10 +54,11 @@ import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
 import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
 import type { SpecMeasureEventPayload } from "./measures";
 import { resolveDial } from "./policy";
+import type { SpecApprovalRequestsClosedNotice } from "./attention-records";
 import {
   recordPolicyGateAdmissionInTransaction,
+  type SpecExecutionGateAdmissionNotifier,
   type SpecPolicyAdmissionNotice,
-  type SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
 import {
   specGateDialSchema,
@@ -118,8 +119,11 @@ export interface ExecutionServiceDeps {
   runInImmediateTransaction<T>(fn: () => T): T;
   /** The production one-off graph-launch seam, injected at composition. */
   executionStartGate?: ExecutionStartGatePort;
-  /** Post-hoc review notices for Notify-dial policy admissions (R11.2). */
-  policyNotifier?: SpecPolicyAdmissionNotifier;
+  /**
+   * Post-hoc review notices for Notify-dial policy admissions (R11.2), and
+   * the closing of the requests such an admission answers (#108).
+   */
+  policyNotifier?: SpecExecutionGateAdmissionNotifier;
   /**
    * Abandoning an execution or spec resolves its open spec attention rows so
    * Needs You never shows requests for a terminal run (R19.3). Scope
@@ -980,7 +984,10 @@ async function markRunning(
     `spec-execution-running[${workflowExecutionId}]`,
     async () => {
       const prepared: PreparedSpecEventPublication[] = [];
-      const notices: SpecPolicyAdmissionNotice[] = [];
+      const notices: PolicyStartAdmissionNotices = {
+        admitted: [],
+        requestsClosed: [],
+      };
       const result = deps.runInImmediateTransaction<
         LifecycleResult<SpecExecutionRow | null>
       >(() => {
@@ -1012,10 +1019,20 @@ async function markRunning(
         return { ok: true, value: updated };
       });
       publishPrepared(deps, prepared);
-      for (const notice of notices) deps.policyNotifier?.policyAdmitted(notice);
+      for (const notice of notices.admitted) {
+        deps.policyNotifier?.policyAdmitted(notice);
+      }
+      for (const notice of notices.requestsClosed) {
+        deps.policyNotifier?.approvalRequestsClosed(notice);
+      }
       return result;
     },
   );
+}
+
+interface PolicyStartAdmissionNotices {
+  admitted: SpecPolicyAdmissionNotice[];
+  requestsClosed: SpecApprovalRequestsClosedNotice[];
 }
 
 /**
@@ -1032,7 +1049,7 @@ function recordPolicyStartAdmission(
   deps: ExecutionLifecycleDeps,
   execution: SpecExecutionRow,
   prepared: PreparedSpecEventPublication[],
-  notices: SpecPolicyAdmissionNotice[],
+  notices: PolicyStartAdmissionNotices,
 ): void {
   const spec = deps.specsRepo.findByIdInTransaction(execution.spec_id);
   if (spec === null) return;
@@ -1045,6 +1062,7 @@ function recordPolicyStartAdmission(
   const recorded = recordPolicyGateAdmissionInTransaction(
     {
       reviewRepo: deps.reviewRepo,
+      attention: deps.eventsRepo,
       events: deps.events,
       newAdmissionId: () => deps.nextId("admission"),
       now: deps.now,
@@ -1057,8 +1075,11 @@ function recordPolicyStartAdmission(
     },
   );
   if (recorded === null) return;
-  prepared.push(recorded.prepared);
-  if (recorded.notice !== null) notices.push(recorded.notice);
+  prepared.push(...recorded.prepared);
+  if (recorded.notice !== null) notices.admitted.push(recorded.notice);
+  if (recorded.requestsClosed !== null) {
+    notices.requestsClosed.push(recorded.requestsClosed);
+  }
 }
 
 async function markDelivered(

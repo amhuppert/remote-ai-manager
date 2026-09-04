@@ -12,10 +12,15 @@ vi.mock("@/lib/logging", () => ({
 import type Database from "better-sqlite3";
 
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
+import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
+import type { SpecApprovalRequestsClosedNotice } from "@/lib/specs/attention-records";
+import { createSpecEventsPublisher } from "@/lib/specs/events";
 import type { SpecExecutionBindingSnapshotV2 } from "@/lib/specs/execution-binding";
 import { createSpecExecutionBindingPorts } from "@/lib/specs/execution-binding-service";
+import type { SpecPolicyAdmissionNotice } from "@/lib/specs/policy-admissions";
 import type {
   Spec,
   SpecExecutionRow,
@@ -404,6 +409,11 @@ function createIntegratedGate(execution: GraphWorkflowExecution) {
       },
       findGateAdmissionsByRevision: () => [],
     },
+    attention: {
+      listOpenApprovalRequests: () => {
+        throw new Error("Delivery gate policy admission was not expected.");
+      },
+    },
     specsRepo: {
       findById: async (specId) => (specId === SPEC_ID ? spec : null),
       getRevisionSnapshot: async (revisionId) =>
@@ -435,6 +445,90 @@ function createIntegratedGate(execution: GraphWorkflowExecution) {
     gate: createDeliveryGate(deps),
     outcomePort,
   };
+}
+
+/**
+ * The gate as production composes it for a Notify delivery dial: real
+ * admissions, a real attention register, and the notifier port observed.
+ */
+function createNotifyAdmissionGate(execution: GraphWorkflowExecution) {
+  const eventsRepo = createSpecEventsRepo(db);
+  const events = createSpecEventsPublisher({
+    appendInTransaction: eventsRepo.appendInTransaction,
+    publish: () => ({ delivered: true }),
+  });
+  const notifyingSpec: Spec = {
+    ...spec,
+    gatePolicy: {
+      preset: "contract-bearing",
+      overrides: { delivery: "notify" },
+    },
+  };
+  const policyAdmitted: SpecPolicyAdmissionNotice[] = [];
+  const closed: SpecApprovalRequestsClosedNotice[] = [];
+  let sequence = 0;
+  const deps: DeliveryGateDeps = {
+    bindingPort: createSpecExecutionBindingPorts(
+      createSpecExecutionBindingRepo(db),
+    ).delivery,
+    outcomePort: createAuthoredContextOutcomeService({
+      async findExecutionById(executionId) {
+        return executionId === execution.id
+          ? { execution, location: "archived" }
+          : null;
+      },
+    }),
+    deliveryRepo: createSpecDeliveryRepo(db),
+    reviewRepo: createSpecReviewRepo(db),
+    attention: eventsRepo,
+    specsRepo: {
+      findById: async (specId) => (specId === SPEC_ID ? notifyingSpec : null),
+      getRevisionSnapshot: async (revisionId) =>
+        revisionId === REVISION_ID ? snapshot : null,
+    },
+    newVerdictId: () => `delivery-verdict-${++sequence}`,
+    newAdmissionId: () => `delivery-admission-${++sequence}`,
+    events,
+    writeQueue: {
+      withWriteQueue: (_label, fn) => fn(),
+    },
+    runInImmediateTransaction: (fn) => db.transaction(fn).immediate(),
+    policyNotifier: {
+      policyAdmitted: (notice) => {
+        policyAdmitted.push(notice);
+      },
+      approvalRequestsClosed: (notice) => {
+        closed.push(notice);
+      },
+    },
+    recordIntervention: () => undefined,
+    requestDeliveryApproval: async () => undefined,
+    getProjectDisplayName: () => "Delivery v2 integration",
+    now: () => NOW,
+  };
+  return { eventsRepo, gate: createDeliveryGate(deps), policyAdmitted, closed };
+}
+
+function openDeliveryRequest(attentionId: string, executionId: string): void {
+  createSpecEventsRepo(db).append({
+    spec_id: SPEC_ID,
+    occurred_at: NOW,
+    event_type: "spec-attention-changed",
+    actor_json: JSON.stringify({
+      kind: "agent",
+      conversationId: `workflow:${executionId}`,
+    }),
+    payload_json: JSON.stringify({
+      kind: "approval-requested",
+      attentionId,
+      revisionId: REVISION_ID,
+      gate: "delivery",
+      scope: "gate",
+      subject: "delivery",
+      executionId,
+      active: true,
+    }),
+  });
 }
 
 beforeEach(() => {
@@ -589,5 +683,72 @@ describe("delivery gate v2 integrated execution identity", () => {
         criterion_element_id: SECONDARY_CRITERION_ID,
       }),
     ]);
+  });
+});
+
+describe("delivery gate policy admission answers the open approval request (#108)", () => {
+  it("retires this run's delivery request and closes its Needs You entry when Notify admits the run", async () => {
+    // The run was refused under the Gate dial and asked for a human approval;
+    // the human then relaxed the delivery dial to Notify instead of granting.
+    openDeliveryRequest(
+      "attention-delivery-current",
+      CURRENT_SPEC_EXECUTION_ID,
+    );
+    openDeliveryRequest("attention-delivery-prior", PRIOR_SPEC_EXECUTION_ID);
+    const { eventsRepo, gate, policyAdmitted, closed } =
+      createNotifyAdmissionGate(graphExecution("completed", false));
+
+    const result = await gate.evaluate({
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      preparedSha: "prepared-current",
+      expectedTargetSha: "target-current",
+      projectPath: PROJECT_PATH,
+    });
+
+    expect(result).toMatchObject({ status: "pass" });
+    expect(policyAdmitted).toEqual([
+      expect.objectContaining({
+        gate: "delivery",
+        basis: "notify_policy",
+        executionId: CURRENT_SPEC_EXECUTION_ID,
+      }),
+    ]);
+    // The admission answers the ask for THIS run alone: the register keeps
+    // the other run's request, and the queue entry closes rather than asking
+    // for an approval nothing still needs.
+    expect(eventsRepo.listOpenApprovalRequests(SPEC_ID)).toEqual([
+      expect.objectContaining({
+        attentionId: "attention-delivery-prior",
+        executionId: PRIOR_SPEC_EXECUTION_ID,
+      }),
+    ]);
+    expect(closed).toEqual([
+      expect.objectContaining({
+        specId: SPEC_ID,
+        attentionIds: ["attention-delivery-current"],
+      }),
+    ]);
+  });
+
+  it("re-reporting an already admitted run neither re-admits nor re-closes anything", async () => {
+    openDeliveryRequest(
+      "attention-delivery-current",
+      CURRENT_SPEC_EXECUTION_ID,
+    );
+    const { gate, policyAdmitted, closed } = createNotifyAdmissionGate(
+      graphExecution("completed", false),
+    );
+    const input = {
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      preparedSha: "prepared-current",
+      expectedTargetSha: "target-current",
+      projectPath: PROJECT_PATH,
+    };
+
+    await gate.evaluate(input);
+    await gate.evaluate(input);
+
+    expect(policyAdmitted).toHaveLength(1);
+    expect(closed).toHaveLength(1);
   });
 });

@@ -1,5 +1,6 @@
 import { createLogger } from "@/lib/logging";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
@@ -20,7 +21,7 @@ import type { SpecEventsPublisher } from "./events";
 import { resolveDial } from "./policy";
 import {
   recordPolicyGateAdmissionInTransaction,
-  type SpecPolicyAdmissionNotifier,
+  type SpecExecutionGateAdmissionNotifier,
 } from "./policy-admissions";
 import type {
   LinkedSpecExecutionBindingV2,
@@ -84,12 +85,14 @@ export interface DeliveryGateDeps {
     | "findGateAdmissionsByRevision"
   >;
   specsRepo: Pick<SpecsRepo, "findById" | "getRevisionSnapshot">;
+  /** The open approval requests a policy admission answers (#108). */
+  attention: Pick<SpecEventsRepo, "listOpenApprovalRequests">;
   newVerdictId(): string;
   newAdmissionId(): string;
   events: SpecEventsPublisher;
   writeQueue: Pick<WriteQueue, "withWriteQueue">;
   runInImmediateTransaction<T>(fn: () => T): T;
-  policyNotifier?: SpecPolicyAdmissionNotifier;
+  policyNotifier?: SpecExecutionGateAdmissionNotifier;
   recordIntervention(input: DeliveryGateIntervention): void;
   requestDeliveryApproval(input: {
     specId: string;
@@ -626,6 +629,7 @@ async function recordPolicyDeliveryAdmission(
         recordPolicyGateAdmissionInTransaction(
           {
             reviewRepo: deps.reviewRepo,
+            attention: deps.attention,
             events: deps.events,
             newAdmissionId: deps.newAdmissionId,
             now: deps.now,
@@ -634,9 +638,14 @@ async function recordPolicyDeliveryAdmission(
         ),
       );
       if (recorded === null) return;
-      deps.events.publishAfterCommit(recorded.prepared);
+      for (const prepared of recorded.prepared) {
+        deps.events.publishAfterCommit(prepared);
+      }
       if (recorded.notice !== null) {
         deps.policyNotifier?.policyAdmitted(recorded.notice);
+      }
+      if (recorded.requestsClosed !== null) {
+        deps.policyNotifier?.approvalRequestsClosed(recorded.requestsClosed);
       }
     },
   );
