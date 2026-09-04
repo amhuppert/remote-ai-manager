@@ -4,7 +4,9 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import { createDefinitionMutationCoordinator } from "@/lib/workflow-graph/definition-mutation-coordinator";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import { createManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
@@ -37,7 +39,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const launch = createWorkflowDefinitionRecord();
     const first = await service.open({
       spec: SPEC,
@@ -96,7 +101,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const record = await service.open({
       spec: SPEC,
       pinnedRevisionId: "revision-1",
@@ -133,7 +141,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const launch = createWorkflowDefinitionRecord();
 
     const first = await service.open({
@@ -176,7 +187,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const opened = await service.open({
       spec: SPEC,
       pinnedRevisionId: "revision-1",
@@ -234,5 +248,75 @@ describe("managed workflow definition service", () => {
     expect(
       clone.definition.lockedRegions?.flatMap((lock) => lock.paths),
     ).not.toContain("/charter");
+  });
+
+  it("keeps authored edge ids through a replace, the propose freeze and the reopen clone", async () => {
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => tempDir,
+      // The freeze changes the lock table, and that check consults the live
+      // execution list; no execution is seeded from this definition.
+      listActiveExecutions: async () => new Map(),
+    });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
+    const scope = { kind: "project" as const, projectPath: SPEC.projectPath };
+    const opened = await service.open({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-edges",
+      launch: createWorkflowDefinitionRecord(),
+    });
+    const edges = [
+      {
+        id: "edge-plan-to-implement",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      },
+      {
+        id: "edge-implement-to-verify",
+        sourceContextId: "context-implement",
+        targetContextId: "context-verify",
+      },
+    ];
+
+    // What `workflow replace` persists for a managed draft: the stored record
+    // with the planner's graph, server-owned fields carried across.
+    const replaced = await storage.update(scope, opened.id, opened.revision, {
+      name: opened.name,
+      description: opened.description,
+      definition: { ...opened.definition, edges },
+      layout: opened.layout,
+    });
+    expect(replaced.definition.edges).toEqual(edges);
+
+    const frozen = await service.restage({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-edges",
+      workflowDefinitionId: opened.id,
+      expectedRevision: replaced.revision,
+      stage: "candidate",
+    });
+    expect(frozen.definition.edges).toEqual(edges);
+
+    const clone = await service.clone({
+      spec: SPEC,
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-edges",
+      sourceDefinitionId: opened.id,
+      cloneDefinitionId: "attempt-edges-clone",
+    });
+    expect(clone.definition.edges).toEqual(edges);
+
+    const removed = applyDefinitionEdits(clone, [
+      { type: "remove-edge", edgeId: "edge-plan-to-implement" },
+    ]);
+    expect(removed.ok).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.record.definition.edges.map((edge) => edge.id)).toEqual([
+      "edge-implement-to-verify",
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
 import {
@@ -29,6 +29,7 @@ import {
 } from "@/lib/workflow-graph/assignment-references";
 import { runDefinitionEditRequest } from "./definition-edit-handler";
 import {
+  assignmentReferenceIssues,
   assignmentReferenceRefusal,
   assignmentReferenceRefusalBody,
 } from "./assignment-reference-refusal";
@@ -45,6 +46,7 @@ import {
 import { staleWorkflowDefinitionResponse } from "@/lib/workflow-graph/stale-workflow-definition";
 import {
   managedWorkflowReadOnlyInstruction,
+  managedWorkflowReadOnlyRationale,
   type ManagedWorkflowDefinitionPolicy,
   type NativeSddWorkflowManagementCompact,
 } from "@/lib/workflow-graph/managed-definition";
@@ -54,10 +56,23 @@ import {
 } from "@/lib/workflow-graph/definition-mutation-coordinator";
 import {
   findChangedLockedRegion,
+  isServerOwnedRegionPath,
+  mergeServerOwnedRegions,
   regionLockedInstruction,
+  serverOwnedRegionPathsFilled,
+  type LockedRegionMatch,
 } from "@/lib/workflow-graph/locked-regions";
+import {
+  callerConversationId,
+  workflowReplaceServerFieldsMergedEvent,
+  workflowValidateRefusedEvents,
+  type RefusedPlanIssue,
+} from "@/lib/workflow-graph/planning-telemetry";
 import { getStateDb } from "@/lib/state-store/store";
+import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
 import { createNativeSddManagedWorkflowDefinitionPolicy } from "@/lib/specs/managed-workflow-definition-policy";
+import { dedupeServerOwnedDeliveryPlanSources } from "@/lib/specs/delivery-plan-finalization";
 
 const logger = createLogger("workflow-graph");
 
@@ -237,29 +252,59 @@ export interface WorkflowDefinitionRouteDeps {
   planReviews: PlanReviewLookup;
   managedDefinitions?: ManagedWorkflowDefinitionPolicy;
   mutationCoordinator?: DefinitionMutationCoordinator;
+  /**
+   * The sink for this module's structured events. Injectable because a log
+   * field is a contract these handlers are held to — the planning telemetry of
+   * design 3.10 is unprovable against a module-level file sink.
+   */
+  log?: Logger;
 }
 
 const defaultStorage = createWorkflowStorageService();
+
+/**
+ * The propose gate of a managed draft exactly as `spec plan status` reads it:
+ * the delivery-plan service's health projection for the spec the ownership row
+ * names. Composed here rather than in workflow-graph so the graph keeps only
+ * the port and specs keeps the one projection. Loaded lazily, the way the spec
+ * route handlers load the same factory.
+ */
+async function productionDraftBlockingCount(
+  projectPath: string,
+  specSlug: string,
+): Promise<number | null> {
+  const { createProductionSpecRouteServices } =
+    await import("@/lib/specs/service-factory");
+  const [services, spec] = await Promise.all([
+    createProductionSpecRouteServices(projectPath),
+    createSpecsRepo(getStateDb(), getSharedWriteQueue()).resolve(
+      projectPath,
+      specSlug,
+    ),
+  ]);
+  if (spec === null) return null;
+  const plan = await services.deliveryPlan.read({ spec });
+  return plan.ok ? plan.value.health.blocking : null;
+}
+
+/** Built per call: the state database is opened per request, not at import. */
+function defaultPolicy(): ManagedWorkflowDefinitionPolicy {
+  return createNativeSddManagedWorkflowDefinitionPolicy({
+    db: getStateDb(),
+    resolveProjectName: getProjectDisplayName,
+    getWorkflowDefinition: (path, definitionId) =>
+      defaultStorage.get({ kind: "project", projectPath: path }, definitionId),
+    draftBlockingCount: productionDraftBlockingCount,
+  });
+}
+
 const defaultManagedDefinitions: ManagedWorkflowDefinitionPolicy = {
-  list(projectPath, workflowIds) {
-    return createNativeSddManagedWorkflowDefinitionPolicy({
-      db: getStateDb(),
-      resolveProjectName: getProjectDisplayName,
-      getWorkflowDefinition: (path, workflowId) =>
-        defaultStorage.get({ kind: "project", projectPath: path }, workflowId),
-    }).list(projectPath, workflowIds);
-  },
-  get(projectPath, workflowId) {
-    return createNativeSddManagedWorkflowDefinitionPolicy({
-      db: getStateDb(),
-      resolveProjectName: getProjectDisplayName,
-      getWorkflowDefinition: (path, definitionId) =>
-        defaultStorage.get(
-          { kind: "project", projectPath: path },
-          definitionId,
-        ),
-    }).get(projectPath, workflowId);
-  },
+  list: (projectPath, workflowIds) =>
+    defaultPolicy().list(projectPath, workflowIds),
+  get: (projectPath, workflowId) =>
+    defaultPolicy().get(projectPath, workflowId),
+  proposeBlockingCount: (projectPath, workflowId) =>
+    defaultPolicy().proposeBlockingCount(projectPath, workflowId),
 };
 
 const defaultDeps: WorkflowDefinitionRouteDeps = {
@@ -290,6 +335,45 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
   managedDefinitions: defaultManagedDefinitions,
 };
 
+/**
+ * Log a plan write's refusal codes (#80 design 3.10) so a retrospective can
+ * group planning friction by the conversation that met it. The conversation is
+ * read from the request rather than the ambient trace: these routes take no
+ * `conversationId` path segment for the trace to derive one from.
+ */
+function logPlanRefusal(
+  routeLog: Logger,
+  request: Request,
+  input: {
+    issues: readonly RefusedPlanIssue[];
+    definitionId?: string | null;
+  },
+): void {
+  for (const telemetry of workflowValidateRefusedEvents({
+    issues: input.issues,
+    definitionId: input.definitionId,
+    conversationId: callerConversationId(request),
+  })) {
+    routeLog.info(telemetry.event, telemetry.fields);
+  }
+}
+
+/**
+ * The refusal codes of an acceptance-time assignment-reference error, keeping
+ * the record each issue located. Validate admits a reference storage can still
+ * refuse — a profile deleted between the two — and that refusal reaches the
+ * author with its use site, so its log line must name it too.
+ */
+function assignmentRefusalIssues(error: unknown): RefusedPlanIssue[] | null {
+  const issues = assignmentReferenceIssues(error);
+  return issues === null
+    ? null
+    : issues.map((issue) => ({
+        code: WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
+        recordId: issue.recordId,
+      }));
+}
+
 function admissionRefusalResponse(validation: {
   issues: ReadonlyArray<{ path: string; message: string }>;
   code?: string;
@@ -306,6 +390,8 @@ function admissionRefusalResponse(validation: {
 }
 
 function managedMutationRefusal(
+  routeLog: Logger,
+  request: Request,
   workflowId: string,
   management: NativeSddWorkflowManagementCompact,
   operation: "update" | "edit" | "delete",
@@ -318,13 +404,26 @@ function managedMutationRefusal(
     operation === "delete"
       ? "Abandon the delivery plan from its managed header; candidate definition files are retained as history."
       : managedWorkflowReadOnlyInstruction(management);
-  logger.warn("workflow-graph.definition-mutation.managed-refused", {
+  const rationale =
+    operation === "delete"
+      ? null
+      : managedWorkflowReadOnlyRationale(management);
+  routeLog.warn("workflow-graph.definition-mutation.managed-refused", {
     workflowId,
     attemptId: management.attemptId,
     lifecycle: management.lifecycle,
     operation,
     code,
   });
+  // Only the replace surface is counted. `workflow.validate.refused` names the
+  // three surfaces the retrospective measures, and folding an edit or a delete
+  // refusal under it would inflate exactly the tally being read.
+  if (operation === "update") {
+    logPlanRefusal(routeLog, request, {
+      issues: [{ code }],
+      definitionId: workflowId,
+    });
+  }
   return NextResponse.json(
     {
       error:
@@ -334,6 +433,74 @@ function managedMutationRefusal(
       code,
       lifecycle: management.lifecycle,
       instruction,
+      ...(rationale === null ? {} : { rationale }),
+    },
+    { status: 409 },
+  );
+}
+
+/**
+ * The propose-gate delta a managed write reports (design 3.1): the blocking
+ * count read through the draft-health projection before and after the write.
+ * Present only when both reads answered — a receipt never prints a delta it
+ * half measured — and never on an ordinary definition, which has no gate.
+ */
+function proposeGateFields(
+  blockingBefore: number | null,
+  blockingAfter: number | null,
+): { proposeGate?: { blockingBefore: number; blockingAfter: number } } {
+  if (blockingBefore === null || blockingAfter === null) return {};
+  return { proposeGate: { blockingBefore, blockingAfter } };
+}
+
+/**
+ * Why a managed draft's server-owned region cannot be authored. Stated once,
+ * at the refusal, so the constraint reads as the design rather than as a
+ * missing capability (design 3.1).
+ */
+const SERVER_OWNED_REGION_RATIONALE =
+  "provenance and approval policy are stamped by the server so a signed candidate can prove where it came from";
+
+/**
+ * The region_locked refusal for a managed definition, stage-aware: on a draft,
+ * a server-owned path was never the author's to write, so the remedy is to
+ * omit it from the plan and the reason is stated; any other lock keeps the
+ * escape its declarer wrote (the charter lock's reopen-and-re-propose line).
+ */
+function regionLockedRefusal(
+  routeLog: Logger,
+  request: Request,
+  workflowId: string,
+  management: NativeSddWorkflowManagementCompact,
+  locked: LockedRegionMatch,
+): Response {
+  const serverOwnedOnDraft =
+    management.lifecycle === "draft" &&
+    isServerOwnedRegionPath(locked.lockedPath);
+  routeLog.warn("workflow-graph.definition-replace.region_locked", {
+    workflowId,
+    attemptId: management.attemptId,
+    lifecycle: management.lifecycle,
+    lockedPath: locked.lockedPath,
+    serverOwned: serverOwnedOnDraft,
+    code: "region_locked",
+  });
+  logPlanRefusal(routeLog, request, {
+    issues: [{ code: "region_locked" }],
+    definitionId: workflowId,
+  });
+  return NextResponse.json(
+    {
+      error: "Managed delivery workflow locked regions cannot be edited.",
+      code: "region_locked",
+      lockedPath: locked.lockedPath,
+      sourceUri: locked.sourceUri,
+      instruction: serverOwnedOnDraft
+        ? `${locked.lockedPath} is server-owned; omit it from your plan.`
+        : regionLockedInstruction(locked),
+      ...(serverOwnedOnDraft
+        ? { rationale: SERVER_OWNED_REGION_RATIONALE }
+        : {}),
     },
     { status: 409 },
   );
@@ -344,6 +511,7 @@ export function createWorkflowDefinitionRouteHandlers(
 ) {
   const assignmentReferences = deps.assignmentReferences;
   const coordinator = deps.mutationCoordinator ?? definitionMutationCoordinator;
+  const routeLog = deps.log ?? logger;
   async function LIST(
     _request: Request,
     context: RouteContext,
@@ -403,10 +571,17 @@ export function createWorkflowDefinitionRouteHandlers(
       assignmentReferences,
     });
     if (!validation.ok) {
-      logger.warn("workflow-graph.definition-create.rejected", {
+      const code = validation.code ?? "invalid_plan";
+      routeLog.warn("workflow-graph.definition-create.rejected", {
         projectPath,
         issueCount: validation.issues.length,
-        code: validation.code ?? "invalid_plan",
+        code,
+      });
+      logPlanRefusal(routeLog, request, {
+        issues: validation.issues.map((issue) => ({
+          code,
+          recordId: issue.recordId,
+        })),
       });
       return admissionRefusalResponse(validation);
     }
@@ -418,9 +593,12 @@ export function createWorkflowDefinitionRouteHandlers(
       { projectPath, caller: "project-create" },
     );
     if (review.refusal !== null) {
-      logger.warn("workflow-graph.definition-create.review_unacknowledged", {
+      routeLog.warn("workflow-graph.definition-create.review_unacknowledged", {
         projectPath,
         definitionHash: review.refusal.definitionHash,
+      });
+      logPlanRefusal(routeLog, request, {
+        issues: [{ code: REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE }],
       });
       return reviewAcknowledgementRefusalResponse(review.refusal);
     }
@@ -433,7 +611,12 @@ export function createWorkflowDefinitionRouteHandlers(
       );
     } catch (error) {
       const refusal = assignmentReferenceRefusal(error);
-      if (refusal) return refusal;
+      if (refusal) {
+        logPlanRefusal(routeLog, request, {
+          issues: assignmentRefusalIssues(error) ?? [],
+        });
+        return refusal;
+      }
       const message =
         error instanceof Error ? error.message : "Failed to create workflow";
       return NextResponse.json({ error: message } satisfies ApiError, {
@@ -518,11 +701,19 @@ export function createWorkflowDefinitionRouteHandlers(
       assignmentReferences,
     });
     if (!validation.ok) {
-      logger.warn("workflow-graph.definition-replace.rejected", {
+      const code = validation.code ?? "invalid_plan";
+      routeLog.warn("workflow-graph.definition-replace.rejected", {
         projectPath,
         workflowId,
         issueCount: validation.issues.length,
-        code: validation.code ?? "invalid_plan",
+        code,
+      });
+      logPlanRefusal(routeLog, request, {
+        issues: validation.issues.map((issue) => ({
+          code,
+          recordId: issue.recordId,
+        })),
+        definitionId: workflowId,
       });
       return admissionRefusalResponse(validation);
     }
@@ -534,10 +725,14 @@ export function createWorkflowDefinitionRouteHandlers(
       { projectPath, workflowId, caller: "project-replace" },
     );
     if (review.refusal !== null) {
-      logger.warn("workflow-graph.definition-replace.review_unacknowledged", {
+      routeLog.warn("workflow-graph.definition-replace.review_unacknowledged", {
         projectPath,
         workflowId,
         definitionHash: review.refusal.definitionHash,
+      });
+      logPlanRefusal(routeLog, request, {
+        issues: [{ code: REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE }],
+        definitionId: workflowId,
       });
       return reviewAcknowledgementRefusalResponse(review.refusal);
     }
@@ -546,50 +741,89 @@ export function createWorkflowDefinitionRouteHandlers(
       return await coordinator.run(
         `${projectPath}\0${workflowId}`,
         async () => {
-          const management = await deps.managedDefinitions?.get(
-            projectPath,
-            workflowId,
-          );
+          const policy = deps.managedDefinitions;
+          const management = await policy?.get(projectPath, workflowId);
           if (management && !management.editable) {
-            return managedMutationRefusal(workflowId, management, "update");
+            return managedMutationRefusal(
+              routeLog,
+              request,
+              workflowId,
+              management,
+              "update",
+            );
           }
+          let launch = validation.launch;
+          let mergedServerOwnedPaths: readonly string[] = [];
           if (management) {
             const existing = await deps.getDefinition(projectPath, workflowId);
             if (!existing) return notFound("Workflow not found");
-            const locked = findChangedLockedRegion(
+            // The plan is authored without the server-owned fields; fill them
+            // from the stored record so only a present-and-different value
+            // reaches the lock, and store the injected sources at most once.
+            const mergedPaths = serverOwnedRegionPathsFilled(
               existing.definition,
-              validation.launch.definition,
+              launch.definition,
             );
+            const merged = mergeServerOwnedRegions(
+              existing.definition,
+              launch.definition,
+            );
+            const locked = findChangedLockedRegion(existing.definition, merged);
             if (locked) {
-              return NextResponse.json(
-                {
-                  error:
-                    "Managed delivery workflow locked regions cannot be edited.",
-                  code: "region_locked",
-                  lockedPath: locked.lockedPath,
-                  sourceUri: locked.sourceUri,
-                  instruction: regionLockedInstruction(locked),
-                },
-                { status: 409 },
+              return regionLockedRefusal(
+                routeLog,
+                request,
+                workflowId,
+                management,
+                locked,
               );
             }
+            mergedServerOwnedPaths = mergedPaths;
+            launch = {
+              ...launch,
+              definition: {
+                ...merged,
+                charter: {
+                  ...merged.charter,
+                  sourcesOfTruth: dedupeServerOwnedDeliveryPlanSources(
+                    merged.charter.sourcesOfTruth,
+                  ),
+                },
+              },
+            };
           }
 
+          // Read on both sides of the write so the receipt reports the count
+          // it moved from, which is what makes a partial correction legible.
+          const gate =
+            management && policy
+              ? () => policy.proposeBlockingCount(projectPath, workflowId)
+              : null;
+          const blockingBefore = gate ? await gate() : null;
           const item = await deps.updateDefinition(
             projectPath,
             workflowId,
             revision.data.expectedRevision,
-            validation.launch,
+            launch,
           );
-          const nextManagement = await deps.managedDefinitions?.get(
-            projectPath,
-            workflowId,
-          );
+          // Reported after the write lands: a merge the record never kept —
+          // refused by the lock, or lost to a stale token — filled nothing.
+          const mergeTelemetry = workflowReplaceServerFieldsMergedEvent({
+            definitionId: workflowId,
+            fields: mergedServerOwnedPaths,
+            conversationId: callerConversationId(request),
+          });
+          if (mergeTelemetry !== null) {
+            routeLog.info(mergeTelemetry.event, mergeTelemetry.fields);
+          }
+          const nextManagement = await policy?.get(projectPath, workflowId);
+          const blockingAfter = gate ? await gate() : null;
           return NextResponse.json({
             item: nextManagement
               ? { ...item, management: nextManagement }
               : item,
             ...saveAdvisoryFields(review, validation.warnings),
+            ...proposeGateFields(blockingBefore, blockingAfter),
           });
         },
       );
@@ -598,8 +832,18 @@ export function createWorkflowDefinitionRouteHandlers(
       // reference is a refusal of the SUBMITTED document, not a missing id, and
       // reporting it as "not found" hid its located issues entirely.
       const refusal = assignmentReferenceRefusal(error);
-      if (refusal) return refusal;
+      if (refusal) {
+        logPlanRefusal(routeLog, request, {
+          issues: assignmentRefusalIssues(error) ?? [],
+          definitionId: workflowId,
+        });
+        return refusal;
+      }
       if (error instanceof StaleWorkflowDefinitionError) {
+        logPlanRefusal(routeLog, request, {
+          issues: [{ code: "stale_workflow_definition" }],
+          definitionId: workflowId,
+        });
         return staleWorkflowDefinitionResponse(
           error.workflowId,
           error.expectedRevision,
@@ -623,13 +867,24 @@ export function createWorkflowDefinitionRouteHandlers(
 
     const rawBody = await request.json().catch(() => undefined);
     return coordinator.run(`${projectPath}\0${workflowId}`, async () => {
-      const management = await deps.managedDefinitions?.get(
-        projectPath,
-        workflowId,
-      );
+      const policy = deps.managedDefinitions;
+      const management = await policy?.get(projectPath, workflowId);
       if (management && !management.editable) {
-        return managedMutationRefusal(workflowId, management, "edit");
+        return managedMutationRefusal(
+          routeLog,
+          request,
+          workflowId,
+          management,
+          "edit",
+        );
       }
+      // The gate is read inside persist rather than up front: a dry run or a
+      // refused batch writes nothing, so there is nothing it could have moved.
+      const gate =
+        management && policy
+          ? () => policy.proposeBlockingCount(projectPath, workflowId)
+          : null;
+      let blockingBefore: number | null = null;
       return runDefinitionEditRequest({
         rawBody,
         notFoundError: "Workflow not found",
@@ -649,19 +904,33 @@ export function createWorkflowDefinitionRouteHandlers(
             assignmentReferences,
           });
         },
-        persist: (draft, expectedRevision) =>
-          deps.updateDefinition(
+        persist: async (draft, expectedRevision) => {
+          blockingBefore = gate ? await gate() : null;
+          const item = await deps.updateDefinition(
             projectPath,
             workflowId,
             expectedRevision,
             draft,
-          ),
+          );
+          const nextManagement = management
+            ? await policy?.get(projectPath, workflowId)
+            : null;
+          return nextManagement
+            ? { ...item, management: nextManagement }
+            : item;
+        },
+        ...(gate
+          ? {
+              receiptFields: async () =>
+                proposeGateFields(blockingBefore, await gate()),
+            }
+          : {}),
       });
     });
   }
 
   async function DELETE(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const { name = "", workflowId = "" } = await context.params;
@@ -675,7 +944,13 @@ export function createWorkflowDefinitionRouteHandlers(
         workflowId,
       );
       if (management) {
-        return managedMutationRefusal(workflowId, management, "delete");
+        return managedMutationRefusal(
+          routeLog,
+          request,
+          workflowId,
+          management,
+          "delete",
+        );
       }
 
       const deleted = await deps.deleteDefinition(projectPath, workflowId);

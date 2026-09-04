@@ -424,6 +424,8 @@ export type ApplyLiveExecutionEditsResult =
       code: LiveEditRejectionCode;
       issues: WorkflowGraphValidationError[];
       instruction?: string;
+      /** Why the refused constraint exists, for surfaces that render a why-line. */
+      rationale?: string;
     };
 
 /**
@@ -512,6 +514,13 @@ function laneAgentLiveEditDeps(
 interface LiveEditRejection {
   code: LiveEditRejectionCode;
   issues: WorkflowGraphValidationError[];
+  instruction?: string;
+  /**
+   * Why the constraint this rejection enforces exists. Carried on the rejection
+   * rather than folded into the message so every surface can render it in its
+   * own reason tier instead of re-deriving one (#80 I-12).
+   */
+  rationale?: string;
 }
 
 interface LiveEditOpContext {
@@ -736,6 +745,7 @@ interface LiveEditBatchRejection {
   code: LiveEditRejectionCode;
   issues: WorkflowGraphValidationError[];
   instruction?: string;
+  rationale?: string;
 }
 
 type LiveEditOpsResult =
@@ -861,7 +871,17 @@ function runLiveEditOps(
     }
     const rejection = applyLiveEditOperation(next, operation, index, opContext);
     if (rejection) {
-      return { ok: false, code: rejection.code, issues: rejection.issues };
+      return {
+        ok: false,
+        code: rejection.code,
+        issues: rejection.issues,
+        ...(rejection.instruction === undefined
+          ? {}
+          : { instruction: rejection.instruction }),
+        ...(rejection.rationale === undefined
+          ? {}
+          : { rationale: rejection.rationale }),
+      };
     }
   }
 
@@ -1103,6 +1123,7 @@ export type PrepareLiveExecutionEditsResult =
       code: LiveEditRejectionCode;
       issues: WorkflowGraphValidationError[];
       instruction?: string;
+      rationale?: string;
     };
 
 export type FinalizePreparedEditsRefusalCode =
@@ -1699,8 +1720,9 @@ function liveEditIssue(
 function rejectLiveEdit(
   code: LiveEditRejectionCode,
   issue: WorkflowGraphValidationError,
+  guidance: { rationale?: string; instruction?: string } = {},
 ): LiveEditRejection {
-  return { code, issues: [issue] };
+  return { code, issues: [issue], ...guidance };
 }
 
 function findLiveContext(
@@ -2536,6 +2558,14 @@ function applyReorderTasks(
   return null;
 }
 
+/** Why a structural batch waits for an idle scheduler, in one sentence. */
+const QUIESCENT_STRUCTURAL_EDIT_RATIONALE =
+  "structural edits apply atomically against a quiescent scheduler so no lane reads a half-applied definition";
+
+/** The three acts that satisfy it. */
+const QUIESCENT_STRUCTURAL_EDIT_INSTRUCTION =
+  "pause, edit, resume: cctl workflow live pause, then this edit, then cctl workflow live resume";
+
 // Structural ops (add-context / remove-context / add-edge / remove-edge) all
 // require a quiescent execution (doc 06, D5): the edge topology and context set
 // are the graph's shape, so shape edits only land while the scheduler is idle.
@@ -2551,6 +2581,14 @@ function requireQuiescent(
       "Structural edits require a quiescent execution; pause it first",
       index,
     ),
+    {
+      // #80 I-12: without the reason, "quiescent" was read as "no started
+      // context" and the refusal looked arbitrary. It is not the contexts that
+      // must be idle — it is the scheduler, because the batch lands as one
+      // definition swap.
+      rationale: QUIESCENT_STRUCTURAL_EDIT_RATIONALE,
+      instruction: QUIESCENT_STRUCTURAL_EDIT_INSTRUCTION,
+    },
   );
 }
 

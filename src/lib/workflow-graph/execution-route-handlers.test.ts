@@ -5215,7 +5215,7 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     expect(body.receipt.status).toBe("running");
     expect(body.receipt.warnings).toHaveLength(2);
     expect(body.receipt.warnings[0]).toMatchObject({
-      path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+      path: "definition.executionContexts.0 (context-plan).acceptanceCriteria.0 (ac-1).statement",
       message: expect.stringContaining("lint/open-quantifier"),
     });
     expect(body.receipt.warnings[1]).toEqual(committedWarning);

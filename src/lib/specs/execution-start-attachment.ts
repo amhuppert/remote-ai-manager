@@ -1,4 +1,4 @@
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
 import type { SpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
@@ -7,6 +7,7 @@ import { stableStringify } from "@/lib/state-store/serialization";
 import type { GraphWorkflowExecutionOrigin } from "@/lib/workflow-graph/spec-bridge";
 
 import { executionDispositionFromDeliveryPlan } from "./delivery-plan";
+import { specPlanAttemptTransitionEvent } from "./planning-telemetry";
 import type { SpecExecutionBindingSnapshotV2 } from "./execution-binding";
 import type {
   PreparedSpecEventPublication,
@@ -29,9 +30,20 @@ interface SpecExecutionStartAttachmentDeps {
   >;
   bindingRepo: Pick<SpecExecutionBindingRepo, "insert">;
   linksRepo: Pick<SpecLinksRepo, "insertLink">;
-  plansRepo: Pick<SpecDeliveryPlanRepo, "recordTransition">;
+  /**
+   * `findAttemptById` reads the status the launch moves the attempt off, which
+   * the catalogued transition event names as `from`; `recordTransition` alone
+   * reports only where the attempt landed.
+   */
+  plansRepo: Pick<SpecDeliveryPlanRepo, "recordTransition" | "findAttemptById">;
   events: Pick<SpecEventsPublisher, "appendInTransaction">;
   nextLinkId(): string;
+  /**
+   * The sink for this module's structured events. Injectable because a log
+   * field is a contract this attachment is held to — the planning telemetry of
+   * design 3.10 is unprovable against a module-level file sink.
+   */
+  log?: Logger;
 }
 
 interface SpecExecutionStartAttachmentInput {
@@ -144,7 +156,8 @@ export function prepareSpecExecutionStartAttachment(
         created_at: input.createdAt,
       });
 
-      deps.plansRepo.recordTransition({
+      const beforeLaunch = deps.plansRepo.findAttemptById(input.attemptId);
+      const launched = deps.plansRepo.recordTransition({
         attemptId: input.attemptId,
         transition: {
           kind: "launch",
@@ -180,6 +193,18 @@ export function prepareSpecExecutionStartAttachment(
           },
         }),
       );
+
+      // Emitted last, after every write this attachment owns: a launch that
+      // faults part way through leaves no transition line for a transition
+      // the transaction rolled back. Only the actor's KIND travels — a
+      // conversation handle would be content, and this event counts acts.
+      const telemetry = specPlanAttemptTransitionEvent({
+        slug: input.spec.slug,
+        from: beforeLaunch?.status ?? "none",
+        to: launched.status,
+        actor: input.actor.kind,
+      });
+      (deps.log ?? logger).info(telemetry.event, telemetry.fields);
     },
   };
 }

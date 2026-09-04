@@ -735,7 +735,7 @@ function guidanceDocument(): SchemaDocument {
     enums: collectEnums(schema, ""),
     example: NATIVE_SDD_GUIDANCE,
     notes: [
-      "The empty delivery-plan lint taxonomy records that graph admission and accountability checks belong to the shared graph launch boundary. Evergreen lint rule ids and severities come from the registries that construct findings.",
+      "Every rule id comes from the registry that constructs the finding: the delivery-plan rows are derived from the binding lint's code list and the propose gate's launch and plan ids, so a code the gate can emit cannot be missing here. `severity` names the transition the finding blocks; a `note` of \"human act\" marks a blocks_propose code no authored write clears, because reaffirming a criterion an earlier execution delivered is a human judgment.",
       "test_run is minted only when the criterion's own strategy declares it, alongside validator_verdict from the same graph-workflow-validation-result event; no test runner mints independent test_run evidence.",
     ],
   };

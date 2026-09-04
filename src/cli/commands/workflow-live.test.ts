@@ -384,6 +384,7 @@ describe("cctl workflow live get", () => {
         impl    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet effort=medium
         verify  implementer  implementer       project:house-implementer@7    #dddddddddddd  codex gpt-5.4 fast=false reasoning=high  focus "state-store"
         verify  validator    dormant-security  global:house-reviewer@3        #ffffffffffff  task codex gpt-5.4 fast=false reasoning=low  (cohort disabled)
+      next write: baseLiveRevision 4
       "
     `);
   });
@@ -1713,5 +1714,147 @@ describe("cctl workflow live ledger (D4 R16.2)", () => {
     expect(result.stderr).toContain(
       "no active graph workflow execution in this session",
     );
+  });
+});
+
+describe("live write receipts name baseLiveRevision (#80 I-7, I-12)", () => {
+  const opsFile = ".cc/temp/live-ops.json";
+  const opsBody = JSON.stringify({
+    executionId: "exec-7",
+    baseLiveRevision: 4,
+    operations: [{ type: "update-context", contextId: "impl", title: "Go" }],
+  });
+
+  it("names the token on the live outline the next edit is addressed from", async () => {
+    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+    const text = await runCli(["workflow", "live", "get"], baseEnv, host);
+    const structured = await runCli(
+      ["workflow", "live", "get", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: baseLiveRevision 4");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      baseLiveRevision: 4,
+    });
+  });
+
+  it("names the token the next edit needs on the live edit receipt", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          applied: 1,
+          liveRevision: 5,
+          affectedContextIds: ["impl"],
+          dryRun: false,
+        }),
+      { [opsFile]: opsBody },
+    );
+    const text = await runCli(
+      ["workflow", "live", "edit", "--file", opsFile],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["workflow", "live", "edit", "--file", opsFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: baseLiveRevision 5");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      baseLiveRevision: 5,
+    });
+  });
+
+  it("renders the requires-pause reason and the pause/edit/resume act", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error: "live edit was rejected",
+            code: "requires_pause",
+            issues: [
+              {
+                path: "operations[0]",
+                message:
+                  "Structural edits require a quiescent execution; pause it first",
+              },
+            ],
+            rationale:
+              "structural edits apply atomically against a quiescent scheduler so no lane reads a half-applied definition",
+            instruction:
+              "pause, edit, resume: cctl workflow live pause, then this edit, then cctl workflow live resume",
+          },
+          400,
+        ),
+      { [opsFile]: opsBody },
+    );
+    const result = await runCli(
+      ["workflow", "live", "edit", "--file", opsFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "why: structural edits apply atomically against a quiescent scheduler so no lane reads a half-applied definition",
+    );
+    expect(result.stderr).toContain("instruction: pause, edit, resume");
+  });
+
+  // `--full` is header-bearing too, so it owes the same token as the default
+  // outline — on both disclosure paths, since a spilled record is still the map
+  // the next edit is addressed from.
+  const fullBody = (instructions: string) => ({
+    ok: true,
+    section: "full",
+    header: { ...OUTLINE_BODY.outline.header },
+    contexts: [{ id: "impl", instructions }],
+  });
+
+  it("names the token on the inline --full projection", async () => {
+    const host = makeHost(() => jsonResponse(fullBody("short")));
+    const text = await runCli(
+      ["workflow", "live", "get", "--full"],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["workflow", "live", "get", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: baseLiveRevision 4");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      baseLiveRevision: 4,
+    });
+  });
+
+  it("names the token on the spilled --full manifest", async () => {
+    const host = makeHost(() => jsonResponse(fullBody("y".repeat(80_000))));
+    const text = await runCli(
+      ["workflow", "live", "get", "--full"],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["workflow", "live", "get", "--full", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("artifact: .cc/temp/");
+    expect(text.stdout).toContain("next write: baseLiveRevision 4");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      storage: "artifact",
+      baseLiveRevision: 4,
+    });
   });
 });

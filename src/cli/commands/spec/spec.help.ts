@@ -1,5 +1,27 @@
-import type { CommandHelpEntry } from "../../help-types";
+import { successHintRow, type CommandHelpEntry } from "../../help-types";
 import { NATIVE_SDD_GUIDANCE_SECTIONS } from "@/lib/specs/native-sdd-guidance";
+
+/**
+ * The CLI-owned rows of the launch hint chain that `spec` receipts render (#80
+ * design 3.6), declared beside the entries whose receipts carry them.
+ */
+export const SPEC_LAUNCH_HINTS = {
+  /** The launch hands off to the workflow verbs, which take the execution id. */
+  start: successHintRow({
+    after: "spec start",
+    names: ["workflow", "status"],
+    sampleTokens: { executionId: "exec-7" },
+    hint: ({ executionId }) =>
+      `cctl workflow status ${executionId} — reports the run's lane position`,
+  }),
+  /** The working exit after an abandoned launch, which no other surface names. */
+  abandonedExecution: successHintRow({
+    after: "spec abandon --execution",
+    names: ["spec", "plan", "open"],
+    sampleTokens: { specSlug: "native-sdd" },
+    hint: ({ specSlug }) => `cctl spec plan open ${specSlug}`,
+  }),
+} as const;
 
 export const specHelpEntries: CommandHelpEntry[] = [
   {
@@ -1573,11 +1595,20 @@ export const specHelpEntries: CommandHelpEntry[] = [
     flags: [],
     examples: [],
     domainContext:
-      "Dispositions are selected, deferred, waived, delivered_elsewhere, reaffirmed, and pending_reaffirmation. Each selected criterion needs at least one claim by a stable authored accountability context in the graph; claims are alternatives, not task-level contributions. Judgments are made against the PINNED revision, never the evergreen head. The attempt is addressed by spec slug: a spec has at most one live attempt, so no verb takes an attempt id.",
+      "The launch is authored as an ordinary plan.json and checked before it is stored: `cctl workflow validate --file <plan.json> --definition <definition-id>` reports everything that would refuse propose, and `cctl workflow replace <definition-id> --file <plan.json>` writes it, merging the server-owned provenance, locks, and injected sources rather than demanding them. Workflow Builder is where a human reviews the same definition; `cctl workflow edit` is for a targeted change to one element, not for authoring. Dispositions are selected, deferred, waived, delivered_elsewhere, reaffirmed, and pending_reaffirmation, and each selected criterion needs at least one claim by a stable authored accountability context in the graph; claims are alternatives, not task-level contributions. Judgments are made against the PINNED revision, never the evergreen head, and the attempt is addressed by spec slug: a spec has at most one live attempt, so no verb takes an attempt id.",
     related: [
       {
         command: "spec plan open",
         oneLiner: "open the delta-seeded managed delivery workflow",
+      },
+      {
+        command: "workflow validate",
+        oneLiner:
+          "check plan.json against the managed draft's propose gate before storing it",
+      },
+      {
+        command: "workflow replace",
+        oneLiner: "store the authored plan.json as the managed draft",
       },
       {
         command: "spec plan status",
@@ -1608,15 +1639,24 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Seeding is derived from the delivery delta: fresh delivered criteria become delivered_elsewhere, soft-stale criteria become pending_reaffirmation, undelivered/hard-stale/deferred criteria become selected, and waivers stay waived. A second attempt is refused while one is live. The launch — graph, workflow config, and charter — belongs to the managed definition: author it with `cctl workflow edit <definition-id>` or Workflow Builder while the attempt is a draft; only the server-owned provenance is locked until propose freezes the charter.",
+      "Seeding is derived from the delivery delta: fresh delivered criteria become delivered_elsewhere, soft-stale criteria become pending_reaffirmation, undelivered/hard-stale/deferred criteria become selected, and waivers stay waived. A second attempt is refused while one is live. The launch — graph, workflow config, and charter — belongs to the managed definition and is authored as a plan.json while the attempt is a draft: check it with `cctl workflow validate --file <plan.json> --definition <definition-id>`, then store it with `cctl workflow replace <definition-id> --file <plan.json>`. Workflow Builder reviews the same definition for a human, and `cctl workflow edit` remains for a targeted change to one element; only the server-owned provenance is locked until propose freezes the charter.",
     related: [
       {
-        command: "spec plan edit",
-        oneLiner: "write the seeded document back with your changes",
+        command: "workflow validate",
+        oneLiner:
+          "check the authored plan.json against this draft's propose gate",
+      },
+      {
+        command: "workflow replace",
+        oneLiner: "store the checked plan.json as this draft's definition",
       },
       {
         command: "spec plan status",
         oneLiner: "read what the seeded plan still owes",
+      },
+      {
+        command: "spec plan edit",
+        oneLiner: "write the binding document back with your changes",
       },
       {
         command: "spec plan abandon",
@@ -1860,14 +1900,14 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "plan", "status"],
     summary: "read the attempt's state, findings, and the act it owes next",
     description:
-      "Show the attempt's status, its pinned revision and draft revision, the delta basis it was seeded against, the plan lint findings that would refuse a proposal, the dispositions still awaiting a human act, every proposal snapshot, and the exact next act with the party who performs it.",
+      "Show the attempt's status, its pinned revision and draft revision, the delta basis it was seeded against, the plan lint findings that would refuse a proposal, the claims ledger and charter state, the criteria still owing an act, every proposal snapshot, and the exact next act with the party who performs it.",
     usage: ["cctl spec plan status <slug>"],
     flags: [],
     examples: [
       {
         invocation: "cctl spec plan status native-sdd --json",
         explanation:
-          "read blocking findings, unresolved dispositions, and the next act as data",
+          "read blocking findings, the claims ledger, unresolved criteria, and the next act as data",
       },
     ],
     generatedReference: [NATIVE_SDD_GUIDANCE_SECTIONS.deliveryPlanLint],
@@ -1894,7 +1934,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     description:
       "Show the exact authored graph launch, layout, and accountability binding from a delivery-plan attempt without launching it. `--stage draft` reads the current editable attempt and never represents approvable bytes. `--stage proposed` reads only the frozen finalized candidate, including its server-injected sources, locks, origin, and approval policy, so its candidate hash is exactly what sign-off accepts and `spec start` verifies.",
     usage: [
-      "cctl spec plan preview <slug> --stage draft|proposed [--expected-draft-revision <n>]",
+      "cctl spec plan preview <slug> --stage draft|proposed [--outline] [--expected-draft-revision <n>]",
     ],
     flags: [
       {
@@ -1903,6 +1943,12 @@ export const specHelpEntries: CommandHelpEntry[] = [
         valuePlaceholder: "draft|proposed",
         description:
           "preview the delivery plan ATTEMPT instead of the revision. `draft` reads the attempt's current document and is never approvable; `proposed` reads the frozen finalized candidate and nothing else, so its candidateHash is exactly what approval binds to and start verifies",
+      },
+      {
+        name: "outline",
+        kind: "boolean",
+        description:
+          "render the launch envelope through the same outline renderer `cctl workflow get` uses — structure, identifiers, and prose SIZES with the selector beside each — instead of the whole envelope, which runs to tens of kilobytes on a real delivery plan",
       },
       {
         name: "expected-draft-revision",
@@ -1991,7 +2037,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "start"],
     summary: "launch the approved delivery-plan candidate, exactly as approved",
     description:
-      "Launch the finalized candidate the plan sign-off approved. Start verifies the approved candidateHash against the frozen canonical bytes, then creates the graph-workflow execution at the shared graph start boundary: before this command the spec owns no workflow execution and no session slot. `--inputs` supplies the ordinary graph launch inputs as a JSON object; required/default/enum/text validation is performed by that shared boundary. A spec with no approved attempt is refused, naming the exact next act in the open/propose/sign-off chain. `--park` holds a proposed or approved candidate for spec-side prelaunch review instead of launching it, still without creating any execution or taking the slot; its receipt reports the plan's projected next act, so an unapproved park points to sign-off while an approved park points to launch. Scope files are retired; open an authored delivery attempt, propose it, and obtain sign-off before starting.",
+      "Launch the finalized candidate the plan sign-off approved. Start verifies the approved candidateHash against the frozen canonical bytes, then creates the graph-workflow execution at the shared graph start boundary: before this command the spec owns no workflow execution and no session slot. `--inputs` supplies the ordinary graph launch inputs as a JSON object; required/default/enum/text validation is performed by that shared boundary. A spec with no approved attempt is refused, naming the exact next act in the open/propose/sign-off chain. `--park` holds a proposed or approved candidate for spec-side prelaunch review instead of launching it, still without creating any execution or taking the slot; its receipt reports the plan's projected next act, so an unapproved park points to sign-off while an approved park points to launch. Scope files are retired; open an authored delivery attempt, propose it, and obtain sign-off before starting. The receipt prints exactly one execution id — the workflow execution id every `cctl workflow` verb takes, and the id `cctl spec abandon --execution` and `cctl spec capture --execution` want; the spec-side execution row id is internal and appears in no token.",
     usage: ["cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]"],
     flags: [
       {
@@ -2051,6 +2097,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         oneLiner: "capture work discovered while the execution runs",
       },
     ],
+    successHints: [SPEC_LAUNCH_HINTS.start],
   },
   {
     path: ["spec", "capture"],
@@ -2059,15 +2106,15 @@ export const specHelpEntries: CommandHelpEntry[] = [
     description:
       "Record work a running execution found and deliberately did not do. Without --blocking-reason it records a durable discovery that the next `cctl spec plan open <slug>` places in a later delivery attempt, and the run keeps its pinned scope; with --blocking-reason it abandons the run through the abandon coordinator and opens a replacement attempt in the same operation, with the discovery already placed. Capture never mutates the running graph. Before launch there is no run to capture against: the command creates nothing and names the plan verb instead (`cctl spec plan edit` for a draft attempt, `cctl spec plan reopen` for a proposed, approved, or parked one). The discovered-work trace arrays may be empty at capture time, but any id they do name must resolve in the run's pinned revision to an element of the expected kind: otherwise the capture returns dangling_reference and leaves no discovery and no event behind. Capture records delivery work, never spec content: to continue authoring the evergreen spec after a gate is approved, outside any run, use `cctl spec amend`.",
     usage: [
-      "cctl spec capture <slug> --file <task.json> [--execution <id>] [--blocking-reason <reason>]",
+      "cctl spec capture <slug> --file <task.json> [--execution <workflow-execution-id>] [--blocking-reason <reason>]",
     ],
     flags: [
       {
         name: "execution",
         kind: "value",
-        valuePlaceholder: "<id>",
+        valuePlaceholder: "<workflow-execution-id>",
         description:
-          "the run to capture against — needed only to address a run by execution id rather than by the spec's live attempt",
+          "the WORKFLOW execution id the `cctl spec start` receipt printed and every `cctl workflow` verb takes — needed only to address a run by id rather than by the spec's live attempt; the internal spec execution row id is refused, naming the one to use",
       },
       {
         name: "file",
@@ -2167,14 +2214,15 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "Record a required durable reason while abandoning the whole spec, or target one execution with --execution. Execution-targeted abandon aborts the linked workflow — which releases the session's execution lease — before finalizing the spec execution; a partial cleanup refusal names the exact `cctl workflow live abort` or `cctl workflow abandon` recovery and tells you to retry this command. Abandoning one execution is ordinary agent work. Retiring the whole spec is the least reversible act on this surface and is human-only: agent transports receive a typed human_act_required refusal, so ask the operator to retire the spec from Spec Studio.",
     usage: [
       "cctl spec abandon <slug> --reason <reason>",
-      "cctl spec abandon <slug> --execution <id> --reason <reason>",
+      "cctl spec abandon <slug> --execution <workflow-execution-id> --reason <reason>",
     ],
     flags: [
       {
         name: "execution",
         kind: "value",
-        valuePlaceholder: "<id>",
-        description: "abandon this execution instead of the whole spec",
+        valuePlaceholder: "<workflow-execution-id>",
+        description:
+          "abandon this execution instead of the whole spec, named by the WORKFLOW execution id the `cctl spec start` receipt printed and every `cctl workflow` verb takes; the internal spec execution row id is refused, naming the one to use",
       },
       {
         name: "reason",
@@ -2206,5 +2254,6 @@ export const specHelpEntries: CommandHelpEntry[] = [
           "the exact backstop a partial abandon receipt names if the run still holds the lease",
       },
     ],
+    successHints: [SPEC_LAUNCH_HINTS.abandonedExecution],
   },
 ];

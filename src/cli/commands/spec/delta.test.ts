@@ -31,6 +31,7 @@ function projection(
     base: { revisionId: "rev-2", revisionNumber: 2 },
     comparedExecution: {
       executionId: "exec-new",
+      workflowExecutionId: "workflow-exec-new",
       revisionId: "rev-2",
       state: "delivered",
       deliveredAt: "2026-08-04T00:00:00.000Z",
@@ -93,9 +94,12 @@ describe("cctl spec delta", () => {
       "/api/specs/demo/native-sdd/delta",
     );
     expect(new URL(calls.url).search).toBe("");
+    // The compared run is named by the id the reader could pass to another
+    // verb; the internal row id stays in the --json data (design 3.5, D-B).
     expect(result.stdout).toContain(
-      "native-sdd: revision 3 vs execution exec-new",
+      "native-sdd: revision 3 vs execution workflow-exec-new",
     );
+    expect(result.stdout).not.toMatch(/(?<![\w-])exec-new(?![\w-])/);
   });
 
   it("passes --since through as the compared execution", async () => {

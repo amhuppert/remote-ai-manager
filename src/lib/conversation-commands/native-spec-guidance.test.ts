@@ -153,7 +153,8 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     required: [
       /`schemaVersion: 3`/,
       /managed workflow definition/i,
-      /`cctl workflow get\/edit <definitionId>`/,
+      /`cctl workflow replace <definitionId>`/,
+      /"Delivering a native spec" section of the graph-workflow-planning skill/,
       /`cctl spec plan edit <slug> --file <plan\.json>`/,
       /`binding`/,
       /stable source/i,
@@ -166,6 +167,10 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     forbidden: [
       /`schemaVersion: 2`/,
       /\{ launch, binding \}/,
+      // The retired authoring path (#80 design 3.6): a managed draft is
+      // authored as an ordinary plan.json, and naming `workflow edit` here is
+      // how it became a second path in the first place.
+      /`cctl workflow get\/edit/,
       /compiler/i,
       /materializer/i,
       /context pack/i,

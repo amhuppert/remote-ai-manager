@@ -15,7 +15,10 @@ vi.mock("@/lib/logging", () => ({
 
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
-import { createAssignmentReferenceChecker } from "./assignment-references";
+import {
+  createAssignmentReferenceChecker,
+  WorkflowAssignmentReferenceError,
+} from "./assignment-references";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -217,6 +220,38 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
 
     // Nothing was written: acceptance fails closed.
     expect(await storage.list(GLOBAL_SCOPE)).toHaveLength(0);
+  });
+
+  /**
+   * A profile can be deleted between `workflow validate` and the write, so this
+   * accept-time check is where a reference refusal actually reaches most
+   * authors — and it has to arrive with the same id-bearing locator validate
+   * renders (#80 design 3.2), not the bare index the traversal builds.
+   */
+  it("throws located issues naming the record each reference sits on", async () => {
+    await seedProjectProfile();
+    const storage = storageFor();
+
+    const failure = await storage
+      .create(GLOBAL_SCOPE, {
+        ...draft(),
+        definition: definitionReferencing({
+          tier: "project",
+          id: "repo-reviewer",
+        }),
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(WorkflowAssignmentReferenceError);
+    if (!(failure instanceof WorkflowAssignmentReferenceError)) return;
+    expect(failure.issues).toContainEqual({
+      path: "definition.executionContexts.0 (context-plan).implementer.profile",
+      recordId: "context-plan",
+      message: expect.stringMatching(/project-tier/i),
+    });
   });
 
   it("refuses the same project-tier reference on update, not only on create", async () => {

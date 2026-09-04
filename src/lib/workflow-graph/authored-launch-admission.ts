@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { locatePlanIssues } from "@/lib/workflows/plan-issue-locator";
 import {
   validateWorkflowPlan,
   type WorkflowPlanCommandIssue,
@@ -168,7 +169,10 @@ export async function admitAuthoredWorkflowLaunch(
     return rejected(
       deps.caller,
       deps.documentScope,
-      modelSelectionAdmission.issues,
+      // Located against the parsed draft rather than the raw body: model
+      // selections are validated on the canonicalized definition, and this is
+      // the only definition the refusal path holds.
+      locatePlanIssues(modelSelectionAdmission.issues, parsed.draft.definition),
       WORKFLOW_MODEL_SELECTION_INVALID_CODE,
       parsed.warnings.length,
     );
@@ -192,7 +196,7 @@ export async function admitAuthoredWorkflowLaunch(
     return rejected(
       deps.caller,
       deps.documentScope,
-      issues,
+      locatePlanIssues(issues, launch.definition),
       WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
       parsed.warnings.length,
     );

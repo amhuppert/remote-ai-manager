@@ -9,8 +9,12 @@ import { runRegisteredMergeJob } from "@/lib/jobs/queue";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
-import { createManagedDefinitionTestService } from "@/lib/state-store/spec-delivery-plan-test-fixture";
+import {
+  createManagedDefinitionTestService,
+  type TestManagedDefinitionService,
+} from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution-binding-repo";
+import { dedupeServerOwnedDeliveryPlanSources } from "./delivery-plan-finalization";
 import { createMergeAssociationResolver } from "./merge-association";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
@@ -274,6 +278,8 @@ export interface SpecSpineWorld {
     execution: ReturnType<typeof createExecutionService>;
   };
   definitions: InMemoryWorkflowDefinitions;
+  /** The managed definitions the delivery-plan service reads and writes. */
+  managedDefinitions: TestManagedDefinitionService;
   measures: ReturnType<typeof createMeasuresQuery>;
   readHandlers: ReturnType<typeof createSpecRouteHandlers>;
   writeHandlers: ReturnType<typeof createSpecWriteRouteHandlers>;
@@ -797,9 +803,10 @@ export function createSpecSpineWorld(
   // Real, not a failing proxy: the spine's whole point is that a spec walks
   // authoring -> plan -> execution through the same services production wires,
   // and a plan surface that throws would hide a break in that walk.
+  const managedDefinitions = createManagedDefinitionTestService();
   const deliveryPlan = createDeliveryPlanService({
     plans,
-    managedDefinitions: createManagedDefinitionTestService(),
+    managedDefinitions,
     reviewRepo: review,
     events,
     policyNotifier,
@@ -817,6 +824,8 @@ export function createSpecSpineWorld(
     revisionSnapshot: (revisionId) => specs.getRevisionSnapshot(revisionId),
     launchedExecutionState: (executionId) =>
       delivery.findExecutionById(executionId)?.state ?? null,
+    launchedWorkflowExecutionId: (executionId) =>
+      delivery.findExecutionById(executionId)?.workflow_execution_id ?? null,
     lastDeliveryBasis: ({ spec, pinnedRevision }) =>
       loadDeliveryPlanSeedBasis(
         {
@@ -1699,6 +1708,7 @@ export function createSpecSpineWorld(
     },
     services,
     definitions,
+    managedDefinitions,
     measures,
     readHandlers,
     writeHandlers,
@@ -2068,6 +2078,51 @@ export async function approveAndSignOffSpine(
       "human",
     ),
   );
+}
+
+/**
+ * The charter remedy a planner performs with `cctl workflow replace`: an
+ * authored mission and an authored source of truth stored on the managed
+ * definition the open draft names. Propose refuses a draft whose charter is
+ * still the seed, so a spine walk that reaches a candidate has to author one.
+ */
+export async function authorSpineDeliveryPlanCharter(
+  world: SpecSpineWorld,
+  workflowDefinitionId: string,
+): Promise<void> {
+  const existing = await world.managedDefinitions.get({
+    projectPath: SPINE_PROJECT_PATH,
+    workflowDefinitionId,
+  });
+  if (existing === null) {
+    throw new Error(`Managed definition ${workflowDefinitionId} is missing.`);
+  }
+  world.managedDefinitions.replaceLaunch({
+    workflowDefinitionId,
+    launch: {
+      name: existing.name,
+      description: existing.description,
+      definition: {
+        ...existing.definition,
+        charter: {
+          ...existing.definition.charter,
+          mission: "Deliver the spine spec's criteria through the plan lanes.",
+          sourcesOfTruth: dedupeServerOwnedDeliveryPlanSources([
+            ...existing.definition.charter.sourcesOfTruth,
+            {
+              rank: existing.definition.charter.sourcesOfTruth.length + 1,
+              id: "spine-design",
+              label: "Spine delivery design",
+              type: "document" as const,
+              locator: "docs/designs/spine.md",
+              description: "The decisions this delivery implements.",
+            },
+          ]),
+        },
+      },
+      layout: existing.layout,
+    },
+  });
 }
 
 export interface StartedSpineExecution {

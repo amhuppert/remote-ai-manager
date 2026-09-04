@@ -606,6 +606,38 @@ describe("cctl spec help nodes", () => {
     expect(text).toContain("cctl spec plan open <slug>");
   });
 
+  /**
+   * The authoring path a planner meets first (#80 design 3.6). Both nodes carry
+   * it because either one can be the entry: the group is where a planner
+   * browses, `spec plan open` is where the attempt actually starts.
+   */
+  it("routes plan authoring through plan.json, the preflight, and workflow replace", async () => {
+    const group = await helpText(["spec", "plan"]);
+    const open = await helpText(["spec", "plan", "open"]);
+
+    for (const [name, text] of [
+      ["spec plan", group],
+      ["spec plan open", open],
+    ] as const) {
+      expect(text, name).toContain("plan.json");
+      expect(text, name).toContain("cctl workflow validate --file");
+      expect(text, name).toContain("--definition");
+      expect(text, name).toContain("cctl workflow replace");
+      // Named once, and only as the surface a human reviews on: two mentions
+      // is how it became a second authoring path in the first place.
+      expect((text.match(/Workflow Builder/gu) ?? []).length, name).toBe(1);
+    }
+  });
+
+  it("no longer presents cctl workflow edit as the way to author a draft", async () => {
+    const open = await helpText(["spec", "plan", "open"]);
+
+    expect(open).not.toMatch(/author it with `cctl workflow edit/u);
+    expect(open).toMatch(/targeted change/u);
+    // The binding write survives this change; only its deletion is a follow-up.
+    expect(open).toContain("spec plan edit");
+  });
+
   it("teaches the bounded show disclosure ladder without using JSON as a depth control", async () => {
     const text = await helpText(["spec", "show"]);
 

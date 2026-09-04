@@ -329,7 +329,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow <validate|create|replace|review|edit|list|get|status|start|run|wait|abandon|delete|templates>`
   - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
 - `cctl workflow validate` — check a plan.json without saving anything
-  - `cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]`
+  - `cctl workflow validate --file .cc/temp/plan.json [--definition <id>] [--tier global|project] [--json]`
 - `cctl workflow create` — save a new definition for visual review before launch
   - `cctl workflow create --file .cc/temp/plan.json [--acknowledge-review <hash>] [--json]`
 - `cctl workflow replace` — overwrite an existing definition from a plan file
@@ -646,12 +646,12 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec start` — launch the approved delivery-plan candidate, exactly as approved
   - `cctl spec start <slug> [--inputs .cc/temp/inputs.json] [--park]`
 - `cctl spec capture` — record work discovered during a running execution as a durable discovery
-  - `cctl spec capture <slug> --file <task.json> [--execution <id>] [--blocking-reason <reason>]`
+  - `cctl spec capture <slug> --file <task.json> [--execution <workflow-execution-id>] [--blocking-reason <reason>]`
 - `cctl spec rename` — rename a spec's slug, keeping the old slug as an alias
   - `cctl spec rename <slug> --to <new-slug> [--name <name>]`
 - `cctl spec abandon` — abandon one execution, or retire the whole spec as a human
   - `cctl spec abandon <slug> --reason <reason>`
-  - `cctl spec abandon <slug> --execution <id> --reason <reason>`
+  - `cctl spec abandon <slug> --execution <workflow-execution-id> --reason <reason>`
 - `cctl spec section get` — read one section by its element id
   - `cctl spec section get <slug> --id <element-id>`
 - `cctl spec attention edit` — correct an open question or proposed assumption
@@ -681,7 +681,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec plan status` — read the attempt's state, findings, and the act it owes next
   - `cctl spec plan status <slug>`
 - `cctl spec plan preview` — read an authored or finalized launch envelope
-  - `cctl spec plan preview <slug> --stage draft|proposed [--expected-draft-revision <n>]`
+  - `cctl spec plan preview <slug> --stage draft|proposed [--outline] [--expected-draft-revision <n>]`
 
 - `cctl logs` — analyze this machine's CC server logs offline
   - `cctl logs <report|trace|compare>`

@@ -9,6 +9,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCli } from "@/cli/core";
 import type { CliHost } from "@/cli/shared";
 import { publishManagedSkillBundle } from "@/lib/managed-skills/publisher";
+import {
+  NATIVE_SDD_CLAIMS_SOURCE_ID,
+  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+} from "@/lib/specs/delivery-plan";
 
 import { ensureCodexManagedSkillsBridge } from "./managed-skills-bridge";
 
@@ -227,6 +231,46 @@ describe("native-sdd-authoring managed skill", () => {
     const friction = sectionBody(skill, "Designed friction versus a defect");
     expect(friction).toMatch(/human judgment or an audit property/);
     expect(friction).toMatch(/read path|message|missing verb/);
+
+    // #80 design 4: the three constraints this run makes legible. Each row
+    // names what it protects and where its reason renders, so an agent that
+    // meets one classifies it from the taxonomy instead of a retrospective.
+    for (const row of [
+      "binding/selected-criterion-not-must-run",
+      "requires-pause",
+      "region_locked",
+    ]) {
+      expect(friction, `designed-friction row: ${row}`).toContain(row);
+    }
+    // The provenance row has to state the merge as well as the lock: an author
+    // told only that the fields are locked hand-authors them and is refused.
+    expect(friction).toMatch(/replace merges around/iu);
+    for (const omitted of [
+      "origin",
+      "approvalRequired",
+      "lockedRegions",
+      NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+      NATIVE_SDD_CLAIMS_SOURCE_ID,
+    ]) {
+      expect(
+        friction,
+        `the provenance row names ${omitted} among what a plan omits`,
+      ).toContain(omitted);
+    }
+
+    // The delivery guidance points at its owner rather than carrying a second
+    // copy, and `cctl workflow edit` is no longer the authoring path.
+    const delivery = sectionBody(skill, "Managed delivery workflow");
+    expect(delivery).toContain("Delivering a native spec");
+    expect(delivery).toContain("graph-workflow-planning");
+    expect(delivery).not.toContain("cctl workflow edit");
+
+    // #80 design 3.8 landed in this run, so the interim rule it earned — pause
+    // only once a lane is active — is retired rather than left to outlive the
+    // defect it worked around.
+    expect(skill).toMatch(/pause is safe at any point after start/iu);
+    expect(skill).toContain("cctl spec plan open <slug>");
+    expect(skill).not.toMatch(/lane (is )?active/iu);
 
     // Guidance the reflection proves is harmful: an agent told to hold design
     // work in a question stops authoring, and an assumption disposition is not

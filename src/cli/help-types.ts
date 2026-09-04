@@ -107,6 +107,45 @@ export interface GeneratedReferenceSection {
   lines: readonly string[];
 }
 
+/**
+ * One success hint that walks a receipt to its successor (#80 design 3.6): the
+ * launch sequence is authored beside the command it follows, never copied into
+ * prose, so a renamed verb breaks the registry sweep rather than an agent's
+ * next command.
+ *
+ * A row is data plus its own renderer because the text carries runtime tokens
+ * (an id, a slug, a file path) that only the receipt holds. `sample()` renders
+ * it with stand-in tokens, which is what lets a sweep read every row without
+ * knowing any of their token shapes.
+ */
+export interface SuccessHintRow {
+  /** The receipt this row closes, e.g. "spec start". */
+  readonly after: string;
+  /** The command path the hint names; resolved against the registry. */
+  readonly names: readonly string[];
+  /** The row rendered with placeholder tokens, for the contract sweep. */
+  sample(): string;
+}
+
+/**
+ * Declare one success-hint row. The tokens type is inferred from `sampleTokens`,
+ * so a receipt cannot render a row with the wrong token set and a row cannot
+ * carry a sample its own renderer would reject.
+ */
+export function successHintRow<TTokens>(spec: {
+  readonly after: string;
+  readonly names: readonly string[];
+  readonly sampleTokens: TTokens;
+  readonly hint: (tokens: TTokens) => string;
+}): SuccessHintRow & { hint: (tokens: TTokens) => string } {
+  return {
+    after: spec.after,
+    names: spec.names,
+    hint: spec.hint,
+    sample: () => spec.hint(spec.sampleTokens),
+  };
+}
+
 export interface CommandHelpEntry {
   /** e.g. ["workflow","create"]; length ≥ 1; a length-1 node may be a group. */
   path: string[];
@@ -126,6 +165,8 @@ export interface CommandHelpEntry {
   related: RelatedRef[];
   /** Outbound graph edges. */
   skills?: SkillRef[];
+  /** The success hints this command's receipts render (#80 design 3.6). */
+  successHints?: readonly SuccessHintRow[];
   /** Mechanical reference rows generated from production registries. */
   generatedReference?: readonly GeneratedReferenceSection[];
   /** Whether this command appears in the portable generated command reference. */

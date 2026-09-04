@@ -414,6 +414,37 @@ function guidanceLines(
   return lines;
 }
 
+/**
+ * The compare-and-swap tokens the three write surfaces guard three different
+ * objects with: a saved definition's revision, a delivery-plan draft's revision,
+ * and a launched execution's live revision (#80 I-7). The names stay distinct
+ * because the objects are — what a receipt owes its reader is which of the three
+ * the NEXT write against that surface must carry.
+ */
+export type NextWriteTokenName =
+  | "expectedRevision"
+  | "expectedDraftRevision"
+  | "baseLiveRevision";
+
+export interface NextWriteToken {
+  /** The text line, printed under the receipt's own body. */
+  readonly line: string;
+  /** The same value under the token's own name, spread into the envelope. */
+  readonly field: Record<string, number>;
+}
+
+/**
+ * Render the token by name rather than as a bare revision number. Text and JSON
+ * are built together here so a receipt cannot print one name and envelope
+ * another — the drift that makes an agent guess which of the three it holds.
+ */
+export function nextWriteToken(
+  name: NextWriteTokenName,
+  value: number,
+): NextWriteToken {
+  return { line: `next write: ${name} ${value}`, field: { [name]: value } };
+}
+
 export function render(
   json: boolean,
   humanStdout: string,
@@ -1135,6 +1166,12 @@ export async function readJsonObjectFile(
 export interface RequestIssue {
   path: string;
   message: string;
+  /**
+   * The id of the record `path` addresses, when the server names one (#80
+   * design 3.2). JSON-envelope only: the text line already carries the id
+   * inside `path`, so printing it twice would say the same thing twice.
+   */
+  recordId?: string;
 }
 
 /**
@@ -1268,9 +1305,11 @@ function coerceIssues(value: unknown): RequestIssue[] | undefined {
     if (entry && typeof entry === "object") {
       const path = (entry as { path?: unknown }).path;
       const message = (entry as { message?: unknown }).message;
+      const recordId = (entry as { recordId?: unknown }).recordId;
       issues.push({
         path: typeof path === "string" ? path : String(path ?? ""),
         message: typeof message === "string" ? message : String(message ?? ""),
+        ...(typeof recordId === "string" ? { recordId } : {}),
       });
     }
   }

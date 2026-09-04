@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 
-import { projectDeliveryPlanDraftHealth } from "./delivery-plan-health";
+import {
+  projectDeliveryPlanDraftHealth,
+  deliveryPlanRefusalRationale,
+  LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+  type DeliveryPlanDraftHealthInput,
+} from "./delivery-plan-health";
+import { renderSeededDeliveryPlanMission } from "./delivery-plan-charter-seed";
 import type { DeliveryPlanBinding } from "./delivery-plan";
 import type { SpecRevisionSnapshot } from "./schemas";
 
@@ -131,9 +137,69 @@ function binding(
   };
 }
 
+const SEEDED_MISSION = "Deliver this specification as pinned at revision 1.";
+const DEFINITION_ID = "definition-health";
+
+function seedCharter(): DeliveryPlanDraftHealthInput["draftCharter"] {
+  return {
+    mission: SEEDED_MISSION,
+    sourcesOfTruth: [
+      {
+        rank: 1,
+        id: "native-sdd-pinned-spec",
+        label: "Pinned spec revision",
+        type: "spec",
+        locator: ".cc/graph-workflow-docs/spec/health.md",
+        description: "The revision this attempt is pinned to.",
+      },
+    ],
+  };
+}
+
+function authoredCharter(): DeliveryPlanDraftHealthInput["draftCharter"] {
+  return {
+    mission: "Deliver the withheld status line behind the memory gate.",
+    sourcesOfTruth: [
+      ...seedCharter().sourcesOfTruth,
+      {
+        rank: 2,
+        id: "design-doc",
+        label: "Memory design",
+        type: "document",
+        locator: "docs/designs/memory.md",
+        description: "The decided design the launch delivers.",
+      },
+    ],
+  };
+}
+
+/**
+ * Every case but the charter ones is about the binding, so they run against an
+ * authored charter — the charter rule firing everywhere would prove nothing
+ * about the finding under test.
+ */
+function project(
+  input: Omit<
+    DeliveryPlanDraftHealthInput,
+    "draftCharter" | "workflowDefinitionId"
+  > &
+    Partial<
+      Pick<
+        DeliveryPlanDraftHealthInput,
+        "draftCharter" | "workflowDefinitionId"
+      >
+    >,
+) {
+  return projectDeliveryPlanDraftHealth({
+    draftCharter: authoredCharter(),
+    workflowDefinitionId: DEFINITION_ID,
+    ...input,
+  });
+}
+
 describe("projectDeliveryPlanDraftHealth", () => {
   it("reports nothing owed when the binding lints clean", () => {
-    const health = projectDeliveryPlanDraftHealth({
+    const health = project({
       pinnedRevision: pinnedRevision(),
       binding: binding(),
       admission: admitted(),
@@ -143,8 +209,55 @@ describe("projectDeliveryPlanDraftHealth", () => {
     expect(health.unresolved).toEqual([]);
   });
 
+  it("counts a selected criterion as claimed only from a stable authored source", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding({
+        claims: [
+          {
+            contextId: "context-loop-clone",
+            criterionElementIds: ["criterion-one"],
+          },
+        ],
+      }),
+      admission: admitted(),
+    });
+
+    // The claimant is not among the graph-declared stable authored sources, so
+    // the criterion is not claimed however many claim records name it.
+    expect(health.findings.map((finding) => finding.ruleId)).toContain(
+      "binding/claim-context-unstable",
+    );
+    expect(health.claims).toEqual({ selected: 1, claimed: 0, unclaimed: 1 });
+  });
+
+  it("counts both sides of the claims ledger when every claimant is stable", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted(),
+    });
+
+    expect(health.claims).toEqual({ selected: 1, claimed: 1, unclaimed: 0 });
+  });
+
+  it("proves no claim at all when the launch is not admissible", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: {
+        ok: false,
+        issues: [{ path: "definition.contexts", message: "Refused." }],
+      },
+    });
+
+    // Without an admission nothing says which contexts are stable, so a claim
+    // the ledger cannot prove is not one it may count.
+    expect(health.claims).toEqual({ selected: 1, claimed: 0, unclaimed: 1 });
+  });
+
   it("reports the unclaimed selected criterion propose refuses on", () => {
-    const health = projectDeliveryPlanDraftHealth({
+    const health = project({
       pinnedRevision: pinnedRevision(),
       binding: binding({ claims: [] }),
       admission: admitted({
@@ -180,7 +293,7 @@ describe("projectDeliveryPlanDraftHealth", () => {
   });
 
   it("names the human act a pending reaffirmation owes", () => {
-    const health = projectDeliveryPlanDraftHealth({
+    const health = project({
       pinnedRevision: pinnedRevision(),
       binding: binding({
         dispositions: [
@@ -214,7 +327,7 @@ describe("projectDeliveryPlanDraftHealth", () => {
   });
 
   it("reports a refused graph launch as the blocking finding", () => {
-    const health = projectDeliveryPlanDraftHealth({
+    const health = project({
       pinnedRevision: pinnedRevision(),
       binding: binding(),
       admission: {
@@ -239,8 +352,42 @@ describe("projectDeliveryPlanDraftHealth", () => {
     expect(health.unresolved).toEqual([]);
   });
 
+  /**
+   * An inadmissible launch used to short-circuit the whole projection, so a
+   * seed stub that also failed admission was reported as a graph problem
+   * alone — and the moment the graph was fixed the charter refusal appeared
+   * for the first time. The governance rule reads the charter, not the graph.
+   */
+  it("still reports the unauthored charter when the launch is inadmissible", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      draftCharter: seedCharter(),
+      admission: {
+        ok: false,
+        issues: [
+          {
+            path: "definition.executionContexts",
+            message: "A launch needs at least one execution context.",
+          },
+        ],
+      },
+    });
+
+    expect(health.findings.map((finding) => finding.ruleId)).toEqual([
+      "launch/not-admissible",
+      LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+      LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+    ]);
+    expect(
+      health.refusalConditions.some((condition) =>
+        condition.startsWith("charter.mission:"),
+      ),
+    ).toBe(true);
+  });
+
   it("reports the admitted launch's graph advisories without blocking propose", () => {
-    const health = projectDeliveryPlanDraftHealth({
+    const health = project({
       pinnedRevision: pinnedRevision(),
       binding: binding(),
       admission: admitted({
@@ -268,8 +415,110 @@ describe("projectDeliveryPlanDraftHealth", () => {
     expect(health.unresolved).toEqual([]);
   });
 
+  it("refuses propose while the mission is still the text open seeded", () => {
+    // The seed the projection reconstructs is the text `spec plan open` writes,
+    // so this fixture cannot drift into asserting against a mission the server
+    // would never store.
+    expect(SEEDED_MISSION).toBe(
+      renderSeededDeliveryPlanMission({ pinnedRevision: pinnedRevision() }),
+    );
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted(),
+      draftCharter: seedCharter(),
+    });
+
+    const charterFindings = health.findings.filter(
+      (finding) => finding.ruleId === LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+    );
+    expect(charterFindings.map((finding) => finding.elementHandle)).toEqual([
+      "charter.mission",
+      "charter.sourcesOfTruth",
+    ]);
+    expect(
+      charterFindings.every((finding) => finding.severity === "blocks_propose"),
+    ).toBe(true);
+    expect(charterFindings[0]?.message).toContain(
+      `cctl workflow replace ${DEFINITION_ID}`,
+    );
+    expect(charterFindings[0]?.rationale).toBe(
+      "the charter is the governance every implementer and validator reads, and a seed stub would freeze into the signed candidate (#98)",
+    );
+    expect(health.refusalConditions).toContain(
+      `charter.mission: ${charterFindings[0]?.message}`,
+    );
+    expect(deliveryPlanRefusalRationale(health)).toContain(
+      "a seed stub would freeze into the signed candidate",
+    );
+  });
+
+  it("refuses propose while every charter source is server-owned", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted(),
+      draftCharter: {
+        ...authoredCharter(),
+        sourcesOfTruth: seedCharter().sourcesOfTruth,
+      },
+    });
+
+    expect(
+      health.findings.map((finding) => ({
+        ruleId: finding.ruleId,
+        elementHandle: finding.elementHandle,
+      })),
+    ).toEqual([
+      {
+        ruleId: LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+        elementHandle: "charter.sourcesOfTruth",
+      },
+    ]);
+  });
+
+  it("reports nothing once the mission differs and an authored source exists", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted(),
+      draftCharter: authoredCharter(),
+    });
+
+    expect(health.findings).toEqual([]);
+    expect(deliveryPlanRefusalRationale(health)).toBeUndefined();
+  });
+
+  it("states why a claimed criterion must be covered on every path", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding({ claims: [] }),
+      admission: admitted({
+        accountabilityGroupAnalysis: [
+          {
+            bindingKey: "criterion-one",
+            claimantContextIds: [],
+            stableExistingClaimantContextIds: [],
+            mustRunClaimantContextIds: [],
+            covered: false,
+          },
+        ],
+      }),
+    });
+
+    const notMustRun = health.findings.find(
+      (finding) => finding.ruleId === "binding/selected-criterion-not-must-run",
+    );
+    expect(notMustRun?.rationale).toBe(
+      "a claimed criterion must be covered on every path so a skipped branch can never waive it silently",
+    );
+    expect(deliveryPlanRefusalRationale(health)).toBe(
+      "a claimed criterion must be covered on every path so a skipped branch can never waive it silently",
+    );
+  });
+
   it("keeps blocking binding findings ahead of advisories", () => {
-    const health = projectDeliveryPlanDraftHealth({
+    const health = project({
       pinnedRevision: pinnedRevision(),
       binding: binding({ claims: [] }),
       admission: admitted({

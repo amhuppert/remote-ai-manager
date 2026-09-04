@@ -3885,7 +3885,12 @@ function refusalStatus(refusal: Pick<Refusal, "code">): number {
   ) {
     return 403;
   }
-  if (refusal.code === "validation") return 400;
+  if (
+    refusal.code === "validation" ||
+    refusal.code === "spec_side_execution_id"
+  ) {
+    return 400;
+  }
   if (refusal.code === "not_found") return 404;
   return 409;
 }

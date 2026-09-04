@@ -15,6 +15,7 @@ This core file covers the ordinary planning path end to end: decompose the objec
 | [references/placement-and-parallelism.md](references/placement-and-parallelism.md) | deciding lane sharing, `ownedPaths` for a tricky surface, what the write envelope lets agents do, parallel-vs-sequential calls, or answering a `placement-*` refusal |
 | [references/validation-and-staffing.md](references/validation-and-staffing.md) | selecting script-gate commands, tuning agent command access or lane-merge validation, staffing non-default implementers or validator cohorts, or aligning validators with criteria in detail |
 | [references/revising-and-recovery.md](references/revising-and-recovery.md) | revising a saved definition, editing a running execution, or understanding halts and automatic plan repair |
+| [references/native-spec-delivery.md](references/native-spec-delivery.md) | planning the delivery of a native spec — the managed draft `cctl spec plan open` creates, its pinned revision, and how spec criteria reach contexts |
 
 ## Workflow Model
 

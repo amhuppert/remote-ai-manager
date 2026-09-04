@@ -15,6 +15,22 @@ export interface LockedRegionMatch extends WorkflowLockedRegion {
   lockedPath: string;
 }
 
+/**
+ * The regions a managed definition's server stamps and a submitted plan may
+ * omit: provenance, approval policy, and the lock table itself. Kept as the
+ * JSON-pointer paths a refusal names, with the object keys derived from them,
+ * so the merge and the refusal cannot disagree about which fields these are.
+ */
+const SERVER_OWNED_REGION_KEYS = [
+  "origin",
+  "approvalRequired",
+  "lockedRegions",
+] as const satisfies readonly (keyof LockableDefinition)[];
+type ServerOwnedRegionKey = (typeof SERVER_OWNED_REGION_KEYS)[number];
+const SERVER_OWNED_REGION_PATHS: ReadonlySet<string> = new Set(
+  SERVER_OWNED_REGION_KEYS.map((key) => `/${key}`),
+);
+
 const ID_KEY_BY_COLLECTION: Readonly<Record<string, "id" | "name">> = {
   executionContexts: "id",
   tasks: "id",
@@ -186,10 +202,11 @@ export function findChangedLockedRegion(
   next: LockableDefinition,
 ): LockedRegionMatch | null {
   const regions = previous.lockedRegions ?? [];
-  if (regions.length === 0) return null;
+  const first = regions[0];
+  if (first === undefined) return null;
 
   if (!isDeepStrictEqual(previous.lockedRegions, next.lockedRegions)) {
-    return { ...regions[0]!, lockedPath: "lockedRegions" };
+    return { ...first, lockedPath: "/lockedRegions" };
   }
 
   for (const region of regions) {
@@ -223,4 +240,48 @@ export function regionLockedMessage(match: LockedRegionMatch): string {
   return match.instruction === undefined
     ? `Path "${match.lockedPath}" is locked because ${match.reason}; amend at source ${match.sourceUri} and recompile the workflow definition.`
     : `Path "${match.lockedPath}" is locked because ${match.reason}. ${match.instruction}`;
+}
+
+/**
+ * Fill the server-owned regions (`/origin`, `/approvalRequired`,
+ * `/lockedRegions`) a submitted definition omits from the stored record, so a
+ * plan authored without them reaches {@link findChangedLockedRegion} carrying
+ * the values the server stamped and only a present-and-different value can
+ * trip the lock. A key absent from both stays absent: an explicitly-undefined
+ * key would serialize as `null` and change the stored bytes.
+ */
+export function mergeServerOwnedRegions<T extends LockableDefinition>(
+  previous: LockableDefinition,
+  next: T,
+): T {
+  const filled: Partial<Pick<LockableDefinition, ServerOwnedRegionKey>> = {};
+  for (const key of SERVER_OWNED_REGION_KEYS) {
+    if (next[key] !== undefined || previous[key] === undefined) continue;
+    Object.assign(filled, { [key]: previous[key] });
+  }
+  return { ...next, ...filled };
+}
+
+/**
+ * The locked paths {@link mergeServerOwnedRegions} would fill for this pair —
+ * what the submitted plan omitted and the stored record supplies. Reported
+ * separately from the merge so the write can log which fields it stamped
+ * without the merge growing a second return value every caller must thread.
+ */
+export function serverOwnedRegionPathsFilled(
+  previous: LockableDefinition,
+  next: LockableDefinition,
+): string[] {
+  return SERVER_OWNED_REGION_KEYS.filter(
+    (key) => next[key] === undefined && previous[key] !== undefined,
+  ).map((key) => `/${key}`);
+}
+
+/**
+ * True when a locked path is one the server stamps on a managed definition:
+ * the refusal for it tells the author to omit the field rather than to amend
+ * it at source, because the value was never theirs to author.
+ */
+export function isServerOwnedRegionPath(lockedPath: string): boolean {
+  return SERVER_OWNED_REGION_PATHS.has(lockedPath);
 }

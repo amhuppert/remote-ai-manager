@@ -12,19 +12,16 @@
  */
 
 import { NextResponse } from "next/server";
-import { readConfig } from "@/lib/config/loader";
 import { resolveProjectSessionOr404 } from "@/lib/shared/route-resolution";
-import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
-import { resolveProjectPath } from "@/lib/projects/resolver";
-import { readRepoConfig } from "@/lib/projects/repo-config";
+import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
-import { getSession } from "@/lib/state-store";
-import { createLogger, type Logger, withTracing } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import {
   lintCommittedSourceLocators,
   type CommittedSourceResolutionSession,
 } from "@/lib/workflows/committed-source-locator-lint";
+import { locatePlanIssues } from "@/lib/workflows/plan-issue-locator";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { admitAuthoredWorkflowLaunch } from "./authored-launch-admission";
 import {
@@ -32,8 +29,41 @@ import {
   type AssignmentReferenceChecker,
   WORKFLOW_ASSIGNMENT_REFERENCE_INVALID_CODE,
 } from "./assignment-references";
+import type {
+  ManagedDefinitionPreflightFinding,
+  ManagedDefinitionPreflightPort,
+  ManagedDefinitionPreflightSummary,
+} from "./managed-definition-preflight";
+import {
+  callerConversationId,
+  workflowValidateRefusedEvents,
+  type RefusedPlanIssue,
+} from "./planning-telemetry";
 
 const log = createLogger("graph-workflow-validate-route");
+
+/**
+ * Log a refusal's codes (#80 design 3.10) so a retrospective can group
+ * planning friction by the conversation that met it. The conversation is read
+ * from the request rather than the ambient trace: this route is session-scoped
+ * and has no `conversationId` path segment for the trace to derive one from.
+ */
+function logPlanRefusal(
+  routeLog: Logger,
+  request: Request,
+  input: {
+    issues: readonly RefusedPlanIssue[];
+    definitionId?: string | null;
+  },
+): void {
+  for (const telemetry of workflowValidateRefusedEvents({
+    issues: input.issues,
+    definitionId: input.definitionId,
+    conversationId: callerConversationId(request),
+  })) {
+    routeLog.info(telemetry.event, telemetry.fields);
+  }
+}
 
 const DOCUMENT_TIERS = ["global", "project"] as const;
 const SOURCE_LOCATOR_WARNING_PREFIX = "lint/source-locator-unresolvable:";
@@ -43,9 +73,16 @@ function isSourceLocatorWarning(warning: WorkflowPlanIssue): boolean {
   return warning.message.startsWith(SOURCE_LOCATOR_WARNING_PREFIX);
 }
 
+/**
+ * The charter position a source warning is located at. The optional ` (<id>)`
+ * is the id-bearing annotation every located plan issue now carries (#80
+ * design 3.2), matched so the ordering reads the INDEX rather than depending
+ * on whether the locator has been annotated yet — the lexical warnings arrive
+ * annotated and the committed-tree ones are annotated here.
+ */
 function sourceLocatorIndex(warning: WorkflowPlanIssue): number {
   const match = warning.path.match(
-    /^definition\.charter\.sourcesOfTruth\.(\d+)\.locator$/,
+    /^definition\.charter\.sourcesOfTruth\.(\d+)(?: \(.*\))?\.locator$/,
   );
   return match === null ? Number.MAX_SAFE_INTEGER : Number(match[1]);
 }
@@ -134,6 +171,12 @@ export interface GraphWorkflowValidateRouteDeps {
    */
   readConfig(): Promise<GlobalConfig>;
   assignmentReferences?: AssignmentReferenceChecker;
+  /**
+   * Native-SDD propose-gate projection. Optional so ordinary validation keeps
+   * no specs dependency; a request that names `definition` fails closed when
+   * the composition did not supply the port.
+   */
+  managedDefinitionPreflight?: ManagedDefinitionPreflightPort;
   log?: Logger;
 }
 
@@ -170,6 +213,22 @@ export function createGraphWorkflowValidateHandlers(
       });
     }
     const scope = selected.scope;
+    const definitionParam = new URL(request.url).searchParams.get("definition");
+    const workflowDefinitionId = definitionParam?.trim();
+    if (definitionParam !== null && workflowDefinitionId?.length === 0) {
+      return NextResponse.json(
+        { error: "definition must be a non-empty workflow definition id" },
+        { status: 400 },
+      );
+    }
+    if (workflowDefinitionId !== undefined && scope.kind === "global") {
+      return NextResponse.json(
+        {
+          error: "definition may only be used with project-scope validation",
+        },
+        { status: 400 },
+      );
+    }
 
     let rawBody: unknown;
     try {
@@ -198,12 +257,20 @@ export function createGraphWorkflowValidateHandlers(
       assignmentReferences,
     });
     if (!validation.ok) {
+      const code = validation.code ?? "invalid_plan";
       routeLog.info("graph-workflow-validate.invalid", {
         projectName,
         sessionName,
-        code: validation.code ?? "invalid_plan",
+        code,
         issueCount: validation.issues.length,
         sourceResolutionKind: "root-independent",
+      });
+      logPlanRefusal(routeLog, request, {
+        issues: validation.issues.map((issue) => ({
+          code,
+          recordId: issue.recordId,
+        })),
+        definitionId: workflowDefinitionId,
       });
       return NextResponse.json(
         {
@@ -225,8 +292,51 @@ export function createGraphWorkflowValidateHandlers(
     );
     const warnings = mergeCommittedSourceWarnings(
       validation.warnings,
-      committedSourceWarnings,
+      locatePlanIssues(committedSourceWarnings, validation.launch.definition),
     );
+
+    let preflight:
+      | {
+          specSlug: string;
+          findings: ManagedDefinitionPreflightFinding[];
+          summary: ManagedDefinitionPreflightSummary;
+        }
+      | undefined;
+    if (workflowDefinitionId !== undefined) {
+      if (deps.managedDefinitionPreflight === undefined) {
+        return NextResponse.json(
+          { error: "Managed definition preflight is unavailable" },
+          { status: 500 },
+        );
+      }
+      const projected = await deps.managedDefinitionPreflight.preflight({
+        projectPath: resolved.value.projectPath,
+        workflowDefinitionId,
+        launch: validation.launch,
+      });
+      if (!projected.ok) {
+        logPlanRefusal(routeLog, request, {
+          issues: [{ code: projected.refusal.code }],
+          definitionId: workflowDefinitionId,
+        });
+        return NextResponse.json(
+          {
+            error: projected.refusal.message,
+            code: projected.refusal.code,
+            instruction: projected.refusal.instruction,
+            ...(projected.refusal.rationale === undefined
+              ? {}
+              : { rationale: projected.refusal.rationale }),
+          },
+          { status: 409 },
+        );
+      }
+      preflight = {
+        specSlug: projected.specSlug,
+        findings: projected.findings,
+        summary: projected.summary,
+      };
+    }
 
     routeLog.info("graph-workflow-validate.ok", {
       projectName,
@@ -236,21 +346,12 @@ export function createGraphWorkflowValidateHandlers(
     });
     // Warnings never change the verdict — the plan is valid — but the author
     // gets to see them before creating it (R3.2 enum coverage).
-    return NextResponse.json(
-      warnings.length === 0 ? { ok: true } : { ok: true, warnings },
-    );
+    return NextResponse.json({
+      ok: true,
+      ...(warnings.length === 0 ? {} : { warnings }),
+      ...(preflight === undefined ? {} : { preflight }),
+    });
   }
 
   return { POST: post };
 }
-
-const defaultHandlers = createGraphWorkflowValidateHandlers({
-  auth: createAgentAuth(),
-  resolveProjectPath,
-  getSession,
-  readRepoConfig,
-  readConfig,
-});
-
-/** POST /api/projects/[name]/sessions/[session]/graph-workflow/validate */
-export const POST = withTracing(defaultHandlers.POST);

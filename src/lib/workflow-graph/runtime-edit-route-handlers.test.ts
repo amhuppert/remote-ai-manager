@@ -520,6 +520,50 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     expect(Array.isArray(body.issues)).toBe(true);
   });
 
+  // #80 I-12: the reason a structural batch waits for an idle scheduler has to
+  // reach the wire, or the CLI has no why-line to render and "quiescent" stays
+  // a word the caller has to guess the meaning of.
+  it("carries the quiescence rationale and the pause/edit/resume act on a structural refusal", async () => {
+    const base = createWorkflowExecution({ status: "running" });
+    await seedExecution({
+      ...base,
+      activeContextIds: ["context-plan"],
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "running",
+          iterationCount: 1,
+        },
+      },
+    });
+
+    const response = await handlers.POST(
+      makeRequest(
+        "POST",
+        updateContext({
+          operations: [
+            {
+              type: "add-context",
+              id: "context-new",
+              title: "New",
+              acceptanceCriteria: "Something is done",
+            },
+          ],
+        }),
+      ),
+      routeParams,
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("requires_pause");
+    expect(body.rationale).toBe(
+      "structural edits apply atomically against a quiescent scheduler so no lane reads a half-applied definition",
+    );
+    expect(body.instruction).toContain("pause, edit, resume");
+  });
+
   it("returns a machine-readable 409 when the registered contract refuses", async () => {
     await seedExecution(createWorkflowExecution({ status: "paused" }));
     handlers = createGraphWorkflowRuntimeEditRouteHandlers({

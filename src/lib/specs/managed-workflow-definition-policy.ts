@@ -1,13 +1,12 @@
 import type Database from "better-sqlite3";
 import { stableStringify } from "@/lib/state-store/serialization";
-import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 
-import {
-  type ManagedWorkflowDefinitionLifecycle,
-  type ManagedWorkflowDefinitionPolicy,
-  type NativeSddWorkflowManagementCompact,
-  type NativeSddWorkflowManagementDetail,
-} from "@/lib/workflow-graph/managed-definition";
+import type {
+  ManagedWorkflowDefinitionLifecycle,
+  NativeSddWorkflowManagementCompact,
+  NativeSddWorkflowManagementDetail,
+} from "@/lib/workflows/managed-definition-contract";
+import type { ManagedWorkflowDefinitionRecord } from "./managed-workflow-definition-service";
 import {
   deliveryPlanCandidateManifestV3Schema,
   deliveryPlanV3DocumentSchema,
@@ -65,6 +64,21 @@ interface CommentRow {
   body: string;
   author_json: string;
   created_at: string;
+}
+
+export interface NativeSddManagedWorkflowDefinitionPolicy {
+  list(
+    projectPath: string,
+    workflowIds: readonly string[],
+  ): Promise<ReadonlyMap<string, NativeSddWorkflowManagementCompact>>;
+  get(
+    projectPath: string,
+    workflowId: string,
+  ): Promise<NativeSddWorkflowManagementDetail | null>;
+  proposeBlockingCount(
+    projectPath: string,
+    workflowId: string,
+  ): Promise<number | null>;
 }
 
 function lifecycle(row: OwnershipRow): ManagedWorkflowDefinitionLifecycle {
@@ -126,8 +140,17 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
   getWorkflowDefinition?(
     projectPath: string,
     workflowId: string,
-  ): Promise<WorkflowDefinitionRecord | null>;
-}): ManagedWorkflowDefinitionPolicy {
+  ): Promise<ManagedWorkflowDefinitionRecord | null>;
+  /**
+   * The propose gate of a spec's live draft as `spec plan status` reports it:
+   * how many findings block propose, or null when the plan cannot be read.
+   * Absent, every gate read answers null and receipts report no gate.
+   */
+  draftBlockingCount?(
+    projectPath: string,
+    specSlug: string,
+  ): Promise<number | null>;
+}): NativeSddManagedWorkflowDefinitionPolicy {
   const ownershipSql = `
     SELECT
       ownership.workflow_definition_id,
@@ -228,6 +251,14 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
   }
 
   return {
+    async proposeBlockingCount(projectPath, workflowId) {
+      if (deps.draftBlockingCount === undefined) return null;
+      const row = readOwnership(projectPath, workflowId);
+      // Only the current draft has a gate to move: a candidate is frozen and a
+      // superseded definition is history, so neither owes a count.
+      if (row === null || lifecycle(row) !== "draft") return null;
+      return deps.draftBlockingCount(projectPath, row.spec_slug);
+    },
     async list(projectPath, workflowIds) {
       const projectName = deps.resolveProjectName(projectPath);
       const projections = new Map<string, NativeSddWorkflowManagementCompact>();

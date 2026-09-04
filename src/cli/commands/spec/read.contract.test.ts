@@ -47,6 +47,7 @@ import type {
   SpecRevisionSnapshot,
   SpecWaiverRow,
 } from "@/lib/specs/schemas";
+import type { DeliveryPlanView } from "@/lib/specs/delivery-plan-views";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
 import { SPEC_SHOW_STDOUT_BUDGET_BYTES } from "./read";
@@ -1068,6 +1069,8 @@ function makeHost(
     specNameBytes?: number;
     /** Return this canonical artifact from the export read boundary. */
     exportBundle?: CanonicalSpecBundle;
+    /** Return this delivery-plan projection from the narrow plan read. */
+    planView?: DeliveryPlanView;
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -1436,6 +1439,12 @@ function makeHost(
       if (tail === "outline")
         return handlers.getSpecOutlineGET(request, context);
       if (tail === "status") return handlers.getSpecStatusGET(request, context);
+      if (tail === "plan" && options.planView !== undefined) {
+        return new Response(JSON.stringify(options.planView), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (tail === "comments")
         return handlers.getSpecCommentsGET(request, context);
       if (tail === "lint") return handlers.getSpecLintGET(request, context);
@@ -1479,6 +1488,108 @@ function makeHost(
 }
 
 describe("cctl spec read verbs against seeded read routes", () => {
+  const cleanPlan: DeliveryPlanView = {
+    attempt: {
+      id: "attempt-1",
+      specSlug: "native-sdd",
+      status: "draft",
+      draftRevision: 1,
+      pinnedRevisionId: revision.id,
+      deltaBasisExecutionId: null,
+      proposedSnapshotId: null,
+      candidateId: null,
+      candidateHash: null,
+      launchedExecutionId: null,
+      workflowDefinitionId: "managed-wf",
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+    },
+    approval: null,
+    prelaunch: null,
+    document: {
+      schemaVersion: 3,
+      binding: { dispositions: [], claims: [] },
+    },
+    workflowDefinition: {
+      id: "managed-wf",
+      revision: 1,
+      definitionHash: "definition-hash",
+      builderHref: "/projects/demo/workflows?definition=managed-wf",
+    },
+    health: { total: 0, blocking: 0, counts: [], findings: [] },
+    ledger: {
+      selected: 3,
+      claimed: 2,
+      unclaimed: 1,
+      dispositions: [
+        { kind: "in_scope", count: 3 },
+        { kind: "deferred", count: 1 },
+      ],
+      charter: { state: "authored", invariantCount: 4, sourceCount: 6 },
+    },
+    dispositionCounts: [],
+    unresolved: [],
+    snapshots: [],
+    nextAct: {
+      actor: "agent",
+      command: "cctl spec plan propose native-sdd",
+      reason: "the draft is ready to propose",
+    },
+  };
+
+  it("states that nothing refuses propose for a clean plan status", async () => {
+    const result = await runCli(
+      ["spec", "plan", "status", "native-sdd"],
+      baseEnv,
+      makeHost({ planView: cleanPlan }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("propose: nothing refuses");
+  });
+
+  it("reports both sides of the ledger and the charter state on plan status", async () => {
+    const result = await runCli(
+      ["spec", "plan", "status", "native-sdd"],
+      baseEnv,
+      makeHost({ planView: cleanPlan }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      [
+        "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+        "dispositions: in_scope 3, deferred 1",
+        "charter: authored, 4 invariants, 6 sources",
+      ].join("\n"),
+    );
+    expect(result.stdout).not.toContain("unresolved dispositions:");
+  });
+
+  it("names the plan.json authoring path and the preflight as the draft's next act", async () => {
+    const result = await runCli(
+      ["spec", "plan", "status", "native-sdd"],
+      baseEnv,
+      makeHost({
+        planView: {
+          ...cleanPlan,
+          nextAct: {
+            actor: "agent",
+            command:
+              "author .cc/temp/plan.json with the graph-workflow-planning skill, then cctl workflow validate --file .cc/temp/plan.json --definition managed-wf",
+            reason:
+              "A managed draft is authored as an ordinary plan.json; the preflight reports everything that refuses propose before you replace it.",
+          },
+        },
+      }),
+    );
+
+    expect(result.stdout).toContain(
+      "acts next: agent — author .cc/temp/plan.json with the graph-workflow-planning skill, then cctl workflow validate --file .cc/temp/plan.json --definition managed-wf",
+    );
+    expect(result.stdout).not.toContain("cctl spec plan edit");
+  });
+
   it("refuses a preview without a stage using only direct-plan next acts", async () => {
     const host = makeHost();
     const result = await runCli(
@@ -1892,7 +2003,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     // The park is its own line, not something to infer from the gate block.
     expect(text.stdout).toContain(
-      "execution-1: definition_review — the admitted one-off launch is awaiting restart recovery before its workflow lane is attached",
+      "(no workflow lane): definition_review — the admitted one-off launch is awaiting restart recovery before its workflow lane is attached",
     );
     expect(text.stdout).toContain(
       "admitted one-off launch is awaiting restart recovery",
@@ -1935,7 +2046,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       "phase: executing (1 execution parked awaiting human approval of their workflow lane)",
     );
     expect(text.stdout).toContain(
-      "execution-2: definition_review — parked awaiting human approval of workflow lane workflow-execution-9; approve it from the workflow surface",
+      "workflow-execution-9: definition_review — parked awaiting human approval of workflow lane workflow-execution-9; approve it from the workflow surface",
     );
 
     expect(structured.exitCode).toBe(0);
@@ -1978,7 +2089,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       "phase: executing (1 workflow lane completed awaiting the delivering merge)",
     );
     expect(text.stdout).toContain(
-      "execution-3: running — workflow lane workflow-execution-3 completed; delivery lands when the session's delivering merge publishes",
+      "workflow-execution-3: running — workflow lane workflow-execution-3 completed; delivery lands when the session's delivering merge publishes",
     );
 
     expect(structured.exitCode).toBe(0);
@@ -2008,7 +2119,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
       "phase: executing (1 workflow lane halted awaiting attention)",
     );
     expect(text.stdout).toContain(
-      "execution-3: running — workflow lane workflow-execution-3 halted; resolve the halt from the workflow surface, then resume it",
+      "workflow-execution-3: running — workflow lane workflow-execution-3 halted; resolve the halt from the workflow surface, then resume it",
     );
   });
 

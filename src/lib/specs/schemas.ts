@@ -424,6 +424,11 @@ export const refusalCodeSchema = z.enum([
   "stale_citation_set",
   "attention_state_conflict",
   "idempotency_conflict",
+  // An execution-addressing verb handed the internal spec execution row id
+  // where the workflow execution id belongs. Distinct from `not_found`, which
+  // reports an id that names nothing: this one names a real row an agent is
+  // never meant to hold, so its remedy is the id that IS addressable.
+  "spec_side_execution_id",
   "not_found",
   "validation",
 ]);

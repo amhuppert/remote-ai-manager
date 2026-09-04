@@ -2331,7 +2331,9 @@ function executionLifecycleFindings(
             ? ""
             : `: ${execution.cleanup_last_error}`
         }`,
-        remedy: `Retry the same command to resume the cleanup from where it stopped: cctl spec abandon ${state.spec.slug} --execution ${execution.id} --reason <reason>`,
+        // The remedy is executable, so it names the id the verb accepts — the
+        // workflow execution id — rather than the internal row id.
+        remedy: `Retry the same command to resume the cleanup from where it stopped: cctl spec abandon ${state.spec.slug} --execution ${common.workflowExecutionId ?? execution.workflow_execution_id ?? "<workflow-execution-id>"} --reason <reason>`,
       });
       continue;
     }

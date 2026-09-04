@@ -24,6 +24,7 @@ import {
   workflowSemanticDefinitionSchema,
   workflowValidatorIssueSchema,
 } from "../src/lib/workflow-graph/definition-schemas";
+import { DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES } from "../src/lib/specs/delivery-plan-binding-lint";
 import { planRepairRoundSchema } from "../src/lib/workflow-graph/schemas";
 import { EXPANSION_CAPS } from "../src/lib/workflow-graph/expansion-caps";
 import { graphExpansionRequestSchema } from "../src/lib/workflow-graph/expansion-service";
@@ -150,6 +151,34 @@ function jsonExampleAfterHeading(markdown: string, heading: string): unknown {
 
 function shapeKeys(schema: { shape: Record<string, unknown> }): string[] {
   return Object.keys(schema.shape);
+}
+
+/**
+ * The one section that owns delivering a native spec (#80 design 3.6). It may
+ * live in the core or in a reference file the core's table names; what it may
+ * not do is live in both.
+ */
+const NATIVE_SPEC_DELIVERY_HEADING = "Delivering a native spec";
+
+/** The files of one skill copy that declare the delivery heading. */
+function nativeSpecDeliveryOwners(dir: string): string[] {
+  const heading = new RegExp(
+    `^#{1,4} ${NATIVE_SPEC_DELIVERY_HEADING}\\s*$`,
+    "mu",
+  );
+  return skillFiles(dir).filter((file) => heading.test(read(`${dir}/${file}`)));
+}
+
+/** The canonical copy's delivery guidance, whichever file owns it. */
+function nativeSpecDeliveryGuidance(): string {
+  const dir = SKILL_DIRS[0];
+  const owner = nativeSpecDeliveryOwners(dir)[0];
+  if (owner === undefined) {
+    throw new Error(
+      `no file in ${dir} declares "${NATIVE_SPEC_DELIVERY_HEADING}"`,
+    );
+  }
+  return read(`${dir}/${owner}`);
 }
 
 /**
@@ -1059,6 +1088,83 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     expect(cited).toContain("workflow graph expand");
     expect(cited).toContain("workflow live ledger");
     expect(cited).toContain("workflow live edit");
+  });
+
+  /**
+   * The native-spec delivery guidance (#80 design 3.6). Exactly one owner per
+   * package: three prose copies of the same sequence is the drift this section
+   * exists to end, and a second copy in a reference is the same defect wearing
+   * a different filename.
+   */
+  it.each(SKILL_DIRS)(
+    "%s owns the native-spec delivery guidance in exactly one file",
+    (dir) => {
+      const owners = nativeSpecDeliveryOwners(dir);
+
+      expect(
+        owners,
+        `"${NATIVE_SPEC_DELIVERY_HEADING}" must be owned by exactly one file in ${dir} — found ${owners.length ? owners.join(", ") : "none"}`,
+      ).toHaveLength(1);
+
+      const owner = owners[0] ?? "";
+      if (owner !== "SKILL.md") {
+        expectDocuments(
+          read(`${dir}/SKILL.md`),
+          owner,
+          "the read-on-demand reference index",
+        );
+      }
+    },
+  );
+
+  /**
+   * Bounded to what a receipt cannot teach. Everything else about the launch —
+   * which command follows which — is the hint chain's job at the point of use,
+   * and a copy here is a copy that goes stale silently.
+   */
+  it("bounds the native-spec delivery guidance to what a receipt cannot teach", () => {
+    const guidance = nativeSpecDeliveryGuidance();
+    const why = "the native-spec delivery guidance";
+
+    // The two spec-specific concepts, as they exist at the tip.
+    expectDocuments(guidance, "pinned revision", why);
+    expectDocuments(guidance, "`binding`", why);
+    expectDocuments(guidance, "claims", why);
+
+    // Restate versus reference: spec criteria are the contract, context
+    // criteria are the validator's checklist.
+    expectDocuments(guidance, "never paste", why);
+
+    // Phase-scoped authoring: the plan validates before any task exists.
+    expectDocuments(guidance, "empty `tasks`", why);
+
+    // Edge ids and the removal fallback.
+    expectDocuments(guidance, "remove-edge", why);
+    expectDocuments(guidance, "endpoint pair", why);
+
+    // One line on the must-run constraint, pointing at the refusal that
+    // carries the rationale. The code is read back out of the shipped lint so
+    // a rename fails here rather than leaving a planner a dead code to grep.
+    const mustRun = "binding/selected-criterion-not-must-run";
+    expect(
+      DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
+      "the must-run lint code was renamed",
+    ).toContain(mustRun);
+    expectDocuments(guidance, mustRun, why);
+  });
+
+  it("notes the covers follow-up in one sentence and instructs nothing about it", () => {
+    const guidance = nativeSpecDeliveryGuidance();
+
+    const mentions = guidance.match(/`covers`/gu) ?? [];
+    expect(
+      mentions.length,
+      "the covers note is one sentence about a follow-up ticket, not guidance for a field this run does not ship",
+    ).toBe(1);
+
+    const sentence =
+      guidance.replace(/\s+/gu, " ").match(/[^.]*`covers`[^.]*\./u)?.[0] ?? "";
+    expect(sentence).toMatch(/follow-up ticket/u);
   });
 
   it("keeps the core SKILL.md a bounded single pass with discoverable references", () => {

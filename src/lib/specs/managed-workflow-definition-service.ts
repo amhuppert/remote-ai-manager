@@ -1,23 +1,56 @@
 import { createLogger } from "@/lib/logging";
-import type {
-  WorkflowDefinitionDraft,
-  WorkflowDefinitionRecord,
-} from "@/lib/workflow-graph/definition-schemas";
-import type { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import {
   finalizeDeliveryPlanLaunch,
   type DeliveryPlanLaunchStage,
 } from "./delivery-plan-finalization";
 import type { Spec } from "./schemas";
-import {
-  definitionMutationCoordinator,
-  type DefinitionMutationCoordinator,
-} from "@/lib/workflow-graph/definition-mutation-coordinator";
 
 const logger = createLogger("specs.managed-workflow-definition");
 
-type WorkflowStorage = ReturnType<typeof createWorkflowStorageService>;
+export type ManagedWorkflowDefinitionRecord = WorkflowDefinitionDraft &
+  Readonly<{
+    id: string;
+    schemaVersion: number;
+    revision: number;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+
+interface ProjectWorkflowDefinitionScope {
+  readonly kind: "project";
+  readonly projectPath: string;
+}
+
+export interface ManagedWorkflowDefinitionStorage {
+  list(
+    scope: ProjectWorkflowDefinitionScope,
+  ): Promise<readonly { readonly id: string }[]>;
+  get(
+    scope: ProjectWorkflowDefinitionScope,
+    workflowId: string,
+  ): Promise<ManagedWorkflowDefinitionRecord | null>;
+  createWithId(
+    scope: ProjectWorkflowDefinitionScope,
+    workflowId: string,
+    draft: WorkflowDefinitionDraft,
+  ): Promise<ManagedWorkflowDefinitionRecord>;
+  update(
+    scope: ProjectWorkflowDefinitionScope,
+    workflowId: string,
+    expectedRevision: number,
+    draft: WorkflowDefinitionDraft,
+  ): Promise<ManagedWorkflowDefinitionRecord>;
+  delete(
+    scope: ProjectWorkflowDefinitionScope,
+    workflowId: string,
+  ): Promise<boolean>;
+}
+
+export interface ManagedDefinitionMutationCoordinator {
+  run<T>(key: string, operation: () => Promise<T>): Promise<T>;
+}
 
 export class ManagedWorkflowDefinitionIntegrityError extends Error {
   readonly code = "integrity_mismatch" as const;
@@ -41,18 +74,18 @@ export interface ManagedWorkflowDefinitionService {
   get(input: {
     projectPath: string;
     workflowDefinitionId: string;
-  }): Promise<WorkflowDefinitionRecord | null>;
+  }): Promise<ManagedWorkflowDefinitionRecord | null>;
   findOpenOrphan(input: {
     spec: Spec;
     pinnedRevisionId: string;
     existingAttemptIds: readonly string[];
-  }): Promise<WorkflowDefinitionRecord | null>;
+  }): Promise<ManagedWorkflowDefinitionRecord | null>;
   findReopenOrphan(input: {
     spec: Spec;
     pinnedRevisionId: string;
     attemptId: string;
     linkedDefinitionIds: readonly string[];
-  }): Promise<WorkflowDefinitionRecord | null>;
+  }): Promise<ManagedWorkflowDefinitionRecord | null>;
   removeExact(input: {
     projectPath: string;
     workflowDefinitionId: string;
@@ -64,14 +97,14 @@ export interface ManagedWorkflowDefinitionService {
     pinnedRevisionId: string;
     attemptId: string;
     launch: WorkflowDefinitionDraft;
-  }): Promise<WorkflowDefinitionRecord>;
+  }): Promise<ManagedWorkflowDefinitionRecord>;
   clone(input: {
     spec: Spec;
     pinnedRevisionId: string;
     attemptId: string;
     sourceDefinitionId: string;
     cloneDefinitionId: string;
-  }): Promise<WorkflowDefinitionRecord>;
+  }): Promise<ManagedWorkflowDefinitionRecord>;
   /**
    * Rewrite a managed definition at the given stage as its next revision:
    * `candidate` freezes the charter a proposal binds, `draft` hands it back to
@@ -84,13 +117,13 @@ export interface ManagedWorkflowDefinitionService {
     workflowDefinitionId: string;
     expectedRevision: number;
     stage: DeliveryPlanLaunchStage;
-  }): Promise<WorkflowDefinitionRecord>;
+  }): Promise<ManagedWorkflowDefinitionRecord>;
   getExact(input: {
     projectPath: string;
     workflowDefinitionId: string;
     revision: number;
     definitionHash: string;
-  }): Promise<WorkflowDefinitionRecord>;
+  }): Promise<ManagedWorkflowDefinitionRecord>;
 }
 
 function finalizedDraft(input: {
@@ -113,17 +146,17 @@ function finalizedDraft(input: {
 }
 
 export function createManagedWorkflowDefinitionService(deps: {
-  storage: WorkflowStorage;
-  mutationCoordinator?: DefinitionMutationCoordinator;
+  storage: ManagedWorkflowDefinitionStorage;
+  mutationCoordinator: ManagedDefinitionMutationCoordinator;
 }): ManagedWorkflowDefinitionService {
-  const coordinator = deps.mutationCoordinator ?? definitionMutationCoordinator;
+  const coordinator = deps.mutationCoordinator;
   const projectScope = (projectPath: string) => ({
     kind: "project" as const,
     projectPath,
   });
 
   function sourceIdentity(
-    record: WorkflowDefinitionRecord,
+    record: ManagedWorkflowDefinitionRecord,
     input: { specId: string; pinnedRevisionId: string },
   ): { attemptId: string; candidateId: string } | null {
     const prefix = `spec-plan://${input.specId}/revisions/${input.pinnedRevisionId}/attempts/`;
@@ -149,21 +182,21 @@ export function createManagedWorkflowDefinitionService(deps: {
 
   async function managedRecords(
     spec: Spec,
-  ): Promise<WorkflowDefinitionRecord[]> {
+  ): Promise<ManagedWorkflowDefinitionRecord[]> {
     const scope = projectScope(spec.projectPath);
     const summaries = await deps.storage.list(scope);
     const records = await Promise.all(
       summaries.map((summary) => deps.storage.get(scope, summary.id)),
     );
     return records.filter(
-      (record): record is WorkflowDefinitionRecord => record !== null,
+      (record): record is ManagedWorkflowDefinitionRecord => record !== null,
     );
   }
 
   function soleOrphan(
-    records: readonly WorkflowDefinitionRecord[],
+    records: readonly ManagedWorkflowDefinitionRecord[],
     spec: Spec,
-  ): WorkflowDefinitionRecord | null {
+  ): ManagedWorkflowDefinitionRecord | null {
     if (records.length === 0) return null;
     if (records.length === 1) return records[0]!;
     logger.error("specs.delivery-plan.definition.integrity_mismatch", {
@@ -185,7 +218,7 @@ export function createManagedWorkflowDefinitionService(deps: {
     definitionId: string;
     launch: WorkflowDefinitionDraft;
     event: "created" | "cloned";
-  }): Promise<WorkflowDefinitionRecord> {
+  }): Promise<ManagedWorkflowDefinitionRecord> {
     const scope = {
       kind: "project" as const,
       projectPath: input.spec.projectPath,

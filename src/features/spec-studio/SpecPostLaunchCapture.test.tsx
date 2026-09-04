@@ -4,10 +4,30 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { SpecDetailView } from "@/lib/specs/queries";
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
 import SpecPostLaunchCapture from "./SpecPostLaunchCapture";
+
+const WORKFLOW_EXECUTION_ID = "workflow-execution-1";
+
+/**
+ * A running spec execution always has a linked workflow lane, and the capture
+ * action addresses it by that workflow execution id — never by the spec-side
+ * row id, which is internal (design 3.5, decision D-B). The shared fixture
+ * leaves the link null, so the running row is linked here.
+ */
+function runningDetail(): SpecDetailView {
+  const detail = specControlsDetailFixture("running");
+  return {
+    ...detail,
+    executions: detail.executions.map((execution) => ({
+      ...execution,
+      workflowExecutionId: WORKFLOW_EXECUTION_ID,
+    })),
+  };
+}
 
 describe("SpecPostLaunchCapture", () => {
   let api: FetchFixture;
@@ -26,6 +46,7 @@ describe("SpecPostLaunchCapture", () => {
         discovery: {
           id: "discovery-1",
           executionId: "execution-1",
+          workflowExecutionId: WORKFLOW_EXECUTION_ID,
           attemptId: "attempt-2",
           title: "Carry the edge forward",
         },
@@ -35,7 +56,7 @@ describe("SpecPostLaunchCapture", () => {
     );
     renderWithQuery(
       <SpecPostLaunchCapture
-        detail={specControlsDetailFixture("running")}
+        detail={runningDetail()}
         projectName="command-center"
       />,
     );
@@ -61,7 +82,7 @@ describe("SpecPostLaunchCapture", () => {
     expect(
       api.requestsTo("POST", /capture-scope-amendment/)[0]?.jsonBody,
     ).toMatchObject({
-      executionId: "execution-1",
+      executionId: WORKFLOW_EXECUTION_ID,
       discoveredTask: { title: "Carry the edge forward" },
     });
     expect(screen.queryByRole("button", { name: /launch/i })).toBeNull();

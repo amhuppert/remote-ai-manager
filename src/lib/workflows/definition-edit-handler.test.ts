@@ -286,3 +286,54 @@ describe("runDefinitionEditRequest", () => {
     expect(persist).not.toHaveBeenCalled();
   });
 });
+
+describe("runDefinitionEditRequest receipt fields", () => {
+  const rename = {
+    expectedRevision: 3,
+    operations: [{ type: "update-workflow", name: "Renamed" }],
+  };
+
+  it("merges the fields a persisted write reports beside item and applied", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 3 });
+    const { persist } = persistSpy(record);
+    const receiptFields = vi.fn(async () => ({
+      proposeGate: { blockingBefore: 1, blockingAfter: 0 },
+    }));
+
+    const response = await runDefinitionEditRequest({
+      rawBody: rename,
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      persist,
+      receiptFields,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response)).toMatchObject({
+      item: { name: "Renamed", revision: 4 },
+      applied: 1,
+      proposeGate: { blockingBefore: 1, blockingAfter: 0 },
+    });
+    expect(persist).toHaveBeenCalledOnce();
+    expect(receiptFields).toHaveBeenCalledOnce();
+  });
+
+  it("never asks for receipt fields on a dry run", async () => {
+    const record = createWorkflowDefinitionRecord({ revision: 3 });
+    const { persist } = persistSpy(record);
+    const receiptFields = vi.fn(async () => ({ proposeGate: {} }));
+
+    const response = await runDefinitionEditRequest({
+      rawBody: { ...rename, dryRun: true },
+      notFoundError: "Workflow not found",
+      loadRecord: async () => record,
+      persist,
+      receiptFields,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response)).not.toHaveProperty("proposeGate");
+    expect(persist).not.toHaveBeenCalled();
+    expect(receiptFields).not.toHaveBeenCalled();
+  });
+});

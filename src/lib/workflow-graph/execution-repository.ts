@@ -48,6 +48,7 @@ import {
   createAssignmentReferenceChecker,
   type AssignmentReferenceChecker,
 } from "./assignment-references";
+import { locatePlanIssues } from "@/lib/workflows/plan-issue-locator";
 import {
   createAgentProfileLibraryService,
   type AgentProfileLibraryService,
@@ -428,10 +429,16 @@ async function createExecutionFromSeed(
   // exists to prevent.
   const global = await readConfigDep();
   const referenceIssues = [
-    ...(await assignmentSeeding.assignmentReferences.checkDefinition(concrete, {
-      kind: "project",
-      projectPath: assignmentSeeding.projectPath,
-    })),
+    // Located against the definition being launched, so this refusal names the
+    // same record ids `workflow validate` did (#80 design 3.2). The defaults
+    // issues are rooted at `workflowDefaults`, which the locator leaves alone.
+    ...locatePlanIssues(
+      await assignmentSeeding.assignmentReferences.checkDefinition(concrete, {
+        kind: "project",
+        projectPath: assignmentSeeding.projectPath,
+      }),
+      concrete,
+    ),
     ...(await assignmentSeeding.assignmentReferences.checkWorkflowDefaults(
       global.workflowDefaults,
     )),

@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { parseJsonl } from "@/lib/shared/read-jsonl";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { resolveConfigDir } from "@/lib/config/loader";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -415,24 +416,37 @@ export function createExecutionLogger(
 // -- Registry ----------------------------------------------------------------
 // Maps executionId → ExecutionLogger, so all modules can access the logger
 // for the currently running execution without passing it through every call.
+// Hosted on globalThis, like the active-loop registry in execution-loop.ts:
+// Next.js evaluates route handlers in separate module graphs, and the start,
+// pause and resume routes each compose their own manager, so a module-local
+// map would leave the pause route unable to find the logger the start route
+// registered and lifecycle.jsonl would record the resume without its pause.
 
-const registry = new Map<string, ExecutionLogger>();
+const EXECUTION_LOGGER_REGISTRY_KEY =
+  "__cc_graph_workflow_execution_loggers" as const;
+
+function registry(): Map<string, ExecutionLogger> {
+  return getGlobalSingleton(
+    EXECUTION_LOGGER_REGISTRY_KEY,
+    () => new Map<string, ExecutionLogger>(),
+  );
+}
 
 export function registerExecutionLogger(logger: ExecutionLogger): void {
-  registry.set(logger.executionId, logger);
+  registry().set(logger.executionId, logger);
 }
 
 export function unregisterExecutionLogger(executionId: string): void {
-  registry.delete(executionId);
+  registry().delete(executionId);
 }
 
 export function getExecutionLogger(
   executionId: string,
 ): ExecutionLogger | null {
-  return registry.get(executionId) ?? null;
+  return registry().get(executionId) ?? null;
 }
 
 /** Reset the registry (for testing only). */
 export function _resetRegistryForTesting(): void {
-  registry.clear();
+  registry().clear();
 }

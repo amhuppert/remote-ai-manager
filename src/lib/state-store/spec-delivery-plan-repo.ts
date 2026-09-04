@@ -325,9 +325,14 @@ export interface SpecDeliveryPlanRepo {
  * is exactly the state-with-no-exit this workstream exists to remove. The list
  * itself is owned by `delivery-plan.ts`, so storage cannot drift from what the
  * CLI receipts state.
+ *
+ * Addressed by slug rather than by id: the only execution id storage holds is
+ * `launched_execution_id`, the internal spec execution row id, and naming it
+ * here would print a `--execution` command the resolver refuses (design 3.5,
+ * D-B). The service layer, which owns both the slug and the workflow-id
+ * lookup, states the id-bearing form.
  */
-const POST_LAUNCH_PATHS = (executionId: string) =>
-  postLaunchPathsSentence({ executionId });
+const POST_LAUNCH_PATHS = () => postLaunchPathsSentence({});
 
 export function createSpecDeliveryPlanRepo(
   db: Db,
@@ -464,7 +469,7 @@ export function createSpecDeliveryPlanRepo(
         attempt.id,
         attempt.status,
         attempt.status === "launched" && attempt.launched_execution_id !== null
-          ? POST_LAUNCH_PATHS(attempt.launched_execution_id)
+          ? POST_LAUNCH_PATHS()
           : attempt.status === "abandoned"
             ? "Open a fresh attempt with `cctl spec plan open`."
             : "Return it to draft with `cctl spec plan reopen` before editing it.",
@@ -703,7 +708,7 @@ export function createSpecDeliveryPlanRepo(
       throw new DeliveryPlanStatusConflictError(
         attempt.id,
         attempt.status,
-        POST_LAUNCH_PATHS(attempt.launched_execution_id),
+        POST_LAUNCH_PATHS(),
       );
     }
     if (attempt.status === "abandoned") {

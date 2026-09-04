@@ -36,7 +36,7 @@ import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { launchSpecDeliveryGraphWorkflowExecution } from "@/lib/workflow-graph/execution-route-handlers";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
 import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
-import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import { createProductionManagedWorkflowDefinitionService } from "@/lib/workflows/managed-workflow-definition-composition";
 
 import { createAuthoringService } from "./authoring-service";
 import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
@@ -58,7 +58,6 @@ import { createLinksService } from "./links-service";
 import { createReviewService } from "./review-service";
 import type { SpecExecutionRow } from "./schemas";
 import type { SpecMutationServices } from "./route-handlers";
-import { createManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
 
 const logger = createLogger("specs.service-factory");
 const servicesByProject = new Map<string, SpecMutationServices>();
@@ -370,9 +369,7 @@ export async function createProductionSpecRouteServices(
     },
   });
 
-  const managedDefinitions = createManagedWorkflowDefinitionService({
-    storage: createWorkflowStorageService(),
-  });
+  const managedDefinitions = createProductionManagedWorkflowDefinitionService();
   const deliveryPlan = createDeliveryPlanService({
     plans: deliveryPlanRepo,
     managedDefinitions,
@@ -434,6 +431,12 @@ export async function createProductionSpecRouteServices(
     },
     launchedExecutionState(executionId) {
       return deliveryRepo.findExecutionById(executionId)?.state ?? null;
+    },
+    launchedWorkflowExecutionId(executionId) {
+      return (
+        deliveryRepo.findExecutionById(executionId)?.workflow_execution_id ??
+        null
+      );
     },
     lastDeliveryBasis({ spec, pinnedRevision }) {
       return loadDeliveryPlanSeedBasis(

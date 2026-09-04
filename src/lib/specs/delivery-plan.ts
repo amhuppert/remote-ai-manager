@@ -239,11 +239,25 @@ export function deliveryPlanAttemptBlocksReplacement(input: {
   return !isTerminalSpecExecutionState(input.launchedExecutionState);
 }
 
+/**
+ * The id in both the sentence and the `--execution` form is the WORKFLOW
+ * execution id (design 3.5, D-B): it is the only execution id agents hold, and
+ * the only one the capture and abandon verbs accept. A caller that holds
+ * neither the slug nor that id — the delivery-plan repository, which owns
+ * neither the spec table nor the execution binding — passes neither and gets
+ * the `<slug>` usage form. That is deliberately a template rather than a
+ * spec-side row id: the row id would render a command the resolver refuses,
+ * while the slug is the one thing the caller of the refused verb just typed.
+ */
 export function postLaunchPathActs(input: {
   readonly slug?: string;
-  readonly executionId: string;
+  readonly workflowExecutionId?: string;
 }): readonly [string, string] {
-  const target = input.slug ?? `--execution ${input.executionId}`;
+  const target =
+    input.slug ??
+    (input.workflowExecutionId === undefined
+      ? "<slug>"
+      : `--execution ${input.workflowExecutionId}`);
   return [
     `record a non-blocking discovery for the next plan with \`cctl spec capture ${target} --file <task.json>\``,
     `abandon this run and open a replacement with \`cctl spec capture ${target} --file <task.json> --blocking-reason <why>\``,
@@ -252,9 +266,13 @@ export function postLaunchPathActs(input: {
 
 export function postLaunchPathsSentence(input: {
   readonly slug?: string;
-  readonly executionId: string;
+  readonly workflowExecutionId?: string;
 }): string {
-  return `The plan is already running as execution ${input.executionId}, so its launch and binding are immutable. Take one of the post-launch paths: ${postLaunchPathActs(
+  const running =
+    input.workflowExecutionId === undefined
+      ? "The plan is already running"
+      : `The plan is already running as execution ${input.workflowExecutionId}`;
+  return `${running}, so its launch and binding are immutable. Take one of the post-launch paths: ${postLaunchPathActs(
     input,
   ).join("; ")}.`;
 }

@@ -101,6 +101,25 @@ export function authoredDeliveryPlanSources<
     }));
 }
 
+/**
+ * The submitted sources with each server-owned entry kept once, first
+ * occurrence winning. A managed draft may carry the injected pair (a plan
+ * round-tripped from `get --full` does) or omit it; what it may not do is
+ * store two copies, which a planner's merge of a bare plan with a stored
+ * definition can produce. Authored entries pass through untouched.
+ */
+export function dedupeServerOwnedDeliveryPlanSources<
+  T extends { readonly id: string; readonly locator: string },
+>(sources: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return sources.filter((source) => {
+    if (!isServerOwnedDeliveryPlanSource(source)) return true;
+    if (seen.has(source.id)) return false;
+    seen.add(source.id);
+    return true;
+  });
+}
+
 export function finalizeDeliveryPlanLaunch(
   input: DeliveryPlanLaunchFinalizationInput,
 ): WorkflowDefinitionMutation {

@@ -45,6 +45,13 @@ export function reviewView(
       builderHref: "/projects/command-center/workflows?definition=candidate-2",
     },
     health: { total: 0, blocking: 0, counts: [], findings: [] },
+    ledger: {
+      selected: 0,
+      claimed: 0,
+      unclaimed: 0,
+      dispositions: [],
+      charter: { state: "authored", invariantCount: 1, sourceCount: 2 },
+    },
     dispositionCounts: [],
     unresolved: [],
     snapshots: [],

@@ -39,6 +39,9 @@ const admissionLogger = vi.hoisted(() => ({
 vi.mock("@/lib/logging", () => ({
   createLogger: () => admissionLogger,
   withTracing: <T>(handler: T): T => handler,
+  // The route handlers under test read the request's conversation from the
+  // trace to stamp planning telemetry; outside a traced request there is none.
+  getTraceContext: () => undefined,
 }));
 
 const maximalLaunch = createMaximalAuthoredWorkflowLaunchFixture;
@@ -112,6 +115,79 @@ describe("admitAuthoredWorkflowLaunch", () => {
         }),
       ],
     });
+  });
+
+  it("names the context an indexed model-selection locator addresses (#80 design 3.2)", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const launch = maximalLaunch();
+    const context = launch.definition.executionContexts[0];
+    if (!context) throw new Error("fixture has no execution contexts");
+    context.implementer = makeImplementerAssignment({
+      backend: "codex",
+      modelSelection: {
+        modelId: "arbitrary-codex-model",
+        parameters: { fast: "false", reasoning: "high" },
+      },
+    });
+
+    const result = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "project-create",
+      documentScope: scope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      agentBackends,
+      assignmentReferences: references(scope),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        path: `definition.executionContexts.0 (${context.id}).implementer.agent.modelSelection.modelId`,
+        recordId: context.id,
+      }),
+    );
+  });
+
+  it("names the context an indexed assignment-reference locator addresses (#80 design 3.2)", async () => {
+    const scope = { kind: "project", projectPath: "/repo" } as const;
+    const launch = maximalLaunch();
+    const contextId = launch.definition.executionContexts[1]?.id;
+    if (contextId === undefined)
+      throw new Error("fixture has too few contexts");
+
+    const result = await admitAuthoredWorkflowLaunch(launch, {
+      caller: "project-create",
+      documentScope: scope,
+      projectValidation: repoValidation,
+      globalValidation: globalConfig.validation,
+      workflowDefaults: undefined,
+      agentBackends,
+      assignmentReferences: {
+        async checkDefinition() {
+          return [
+            {
+              path: "definition.executionContexts.1.implementer.profile",
+              message: "Agent profile builtin:ghost could not be resolved.",
+            },
+          ];
+        },
+        async checkWorkflowDefaults() {
+          return [];
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toEqual([
+      {
+        path: `definition.executionContexts.1 (${contextId}).implementer.profile`,
+        message: "Agent profile builtin:ghost could not be resolved.",
+        recordId: contextId,
+      },
+    ]);
   });
 
   it("accepts the one globally configured custom Codex model", async () => {
@@ -358,7 +434,7 @@ describe("admitAuthoredWorkflowLaunch", () => {
     // guard warning surviving admission — not the whole warning set.
     expect(result.warnings).toContainEqual(
       expect.objectContaining({
-        path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+        path: "definition.executionContexts[0] (context-spawner).outputSchema.properties.verdict.enum",
         message: expect.stringContaining("defer"),
       }),
     );

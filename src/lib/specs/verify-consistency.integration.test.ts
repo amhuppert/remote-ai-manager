@@ -39,6 +39,7 @@ import {
   SPINE_CONVERSATION_ID,
   SPINE_PROJECT_NAME,
   SPINE_SESSION_NAME,
+  SPINE_WORKFLOW_EXECUTION_ID,
   startSpineExecution,
   startSpineWorkflowThroughProductionGate,
   type SpecSpineWorld,
@@ -152,11 +153,15 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     );
   }
 
-  function abandon(specExecutionId: string): Promise<Response> {
+  /** `--execution` takes the workflow execution id, never the spec-side row. */
+  function abandon(): Promise<Response> {
     return world.postAction(
       SLUG,
       "abandon-execution",
-      { executionId: specExecutionId, reason: "superseded by a replanned run" },
+      {
+        executionId: SPINE_WORKFLOW_EXECUTION_ID,
+        reason: "superseded by a replanned run",
+      },
       "agent",
     );
   }
@@ -242,7 +247,7 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     it(`reports a row stuck in ${phaseCase.phase} and clears it through the abandon retry`, async () => {
       const { specExecutionId } = await liveExecution();
       phaseCase.inject();
-      expect((await abandon(specExecutionId)).status).not.toBe(200);
+      expect((await abandon()).status).not.toBe(200);
 
       const parked = row(specExecutionId);
       expect(parked.state).toBe("abandoning");
@@ -257,12 +262,14 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
       });
       // refusals-name-remedy: the executable retry, with the target id.
       expect(finding.remedy).toMatch(
-        new RegExp(`cctl spec abandon .*--execution ${specExecutionId}`),
+        new RegExp(
+          `cctl spec abandon .*--execution ${SPINE_WORKFLOW_EXECUTION_ID}`,
+        ),
       );
       expect(finding.remedy.toLowerCase()).toContain("retry");
 
       world.cleanupFaults.beforeOp = null;
-      expect((await abandon(specExecutionId)).status).toBe(200);
+      expect((await abandon()).status).toBe(200);
       expect(row(specExecutionId).state).toBe("abandoned");
       expect(lifecycleFindings(await report())).toEqual([]);
     });
@@ -426,7 +433,7 @@ describe("spec verify reports execution-lifecycle consistency findings", () => {
     world.cleanupFaults.beforeOp = (op) => {
       if (op === "abort") throw new Error("injected abort fault");
     };
-    await abandon(specExecutionId);
+    await abandon();
 
     const result = await runCli(
       ["spec", "verify", SLUG],
@@ -665,7 +672,7 @@ describe("spec verify reports proposal-integrity consistency findings", () => {
     await world.postAction(
       SLUG,
       "abandon-execution",
-      { executionId: started.specExecutionId, reason: "replanned" },
+      { executionId: SPINE_WORKFLOW_EXECUTION_ID, reason: "replanned" },
       "agent",
     );
     const proposal = await proposeFromBase(

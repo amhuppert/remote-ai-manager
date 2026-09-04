@@ -146,7 +146,14 @@ const deliveryDeltaRevisionRefSchema = z
 
 const deliveryDeltaExecutionRefSchema = z
   .object({
+    /** The internal spec execution row id, carried as data only. */
     executionId: z.string().min(1),
+    /**
+     * The id a reader can address this run by, and the only execution id any
+     * `cctl` verb takes (design 3.5, D-B). Null for a run that never linked a
+     * lane, which the text then states rather than falling back to the row id.
+     */
+    workflowExecutionId: z.string().min(1).nullable(),
     revisionId: z.string().min(1),
     state: specExecutionStateSchema,
     deliveredAt: z.string().min(1).nullable(),
@@ -682,6 +689,9 @@ export function projectDeliveryDelta(
         ? null
         : {
             executionId: execution.id,
+            workflowExecutionId:
+              execution.workflow_execution_id ??
+              execution.linked_workflow_execution_id,
             revisionId: execution.revision_id,
             state: execution.state,
             deliveredAt: execution.delivered_at,
