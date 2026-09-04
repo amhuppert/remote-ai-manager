@@ -32,6 +32,7 @@ function makeRequest(
   body?: unknown,
   token = "good-token",
   query = "",
+  headers: Record<string, string> = {},
 ): NextRequest {
   return new NextRequest(
     `http://localhost/api/projects/repo/sessions/sess/graph-workflow/validate${query}`,
@@ -41,6 +42,7 @@ function makeRequest(
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${token}`,
+        ...headers,
       },
     },
   );
@@ -899,6 +901,135 @@ describe("graph-workflow validate route handler", () => {
   // scope the plan is destined for. Without a scope selector a plan authored as
   // a global template validates under project rules and only fails later, at
   // save — the exact "passes validate, refused at save" split R4.2 forbids.
+  // #80 design 3.10: planning-phase friction has to leave telemetry, or the
+  // next retrospective can count planning cost only by tallying tool calls in
+  // a transcript.
+  describe("planning telemetry", () => {
+    function refusedEvents() {
+      return routeLog.entries.filter(
+        (entry) => entry.message === "workflow.validate.refused",
+      );
+    }
+
+    /**
+     * This route has no `conversationId` path segment, so the ambient trace
+     * has none to derive: the refusal can only be attributed to the planning
+     * conversation the calling shell names on the header.
+     */
+    function unresolvableAssignmentPlan() {
+      const base = createWorkflowDefinition();
+      return makePlan({
+        ...base,
+        executionContexts: base.executionContexts.map((context, index) =>
+          index === 0
+            ? {
+                ...context,
+                contextValidator: {
+                  enabled: true,
+                  assignments: [
+                    {
+                      id: "security",
+                      profile: {
+                        tier: "global" as const,
+                        id: "never-created",
+                      },
+                      strategy: "conversation" as const,
+                      authority: "blocking" as const,
+                      agent: {
+                        backend: "claude" as const,
+                        modelSelection: {
+                          modelId: "sonnet",
+                          parameters: { effort: "medium" },
+                        },
+                      },
+                      continuity: { enabled: true },
+                    },
+                  ],
+                },
+              }
+            : context,
+        ),
+      });
+    }
+
+    it("emits workflow.validate.refused at info once per issue code, naming the caller's conversation", async () => {
+      const response = await handlers.POST(
+        makeRequest(unresolvableAssignmentPlan(), "good-token", "", {
+          "x-cc-conversation-id": "conv-planner",
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect(refusedEvents()).toEqual([
+        {
+          level: "info",
+          message: "workflow.validate.refused",
+          fields: {
+            code: "workflow_assignment_reference_invalid",
+            recordId: "security",
+            conversationId: "conv-planner",
+          },
+        },
+      ]);
+    });
+
+    it("records a null conversation rather than dropping the field for a caller with none", async () => {
+      const response = await handlers.POST(
+        makeRequest(unresolvableAssignmentPlan()),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect(refusedEvents()[0]?.fields).toEqual({
+        code: "workflow_assignment_reference_invalid",
+        recordId: "security",
+        conversationId: null,
+      });
+    });
+
+    it("emits nothing when the plan validates", async () => {
+      const response = await handlers.POST(
+        makeRequest(makePlan()),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(refusedEvents()).toEqual([]);
+    });
+
+    it("names the addressed definition when a managed preflight refuses", async () => {
+      preflightManagedDefinition.mockResolvedValue({
+        ok: false,
+        refusal: {
+          code: "definition_not_managed",
+          message: "Workflow definition workflow-1 is not managed.",
+          instruction: "Run `cctl spec plan status <slug>`.",
+        },
+      });
+
+      const response = await handlers.POST(
+        makeRequest(makePlan(), "good-token", "?definition=workflow-1", {
+          "x-cc-conversation-id": "conv-planner",
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(409);
+      expect(refusedEvents()).toEqual([
+        {
+          level: "info",
+          message: "workflow.validate.refused",
+          fields: {
+            code: "definition_not_managed",
+            definitionId: "workflow-1",
+            conversationId: "conv-planner",
+          },
+        },
+      ]);
+    });
+  });
+
   describe("document scope selector (R4.2)", () => {
     /** A project-tier profile that genuinely resolves under /repo. */
     async function seedProjectProfile(): Promise<void> {

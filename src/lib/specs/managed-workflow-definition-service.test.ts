@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import { createDefinitionMutationCoordinator } from "@/lib/workflow-graph/definition-mutation-coordinator";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import { createManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
@@ -38,7 +39,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const launch = createWorkflowDefinitionRecord();
     const first = await service.open({
       spec: SPEC,
@@ -97,7 +101,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const record = await service.open({
       spec: SPEC,
       pinnedRevisionId: "revision-1",
@@ -134,7 +141,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const launch = createWorkflowDefinitionRecord();
 
     const first = await service.open({
@@ -177,7 +187,10 @@ describe("managed workflow definition service", () => {
     const storage = createWorkflowStorageService({
       resolveConfigDir: () => tempDir,
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const opened = await service.open({
       spec: SPEC,
       pinnedRevisionId: "revision-1",
@@ -244,7 +257,10 @@ describe("managed workflow definition service", () => {
       // execution list; no execution is seeded from this definition.
       listActiveExecutions: async () => new Map(),
     });
-    const service = createManagedWorkflowDefinitionService({ storage });
+    const service = createManagedWorkflowDefinitionService({
+      storage,
+      mutationCoordinator: createDefinitionMutationCoordinator(),
+    });
     const scope = { kind: "project" as const, projectPath: SPEC.projectPath };
     const opened = await service.open({
       spec: SPEC,

@@ -39,6 +39,9 @@ const admissionLogger = vi.hoisted(() => ({
 vi.mock("@/lib/logging", () => ({
   createLogger: () => admissionLogger,
   withTracing: <T>(handler: T): T => handler,
+  // The route handlers under test read the request's conversation from the
+  // trace to stamp planning telemetry; outside a traced request there is none.
+  getTraceContext: () => undefined,
 }));
 
 const maximalLaunch = createMaximalAuthoredWorkflowLaunchFixture;

@@ -28,6 +28,11 @@ import {
   type ArtifactManifest,
   type Omission,
 } from "../disclosure";
+import { deliveryPlanLedgerLines } from "./delivery-plan-ledger";
+import {
+  MANAGED_DRAFT_WRITE_HINTS,
+  WORKFLOW_MANAGED_PREFLIGHT_HINTS,
+} from "./workflow.help";
 import { awaitJob } from "../job-wait";
 import {
   EXIT_OK,
@@ -223,6 +228,21 @@ function projectScopeRunFailure(json: boolean): CliResult {
  * honest unowned launch, not an error.
  */
 const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
+
+/**
+ * The caller-conversation header for a plan write, when this shell runs inside
+ * a conversation. The graph-workflow write routes take no conversationId path
+ * segment, so the server's planning telemetry (#80 design 3.10) can attribute
+ * a refusal to the conversation that met it only from what the CLI stamps.
+ */
+function callerConversationHeaders(env: CliEnv): {
+  headers?: Record<string, string>;
+} {
+  const conversationId = env["CC_CONVERSATION_ID"];
+  return conversationId === undefined || conversationId === ""
+    ? {}
+    : { headers: { [CALLER_CONVERSATION_HEADER]: conversationId } };
+}
 const CALLER_BACKEND_HEADER = "x-cc-agent-backend";
 
 /**
@@ -273,8 +293,12 @@ function managedReceipt(
     fields: {
       ...(gate === undefined ? {} : gate),
       hint: clean
-        ? `propose the draft with 'cctl spec plan propose ${management.specSlug}'`
-        : `read what still refuses propose with 'cctl spec plan status ${management.specSlug}'`,
+        ? MANAGED_DRAFT_WRITE_HINTS.clean.hint({
+            specSlug: management.specSlug,
+          })
+        : MANAGED_DRAFT_WRITE_HINTS.refused.hint({
+            specSlug: management.specSlug,
+          }),
     },
   };
 }
@@ -416,6 +440,7 @@ interface RenderedValidateFinding {
   readonly handle: string;
   readonly recordId?: string;
   readonly message: string;
+  readonly rationale?: string;
 }
 
 function renderedValidateFindings(
@@ -428,6 +453,9 @@ function renderedValidateFindings(
     handle: finding.elementHandle,
     ...(finding.recordId === undefined ? {} : { recordId: finding.recordId }),
     message: finding.message,
+    ...(finding.rationale === undefined
+      ? {}
+      : { rationale: finding.rationale }),
   }));
 }
 
@@ -442,12 +470,12 @@ function validateFindingLines(
     const group = findings.filter((finding) => finding.severity === severity);
     if (group.length === 0) continue;
     lines.push(`${severity}:`);
-    lines.push(
-      ...group.map(
-        (finding) =>
-          `  ${finding.handle} [${finding.ruleId}]: ${finding.message}`,
-      ),
-    );
+    for (const finding of group) {
+      lines.push(`  ${finding.handle} [${finding.ruleId}]: ${finding.message}`);
+      if (finding.rationale !== undefined) {
+        lines.push(`  why: ${finding.rationale}`);
+      }
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -795,6 +823,7 @@ async function runWorkflowValidate(
     tokenSource: context.tokenSource,
     method: "POST",
     path: `${graphWorkflowPath(context)}/validate${queryString}`,
+    ...callerConversationHeaders(env),
     body: plan.value,
   });
   // A 400 carries { error, issues[] }; the shared mapping renders each issue on
@@ -820,13 +849,26 @@ async function runWorkflowValidate(
     preflight === null ? null : { ok: true, ...preflight },
   );
   const preflightText =
-    workflowDefinitionId === undefined ? "" : validateFindingLines(findings);
+    workflowDefinitionId === undefined || preflight === null
+      ? ""
+      : `${validateFindingLines(findings)}${deliveryPlanLedgerLines(preflight.summary).join("\n")}\n`;
+  // A managed preflight's successor depends on what it found: a file that still
+  // refuses propose is corrected where it was authored, not replaced into the
+  // draft. Both rows come from the one chain declaration.
   const hint =
     workflowDefinitionId === undefined
       ? tier.tier === "global"
         ? "valid as a global-scope template — note 'cctl workflow create' saves under this project, not the global library"
         : `valid — create it with 'cctl workflow create --file ${filePath}'`
-      : `valid — replace it with 'cctl workflow replace ${workflowDefinitionId} --file ${filePath}'`;
+      : findings.some((finding) => finding.severity === "blocks_propose")
+        ? WORKFLOW_MANAGED_PREFLIGHT_HINTS.refused.hint({
+            definitionId: workflowDefinitionId,
+            planFilePath: filePath,
+          })
+        : WORKFLOW_MANAGED_PREFLIGHT_HINTS.clean.hint({
+            definitionId: workflowDefinitionId,
+            planFilePath: filePath,
+          });
 
   return {
     exitCode: EXIT_OK,
@@ -884,6 +926,7 @@ async function runWorkflowCreate(
     tokenSource: context.tokenSource,
     method: "POST",
     path: definitionsPath(context),
+    ...callerConversationHeaders(env),
     body: planBodyWithAcknowledgement(plan.value, values["acknowledge-review"]),
   });
   if (result.kind !== "ok") {
@@ -967,6 +1010,7 @@ async function runWorkflowReplace(
     tokenSource: context.tokenSource,
     method: "PUT",
     path: `${definitionsPath(context)}/${encodePathSegment(id)}`,
+    ...callerConversationHeaders(env),
     body: planBodyWithAcknowledgement(plan.value, values["acknowledge-review"]),
   });
   if (result.kind !== "ok") {

@@ -10,14 +10,10 @@ import type {
   AuthoredWorkflowModelSelectionAdmissionResult,
 } from "@/lib/workflow-graph/authored-launch-admission";
 import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/spec-bridge";
-import type {
-  ManagedDefinitionPreflightResult,
-  ManagedDefinitionPreflightSummary,
-} from "@/lib/workflow-graph/managed-definition-preflight";
+import type { ManagedDefinitionPreflightResult } from "@/lib/workflows/managed-definition-preflight-contract";
 import {
   type WorkflowDefinitionDraft,
   type WorkflowDefinitionMutation,
-  type WorkflowDefinitionRecord,
 } from "@/lib/workflow-graph/definition-schemas";
 
 import {
@@ -55,13 +51,16 @@ import {
   renderSeededDeliveryPlanMission,
   seededDeliveryPlanCharterSources,
 } from "./delivery-plan-charter-seed";
+import { deliveryPlanNextAct } from "./delivery-plan-next-act";
 import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import type { SpecPolicyAdmissionNotifier } from "./policy-admissions";
 import type { DeliveryPlanDocumentDiff } from "./delivery-plan-diff";
 import {
+  certifiedDeliveryPlanClaims,
+  deliveryPlanLedgerSummary,
   deliveryPlanRefusalRationale,
+  unprovenDeliveryPlanClaims,
   projectDeliveryPlanDraftHealth,
-  LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
   LAUNCH_NOT_ADMISSIBLE_RULE_ID,
   PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID,
   PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID,
@@ -75,6 +74,13 @@ import {
   type SeededDeliveryPlanDraft,
 } from "./delivery-plan-seed";
 import { draftHealth } from "./draft-health";
+import {
+  specPlanAttemptTransitionEvent,
+  specPlanPreflightEvent,
+  specPlanProposeAcceptedEvent,
+  type DeliveryPlanAttemptOrigin,
+  type DeliveryPlanGateSurface,
+} from "./planning-telemetry";
 import {
   deliveryPlanReviewView,
   type DeliveryPlanReviewView,
@@ -90,6 +96,7 @@ import type {
 } from "./delivery-plan-views";
 import type {
   ActorProvenance,
+  DeliveryPlanAttemptStatus,
   Refusal,
   Spec,
   SpecDeliveryPlanAttemptRow,
@@ -99,7 +106,10 @@ import type {
   SpecRevisionSnapshot,
 } from "./schemas";
 import type { ExecutionScope } from "./scope-validation";
-import type { ManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
+import type {
+  ManagedWorkflowDefinitionRecord,
+  ManagedWorkflowDefinitionService,
+} from "./managed-workflow-definition-service";
 
 const logger = createLogger("specs.delivery-plan");
 
@@ -384,7 +394,7 @@ export function createDeliveryPlanService(
   async function workingDefinition(
     attempt: SpecDeliveryPlanAttemptRow,
     spec: Spec,
-  ): Promise<WorkflowDefinitionRecord | null> {
+  ): Promise<ManagedWorkflowDefinitionRecord | null> {
     if (attempt.workflow_definition_id === null) return null;
     return deps.managedDefinitions.get({
       projectPath: spec.projectPath,
@@ -401,7 +411,7 @@ export function createDeliveryPlanService(
   async function thawAfterFailedProposal(
     spec: Spec,
     attempt: SpecDeliveryPlanAttemptRow,
-    frozen: WorkflowDefinitionRecord,
+    frozen: ManagedWorkflowDefinitionRecord,
   ): Promise<void> {
     try {
       await deps.managedDefinitions.restage({
@@ -434,10 +444,42 @@ export function createDeliveryPlanService(
     attempt: SpecDeliveryPlanAttemptRow,
     spec: Spec,
     document: DeliveryPlanDocument,
+    surface: DeliveryPlanGateSurface,
+    submittedLaunch?: WorkflowDefinitionMutation,
+  ): Promise<DeliveryPlanDraftHealth> {
+    const health = await projectHealth(
+      attempt,
+      spec,
+      document,
+      submittedLaunch,
+    );
+    const telemetry = specPlanPreflightEvent({
+      slug: spec.slug,
+      surface,
+      findings: health.findings,
+    });
+    logger.info(telemetry.event, telemetry.fields);
+    return health;
+  }
+
+  /**
+   * The projection itself. Separated from {@link healthOf} so every evaluation
+   * — including the ones that answer early — leaves exactly one
+   * `spec.plan.preflight` line, rather than one per return path.
+   */
+  async function projectHealth(
+    attempt: SpecDeliveryPlanAttemptRow,
+    spec: Spec,
+    document: DeliveryPlanDocument,
     submittedLaunch?: WorkflowDefinitionMutation,
   ): Promise<DeliveryPlanDraftHealth> {
     if (attempt.status !== "draft") {
-      return { findings: [], unresolved: [], refusalConditions: [] };
+      return {
+        findings: [],
+        unresolved: [],
+        refusalConditions: [],
+        claims: certifiedDeliveryPlanClaims(document.binding),
+      };
     }
     const pinnedRevision = await deps.revisionSnapshot(
       attempt.pinned_revision_id,
@@ -455,6 +497,7 @@ export function createDeliveryPlanService(
         ],
         unresolved: [],
         refusalConditions: [message],
+        claims: unprovenDeliveryPlanClaims(document.binding),
       };
     }
     const definition = await workingDefinition(attempt, spec);
@@ -471,6 +514,7 @@ export function createDeliveryPlanService(
         ],
         unresolved: [],
         refusalConditions: [message],
+        claims: unprovenDeliveryPlanClaims(document.binding),
       };
     }
     const launch = submittedLaunch ?? definition;
@@ -565,7 +609,7 @@ export function createDeliveryPlanService(
     const approval = parseApproval(attempt);
     const current = candidate;
     const prelaunch = parsePrelaunch(attempt);
-    const health = await healthOf(attempt, spec, document);
+    const health = await healthOf(attempt, spec, document, "status");
     const currentDefinition = await workingDefinition(attempt, spec);
     const workflowDefinition =
       frozenCandidate?.workflowDefinition ??
@@ -623,6 +667,11 @@ export function createDeliveryPlanService(
         builderHref: `/projects/${encodeURIComponent(deps.projectName?.(spec.projectPath) ?? spec.projectPath.split("/").filter(Boolean).at(-1) ?? spec.projectPath)}/workflows?definition=${encodeURIComponent(workflowDefinition.id)}`,
       },
       health: healthView(health),
+      ledger: deliveryPlanLedgerSummary({
+        binding: document.binding,
+        workflowCharter: currentDefinition?.definition.charter ?? null,
+        health,
+      }),
       dispositionCounts: dispositionCounts(document.binding),
       unresolved: [...health.unresolved],
       snapshots: snapshots(attempt),
@@ -744,45 +793,18 @@ export function createDeliveryPlanService(
         attempt,
         input.spec,
         document,
+        "validate",
         input.launch,
       );
-      const selectedIds = new Set(
-        document.binding.dispositions.flatMap((disposition) =>
-          disposition.disposition === "in_scope"
-            ? [disposition.criterionElementId]
-            : [],
-        ),
-      );
-      const claimedIds = new Set(
-        document.binding.claims.flatMap((claim) =>
-          claim.criterionElementIds.filter((criterionElementId) =>
-            selectedIds.has(criterionElementId),
-          ),
-        ),
-      );
-      const summary: ManagedDefinitionPreflightSummary = {
-        selected: selectedIds.size,
-        claimed: claimedIds.size,
-        unclaimed: selectedIds.size - claimedIds.size,
-        dispositions: dispositionCounts(document.binding).map(
-          ({ disposition, count }) => ({ kind: disposition, count }),
-        ),
-        charter: {
-          state: health.findings.some(
-            (finding) => finding.ruleId === LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
-          )
-            ? "seed_stub"
-            : "authored",
-          invariantCount:
-            input.launch.definition.charter.invariants?.length ?? 0,
-          sourceCount: input.launch.definition.charter.sourcesOfTruth.length,
-        },
-      };
       return {
         ok: true,
         specSlug: input.spec.slug,
         findings: [...health.findings],
-        summary,
+        summary: deliveryPlanLedgerSummary({
+          binding: document.binding,
+          workflowCharter: input.launch.definition.charter,
+          health,
+        }),
       };
     },
 
@@ -902,6 +924,12 @@ export function createDeliveryPlanService(
               }
               throw error;
             }
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: "none",
+              to: opened.status,
+              actor: input.actor,
+            });
             const view = await project(opened, input.spec);
             logger.info("specs.delivery-plan.opened", {
               specId: input.spec.id,
@@ -932,6 +960,7 @@ export function createDeliveryPlanService(
         attempt,
         input.spec,
         deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json)),
+        "status",
       );
       try {
         const edited = deps.plans.saveDraft({
@@ -981,7 +1010,12 @@ export function createDeliveryPlanService(
           // The refusal and `plan status` read the same projection through the
           // same entry, so a draft that reads proposable cannot refuse here and
           // a refusal always shows up on the next status.
-          const health = await healthOf(attempt, input.spec, document);
+          const health = await healthOf(
+            attempt,
+            input.spec,
+            document,
+            "propose",
+          );
           const blocked = proposeRefusal(input.spec, attempt, health);
           if (blocked) return blocked;
           const definition = await workingDefinition(attempt, input.spec);
@@ -1044,6 +1078,19 @@ export function createDeliveryPlanService(
               candidateHash,
               workflowDefinitionRevision: frozen.revision,
             });
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: proposed.attempt.status,
+              actor: input.actor,
+            });
+            const accepted = specPlanProposeAcceptedEvent({
+              slug: input.spec.slug,
+              covered: health.claims.claimed,
+              selected: health.claims.selected,
+              contexts: frozen.definition.executionContexts.length,
+            });
+            logger.info(accepted.event, accepted.fields);
             const view = await project(proposed.attempt, input.spec);
             publishPlanChange(input.spec, view, "proposed");
             return mutation(view, healthTotals(health), null);
@@ -1134,6 +1181,12 @@ export function createDeliveryPlanService(
               }
               throw error;
             }
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: reopened.attempt.status,
+              actor: input.actor,
+            });
             const view = await project(reopened.attempt, input.spec);
             publishPlanChange(input.spec, view, "reopened");
             // Frozen bytes owed nothing; the reopened draft's own health is what
@@ -1408,6 +1461,12 @@ export function createDeliveryPlanService(
             deps.events.publishAfterCommit(outcome.admission.prepared);
             if (outcome.admission.notice !== null)
               deps.policyNotifier?.policyAdmitted(outcome.admission.notice);
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: outcome.approved.status,
+              actor: input.actor,
+            });
             const view = await project(outcome.approved, input.spec);
             publishPlanChange(input.spec, view, "signed-off");
             return mutation(view, null, null, admissionView(outcome.admission));
@@ -1442,6 +1501,12 @@ export function createDeliveryPlanService(
               attemptId: attempt.id,
               transition: { kind: "park", ...candidate, reason: input.reason },
               occurredAt: deps.now(),
+              actor: input.actor,
+            });
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: parked.status,
               actor: input.actor,
             });
             const view = await project(parked, input.spec);
@@ -1584,6 +1649,12 @@ export function createDeliveryPlanService(
               occurredAt: deps.now(),
               actor: input.actor,
             });
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: launched.status,
+              actor: input.actor,
+            });
             const view = await project(launched, input.spec);
             publishPlanChange(input.spec, view, "launched");
             return mutation(view, null, null);
@@ -1647,6 +1718,12 @@ export function createDeliveryPlanService(
               specId: input.spec.id,
               attemptId: abandoned.id,
               executionId: null,
+            });
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: abandoned.status,
+              actor: input.actor,
             });
             publishPlanChange(
               input.spec,
@@ -1720,6 +1797,12 @@ export function createDeliveryPlanService(
               attemptId: abandoned.id,
               executionId: input.executionId,
             });
+            logAttemptTransition({
+              slug: input.spec.slug,
+              from: attempt.status,
+              to: abandoned.status,
+              actor: input.actor,
+            });
             publishPlanChange(
               input.spec,
               await project(abandoned, input.spec),
@@ -1767,6 +1850,26 @@ function healthView(
     counts: [...summary.counts],
     findings: [...summary.ordered],
   };
+}
+
+/**
+ * One `spec.plan.attempt.transition` line per recorded act (#80 design 3.10).
+ * Only the actor's KIND travels: a name or a conversation handle would be
+ * content, and this event exists to count acts, not to identify people.
+ */
+function logAttemptTransition(input: {
+  slug: string;
+  from: DeliveryPlanAttemptOrigin;
+  to: DeliveryPlanAttemptStatus;
+  actor: ActorProvenance;
+}): void {
+  const telemetry = specPlanAttemptTransitionEvent({
+    slug: input.slug,
+    from: input.from,
+    to: input.to,
+    actor: input.actor.kind,
+  });
+  logger.info(telemetry.event, telemetry.fields);
 }
 
 function healthTotals(health: DeliveryPlanDraftHealth): {
@@ -1850,58 +1953,15 @@ function nextAct(
   attempt: SpecDeliveryPlanAttemptRow,
   spec: Spec,
 ): DeliveryPlanNextAct {
-  switch (attempt.status) {
-    case "draft":
-      return {
-        actor: "agent",
-        command: `cctl spec plan edit ${spec.slug} --file <plan.json>`,
-        reason: `Author the launch graph and its charter on the managed workflow definition with \`cctl workflow edit ${attempt.workflow_definition_id ?? attempt.id} --file <ops.json>\`; this act writes the immutable accountability binding.`,
-      };
-    case "proposed":
-      return {
-        actor: dialRequiresHumanApproval(
-          resolveDial(spec.gatePolicy, "execution_start"),
-        )
-          ? "human"
-          : "agent",
-        command: `cctl spec plan sign-off ${spec.slug}`,
-        reason: "Sign the finalized launch envelope.",
-      };
-    case "approved":
-      return {
-        actor: "agent",
-        command: `cctl spec start ${spec.slug}`,
-        reason: "Start the signed one-off graph launch.",
-      };
-    case "parked":
-      return parseApproval(attempt) === null
-        ? {
-            actor: dialRequiresHumanApproval(
-              resolveDial(spec.gatePolicy, "execution_start"),
-            )
-              ? "human"
-              : "agent",
-            command: `cctl spec plan sign-off ${spec.slug}`,
-            reason: "The parked candidate still needs sign-off.",
-          }
-        : {
-            actor: "agent",
-            command: `cctl spec start ${spec.slug}`,
-            reason: "The signed candidate is parked for prelaunch review.",
-          };
-    case "launched":
-      return {
-        actor: "agent",
-        command: `cctl spec status ${spec.slug}`,
-        reason: "The immutable launch is running.",
-      };
-    case "abandoned":
-      return {
-        actor: "agent",
-        command: `cctl spec plan open ${spec.slug}`,
-        reason: "Open a fresh attempt.",
-      };
-  }
+  return deliveryPlanNextAct({
+    status: attempt.status,
+    specSlug: spec.slug,
+    workflowDefinitionId: attempt.workflow_definition_id ?? attempt.id,
+    signOffRequiresHuman: dialRequiresHumanApproval(
+      resolveDial(spec.gatePolicy, "execution_start"),
+    ),
+    parkedApproved: parseApproval(attempt) !== null,
+  });
 }
 interface StoredDeliveryPlanCandidate {
   readonly snapshot: SpecDeliveryPlanSnapshotRow;

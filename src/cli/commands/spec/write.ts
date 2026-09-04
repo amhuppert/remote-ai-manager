@@ -87,6 +87,8 @@ import {
   type ProjectConversationContext,
   type GlobalFlags,
 } from "../../shared";
+import { deliveryPlanLedgerLines } from "../delivery-plan-ledger";
+import { SPEC_LAUNCH_HINTS } from "./spec.help";
 import {
   approvalLedgerLines,
   countOf,
@@ -3511,7 +3513,9 @@ export async function runSpecStart(
       detail: [
         `execution ${deliveryPlan.workflowExecutionId} is the id \`cctl workflow status\`, \`cctl workflow wait\`, \`cctl spec abandon --execution\` and \`cctl spec capture --execution\` take`,
       ],
-      next: `cctl spec status ${slug.value} — reports the run's lane position`,
+      next: SPEC_LAUNCH_HINTS.start.hint({
+        executionId: deliveryPlan.workflowExecutionId,
+      }),
     },
     "execution",
     response.value,
@@ -3753,7 +3757,9 @@ export async function runSpecAbandon(
         tokens: { execution: executionId },
         actsNext: "agent",
         blocked: null,
-        next: `cctl spec plan open ${slug.value}`,
+        next: SPEC_LAUNCH_HINTS.abandonedExecution.hint({
+          specSlug: slug.value,
+        }),
       },
       "abandoned",
       abandoned,
@@ -3866,17 +3872,18 @@ function planMutationResult(
 }
 
 /**
- * The lines between the position and the next act: the dispositions that still
- * owe a human act, and the approval a reopen took away. Both are things the
- * caller cannot act on without being told the id.
+ * The lines between the position and the next act: both sides of the ledger,
+ * the candidate a proposal froze, and the approval a reopen took away. The
+ * per-criterion unresolved rows are not repeated here — the ledger reports the
+ * same deficit with its numerator, and `cctl spec plan status` is the read that
+ * enumerates them.
  */
 function planReceiptDetail(
   slug: string,
   view: DeliveryPlanMutationView,
 ): string[] {
-  const unresolved = view.unresolved.slice(0, PLAN_RECEIPT_ROWS);
-  const omitted = view.unresolved.length - unresolved.length;
   return [
+    ...deliveryPlanLedgerLines(view.ledger),
     ...(view.attempt.candidateHash === null
       ? []
       : [
@@ -3888,15 +3895,6 @@ function planReceiptDetail(
           `the approval of snapshot ${view.invalidatedApproval.snapshotId} (${view.invalidatedApproval.candidateHash}) no longer stands; a re-propose needs a new one`,
         ]),
     ...prelaunchDetail(slug, view.prelaunch),
-    ...(view.unresolved.length === 0
-      ? []
-      : [
-          `unresolved dispositions: ${view.unresolved.length}`,
-          ...unresolved.map((row) => `  ${row.handle}: ${row.resolution}`),
-          ...(omitted > 0
-            ? [`  …and ${omitted} more — cctl spec plan status ${slug}`]
-            : []),
-        ]),
   ];
 }
 
@@ -3922,9 +3920,6 @@ function prelaunchDetail(
     `sign the new candidate off with \`cctl spec plan sign-off ${slug}\` before \`cctl spec start ${slug}\``,
   ];
 }
-
-/** How many unresolved rows a receipt names before pointing at the status verb. */
-const PLAN_RECEIPT_ROWS = 5;
 
 async function postPlanAction(
   host: CliHost,

@@ -159,7 +159,10 @@ export interface ExecutionServiceDeps {
    */
   plansRepo: Pick<
     SpecDeliveryPlanRepo,
-    "findAttemptsBySpecId" | "recordDiscovery" | "recordTransition"
+    | "findAttemptById"
+    | "findAttemptsBySpecId"
+    | "recordDiscovery"
+    | "recordTransition"
   >;
 }
 

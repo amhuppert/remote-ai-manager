@@ -313,13 +313,13 @@ const SPEC_LAUNCH_SCHEMA_CONSUMERS = [
 ];
 
 /**
- * The only native-SDD modules allowed to own workflow-definition storage.
- * Delivery services depend on the managed port rather than reaching through
- * it to create a second storage or launch implementation.
+ * The composition modules allowed to own workflow-definition storage across
+ * ordinary authoring and native-SDD delivery. Spec services depend on their
+ * managed adapter rather than reaching through it to storage.
  */
 const MANAGED_DEFINITION_STORAGE_OWNERS = [
-  "src/lib/specs/managed-workflow-definition-service.ts",
-  "src/lib/specs/service-factory.ts",
+  "src/lib/workflows/definition-route-handlers.ts",
+  "src/lib/workflows/managed-workflow-definition-composition.ts",
 ] as const;
 
 /** The single graph start entry point native SDD is allowed to call. */
@@ -340,6 +340,16 @@ function repositoryFiles(relativeDirectory: string): string[] {
 
 function specProductionFiles(): string[] {
   return SPEC_PRODUCTION_ROOTS.flatMap((root) => repositoryFiles(root)).filter(
+    (relativePath) =>
+      /\.tsx?$/.test(relativePath) &&
+      !/\.(?:test|stories)\.tsx?$/.test(relativePath) &&
+      !/(?:^|[./-])fixtures?\.tsx?$/.test(relativePath) &&
+      !relativePath.endsWith("-test-fixture.ts"),
+  );
+}
+
+function workflowProductionFiles(): string[] {
+  return repositoryFiles("src/lib/workflows").filter(
     (relativePath) =>
       /\.tsx?$/.test(relativePath) &&
       !/\.(?:test|stories)\.tsx?$/.test(relativePath) &&
@@ -644,7 +654,10 @@ describe("native SDD start shares the spec-delivery start core", () => {
   });
 
   it("limits managed workflow storage ownership to the adapter and composition root", () => {
-    const owners = specProductionFiles().filter((relativePath) =>
+    const owners = [
+      ...specProductionFiles(),
+      ...workflowProductionFiles(),
+    ].filter((relativePath) =>
       /\bcreateWorkflowStorageService\b/.test(read(relativePath)),
     );
     expect(owners.sort()).toEqual(

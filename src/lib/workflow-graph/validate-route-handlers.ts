@@ -34,8 +34,36 @@ import type {
   ManagedDefinitionPreflightPort,
   ManagedDefinitionPreflightSummary,
 } from "./managed-definition-preflight";
+import {
+  callerConversationId,
+  workflowValidateRefusedEvents,
+  type RefusedPlanIssue,
+} from "./planning-telemetry";
 
 const log = createLogger("graph-workflow-validate-route");
+
+/**
+ * Log a refusal's codes (#80 design 3.10) so a retrospective can group
+ * planning friction by the conversation that met it. The conversation is read
+ * from the request rather than the ambient trace: this route is session-scoped
+ * and has no `conversationId` path segment for the trace to derive one from.
+ */
+function logPlanRefusal(
+  routeLog: Logger,
+  request: Request,
+  input: {
+    issues: readonly RefusedPlanIssue[];
+    definitionId?: string | null;
+  },
+): void {
+  for (const telemetry of workflowValidateRefusedEvents({
+    issues: input.issues,
+    definitionId: input.definitionId,
+    conversationId: callerConversationId(request),
+  })) {
+    routeLog.info(telemetry.event, telemetry.fields);
+  }
+}
 
 const DOCUMENT_TIERS = ["global", "project"] as const;
 const SOURCE_LOCATOR_WARNING_PREFIX = "lint/source-locator-unresolvable:";
@@ -229,12 +257,20 @@ export function createGraphWorkflowValidateHandlers(
       assignmentReferences,
     });
     if (!validation.ok) {
+      const code = validation.code ?? "invalid_plan";
       routeLog.info("graph-workflow-validate.invalid", {
         projectName,
         sessionName,
-        code: validation.code ?? "invalid_plan",
+        code,
         issueCount: validation.issues.length,
         sourceResolutionKind: "root-independent",
+      });
+      logPlanRefusal(routeLog, request, {
+        issues: validation.issues.map((issue) => ({
+          code,
+          recordId: issue.recordId,
+        })),
+        definitionId: workflowDefinitionId,
       });
       return NextResponse.json(
         {
@@ -279,6 +315,10 @@ export function createGraphWorkflowValidateHandlers(
         launch: validation.launch,
       });
       if (!projected.ok) {
+        logPlanRefusal(routeLog, request, {
+          issues: [{ code: projected.refusal.code }],
+          definitionId: workflowDefinitionId,
+        });
         return NextResponse.json(
           {
             error: projected.refusal.message,

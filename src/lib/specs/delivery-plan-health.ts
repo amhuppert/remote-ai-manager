@@ -1,4 +1,5 @@
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
+import type { ManagedDefinitionPreflightSummary } from "@/lib/workflows/managed-definition-preflight-contract";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 
 import type { DeliveryPlanBinding } from "./delivery-plan";
@@ -32,6 +33,22 @@ export interface DeliveryPlanDraftHealth {
   readonly findings: readonly DeliveryPlanGateFinding[];
   readonly unresolved: readonly DeliveryPlanUnresolvedView[];
   readonly refusalConditions: readonly string[];
+  /**
+   * Both sides of the claims ledger AS THIS PROJECTION JUDGED THEM. It lives on
+   * the health rather than being recomputed by each surface because "claimed"
+   * is not a property of the binding: a claim only counts when its context is
+   * among the graph-declared stable authored accountability sources, which only
+   * the admission knows. A ledger that counted claim records instead would
+   * report a criterion covered in the same breath the gate refuses it.
+   */
+  readonly claims: DeliveryPlanClaimsLedger;
+}
+
+/** Selected criteria, and how many of them a stable authored source claims. */
+export interface DeliveryPlanClaimsLedger {
+  readonly selected: number;
+  readonly claimed: number;
+  readonly unclaimed: number;
 }
 
 export interface DeliveryPlanDraftHealthInput {
@@ -147,6 +164,114 @@ export function deliveryPlanRefusalRationale(
   return rationales.length === 0 ? undefined : rationales.join("; ");
 }
 
+/**
+ * The ledger the propose-gate surfaces print. It is the preflight's own
+ * summary shape rather than a parallel one: `workflow validate --definition`
+ * reads it off the wire and the spec verbs read it off the view, and one type
+ * is what keeps the two renderings the same reading.
+ */
+export type DeliveryPlanLedgerSummary = ManagedDefinitionPreflightSummary;
+
+/**
+ * Both sides of what a draft owes, counted once (#80 design 3.3). The claims,
+ * disposition and charter numbers every propose-gate surface reports come from
+ * here — the binding it was linted from and the health projection that judged
+ * it — so a status and a preflight cannot disagree about how much is covered.
+ */
+export function deliveryPlanLedgerSummary(input: {
+  readonly binding: DeliveryPlanBinding;
+  /** Null only when the managed definition itself is unreadable. */
+  readonly workflowCharter: WorkflowCharter | null;
+  readonly health: DeliveryPlanDraftHealth;
+}): DeliveryPlanLedgerSummary {
+  const counts = new Map<string, number>();
+  for (const disposition of input.binding.dispositions) {
+    counts.set(
+      disposition.disposition,
+      (counts.get(disposition.disposition) ?? 0) + 1,
+    );
+  }
+  return {
+    ...input.health.claims,
+    dispositions: [...counts].map(([kind, count]) => ({ kind, count })),
+    charter: {
+      state: input.health.findings.some(
+        (finding) => finding.ruleId === LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+      )
+        ? "seed_stub"
+        : "authored",
+      invariantCount: input.workflowCharter?.invariants?.length ?? 0,
+      sourceCount: input.workflowCharter?.sourcesOfTruth.length ?? 0,
+    },
+  };
+}
+
+/** The criteria the binding puts in scope, by id. */
+export function selectedDeliveryPlanCriterionIds(
+  binding: DeliveryPlanBinding,
+): Set<string> {
+  return new Set(
+    binding.dispositions.flatMap((disposition) =>
+      disposition.disposition === "in_scope"
+        ? [disposition.criterionElementId]
+        : [],
+    ),
+  );
+}
+
+/**
+ * The claims of a frozen attempt. Propose refuses on every binding finding,
+ * including an unstable claimant and an unclaimed selection, so the selection a
+ * candidate froze IS the claim set the gate certified — and re-deriving it
+ * would need an admission of bytes nobody can still change.
+ */
+export function certifiedDeliveryPlanClaims(
+  binding: DeliveryPlanBinding,
+): DeliveryPlanClaimsLedger {
+  const selected = selectedDeliveryPlanCriterionIds(binding).size;
+  return { selected, claimed: selected, unclaimed: 0 };
+}
+
+/**
+ * The claims of a draft nothing could judge — an unreadable pinned revision or
+ * a missing managed definition. Nothing proves a claimant is stable, so nothing
+ * is counted as claimed.
+ */
+export function unprovenDeliveryPlanClaims(
+  binding: DeliveryPlanBinding,
+): DeliveryPlanClaimsLedger {
+  const selected = selectedDeliveryPlanCriterionIds(binding).size;
+  return { selected, claimed: 0, unclaimed: selected };
+}
+
+/**
+ * Selected criteria claimed by at least one context the graph declared a stable
+ * authored accountability source. `stableContextIds` is null when no admission
+ * answered, in which case nothing is provably claimed.
+ */
+function claimsLedger(
+  binding: DeliveryPlanBinding,
+  stableContextIds: ReadonlySet<string> | null,
+): DeliveryPlanClaimsLedger {
+  const selected = selectedDeliveryPlanCriterionIds(binding);
+  const claimed = new Set(
+    stableContextIds === null
+      ? []
+      : binding.claims.flatMap((claim) =>
+          stableContextIds.has(claim.contextId)
+            ? claim.criterionElementIds.filter((criterionElementId) =>
+                selected.has(criterionElementId),
+              )
+            : [],
+        ),
+  );
+  return {
+    selected: selected.size,
+    claimed: claimed.size,
+    unclaimed: selected.size - claimed.size,
+  };
+}
+
 export function projectDeliveryPlanDraftHealth(
   input: DeliveryPlanDraftHealthInput,
 ): DeliveryPlanDraftHealth {
@@ -179,6 +304,7 @@ export function projectDeliveryPlanDraftHealth(
         ),
         ...charterConditions,
       ],
+      claims: claimsLedger(input.binding, null),
     };
   }
 
@@ -220,6 +346,10 @@ export function projectDeliveryPlanDraftHealth(
       ...issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
       ...charterConditions,
     ],
+    claims: claimsLedger(
+      input.binding,
+      new Set(input.admission.stableAccountabilityContextIds),
+    ),
   };
 }
 

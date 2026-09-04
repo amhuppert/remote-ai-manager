@@ -1,13 +1,12 @@
 import type Database from "better-sqlite3";
 import { stableStringify } from "@/lib/state-store/serialization";
-import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 
-import {
-  type ManagedWorkflowDefinitionLifecycle,
-  type ManagedWorkflowDefinitionPolicy,
-  type NativeSddWorkflowManagementCompact,
-  type NativeSddWorkflowManagementDetail,
-} from "@/lib/workflow-graph/managed-definition";
+import type {
+  ManagedWorkflowDefinitionLifecycle,
+  NativeSddWorkflowManagementCompact,
+  NativeSddWorkflowManagementDetail,
+} from "@/lib/workflows/managed-definition-contract";
+import type { ManagedWorkflowDefinitionRecord } from "./managed-workflow-definition-service";
 import {
   deliveryPlanCandidateManifestV3Schema,
   deliveryPlanV3DocumentSchema,
@@ -65,6 +64,21 @@ interface CommentRow {
   body: string;
   author_json: string;
   created_at: string;
+}
+
+export interface NativeSddManagedWorkflowDefinitionPolicy {
+  list(
+    projectPath: string,
+    workflowIds: readonly string[],
+  ): Promise<ReadonlyMap<string, NativeSddWorkflowManagementCompact>>;
+  get(
+    projectPath: string,
+    workflowId: string,
+  ): Promise<NativeSddWorkflowManagementDetail | null>;
+  proposeBlockingCount(
+    projectPath: string,
+    workflowId: string,
+  ): Promise<number | null>;
 }
 
 function lifecycle(row: OwnershipRow): ManagedWorkflowDefinitionLifecycle {
@@ -126,7 +140,7 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
   getWorkflowDefinition?(
     projectPath: string,
     workflowId: string,
-  ): Promise<WorkflowDefinitionRecord | null>;
+  ): Promise<ManagedWorkflowDefinitionRecord | null>;
   /**
    * The propose gate of a spec's live draft as `spec plan status` reports it:
    * how many findings block propose, or null when the plan cannot be read.
@@ -136,7 +150,7 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
     projectPath: string,
     specSlug: string,
   ): Promise<number | null>;
-}): ManagedWorkflowDefinitionPolicy {
+}): NativeSddManagedWorkflowDefinitionPolicy {
   const ownershipSql = `
     SELECT
       ownership.workflow_definition_id,

@@ -66,11 +66,11 @@ Inspect stage and return-path contracts with `cctl spec status --help`,
 
 ## Managed delivery workflow
 
-After Design sign-off, open an attempt with `cctl spec plan open <slug>`. The receipt names a real project workflow definition and its Workflow Builder link. Read graph configuration with `cctl workflow get <definitionId>` and edit it with `cctl workflow edit <definitionId>` or Workflow Builder, using the definition revision as its compare-and-swap token. The charter (mission, invariants, conventions, sources) is authored the same way while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the two server-owned sources (`native-sdd-pinned-spec`, `native-sdd-claims`) are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
+A delivery attempt (`cctl spec plan open <slug>`) owns one real project workflow definition. That definition is authored as an ordinary graph `plan.json` and written with `cctl workflow replace <definitionId>`, using the definition revision as its compare-and-swap token. What is specific to a spec delivery — the pinned revision, how criteria reach contexts, phase-scoped authoring, and the preflight that reports what would refuse a propose — is owned by the "Delivering a native spec" section of the graph-workflow-planning skill. Every receipt on this path names the act that follows it, so follow the hint rather than a sequence restated here. Workflow Builder is the human's review surface: the managed definition is reviewed there before sign-off, and pending reaffirmations are cleared there in one batch. The charter (mission, invariants, conventions, sources) is part of that same plan while the attempt is a draft — an `update-charter` op carries its fields at the top level of the operation, never nested under a `charter` key — and the two server-owned sources (`native-sdd-pinned-spec`, `native-sdd-claims`) are re-injected at propose, so leave them out of what you author. `cctl spec plan propose` freezes the charter into the candidate revision; `cctl spec plan reopen` clones an editable draft.
 
-The plan document is version 3 and binding-only. Read it with `cctl spec plan get <slug>`, then submit `{ "expectedDraftRevision": ..., "binding": ... }` with `cctl spec plan edit <slug> --file <plan.json>`. Keep payloads under `.cc/temp/`. Graph and binding revisions are independent; re-read the surface whose write was refused.
+The plan document is version 3 and binding-only. `cctl spec plan get <slug>` is the read over it; `cctl spec plan edit <slug> --file <plan.json>` is the write, whose file carries `{ "expectedDraftRevision": ..., "binding": ... }`. Keep payloads under `.cc/temp/`. Graph and binding revisions are independent; re-read the surface whose write was refused.
 
-Every open derives its scope from the delivery delta. A criterion the last delivery proved and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch in Workflow Builder, against the binding revision they read.
+Every open derives its scope from the delivery delta. A criterion the last delivery proved and nothing invalidated becomes `delivered_elsewhere`; one whose governing content moved becomes `pending_reaffirmation`; undelivered, hard-stale, and deferred criteria are selected again. Only a human clears pending reaffirmations, as one batch on that review surface, against the binding revision they read.
 
 Write each launch context's graph acceptance criteria in the ordinary graph dialect: `acceptanceCriteria` is an ordered list of `{ "id", "statement" }` records, ids kebab-case and unique within the context, one independently-failable obligation per record. Validators cite those ids in blocking issues, so a record is the unit a verdict can address. Prose is still accepted on the authored write paths and wraps as exactly one `ac-1` record — a migration affordance, not a second spelling, and one record holding a paragraph of obligations is the blob the records replaced. These are graph criteria, distinct from the spec's own pinned criteria that `binding` dispositions and claims address. Criteria and charter invariants state outcomes only; process rules such as red-green TDD belong in the charter's `conventions`, because a validator cannot verify process on the finished candidate and would fail correct work for lacking proof.
 
@@ -97,13 +97,15 @@ therefore deterministic.
 
 ## Finalized proposal, sign-off, and one-off start
 
-Review the managed definition in Workflow Builder and the binding with `cctl spec plan get`. `cctl spec plan propose <slug>` freezes the exact definition id, revision, definition hash, binding hash, candidate id, and candidate hash. A draft never has a candidate identity. A proposed definition is read-only; `cctl spec plan reopen <slug> --reason <why>` clones it to a new editable definition and preserves the frozen candidate as history.
+Review the managed definition and the binding with `cctl spec plan get` before proposing. `cctl spec plan propose <slug>` freezes the exact definition id, revision, definition hash, binding hash, candidate id, and candidate hash. A draft never has a candidate identity. A proposed definition is read-only; `cctl spec plan reopen <slug> --reason <why>` clones it to a new editable definition and preserves the frozen candidate as history.
 
-Only a human can sign off. After sign-off, run `cctl spec start <slug> --inputs .cc/temp/inputs.json` for the one-off start; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` is only prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
+Only a human can sign off. `cctl spec start <slug> --inputs .cc/temp/inputs.json` is the one-off start of an approved attempt; the file is the exact JSON object sent to the shared graph start boundary for ordinary input validation. `--park` is only prelaunch review and creates no execution. Read `cctl spec start --help` and `cctl spec schema guidance` before launch.
 
 ## Ordinary live edit, capture, and replacement
 
-After launch, use the ordinary `cctl workflow live edit` surface for a running execution's working copy. It never changes the immutable approved candidate. Use `cctl spec capture` for discovered delivery work: without `--blocking-reason` it records follow-up work; with that reason it abandons the run and opens a replacement attempt. Before launch, edit a draft or reopen the proposed attempt instead of trying to capture work.
+A running execution's working copy is edited through the ordinary `cctl workflow live edit` surface. It never changes the immutable approved candidate. Use `cctl spec capture` for discovered delivery work: without `--blocking-reason` it records follow-up work; with that reason it abandons the run and opens a replacement attempt. Before launch, edit a draft or reopen the proposed attempt instead of trying to capture work.
+
+A pause is safe at any point after start, including before any lane has been provisioned: a run paused that early resumes into its first dispatch rather than stalling. The exit after an abandoned launch is `cctl spec plan open <slug>`, which opens the replacement attempt.
 
 The version-3 transition is a one-way destructive cutover. Its
 legacy-retirement boundary removes the embedded graph plan; do not retain or
@@ -184,6 +186,16 @@ Inspect the current lint and diff surfaces with `cctl spec lint --help` and `cct
 Parts of this surface resist you on purpose. Staged authoring, human-only acts, the withdraw-after-engagement guard, frozen revisions, stable handles, immutable parents, and strict validation-strategy rules are the product working: each protects a human judgment or an audit property that would be worth nothing if an agent could route around it. Absorb that friction, follow the refusal's named next act, and read the `why:` line a designed-constraint refusal prints — it states the rule rather than apologising for it.
 
 The rest is not the product. A read path that answers the wrong question, a message that names no recovery, a verb that does not exist, or a refusal you cannot act on is a defect: report it to the user plainly instead of inventing a workaround around it.
+
+Three constraints on the delivery path are worth naming in advance, because each is met as a refusal that reads like a missing capability:
+
+| Constraint | What it protects | Where its reason renders |
+|---|---|---|
+| Must-run coverage lock | a skipped branch can never silently waive a claimed criterion | the `binding/selected-criterion-not-must-run` finding, which carries both the reason and the act that clears it |
+| `requires-pause` for structural live edits | no lane reads a half-applied definition, because the batch lands as one definition swap | the `requires-pause` live-edit refusal |
+| Provenance locks on a draft's `/origin` and `/approvalRequired` | what a signed candidate can prove about where it came from | the draft-stage `region_locked` refusal, which names the locked path and tells you to omit it; replace merges around the locks rather than refusing the write |
+
+That last row is the one most often misread as a wall. Replace merges around those locks: a plan for a managed draft omits `origin`, `approvalRequired` and `lockedRegions`, and the two injected sources `native-sdd-pinned-spec` and `native-sdd-claims`, and the server fills them from the stored draft.
 
 The heuristic: friction protecting a human judgment or an audit property is designed, so absorb it; friction in a read path, a message, or a missing verb is incidental, so report it. For the current lint and evidence reference, run `cctl spec schema guidance`.
 

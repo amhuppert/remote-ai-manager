@@ -3,13 +3,14 @@ import { z } from "zod";
 import { getStateDb } from "@/lib/state-store/store";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
-import type {
-  ManagedDefinitionPreflightPort,
-  ManagedDefinitionPreflightResult,
-} from "@/lib/workflow-graph/managed-definition-preflight";
+import type { ManagedDefinitionPreflightResult } from "@/lib/workflows/managed-definition-preflight-contract";
 
 import type { DeliveryPlanService } from "./delivery-plan-service";
 import type { Spec } from "./schemas";
+
+type DeliveryPlanPreflightLaunch = Parameters<
+  DeliveryPlanService["preflight"]
+>[0]["launch"];
 
 export interface ManagedDeliveryPlanOwnership {
   readonly projectPath: string;
@@ -28,9 +29,17 @@ export interface DeliveryPlanPreflightPortDeps {
   ): Promise<Pick<DeliveryPlanService, "preflight">>;
 }
 
+export interface DeliveryPlanPreflightPort {
+  preflight(input: {
+    projectPath: string;
+    workflowDefinitionId: string;
+    launch: DeliveryPlanPreflightLaunch;
+  }): Promise<ManagedDefinitionPreflightResult>;
+}
+
 export function createDeliveryPlanPreflightPort(
   deps: DeliveryPlanPreflightPortDeps,
-): ManagedDefinitionPreflightPort {
+): DeliveryPlanPreflightPort {
   return {
     async preflight(input): Promise<ManagedDefinitionPreflightResult> {
       const ownerships = await deps.findOwnerships(input.workflowDefinitionId);
@@ -125,7 +134,7 @@ function productionOwnerships(
 }
 
 /** Built without opening the database; every dependency resolves per request. */
-export function createProductionDeliveryPlanPreflightPort(): ManagedDefinitionPreflightPort {
+export function createProductionDeliveryPlanPreflightPort(): DeliveryPlanPreflightPort {
   return createDeliveryPlanPreflightPort({
     findOwnerships: async (workflowDefinitionId) =>
       productionOwnerships(workflowDefinitionId),

@@ -18,6 +18,10 @@ import { createSpecExecutionBindingRepo } from "@/lib/state-store/spec-execution
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { stableStringify } from "@/lib/state-store/serialization";
+import {
+  createCapturingLogger,
+  type CapturingLogger,
+} from "@/lib/shared/testing/capturing-logger";
 import { createSpecEventsPublisher } from "./events";
 import { prepareSpecExecutionStartAttachment } from "./execution-start-attachment";
 import type { Spec } from "./schemas";
@@ -124,7 +128,7 @@ type AttachmentWriteBoundary =
   | "attempt-transition"
   | "execution-event";
 
-function prepare(failAt?: AttachmentWriteBoundary) {
+function prepare(failAt?: AttachmentWriteBoundary, log?: CapturingLogger) {
   const eventRows = createSpecEventsRepo(db);
   const deliveryRepo = createSpecDeliveryRepo(db);
   const bindingRepo = createSpecExecutionBindingRepo(db);
@@ -160,6 +164,8 @@ function prepare(failAt?: AttachmentWriteBoundary) {
         },
       },
       plansRepo: {
+        findAttemptById: (attemptId) =>
+          deliveryPlans.findAttemptById(attemptId),
         recordTransition(input) {
           fail("attempt-transition");
           return deliveryPlans.recordTransition(input);
@@ -175,6 +181,7 @@ function prepare(failAt?: AttachmentWriteBoundary) {
         },
       },
       nextLinkId: () => "link-start-attachment",
+      ...(log === undefined ? {} : { log }),
     },
     {
       spec,
@@ -241,6 +248,64 @@ afterEach(() => {
 });
 
 describe("spec one-off execution transaction attachment", () => {
+  // #80 design 3.10: this is the production launch path — a real `cctl spec
+  // start` records its launch here — so the catalogued attempt-transition
+  // event has to be emitted from it, not from a sibling with no caller.
+  it("emits spec.plan.attempt.transition for the launch it records", () => {
+    const log = createCapturingLogger();
+    const prepared = prepare(undefined, log);
+    db.transaction(() => {
+      prepared.attach({ executionId: WORKFLOW_EXECUTION_ID });
+    }).immediate();
+
+    expect(
+      log.entries.filter(
+        (entry) => entry.message === "spec.plan.attempt.transition",
+      ),
+    ).toEqual([
+      {
+        level: "info",
+        message: "spec.plan.attempt.transition",
+        fields: {
+          slug: spec.slug,
+          from: "approved",
+          to: "launched",
+          actor: "agent",
+        },
+      },
+    ]);
+  });
+
+  it("carries the actor kind only — never the conversation that launched", () => {
+    const log = createCapturingLogger();
+    const prepared = prepare(undefined, log);
+    db.transaction(() => {
+      prepared.attach({ executionId: WORKFLOW_EXECUTION_ID });
+    }).immediate();
+
+    expect(JSON.stringify(log.allFieldValues())).not.toContain(
+      "conversation-start-attachment",
+    );
+  });
+
+  it("emits no transition line when the launch write is rolled back", () => {
+    const log = createCapturingLogger();
+    const prepared = prepare("execution-event", log);
+    expect(() =>
+      db
+        .transaction(() => {
+          prepared.attach({ executionId: WORKFLOW_EXECUTION_ID });
+        })
+        .immediate(),
+    ).toThrow("fault: execution-event");
+
+    expect(
+      log.entries.filter(
+        (entry) => entry.message === "spec.plan.attempt.transition",
+      ),
+    ).toEqual([]);
+  });
+
   it("commits the spec execution, frozen binding, typed link, dispositions, audit link, event, and attempt transition together", () => {
     const prepared = prepare();
     db.transaction(() => {

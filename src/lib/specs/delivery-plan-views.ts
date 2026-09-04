@@ -8,6 +8,7 @@ import {
   finalizedDeliveryPlanCandidateIdentitySchema,
 } from "./delivery-plan";
 import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
+import { managedDefinitionPreflightSummarySchema } from "@/lib/workflows/managed-definition-preflight-contract";
 import {
   lintFindingSchema,
   specStartedExecutionViewSchema,
@@ -127,6 +128,12 @@ export const deliveryPlanViewSchema = z
       })
       .strict(),
     health: deliveryPlanHealthViewSchema,
+    /**
+     * Both sides of what the attempt owes, in the preflight's own shape so a
+     * `spec plan status` and a `workflow validate --definition` render one
+     * reading (#80 design 3.3).
+     */
+    ledger: managedDefinitionPreflightSummarySchema,
     dispositionCounts: z.array(
       z
         .object({

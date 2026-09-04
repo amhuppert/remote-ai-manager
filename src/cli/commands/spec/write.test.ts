@@ -3460,6 +3460,17 @@ describe("cctl spec start against a delivery plan", () => {
     expect(result.stdout).not.toMatch(/(?<![\w-])execution-1(?![\w-])/);
   });
 
+  it("hands the launch to the workflow verbs by naming the execution", async () => {
+    const host = makeHost({ approved: true });
+
+    const result = await runCli(["spec", "start", "native-sdd"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "next: cctl workflow status workflow-execution-1",
+    );
+  });
+
   it("omits parameters when --inputs is absent", async () => {
     const host = makeHost({ approved: true });
 
@@ -3707,8 +3718,25 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
         builderHref: "/workflows/wf-1",
       },
       health: { total: 0, blocking: 0, counts: [], findings: [] },
+      ledger: {
+        selected: 3,
+        claimed: 2,
+        unclaimed: 1,
+        dispositions: [
+          { kind: "in_scope", count: 3 },
+          { kind: "deferred", count: 1 },
+        ],
+        charter: { state: "authored", invariantCount: 4, sourceCount: 6 },
+      },
       dispositionCounts: [],
-      unresolved: [],
+      unresolved: [
+        {
+          criterionElementId: "criterion-1",
+          handle: "R1.1",
+          disposition: "in_scope",
+          resolution: "Claim it from a stable authored accountability context.",
+        },
+      ],
       snapshots: [],
       nextAct: {
         actor: "agent",
@@ -3806,6 +3834,74 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
     expect(JSON.parse(structured.stdout)).toMatchObject({
       expectedDraftRevision: 5,
     });
+  });
+
+  it("reports both sides of the ledger on the plan open receipt", async () => {
+    const host = planHost(planView("draft", 1));
+
+    const result = await runCli(
+      ["spec", "plan", "open", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      [
+        "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+        "dispositions: in_scope 3, deferred 1",
+        "charter: authored, 4 invariants, 6 sources",
+      ].join("\n"),
+    );
+  });
+
+  it("reports both sides of the ledger on the plan propose receipt", async () => {
+    const host = planHost(planView("proposed", 5));
+
+    const result = await runCli(
+      ["spec", "plan", "propose", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+    );
+    expect(result.stdout).toContain(
+      "charter: authored, 4 invariants, 6 sources",
+    );
+  });
+
+  it("drops the deficit-only unresolved count from the plan receipts", async () => {
+    const host = planHost(planView("draft", 1));
+
+    const result = await runCli(
+      ["spec", "plan", "open", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.stdout).not.toContain("unresolved dispositions:");
+  });
+
+  it("names the seed stub rather than a charter count when the charter is unauthored", async () => {
+    const seeded = planView("draft", 1) as { ledger: { charter: unknown } };
+    seeded.ledger.charter = {
+      state: "seed_stub",
+      invariantCount: 0,
+      sourceCount: 2,
+    };
+    const host = planHost(seeded);
+
+    const result = await runCli(
+      ["spec", "plan", "open", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.stdout).toContain("charter: seed stub");
+    expect(result.stdout).not.toContain("charter: authored");
   });
 
   it("prints no draft token once propose has frozen the attempt", async () => {

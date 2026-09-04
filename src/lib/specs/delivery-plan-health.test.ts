@@ -209,6 +209,53 @@ describe("projectDeliveryPlanDraftHealth", () => {
     expect(health.unresolved).toEqual([]);
   });
 
+  it("counts a selected criterion as claimed only from a stable authored source", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding({
+        claims: [
+          {
+            contextId: "context-loop-clone",
+            criterionElementIds: ["criterion-one"],
+          },
+        ],
+      }),
+      admission: admitted(),
+    });
+
+    // The claimant is not among the graph-declared stable authored sources, so
+    // the criterion is not claimed however many claim records name it.
+    expect(health.findings.map((finding) => finding.ruleId)).toContain(
+      "binding/claim-context-unstable",
+    );
+    expect(health.claims).toEqual({ selected: 1, claimed: 0, unclaimed: 1 });
+  });
+
+  it("counts both sides of the claims ledger when every claimant is stable", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted(),
+    });
+
+    expect(health.claims).toEqual({ selected: 1, claimed: 1, unclaimed: 0 });
+  });
+
+  it("proves no claim at all when the launch is not admissible", () => {
+    const health = project({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: {
+        ok: false,
+        issues: [{ path: "definition.contexts", message: "Refused." }],
+      },
+    });
+
+    // Without an admission nothing says which contexts are stable, so a claim
+    // the ledger cannot prove is not one it may count.
+    expect(health.claims).toEqual({ selected: 1, claimed: 0, unclaimed: 1 });
+  });
+
   it("reports the unclaimed selected criterion propose refuses on", () => {
     const health = project({
       pinnedRevision: pinnedRevision(),

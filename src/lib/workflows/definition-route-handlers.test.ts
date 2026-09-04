@@ -1,6 +1,9 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import {
+  createCapturingLogger,
+  type CapturingLogger,
+} from "@/lib/shared/testing/capturing-logger";
 import { unreviewedPlanReviewLookup } from "@/lib/shared/testing/graph-plan-review-fixture";
 import {
   createPersistenceFixture,
@@ -20,6 +23,7 @@ import {
   createRootIndependentWarningDefinition,
 } from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { WorkflowAssignmentReferenceError } from "@/lib/workflow-graph/assignment-references";
 import {
   StaleWorkflowDefinitionError,
   type WorkflowDefinitionDraft,
@@ -56,12 +60,19 @@ import { workflowDefinitionGetResponseSchema } from "@/lib/workflow-definitions/
 import { createWorkflowDefinitionRouteHandlers } from "./definition-route-handlers";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
-function makeRequest(url: string, method: string, body?: unknown): NextRequest {
+function makeRequest(
+  url: string,
+  method: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...headers,
+    },
   });
 }
 
@@ -1510,8 +1521,10 @@ describe("managed draft replace (one write path)", () => {
     store: ReturnType<typeof draftStore>,
     projection: NativeSddWorkflowManagementDetail | null = managedProjection(),
     gate: ReturnType<typeof gateReads> = gateReads(store, 0, 0),
+    log?: CapturingLogger,
   ) {
     return createWorkflowDefinitionRouteHandlers({
+      ...(log === undefined ? {} : { log }),
       resolveProjectPath: async () => "/repo",
       readConfig: async () => MOCK_CONFIG,
       readRepoConfig: async () => null,
@@ -1529,9 +1542,18 @@ describe("managed draft replace (one write path)", () => {
     });
   }
 
-  function put(handlers: ReturnType<typeof managedHandlers>, body: unknown) {
+  function put(
+    handlers: ReturnType<typeof managedHandlers>,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ) {
     return handlers.UPDATE(
-      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", body),
+      makeRequest(
+        "/api/projects/repo/workflows/workflow-1",
+        "PUT",
+        body,
+        headers,
+      ),
       makeContext({ name: "repo", workflowId: "workflow-1" }),
     );
   }
@@ -1660,6 +1682,318 @@ describe("managed draft replace (one write path)", () => {
       });
     }
     expect(store.updateDefinition).not.toHaveBeenCalled();
+  });
+
+  // #80 design 3.10: planning-phase friction has to leave telemetry, or the
+  // next retrospective can count planning cost only by tallying tool calls in
+  // a transcript.
+  describe("planning telemetry", () => {
+    /** The header a `cctl` shell running inside a conversation stamps on a write. */
+    const PLANNER = { "x-cc-conversation-id": "conv-planner" };
+
+    function eventsNamed(log: CapturingLogger, event: string) {
+      return log.entries.filter((entry) => entry.message === event);
+    }
+
+    it("names the server-owned paths a bare plan's merge filled", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+
+      const response = await put(
+        managedHandlers(
+          store,
+          managedProjection(),
+          gateReads(store, 0, 0),
+          log,
+        ),
+        barePlan(record),
+        PLANNER,
+      );
+
+      expect(response.status).toBe(200);
+      expect(eventsNamed(log, "workflow.replace.server_fields_merged")).toEqual(
+        [
+          {
+            level: "info",
+            message: "workflow.replace.server_fields_merged",
+            fields: {
+              definitionId: "workflow-1",
+              fields: ["/origin", "/approvalRequired", "/lockedRegions"],
+              conversationId: "conv-planner",
+            },
+          },
+        ],
+      );
+    });
+
+    it("emits no merge event when the plan already carried every server-owned field", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+
+      const response = await put(
+        managedHandlers(
+          store,
+          managedProjection(),
+          gateReads(store, 0, 0),
+          log,
+        ),
+        {
+          expectedRevision: 1,
+          name: record.name,
+          description: record.description,
+          definition: record.definition,
+          layout: record.layout,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(eventsNamed(log, "workflow.replace.server_fields_merged")).toEqual(
+        [],
+      );
+    });
+
+    it("emits workflow.validate.refused for a region_locked replace", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const plan = barePlan(record);
+      const log = createCapturingLogger();
+
+      const response = await put(
+        managedHandlers(
+          store,
+          managedProjection(),
+          gateReads(store, 0, 0),
+          log,
+        ),
+        {
+          ...plan,
+          definition: { ...plan.definition, approvalRequired: true },
+        },
+        PLANNER,
+      );
+
+      expect(response.status).toBe(409);
+      expect(eventsNamed(log, "workflow.validate.refused")).toEqual([
+        {
+          level: "info",
+          message: "workflow.validate.refused",
+          fields: {
+            code: "region_locked",
+            definitionId: "workflow-1",
+            conversationId: "conv-planner",
+          },
+        },
+      ]);
+      // A refused write filled nothing, so it reports no merge.
+      expect(eventsNamed(log, "workflow.replace.server_fields_merged")).toEqual(
+        [],
+      );
+    });
+
+    it("reports no merge when the write is lost to a stale token", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+      const handlers = managedHandlers(
+        store,
+        managedProjection(),
+        gateReads(store, 0, 0),
+        log,
+      );
+      store.updateDefinition.mockImplementation(() => {
+        throw new StaleWorkflowDefinitionError("workflow-1", 1, 2);
+      });
+
+      expect((await put(handlers, barePlan(record))).status).toBe(409);
+      expect(eventsNamed(log, "workflow.replace.server_fields_merged")).toEqual(
+        [],
+      );
+    });
+
+    it("emits workflow.validate.refused when the candidate is read-only", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+
+      const response = await put(
+        managedHandlers(
+          store,
+          managedProjection({ lifecycle: "in_review", editable: false }),
+          gateReads(store, 0, 0),
+          log,
+        ),
+        barePlan(record),
+        PLANNER,
+      );
+
+      expect(response.status).toBe(409);
+      expect(eventsNamed(log, "workflow.validate.refused")).toEqual([
+        {
+          level: "info",
+          message: "workflow.validate.refused",
+          fields: {
+            code: "managed_workflow_definition_read_only",
+            definitionId: "workflow-1",
+            conversationId: "conv-planner",
+          },
+        },
+      ]);
+    });
+
+    it("emits workflow.validate.refused when the compare-and-swap token is stale", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+      const handlers = managedHandlers(
+        store,
+        managedProjection(),
+        gateReads(store, 0, 0),
+        log,
+      );
+      store.updateDefinition.mockImplementation(() => {
+        throw new StaleWorkflowDefinitionError("workflow-1", 1, 2);
+      });
+
+      const response = await put(handlers, barePlan(record), PLANNER);
+
+      expect(response.status).toBe(409);
+      expect(eventsNamed(log, "workflow.validate.refused")).toEqual([
+        {
+          level: "info",
+          message: "workflow.validate.refused",
+          fields: {
+            code: "stale_workflow_definition",
+            definitionId: "workflow-1",
+            conversationId: "conv-planner",
+          },
+        },
+      ]);
+    });
+
+    it("emits one refusal event per issue code when the plan is invalid", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+      const plan = barePlan(record);
+
+      const response = await put(
+        managedHandlers(
+          store,
+          managedProjection(),
+          gateReads(store, 0, 0),
+          log,
+        ),
+        {
+          ...plan,
+          definition: { ...plan.definition, executionContexts: [], tasks: [] },
+        },
+        PLANNER,
+      );
+
+      expect(response.status).toBe(400);
+      const refusals = eventsNamed(log, "workflow.validate.refused");
+      expect(refusals).toHaveLength(1);
+      expect(refusals[0]?.fields).toMatchObject({
+        code: "invalid_plan",
+        definitionId: "workflow-1",
+        conversationId: "conv-planner",
+      });
+    });
+
+    it("records a null conversation rather than dropping the field for a caller with none", async () => {
+      // The workflow definition routes carry no conversationId path segment,
+      // so a browser caller has no conversation anywhere to read; the field is
+      // still emitted, because a retrospective grouping by it must see the
+      // uncounted callers rather than lose them.
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+
+      const response = await put(
+        managedHandlers(
+          store,
+          managedProjection({ lifecycle: "in_review", editable: false }),
+          gateReads(store, 0, 0),
+          log,
+        ),
+        barePlan(record),
+      );
+
+      expect(response.status).toBe(409);
+      expect(eventsNamed(log, "workflow.validate.refused")[0]?.fields).toEqual({
+        code: "managed_workflow_definition_read_only",
+        definitionId: "workflow-1",
+        conversationId: null,
+      });
+    });
+
+    it("keeps the record an accept-time assignment refusal located", async () => {
+      // Validate admits a reference that storage then refuses (a profile
+      // deleted between the two). Its issues are located, so the refusal event
+      // must carry the record rather than degrade to the bare code.
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+      const handlers = managedHandlers(
+        store,
+        managedProjection(),
+        gateReads(store, 0, 0),
+        log,
+      );
+      store.updateDefinition.mockImplementation(() => {
+        throw new WorkflowAssignmentReferenceError([
+          {
+            path: "definition.executionContexts.0 (ctx-a).contextValidator.assignments.0 (security).profile",
+            message: "Agent profile global:never-created was not found.",
+            recordId: "security",
+          },
+        ]);
+      });
+
+      const response = await put(handlers, barePlan(record), PLANNER);
+
+      expect(response.status).toBe(400);
+      expect(eventsNamed(log, "workflow.validate.refused")).toEqual([
+        {
+          level: "info",
+          message: "workflow.validate.refused",
+          fields: {
+            code: "workflow_assignment_reference_invalid",
+            recordId: "security",
+            definitionId: "workflow-1",
+            conversationId: "conv-planner",
+          },
+        },
+      ]);
+    });
+
+    it("does not count an edit or a delete as validate/create/replace friction", async () => {
+      // The catalogued event names three surfaces. Counting the other managed
+      // refusals under the same name would inflate exactly the tally the
+      // retrospective reads.
+      const record = storedDraft();
+      const store = draftStore(record);
+      const log = createCapturingLogger();
+      const handlers = managedHandlers(
+        store,
+        managedProjection({ lifecycle: "in_review", editable: false }),
+        gateReads(store, 0, 0),
+        log,
+      );
+
+      expect((await patch(handlers, RENAME_OPS)).status).toBe(409);
+      expect(
+        (
+          await handlers.DELETE(
+            makeRequest("/api/projects/repo/workflows/workflow-1", "DELETE"),
+            makeContext({ name: "repo", workflowId: "workflow-1" }),
+          )
+        ).status,
+      ).toBe(409);
+      expect(eventsNamed(log, "workflow.validate.refused")).toEqual([]);
+    });
   });
 
   it("stores the submitted plan's edge ids unchanged", async () => {

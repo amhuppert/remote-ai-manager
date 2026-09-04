@@ -38,7 +38,7 @@ import {
   renderTopUsageText,
   type HelpContextBlock,
 } from "./help-render";
-import type { CommandHelpEntry } from "./help-types";
+import type { CommandHelpEntry, SuccessHintRow } from "./help-types";
 import { expandFlagSpecs, pathKey } from "./help-types";
 
 /**
@@ -243,6 +243,23 @@ const REGISTRY = buildHelpRegistry(ENTRIES);
 
 export function allHelpEntries(): CommandHelpEntry[] {
   return ENTRIES;
+}
+
+/**
+ * Every declared success-hint row, in registry order and deduplicated by
+ * identity: `workflow replace` and `workflow edit` declare the same two rows
+ * because their receipts render the same handoff, and the launch chain has one
+ * row there, not two (#80 design 3.6).
+ */
+export function successHintRows(
+  entries: readonly CommandHelpEntry[],
+): SuccessHintRow[] {
+  return [...new Set(entries.flatMap((entry) => entry.successHints ?? []))];
+}
+
+/** The declared success-hint rows of the singleton registry. */
+export function allSuccessHintRows(): SuccessHintRow[] {
+  return successHintRows(ENTRIES);
 }
 
 export function helpEntryFor(path: string[]): CommandHelpEntry | undefined {

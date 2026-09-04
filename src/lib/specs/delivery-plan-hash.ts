@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type {
-  WorkflowDefinitionDraft,
-  WorkflowDefinitionRecord,
-} from "@/lib/workflow-graph/definition-schemas";
+import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
 import { stableStringify } from "@/lib/state-store/serialization";
 import {
   canonicalDeliveryPlanCandidateBytes,
@@ -18,7 +15,7 @@ function sha256(value: string): string {
 }
 
 export function workflowDefinitionHash(
-  workflow: WorkflowDefinitionDraft | WorkflowDefinitionRecord,
+  workflow: WorkflowDefinitionDraft,
 ): string {
   return sha256(
     stableStringify({

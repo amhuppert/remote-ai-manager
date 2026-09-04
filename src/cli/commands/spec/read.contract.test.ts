@@ -1488,46 +1488,56 @@ function makeHost(
 }
 
 describe("cctl spec read verbs against seeded read routes", () => {
-  it("states that nothing refuses propose for a clean plan status", async () => {
-    const cleanPlan: DeliveryPlanView = {
-      attempt: {
-        id: "attempt-1",
-        specSlug: "native-sdd",
-        status: "draft",
-        draftRevision: 1,
-        pinnedRevisionId: revision.id,
-        deltaBasisExecutionId: null,
-        proposedSnapshotId: null,
-        candidateId: null,
-        candidateHash: null,
-        launchedExecutionId: null,
-        workflowDefinitionId: "managed-wf",
-        createdAt: CREATED_AT,
-        updatedAt: CREATED_AT,
-      },
-      approval: null,
-      prelaunch: null,
-      document: {
-        schemaVersion: 3,
-        binding: { dispositions: [], claims: [] },
-      },
-      workflowDefinition: {
-        id: "managed-wf",
-        revision: 1,
-        definitionHash: "definition-hash",
-        builderHref: "/projects/demo/workflows?definition=managed-wf",
-      },
-      health: { total: 0, blocking: 0, counts: [], findings: [] },
-      dispositionCounts: [],
-      unresolved: [],
-      snapshots: [],
-      nextAct: {
-        actor: "agent",
-        command: "cctl spec plan propose native-sdd",
-        reason: "the draft is ready to propose",
-      },
-    };
+  const cleanPlan: DeliveryPlanView = {
+    attempt: {
+      id: "attempt-1",
+      specSlug: "native-sdd",
+      status: "draft",
+      draftRevision: 1,
+      pinnedRevisionId: revision.id,
+      deltaBasisExecutionId: null,
+      proposedSnapshotId: null,
+      candidateId: null,
+      candidateHash: null,
+      launchedExecutionId: null,
+      workflowDefinitionId: "managed-wf",
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+    },
+    approval: null,
+    prelaunch: null,
+    document: {
+      schemaVersion: 3,
+      binding: { dispositions: [], claims: [] },
+    },
+    workflowDefinition: {
+      id: "managed-wf",
+      revision: 1,
+      definitionHash: "definition-hash",
+      builderHref: "/projects/demo/workflows?definition=managed-wf",
+    },
+    health: { total: 0, blocking: 0, counts: [], findings: [] },
+    ledger: {
+      selected: 3,
+      claimed: 2,
+      unclaimed: 1,
+      dispositions: [
+        { kind: "in_scope", count: 3 },
+        { kind: "deferred", count: 1 },
+      ],
+      charter: { state: "authored", invariantCount: 4, sourceCount: 6 },
+    },
+    dispositionCounts: [],
+    unresolved: [],
+    snapshots: [],
+    nextAct: {
+      actor: "agent",
+      command: "cctl spec plan propose native-sdd",
+      reason: "the draft is ready to propose",
+    },
+  };
 
+  it("states that nothing refuses propose for a clean plan status", async () => {
     const result = await runCli(
       ["spec", "plan", "status", "native-sdd"],
       baseEnv,
@@ -1536,6 +1546,48 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("propose: nothing refuses");
+  });
+
+  it("reports both sides of the ledger and the charter state on plan status", async () => {
+    const result = await runCli(
+      ["spec", "plan", "status", "native-sdd"],
+      baseEnv,
+      makeHost({ planView: cleanPlan }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      [
+        "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+        "dispositions: in_scope 3, deferred 1",
+        "charter: authored, 4 invariants, 6 sources",
+      ].join("\n"),
+    );
+    expect(result.stdout).not.toContain("unresolved dispositions:");
+  });
+
+  it("names the plan.json authoring path and the preflight as the draft's next act", async () => {
+    const result = await runCli(
+      ["spec", "plan", "status", "native-sdd"],
+      baseEnv,
+      makeHost({
+        planView: {
+          ...cleanPlan,
+          nextAct: {
+            actor: "agent",
+            command:
+              "author .cc/temp/plan.json with the graph-workflow-planning skill, then cctl workflow validate --file .cc/temp/plan.json --definition managed-wf",
+            reason:
+              "A managed draft is authored as an ordinary plan.json; the preflight reports everything that refuses propose before you replace it.",
+          },
+        },
+      }),
+    );
+
+    expect(result.stdout).toContain(
+      "acts next: agent — author .cc/temp/plan.json with the graph-workflow-planning skill, then cctl workflow validate --file .cc/temp/plan.json --definition managed-wf",
+    );
+    expect(result.stdout).not.toContain("cctl spec plan edit");
   });
 
   it("refuses a preview without a stage using only direct-plan next acts", async () => {

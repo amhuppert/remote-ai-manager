@@ -89,6 +89,7 @@ import {
   parseOutlineRecord,
   renderOutline,
 } from "../workflow-outline";
+import { deliveryPlanLedgerLines } from "../delivery-plan-ledger";
 import { deliveryPlanPreviewText } from "./plan-preview-text";
 import {
   approvalLedgerLines,
@@ -2805,6 +2806,7 @@ function planStatusText(view: DeliveryPlanView): string {
           `approved: snapshot ${view.approval.snapshotId}, candidate ${view.approval.candidateId} at ${view.approval.candidateHash}`,
         ]),
     ...planHealthLines(view),
+    ...deliveryPlanLedgerLines(view.ledger),
     ...boundedSection(
       "blocking findings",
       view.health.findings.filter(
@@ -2815,14 +2817,11 @@ function planStatusText(view: DeliveryPlanView): string {
         `  ${finding.elementHandle} [${finding.ruleId}]: ${finding.message}`,
       ],
     ),
+    // The ledger already reports every disposition by kind, so the section that
+    // repeated the same counts is gone; what it could not carry is the act each
+    // criterion still owes, which is what these rows are.
     ...boundedSection(
-      "dispositions",
-      view.dispositionCounts,
-      wholeStatus,
-      (entry) => [`  ${entry.disposition}: ${entry.count}`],
-    ),
-    ...boundedSection(
-      "unresolved dispositions",
+      "unresolved criteria",
       view.unresolved,
       wholeStatus,
       (row) => [`  ${row.handle} [${row.disposition}]: ${row.resolution}`],

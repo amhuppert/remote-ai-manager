@@ -1,12 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * A capturing logger, not a silent one: the planning telemetry of #80 design
+ * 3.10 is a field contract this service is held to, and the module-level file
+ * sink has no injectable seam.
+ */
+const capturedLogs = vi.hoisted(() => {
+  const entries: { level: string; message: string; fields: unknown }[] = [];
+  const record =
+    (level: string) =>
+    (message: string, fields?: Record<string, unknown>): void => {
+      entries.push({ level, message, fields: fields ?? {} });
+    };
+  return {
+    entries,
+    info: record("info"),
+    debug: record("debug"),
+    warn: record("warn"),
+    error: record("error"),
+  };
+});
+
 vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: () => capturedLogs,
 }));
 
 import type Database from "better-sqlite3";
@@ -24,6 +40,7 @@ import {
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import {
+  createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   makeLaunchDocument,
 } from "@/lib/workflow-graph/test-fixtures";
@@ -328,6 +345,7 @@ describe("delivery-plan service v3 lifecycle", () => {
   beforeEach(() => {
     db = _createTestDb({ inMemory: true });
     seedDeliveryPlanParents(db);
+    capturedLogs.entries.length = 0;
   });
 
   afterEach(() => db.close());
@@ -355,6 +373,82 @@ describe("delivery-plan service v3 lifecycle", () => {
         workflowDefinitionId: opened.value.workflowDefinition.id,
       }),
     ).resolves.toMatchObject({ id: opened.value.workflowDefinition.id });
+  });
+
+  it("sends a draft author to plan.json and the preflight, never spec plan edit", async () => {
+    const world = createWorld(db);
+
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+
+    expect(opened.value.nextAct.command).toBe(
+      `author .cc/temp/plan.json with the graph-workflow-planning skill, then cctl workflow validate --file .cc/temp/plan.json --definition ${opened.value.workflowDefinition.id}`,
+    );
+    expect(
+      `${opened.value.nextAct.command} ${opened.value.nextAct.reason}`,
+    ).not.toContain("spec plan edit");
+  });
+
+  it("counts both sides of the ledger on the opened attempt", async () => {
+    const world = createWorld(db);
+
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+
+    const selected = opened.value.document.binding.dispositions.filter(
+      (disposition) => disposition.disposition === "in_scope",
+    ).length;
+    expect(opened.value.ledger).toMatchObject({
+      selected,
+      claimed: 0,
+      unclaimed: selected,
+      charter: { state: "seed_stub" },
+    });
+    expect(opened.value.ledger.dispositions).toEqual(
+      opened.value.dispositionCounts.map(({ disposition, count }) => ({
+        kind: disposition,
+        count,
+      })),
+    );
+  });
+
+  it("withholds a claim from a context the graph never declared stable", async () => {
+    const world = createWorld(db);
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const selected = opened.value.document.binding.dispositions.filter(
+      (disposition) => disposition.disposition === "in_scope",
+    );
+
+    const edited = await world.service.edit({
+      spec: SPEC,
+      expectedDraftRevision: opened.value.attempt.draftRevision,
+      binding: {
+        dispositions: opened.value.document.binding.dispositions,
+        claims: [
+          {
+            contextId: "context-the-graph-does-not-declare",
+            criterionElementIds: selected.map(
+              (disposition) => disposition.criterionElementId,
+            ),
+          },
+        ],
+      },
+      actor: AGENT,
+    });
+    if (!edited.ok) throw new Error(edited.refusal.unmetConditions.join(" "));
+
+    // The claim record exists and names every selected criterion, but its
+    // context is not a graph-declared stable authored accountability source, so
+    // the ledger reports the same deficit the gate refuses on.
+    expect(
+      edited.value.health.findings.map((finding) => finding.ruleId),
+    ).toContain("binding/claim-context-unstable");
+    expect(edited.value.ledger).toMatchObject({
+      selected: selected.length,
+      claimed: 0,
+      unclaimed: selected.length,
+    });
   });
 
   it("seeds the mission from the pinned revision's intent and no authoring source", async () => {
@@ -1415,5 +1509,245 @@ describe("delivery-plan service v3 lifecycle", () => {
         { type: "update-charter", mission: "Still authorable." },
       ]).ok,
     ).toBe(true);
+  });
+});
+
+// #80 design 3.10: planning-phase friction has to leave telemetry, or the next
+// retrospective can count planning cost only by tallying tool calls in a
+// transcript.
+describe("delivery-plan planning telemetry", () => {
+  let db: Db;
+
+  beforeEach(() => {
+    db = _createTestDb({ inMemory: true });
+    seedDeliveryPlanParents(db);
+    capturedLogs.entries.length = 0;
+  });
+
+  afterEach(() => db.close());
+
+  function eventsNamed(event: string) {
+    return capturedLogs.entries.filter((entry) => entry.message === event);
+  }
+
+  function fieldsOf(event: string): unknown[] {
+    return eventsNamed(event).map((entry) => entry.fields);
+  }
+
+  it("reports the surface of every draft-health evaluation", async () => {
+    const world = createWorld(db);
+    const edited = await openClean(world);
+    const definition = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: edited.workflowDefinition.id,
+    });
+
+    const preflighted = await world.service.preflight({
+      spec: SPEC,
+      attemptId: edited.attempt.id,
+      workflowDefinitionId: edited.workflowDefinition.id,
+      launch: {
+        name: definition!.name,
+        description: definition!.description,
+        definition: definition!.definition,
+        layout: definition!.layout,
+      },
+    });
+    expect(preflighted.ok).toBe(true);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    expect(proposed.ok).toBe(true);
+
+    const surfaces = fieldsOf("spec.plan.preflight").map(
+      (fields) => (fields as { surface: string }).surface,
+    );
+    expect(new Set(surfaces)).toEqual(
+      new Set(["status", "validate", "propose"]),
+    );
+    for (const fields of fieldsOf("spec.plan.preflight")) {
+      expect(fields).toMatchObject({ slug: "delivery-plan" });
+      // Ids, a surface name and counts — never a finding message.
+      expect(Object.keys(fields as object).sort()).toEqual([
+        "blocking",
+        "codes",
+        "slug",
+        "surface",
+      ]);
+    }
+    // The evaluation the propose ran on a corrected draft owes nothing.
+    expect(
+      fieldsOf("spec.plan.preflight").filter(
+        (fields) => (fields as { surface: string }).surface === "propose",
+      ),
+    ).toEqual([
+      {
+        slug: "delivery-plan",
+        surface: "propose",
+        blocking: 0,
+        codes: [],
+      },
+    ]);
+  });
+
+  it("names the blocking codes a refused propose evaluation found", async () => {
+    const world = createWorld(db);
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    capturedLogs.entries.length = 0;
+
+    // The seeded charter is still a stub, so propose refuses.
+    const refused = await world.service.propose({ spec: SPEC, actor: AGENT });
+    expect(refused.ok).toBe(false);
+
+    const proposeEvaluations = fieldsOf("spec.plan.preflight").filter(
+      (fields) => (fields as { surface: string }).surface === "propose",
+    );
+    expect(proposeEvaluations).toHaveLength(1);
+    // `blocking` counts findings and `codes` names rules, so a seeded draft
+    // that owes six acts under three rules reports both numbers.
+    expect(proposeEvaluations[0]).toEqual({
+      slug: "delivery-plan",
+      surface: "propose",
+      blocking: 6,
+      codes: [
+        "binding/selected-criterion-unclaimed",
+        "binding/selected-criterion-not-must-run",
+        "launch/charter-unauthored",
+      ],
+    });
+  });
+
+  it("reports coverage at freeze", async () => {
+    const world = createWorld(db);
+    const edited = await openClean(world);
+    // The seeded draft carries no execution contexts; give it the fixture
+    // graph so `contexts` reports a count the definition actually has.
+    const shape = createWorkflowDefinition();
+    const existing = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: edited.workflowDefinition.id,
+    });
+    if (existing === null) throw new Error("definition missing");
+    world.managedDefinitions.replaceLaunch({
+      workflowDefinitionId: edited.workflowDefinition.id,
+      launch: {
+        name: existing.name,
+        description: existing.description,
+        definition: {
+          ...existing.definition,
+          executionContexts: shape.executionContexts,
+          tasks: shape.tasks,
+          edges: shape.edges,
+        },
+        layout: existing.layout,
+      },
+    });
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+
+    expect(shape.executionContexts.length).toBeGreaterThan(0);
+    expect(fieldsOf("spec.plan.propose.accepted")).toEqual([
+      {
+        slug: "delivery-plan",
+        covered: 0,
+        selected: 0,
+        contexts: shape.executionContexts.length,
+      },
+    ]);
+  });
+
+  it("records every attempt transition with the states either side and the actor kind", async () => {
+    const world = createWorld(db, {
+      launchedExecutionState: () => "delivered",
+    });
+    await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const candidateId = proposed.value.attempt.candidateId;
+    const candidateHash = proposed.value.attempt.candidateHash;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("Proposal did not freeze a candidate");
+    }
+    const candidate = { candidateId, candidateHash };
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      ...candidate,
+      actor: HUMAN,
+      approver: "Alex",
+    });
+    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const launched = await world.service.recordLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      candidate,
+      actor: AGENT,
+    });
+    if (!launched.ok)
+      throw new Error(launched.refusal.unmetConditions.join(" "));
+    const retired = await world.service.abandonLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      reason: "Superseded",
+      actor: AGENT,
+    });
+    if (!retired.ok) throw new Error(retired.refusal.unmetConditions.join(" "));
+
+    expect(fieldsOf("spec.plan.attempt.transition")).toEqual([
+      { slug: "delivery-plan", from: "none", to: "draft", actor: "agent" },
+      { slug: "delivery-plan", from: "draft", to: "proposed", actor: "agent" },
+      {
+        slug: "delivery-plan",
+        from: "proposed",
+        to: "approved",
+        actor: "human",
+      },
+      {
+        slug: "delivery-plan",
+        from: "approved",
+        to: "launched",
+        actor: "agent",
+      },
+      {
+        slug: "delivery-plan",
+        from: "launched",
+        to: "abandoned",
+        actor: "agent",
+      },
+    ]);
+  });
+
+  it("records the park and reopen transitions", async () => {
+    const world = createWorld(db);
+    await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const candidateId = proposed.value.attempt.candidateId;
+    const candidateHash = proposed.value.attempt.candidateHash;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("Proposal did not freeze a candidate");
+    }
+    const parked = await world.service.park({
+      spec: SPEC,
+      candidateId,
+      candidateHash,
+      reason: "Waiting on review",
+      actor: AGENT,
+    });
+    if (!parked.ok) throw new Error(parked.refusal.unmetConditions.join(" "));
+    const reopened = await world.service.reopen({
+      spec: SPEC,
+      reason: "Findings applied",
+      actor: AGENT,
+    });
+    if (!reopened.ok)
+      throw new Error(reopened.refusal.unmetConditions.join(" "));
+
+    expect(fieldsOf("spec.plan.attempt.transition").slice(-2)).toEqual([
+      { slug: "delivery-plan", from: "proposed", to: "parked", actor: "agent" },
+      { slug: "delivery-plan", from: "parked", to: "draft", actor: "agent" },
+    ]);
   });
 });

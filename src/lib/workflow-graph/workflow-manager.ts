@@ -12,7 +12,12 @@ import {
   createLandingEvidenceProber,
   type LandingEvidenceProber,
 } from "@/lib/workflow-graph/landing-evidence";
-import { StaleLoopFenceError } from "@/lib/workflow-graph/loop-fence";
+import {
+  assertLoopFence,
+  StaleLoopFenceError,
+} from "@/lib/workflow-graph/loop-fence";
+import { createKeyedMutex, type KeyedMutex } from "@/lib/shared/keyed-mutex";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import {
   awaitsDefinitionApproval,
   evaluateLeaseAdmission,
@@ -970,6 +975,28 @@ export interface DrainAndHaltInput {
 }
 
 const logger = createLogger("graph-workflow-manager");
+
+/**
+ * Serializes a session's lane provisioning across LOOP GENERATIONS: the
+ * retired generation and its replacement hold different manager references,
+ * and a pause only signals the retired loop, so its scheduler can still be
+ * cutting a worktree out of the lock when the replacement schedules the same
+ * lane. Hosted on globalThis, like the active-loop registry, because Next.js
+ * evaluates route handlers in separate module graphs: a module-level instance
+ * would hand the loop the start route launched and the replacement the resume
+ * route launches a mutex each, and the two would provision the lane
+ * concurrently after all.
+ */
+const LANE_PROVISIONING_MUTEX_KEY =
+  "__cc_graph_workflow_lane_provisioning_mutex" as const;
+
+function laneProvisioningMutex(): KeyedMutex {
+  return getGlobalSingleton(LANE_PROVISIONING_MUTEX_KEY, createKeyedMutex);
+}
+
+function laneProvisioningKey(projectPath: string, sessionName: string): string {
+  return `${projectPath}::${sessionName}`;
+}
 
 /**
  * How long a definition-approval reservation may sit before a sweep may
@@ -2605,6 +2632,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // retired on entry to the quiescent state and any persisted quiescent
         // execution restored without an in-process predecessor.
         execution.loopEpoch += 1;
+        // The lane half of the same reservation (Design 3.1, decision D5): a
+        // batch fenced out mid-provision cannot release its lane claim any more
+        // than its context stamps, and no batch outlives the generation change,
+        // so every claim here is stale. Left in place, the claim makes the lane
+        // unmintable for every later generation: the resumed scheduler finds
+        // nothing schedulable and the loop halts on its completion invariant
+        // instead of dispatching the first batch (#80, design 3.8).
+        execution.laneReservations = {};
 
         const retryIds: string[] = [];
         const refilledRoundIds: string[] = [];
@@ -3829,429 +3864,463 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         }
       };
 
-      // Slow worktree provisioning OUTSIDE the write queue. A failure disposes
-      // the lanes already created in this pass, releases the reservations, and
-      // aborts scheduling.
-      try {
-        for (const entry of provisionEntries) {
-          const result = await parallelWorktrees.provisionLane({
-            projectPath,
-            sessionName,
-            sessionDir,
-            sessionBranch: entry.mint?.parentBranchName ?? sessionBranch,
-            laneId: entry.laneId,
-          });
-          provisioned.push({ entry, result });
-        }
-      } catch (err) {
-        await compensateSchedule();
-        throw err;
-      }
-
-      // ── Re-freeze what could only be guessed before the worktree existed ──
-      //
-      // Stage 0 canonicalized a to-be-minted lane's prefixes against a path
-      // `git worktree add` had not created, so they were appended lexically.
-      // Checking the source branch out is exactly the step that can turn two
-      // lexically disjoint prefixes into one directory — a symlink committed on
-      // that branch — so the pre-provision freeze cannot be the set anyone is
-      // admitted under. Re-take it here, still OUTSIDE the write queue (this is
-      // realpath I/O), and let the finalize reducer re-judge the frozen results
-      // atomically. A canonicalization that now throws (a prefix escaping the
-      // checked-out worktree) fails the whole batch closed rather than starting
-      // a turn under an envelope that could not be resolved.
-      const recanonicalized = new Map<string, CanonicalOwnership>();
-      if (provisionalFreezes.size > 0) {
-        const provisionedPathByLane = new Map<string, string>();
-        for (const { entry, result } of provisioned) {
-          provisionedPathByLane.set(entry.laneId, result.worktreePath);
-        }
-        try {
-          for (const entry of schedulableEntries) {
-            const staged = provisionalFreezes.get(entry.contextId);
-            if (!staged) continue;
-            recanonicalized.set(
-              entry.contextId,
-              canonicalizeOwnership({
-                placement: staged.placement,
-                laneWorktreePath:
-                  provisionedPathByLane.get(entry.laneId) ??
-                  staged.laneWorktreePath,
-              }),
+      // One provisioning critical section per session, shared across loop
+      // generations (on globalThis, like the loop registry): a pause only
+      // signals the retired loop, so its scheduler can still be inside
+      // `git worktree add` when the operator resumes and the replacement
+      // generation reserves the same lane. Serializing provision-through-
+      // finalize keeps the two apart: the retired batch finishes, its fenced
+      // finalize disposes what it cut, and only then does the successor
+      // provision. So the successor never adopts a worktree the retired batch
+      // is about to dispose and never races it for one path (#80, design 3.8).
+      await laneProvisioningMutex().run(
+        laneProvisioningKey(projectPath, sessionName),
+        async () => {
+          // Slow worktree provisioning OUTSIDE the write queue. A failure disposes
+          // the lanes already created in this pass, releases the reservations, and
+          // aborts scheduling.
+          try {
+            // Re-judge the generation before touching disk. A pause that landed
+            // between this batch's reserve and its turn in the critical section
+            // has retired it; provisioning anyway would cut a worktree that only
+            // the fenced finalize can dispose, after a successor may have adopted
+            // it. The refusal takes the compensation path below: nothing was
+            // provisioned, and the release fences out like every other write.
+            assertLoopFence(
+              projectPath,
+              sessionName,
+              await deps.executionRepository.getActive(
+                projectPath,
+                sessionName,
+              ),
             );
-          }
-        } catch (err) {
-          await compensateSchedule();
-          throw err;
-        }
-      }
-
-      // Fenced finalize: a short synchronous mutation that re-checks the loop
-      // fence (inside the repository's `mutateActive`) and the pending-halt
-      // state before committing the running/lane transition. If this generation
-      // was superseded or a halt landed while provisioning was in flight, the
-      // provisioned worktrees are disposed as compensation.
-      let compensate = false;
-      nextExecution = await deps.executionRepository
-        .mutateActive(projectPath, sessionName, (execution) => {
-          const running = requireRunningExecution(execution);
-
-          // A halt recorded during provisioning supersedes this schedule: do
-          // not start the contexts; commit only the halt-aware snapshot and
-          // dispose the provisioned worktrees below. Clear the reservation stamps
-          // so the contexts are re-schedulable once the halt clears — the batch
-          // never formed (Design 3.1).
-          if (running.pendingHaltReason !== null) {
-            for (const entry of schedulableEntries) {
-              const contextState = running.contextStates[entry.contextId];
-              // Owner-checked like every other release: a stamp reassigned to a
-              // replacement batch while this one was provisioning is that
-              // batch's claim, and clearing it here would strand a context this
-              // batch no longer owns.
-              if (contextState?.reservedByBatchId === batchId) {
-                contextState.reservedByBatchId = null;
-                contextState.reservedOwnership = null;
-              }
+            for (const entry of provisionEntries) {
+              const result = await parallelWorktrees.provisionLane({
+                projectPath,
+                sessionName,
+                sessionDir,
+                sessionBranch: entry.mint?.parentBranchName ?? sessionBranch,
+                laneId: entry.laneId,
+              });
+              provisioned.push({ entry, result });
             }
-            releaseLaneReservations(running, batchId);
-            running.machineSnapshot = buildLifecycleSnapshot(running, {
-              lifecycleStatus: "running",
-              recoveryMode: "none",
-              hasLiveIteration: false,
-            });
-            outcome.value = { kind: "none" };
-            compensate = true;
-            return running;
+          } catch (err) {
+            await compensateSchedule();
+            throw err;
           }
 
-          // Re-judge the batch on the re-taken freezes, atomically. Only the
-          // comparison happens here — the realpath work is already done — so
-          // the reducer stays synchronous. A member refused now was admitted on
-          // a prefix set the checkout invalidated: it keeps no lane, gives back
-          // its stamp, and stays eligible. Its next pass canonicalizes against
-          // the worktree that now exists, so the collision is visible up front
-          // and the refusal is stable rather than a livelock.
-          // Owner fence on the per-context stamp, the twin of the one
-          // `releaseLaneReservations` applies to the lane claim (decision D5).
-          // A context whose stamp is no longer this batch's was taken over
-          // while provisioning was in flight — by reservation recovery or a
-          // replacement batch. Starting it here would run it under a plan its
-          // current owner did not make, and clearing the stamp would erase that
-          // owner's claim, so it is dropped untouched.
-          // Both halves of the claim are fenced, because either can be replaced
-          // while provisioning is in flight and each alone is insufficient: the
-          // context stamp says this batch may still start THIS context, and the
-          // lane claim says it may still materialize and occupy THAT lane. The
-          // owner-checked delete afterwards is cleanup, not an admission fence —
-          // without the lane half, a batch whose claim was replaced would still
-          // create the lane record and start its members on it.
-          const disownedContextIds = new Set<string>();
-          for (const entry of schedulableEntries) {
-            const stampLost =
-              running.contextStates[entry.contextId]?.reservedByBatchId !==
-              batchId;
-            const laneClaim = running.laneReservations[entry.laneId];
-            const laneLost =
-              laneClaim === undefined || laneClaim.batchId !== batchId;
-            if (!stampLost && !laneLost) continue;
-            disownedContextIds.add(entry.contextId);
-            // Give back only what is still ours. A stamp this batch still holds
-            // has to be released or the context is stranded ineligible; a stamp
-            // already reassigned belongs to its new owner and is left alone.
-            if (!stampLost) {
-              const contextState = running.contextStates[entry.contextId];
-              if (contextState) {
-                contextState.reservedByBatchId = null;
-                contextState.reservedOwnership = null;
-              }
+          // ── Re-freeze what could only be guessed before the worktree existed ──
+          //
+          // Stage 0 canonicalized a to-be-minted lane's prefixes against a path
+          // `git worktree add` had not created, so they were appended lexically.
+          // Checking the source branch out is exactly the step that can turn two
+          // lexically disjoint prefixes into one directory — a symlink committed on
+          // that branch — so the pre-provision freeze cannot be the set anyone is
+          // admitted under. Re-take it here, still OUTSIDE the write queue (this is
+          // realpath I/O), and let the finalize reducer re-judge the frozen results
+          // atomically. A canonicalization that now throws (a prefix escaping the
+          // checked-out worktree) fails the whole batch closed rather than starting
+          // a turn under an envelope that could not be resolved.
+          const recanonicalized = new Map<string, CanonicalOwnership>();
+          if (provisionalFreezes.size > 0) {
+            const provisionedPathByLane = new Map<string, string>();
+            for (const { entry, result } of provisioned) {
+              provisionedPathByLane.set(entry.laneId, result.worktreePath);
             }
-            logger.warn("graph-workflow.scheduler.reservation_disowned", {
-              executionId: running.id,
-              contextId: entry.contextId,
-              laneId: entry.laneId,
-              batchId,
-              stampLost,
-              laneLost,
-            });
+            try {
+              for (const entry of schedulableEntries) {
+                const staged = provisionalFreezes.get(entry.contextId);
+                if (!staged) continue;
+                recanonicalized.set(
+                  entry.contextId,
+                  canonicalizeOwnership({
+                    placement: staged.placement,
+                    laneWorktreePath:
+                      provisionedPathByLane.get(entry.laneId) ??
+                      staged.laneWorktreePath,
+                  }),
+                );
+              }
+            } catch (err) {
+              await compensateSchedule();
+              throw err;
+            }
           }
 
-          const refusedContextIds = new Set<string>();
-          if (recanonicalized.size > 0) {
-            const finalizeOccupants = new Map<string, LaneOccupant[]>();
-            const finalizeOccupantsOf = (laneId: string): LaneOccupant[] => {
-              const known = finalizeOccupants.get(laneId);
-              if (known) return known;
-              const occupants: LaneOccupant[] = [];
-              for (const state of Object.values(running.contextStates)) {
-                if (state.laneId !== laneId) continue;
-                if (state.status !== "running") continue;
-                occupants.push({
-                  contextId: state.contextId,
-                  ownership: state.reservedOwnership ?? UNKNOWN_OWNERSHIP,
+          // Fenced finalize: a short synchronous mutation that re-checks the loop
+          // fence (inside the repository's `mutateActive`) and the pending-halt
+          // state before committing the running/lane transition. If this generation
+          // was superseded or a halt landed while provisioning was in flight, the
+          // provisioned worktrees are disposed as compensation.
+          let compensate = false;
+          nextExecution = await deps.executionRepository
+            .mutateActive(projectPath, sessionName, (execution) => {
+              const running = requireRunningExecution(execution);
+
+              // A halt recorded during provisioning supersedes this schedule: do
+              // not start the contexts; commit only the halt-aware snapshot and
+              // dispose the provisioned worktrees below. Clear the reservation stamps
+              // so the contexts are re-schedulable once the halt clears — the batch
+              // never formed (Design 3.1).
+              if (running.pendingHaltReason !== null) {
+                for (const entry of schedulableEntries) {
+                  const contextState = running.contextStates[entry.contextId];
+                  // Owner-checked like every other release: a stamp reassigned to a
+                  // replacement batch while this one was provisioning is that
+                  // batch's claim, and clearing it here would strand a context this
+                  // batch no longer owns.
+                  if (contextState?.reservedByBatchId === batchId) {
+                    contextState.reservedByBatchId = null;
+                    contextState.reservedOwnership = null;
+                  }
+                }
+                releaseLaneReservations(running, batchId);
+                running.machineSnapshot = buildLifecycleSnapshot(running, {
+                  lifecycleStatus: "running",
+                  recoveryMode: "none",
+                  hasLiveIteration: false,
+                });
+                outcome.value = { kind: "none" };
+                compensate = true;
+                return running;
+              }
+
+              // Re-judge the batch on the re-taken freezes, atomically. Only the
+              // comparison happens here — the realpath work is already done — so
+              // the reducer stays synchronous. A member refused now was admitted on
+              // a prefix set the checkout invalidated: it keeps no lane, gives back
+              // its stamp, and stays eligible. Its next pass canonicalizes against
+              // the worktree that now exists, so the collision is visible up front
+              // and the refusal is stable rather than a livelock.
+              // Owner fence on the per-context stamp, the twin of the one
+              // `releaseLaneReservations` applies to the lane claim (decision D5).
+              // A context whose stamp is no longer this batch's was taken over
+              // while provisioning was in flight — by reservation recovery or a
+              // replacement batch. Starting it here would run it under a plan its
+              // current owner did not make, and clearing the stamp would erase that
+              // owner's claim, so it is dropped untouched.
+              // Both halves of the claim are fenced, because either can be replaced
+              // while provisioning is in flight and each alone is insufficient: the
+              // context stamp says this batch may still start THIS context, and the
+              // lane claim says it may still materialize and occupy THAT lane. The
+              // owner-checked delete afterwards is cleanup, not an admission fence —
+              // without the lane half, a batch whose claim was replaced would still
+              // create the lane record and start its members on it.
+              const disownedContextIds = new Set<string>();
+              for (const entry of schedulableEntries) {
+                const stampLost =
+                  running.contextStates[entry.contextId]?.reservedByBatchId !==
+                  batchId;
+                const laneClaim = running.laneReservations[entry.laneId];
+                const laneLost =
+                  laneClaim === undefined || laneClaim.batchId !== batchId;
+                if (!stampLost && !laneLost) continue;
+                disownedContextIds.add(entry.contextId);
+                // Give back only what is still ours. A stamp this batch still holds
+                // has to be released or the context is stranded ineligible; a stamp
+                // already reassigned belongs to its new owner and is left alone.
+                if (!stampLost) {
+                  const contextState = running.contextStates[entry.contextId];
+                  if (contextState) {
+                    contextState.reservedByBatchId = null;
+                    contextState.reservedOwnership = null;
+                  }
+                }
+                logger.warn("graph-workflow.scheduler.reservation_disowned", {
+                  executionId: running.id,
+                  contextId: entry.contextId,
+                  laneId: entry.laneId,
+                  batchId,
+                  stampLost,
+                  laneLost,
                 });
               }
-              finalizeOccupants.set(laneId, occupants);
-              return occupants;
-            };
-            for (const entry of schedulableEntries) {
-              if (disownedContextIds.has(entry.contextId)) continue;
-              const ownership =
-                recanonicalized.get(entry.contextId) ??
-                entry.ownership ??
-                UNKNOWN_OWNERSHIP;
-              const occupants = finalizeOccupantsOf(entry.laneId);
-              const verdict = classifyLaneAdmission({
-                candidate: ownership,
-                occupants,
-              });
-              if (verdict.kind === "refuse") {
-                refusedContextIds.add(entry.contextId);
-                const contextState = running.contextStates[entry.contextId];
-                if (contextState) {
-                  contextState.reservedByBatchId = null;
-                  contextState.reservedOwnership = null;
+
+              const refusedContextIds = new Set<string>();
+              if (recanonicalized.size > 0) {
+                const finalizeOccupants = new Map<string, LaneOccupant[]>();
+                const finalizeOccupantsOf = (
+                  laneId: string,
+                ): LaneOccupant[] => {
+                  const known = finalizeOccupants.get(laneId);
+                  if (known) return known;
+                  const occupants: LaneOccupant[] = [];
+                  for (const state of Object.values(running.contextStates)) {
+                    if (state.laneId !== laneId) continue;
+                    if (state.status !== "running") continue;
+                    occupants.push({
+                      contextId: state.contextId,
+                      ownership: state.reservedOwnership ?? UNKNOWN_OWNERSHIP,
+                    });
+                  }
+                  finalizeOccupants.set(laneId, occupants);
+                  return occupants;
+                };
+                for (const entry of schedulableEntries) {
+                  if (disownedContextIds.has(entry.contextId)) continue;
+                  const ownership =
+                    recanonicalized.get(entry.contextId) ??
+                    entry.ownership ??
+                    UNKNOWN_OWNERSHIP;
+                  const occupants = finalizeOccupantsOf(entry.laneId);
+                  const verdict = classifyLaneAdmission({
+                    candidate: ownership,
+                    occupants,
+                  });
+                  if (verdict.kind === "refuse") {
+                    refusedContextIds.add(entry.contextId);
+                    const contextState = running.contextStates[entry.contextId];
+                    if (contextState) {
+                      contextState.reservedByBatchId = null;
+                      contextState.reservedOwnership = null;
+                    }
+                    logger.info(
+                      "graph-workflow.scheduler.lane_admission_refused_post_provision",
+                      {
+                        executionId: running.id,
+                        contextId: entry.contextId,
+                        laneId: entry.laneId,
+                        reason: verdict.reason,
+                        blockingContextId: verdict.blockingContextId,
+                      },
+                    );
+                    continue;
+                  }
+                  occupants.push({ contextId: entry.contextId, ownership });
                 }
-                logger.info(
-                  "graph-workflow.scheduler.lane_admission_refused_post_provision",
-                  {
-                    executionId: running.id,
+              }
+              const admittedEntries = schedulableEntries.filter(
+                (entry) =>
+                  !refusedContextIds.has(entry.contextId) &&
+                  !disownedContextIds.has(entry.contextId),
+              );
+
+              // Nothing survived the re-check, so this batch never formed. Report
+              // it as such rather than as an empty parallel batch, and give back
+              // only the lane claims still owned here — a replacement owner's claim
+              // must outlive this finalize. Any worktree cut for a lane taken over
+              // meanwhile is deliberately left in place: disposing it could remove
+              // the one its new owner is about to use.
+              if (admittedEntries.length === 0) {
+                releaseLaneReservations(running, batchId);
+                running.machineSnapshot = buildLifecycleSnapshot(running, {
+                  lifecycleStatus: "running",
+                  recoveryMode: "none",
+                  hasLiveIteration: false,
+                });
+                outcome.value = { kind: "none" };
+                return running;
+              }
+
+              const provisionTimestamp = getNow(deps);
+
+              // Mint each provisioned lane exactly once, before placing anyone on
+              // it: several members of one lane can be admitted in a single pass,
+              // and they all join the same record (decision D5).
+              for (const { entry, result } of provisioned) {
+                // A lane whose claim was replaced mid-provision is not this batch's
+                // to materialize: recording it would hand the replacement owner a
+                // lane record it never created. The worktree stays on disk
+                // unreferenced, which is the safe side of this trade.
+                if (disownedContextIds.has(entry.contextId)) continue;
+                const mint = entry.mint;
+                if (!mint) {
+                  throw new Error(
+                    `Provisioned lane "${entry.laneId}" has no mint plan; only a minting entry is provisioned`,
+                  );
+                }
+                // Inherit everything present in the fork parent's branch — what ran
+                // on it AND what a succeeded join already merged into it — so
+                // upstream visibility checks recognize the full history the fork
+                // copied. Inheriting only the parent's own `includedContextIds`
+                // strands the fork on any upstream that arrived by join: its work is
+                // in the branch, but nothing in the lane graph connects the fork to
+                // it. A lane forked from the session branch inherits nothing.
+                const inheritedIncluded =
+                  mint.sourceLaneId === null
+                    ? []
+                    : contextsPresentInLane(mint.sourceLaneId, running);
+                running.executionLanes[entry.laneId] = {
+                  laneId: entry.laneId,
+                  kind: "worktree",
+                  status: "active",
+                  worktreePath: result.worktreePath,
+                  branchName: result.branchName,
+                  includedContextIds: [...inheritedIncluded],
+                  lastCommittingContextId: mint.parentContextId,
+                  commitSnapshots: [],
+                  createdAt: provisionTimestamp,
+                  updatedAt: provisionTimestamp,
+                };
+                if (
+                  mint.sourceLaneId !== null &&
+                  mint.parentContextId !== null
+                ) {
+                  laneForkedDecisions.push({
+                    newLaneId: entry.laneId,
                     contextId: entry.contextId,
+                    parentLaneId: mint.sourceLaneId,
+                    parentContextId: mint.parentContextId,
+                    parentBranchName: mint.parentBranchName,
+                    branchName: result.branchName,
+                    worktreePath: result.worktreePath,
+                  });
+                } else {
+                  laneCreatedDecisions.push({
                     laneId: entry.laneId,
-                    reason: verdict.reason,
-                    blockingContextId: verdict.blockingContextId,
-                  },
+                    contextId: entry.contextId,
+                    branchName: result.branchName,
+                    worktreePath: result.worktreePath,
+                    kind: "worktree",
+                  });
+                }
+              }
+
+              for (const entry of admittedEntries) {
+                const { contextId, laneId } = entry;
+                const contextState = running.contextStates[contextId]!;
+                transitionContextStatus(running, contextId, "running", {
+                  reason: "manager.schedule_eligible_contexts.batch",
+                });
+                contextState.batchId = batchId;
+                // Reservation realized: the context is now `running`, so drop the
+                // owner-discriminated stamp the reserve set (Design 3.1). The frozen
+                // ownership STAYS — it is the envelope dispatch composes the turn's
+                // write policy from, and the set later admissions compare against.
+                // Where the pre-provision freeze was provisional, the re-taken one
+                // supersedes it, so the persisted envelope is the one this context
+                // was actually admitted under.
+                contextState.reservedByBatchId = null;
+                const refrozen = recanonicalized.get(contextId);
+                if (refrozen) contextState.reservedOwnership = refrozen;
+
+                const placement =
+                  running.workingDefinition.executionContexts.find(
+                    (context) => context.id === contextId,
+                  )?.placement;
+                if (
+                  placement?.lane === SESSION_LANE_NAME &&
+                  placement.mode === "readOnly"
+                ) {
+                  contextState.laneId = null;
+                  contextState.worktreePath = null;
+                  contextState.branchName = null;
+                  contextState.isolation = "session";
+                  contextState.batchId = null;
+                  continue;
+                }
+
+                const lane = running.executionLanes[laneId];
+                if (!lane) {
+                  // The session lane before final publish materializes a record for
+                  // it: the context runs in the session worktree with no lane.
+                  if (laneId === SESSION_LANE_ID) {
+                    contextState.laneId = null;
+                    contextState.worktreePath = null;
+                    contextState.branchName = null;
+                    contextState.isolation = "session";
+                    contextState.batchId = null;
+                    continue;
+                  }
+                  throw new Error(
+                    `Lane "${laneId}" referenced by context "${contextId}" was not found in executionLanes`,
+                  );
+                }
+
+                contextState.laneId = laneId;
+                if (lane.kind === "session") {
+                  contextState.worktreePath = null;
+                  contextState.branchName = null;
+                  contextState.isolation = "session";
+                  laneReusedDecisions.push({
+                    laneId,
+                    contextId,
+                    branchName: null,
+                    worktreePath: null,
+                    kind: "session",
+                  });
+                  continue;
+                }
+                if (lane.worktreePath === null) {
+                  throw new Error(
+                    `Lane "${laneId}" referenced by context "${contextId}" is worktree-kind but has null worktreePath`,
+                  );
+                }
+                contextState.worktreePath = lane.worktreePath;
+                contextState.branchName = lane.branchName;
+                contextState.isolation = "worktree";
+                if (entry.mint === null) {
+                  laneReusedDecisions.push({
+                    laneId,
+                    contextId,
+                    branchName: lane.branchName,
+                    worktreePath: lane.worktreePath,
+                    kind: "worktree",
+                  });
+                }
+              }
+
+              releaseLaneReservations(running, batchId);
+
+              // Landing intents ride the SAME mutation that assigns the lanes
+              // (decision D8): the placement above is what decides how each context
+              // will land, so recording the intent anywhere later would leave a
+              // window where the only record of it lives in the runner's memory.
+              for (const entry of admittedEntries) {
+                recordDispatchLandingIntent(
+                  running,
+                  entry.contextId,
+                  provisionTimestamp,
                 );
-                continue;
               }
-              occupants.push({ contextId: entry.contextId, ownership });
-            }
-          }
-          const admittedEntries = schedulableEntries.filter(
-            (entry) =>
-              !refusedContextIds.has(entry.contextId) &&
-              !disownedContextIds.has(entry.contextId),
-          );
 
-          // Nothing survived the re-check, so this batch never formed. Report
-          // it as such rather than as an empty parallel batch, and give back
-          // only the lane claims still owned here — a replacement owner's claim
-          // must outlive this finalize. Any worktree cut for a lane taken over
-          // meanwhile is deliberately left in place: disposing it could remove
-          // the one its new owner is about to use.
-          if (admittedEntries.length === 0) {
-            releaseLaneReservations(running, batchId);
-            running.machineSnapshot = buildLifecycleSnapshot(running, {
-              lifecycleStatus: "running",
-              recoveryMode: "none",
-              hasLiveIteration: false,
-            });
-            outcome.value = { kind: "none" };
-            return running;
-          }
-
-          const provisionTimestamp = getNow(deps);
-
-          // Mint each provisioned lane exactly once, before placing anyone on
-          // it: several members of one lane can be admitted in a single pass,
-          // and they all join the same record (decision D5).
-          for (const { entry, result } of provisioned) {
-            // A lane whose claim was replaced mid-provision is not this batch's
-            // to materialize: recording it would hand the replacement owner a
-            // lane record it never created. The worktree stays on disk
-            // unreferenced, which is the safe side of this trade.
-            if (disownedContextIds.has(entry.contextId)) continue;
-            const mint = entry.mint;
-            if (!mint) {
-              throw new Error(
-                `Provisioned lane "${entry.laneId}" has no mint plan; only a minting entry is provisioned`,
-              );
-            }
-            // Inherit everything present in the fork parent's branch — what ran
-            // on it AND what a succeeded join already merged into it — so
-            // upstream visibility checks recognize the full history the fork
-            // copied. Inheriting only the parent's own `includedContextIds`
-            // strands the fork on any upstream that arrived by join: its work is
-            // in the branch, but nothing in the lane graph connects the fork to
-            // it. A lane forked from the session branch inherits nothing.
-            const inheritedIncluded =
-              mint.sourceLaneId === null
-                ? []
-                : contextsPresentInLane(mint.sourceLaneId, running);
-            running.executionLanes[entry.laneId] = {
-              laneId: entry.laneId,
-              kind: "worktree",
-              status: "active",
-              worktreePath: result.worktreePath,
-              branchName: result.branchName,
-              includedContextIds: [...inheritedIncluded],
-              lastCommittingContextId: mint.parentContextId,
-              commitSnapshots: [],
-              createdAt: provisionTimestamp,
-              updatedAt: provisionTimestamp,
-            };
-            if (mint.sourceLaneId !== null && mint.parentContextId !== null) {
-              laneForkedDecisions.push({
-                newLaneId: entry.laneId,
-                contextId: entry.contextId,
-                parentLaneId: mint.sourceLaneId,
-                parentContextId: mint.parentContextId,
-                parentBranchName: mint.parentBranchName,
-                branchName: result.branchName,
-                worktreePath: result.worktreePath,
-              });
-            } else {
-              laneCreatedDecisions.push({
-                laneId: entry.laneId,
-                contextId: entry.contextId,
-                branchName: result.branchName,
-                worktreePath: result.worktreePath,
-                kind: "worktree",
-              });
-            }
-          }
-
-          for (const entry of admittedEntries) {
-            const { contextId, laneId } = entry;
-            const contextState = running.contextStates[contextId]!;
-            transitionContextStatus(running, contextId, "running", {
-              reason: "manager.schedule_eligible_contexts.batch",
-            });
-            contextState.batchId = batchId;
-            // Reservation realized: the context is now `running`, so drop the
-            // owner-discriminated stamp the reserve set (Design 3.1). The frozen
-            // ownership STAYS — it is the envelope dispatch composes the turn's
-            // write policy from, and the set later admissions compare against.
-            // Where the pre-provision freeze was provisional, the re-taken one
-            // supersedes it, so the persisted envelope is the one this context
-            // was actually admitted under.
-            contextState.reservedByBatchId = null;
-            const refrozen = recanonicalized.get(contextId);
-            if (refrozen) contextState.reservedOwnership = refrozen;
-
-            const placement = running.workingDefinition.executionContexts.find(
-              (context) => context.id === contextId,
-            )?.placement;
-            if (
-              placement?.lane === SESSION_LANE_NAME &&
-              placement.mode === "readOnly"
-            ) {
-              contextState.laneId = null;
-              contextState.worktreePath = null;
-              contextState.branchName = null;
-              contextState.isolation = "session";
-              contextState.batchId = null;
-              continue;
-            }
-
-            const lane = running.executionLanes[laneId];
-            if (!lane) {
-              // The session lane before final publish materializes a record for
-              // it: the context runs in the session worktree with no lane.
-              if (laneId === SESSION_LANE_ID) {
-                contextState.laneId = null;
-                contextState.worktreePath = null;
-                contextState.branchName = null;
-                contextState.isolation = "session";
-                contextState.batchId = null;
-                continue;
+              const activeIdSet = new Set(running.activeContextIds);
+              for (const entry of admittedEntries) {
+                activeIdSet.add(entry.contextId);
               }
-              throw new Error(
-                `Lane "${laneId}" referenced by context "${contextId}" was not found in executionLanes`,
+              running.activeContextIds = [...activeIdSet];
+              const clearedLanes = clearLaneStatesFor(
+                running,
+                admittedEntries.map((e) => e.contextId),
               );
-            }
+              scheduledClearedLanes = clearedLanes;
 
-            contextState.laneId = laneId;
-            if (lane.kind === "session") {
-              contextState.worktreePath = null;
-              contextState.branchName = null;
-              contextState.isolation = "session";
-              laneReusedDecisions.push({
-                laneId,
-                contextId,
-                branchName: null,
-                worktreePath: null,
-                kind: "session",
+              running.machineSnapshot = buildLifecycleSnapshot(running, {
+                lifecycleStatus: "running",
+                recoveryMode: "none",
+                hasLiveIteration: false,
               });
-              continue;
-            }
-            if (lane.worktreePath === null) {
-              throw new Error(
-                `Lane "${laneId}" referenced by context "${contextId}" is worktree-kind but has null worktreePath`,
-              );
-            }
-            contextState.worktreePath = lane.worktreePath;
-            contextState.branchName = lane.branchName;
-            contextState.isolation = "worktree";
-            if (entry.mint === null) {
-              laneReusedDecisions.push({
-                laneId,
-                contextId,
-                branchName: lane.branchName,
-                worktreePath: lane.worktreePath,
-                kind: "worktree",
+
+              outcome.value = {
+                kind: "parallel",
+                batchId,
+                contextIds: admittedEntries.map((e) => e.contextId),
+              };
+              return running;
+            })
+            .catch(async (err: unknown) => {
+              // A finalize refused for a non-fence reason leaves the reserve's
+              // stamps set; the owner-checked release inside `compensateSchedule`
+              // clears them so the contexts re-schedule. When the refusal IS a
+              // stale fence the stamps live on a superseded generation and the
+              // release fences out harmlessly. Disposal is best-effort and cannot
+              // skip the release.
+              await compensateSchedule();
+              throw err;
+            });
+          if (compensate) {
+            // Halt superseded this batch: the fenced finalize already cleared the
+            // reservation stamps atomically, so only the provisioned worktrees need
+            // best-effort disposal here.
+            const disposalFailures = await disposeProvisioned();
+            if (disposalFailures.length > 0) {
+              logger.warn("graph-workflow.scheduler.lane_dispose_failed", {
+                failedLaneBranches: disposalFailures.map((f) => f.branchName),
               });
             }
           }
-
-          releaseLaneReservations(running, batchId);
-
-          // Landing intents ride the SAME mutation that assigns the lanes
-          // (decision D8): the placement above is what decides how each context
-          // will land, so recording the intent anywhere later would leave a
-          // window where the only record of it lives in the runner's memory.
-          for (const entry of admittedEntries) {
-            recordDispatchLandingIntent(
-              running,
-              entry.contextId,
-              provisionTimestamp,
-            );
-          }
-
-          const activeIdSet = new Set(running.activeContextIds);
-          for (const entry of admittedEntries) {
-            activeIdSet.add(entry.contextId);
-          }
-          running.activeContextIds = [...activeIdSet];
-          const clearedLanes = clearLaneStatesFor(
-            running,
-            admittedEntries.map((e) => e.contextId),
-          );
-          scheduledClearedLanes = clearedLanes;
-
-          running.machineSnapshot = buildLifecycleSnapshot(running, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-
-          outcome.value = {
-            kind: "parallel",
-            batchId,
-            contextIds: admittedEntries.map((e) => e.contextId),
-          };
-          return running;
-        })
-        .catch(async (err: unknown) => {
-          // A finalize refused for a non-fence reason leaves the reserve's
-          // stamps set; the owner-checked release inside `compensateSchedule`
-          // clears them so the contexts re-schedule. When the refusal IS a
-          // stale fence the stamps live on a superseded generation and the
-          // release fences out harmlessly. Disposal is best-effort and cannot
-          // skip the release.
-          await compensateSchedule();
-          throw err;
-        });
-      if (compensate) {
-        // Halt superseded this batch: the fenced finalize already cleared the
-        // reservation stamps atomically, so only the provisioned worktrees need
-        // best-effort disposal here.
-        const disposalFailures = await disposeProvisioned();
-        if (disposalFailures.length > 0) {
-          logger.warn("graph-workflow.scheduler.lane_dispose_failed", {
-            failedLaneBranches: disposalFailures.map((f) => f.branchName),
-          });
-        }
-      }
+        },
+      );
     }
 
     const scheduled = outcome.value;

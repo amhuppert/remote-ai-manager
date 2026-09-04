@@ -1,5 +1,5 @@
 import { EXPANSION_CAPS } from "@/lib/workflow-graph/expansion-caps";
-import type { CommandHelpEntry } from "../help-types";
+import { successHintRow, type CommandHelpEntry } from "../help-types";
 
 /**
  * Help-registry entries for `cctl workflow` (docs/design/cc-cli/04 §2.2/§2.4):
@@ -9,6 +9,64 @@ import type { CommandHelpEntry } from "../help-types";
  * Related edges follow the one hint vocabulary: validate → create → start →
  * status (`.kiro/steering/cli.md`).
  */
+
+/**
+ * The CLI-owned rows of the launch hint chain that `workflow` receipts render
+ * (#80 design 3.6). Declared beside the entries that carry them so the sequence
+ * has one author; the receipts read `hint` and the registry sweep reads the row.
+ */
+export const WORKFLOW_MANAGED_PREFLIGHT_HINTS = {
+  /** A submitted file nothing refuses is ready to become the draft. */
+  clean: successHintRow({
+    after: "workflow validate --definition (nothing refuses propose)",
+    names: ["workflow", "replace"],
+    sampleTokens: {
+      definitionId: "managed-wf",
+      planFilePath: ".cc/temp/plan.json",
+    },
+    hint: ({ definitionId, planFilePath }) =>
+      `valid — replace it with 'cctl workflow replace ${definitionId} --file ${planFilePath}'`,
+  }),
+  /**
+   * A file that still refuses propose is corrected where it was authored. The
+   * stored draft's own status reads a different document, so sending the author
+   * there would answer a question they did not ask.
+   */
+  refused: successHintRow({
+    after: "workflow validate --definition (findings refuse propose)",
+    names: ["workflow", "validate"],
+    sampleTokens: {
+      definitionId: "managed-wf",
+      planFilePath: ".cc/temp/plan.json",
+    },
+    hint: ({ definitionId, planFilePath }) =>
+      `correct the findings above in ${planFilePath}, then re-run 'cctl workflow validate --file ${planFilePath} --definition ${definitionId}'`,
+  }),
+} as const;
+
+/**
+ * What follows a write to a managed delivery draft. Both `replace` and `edit`
+ * render these, so the two entries declare the same rows rather than each
+ * wording the handoff its own way.
+ */
+export const MANAGED_DRAFT_WRITE_HINTS = {
+  clean: successHintRow({
+    after:
+      "workflow replace or edit on a managed draft (nothing refuses propose)",
+    names: ["spec", "plan", "propose"],
+    sampleTokens: { specSlug: "native-sdd" },
+    hint: ({ specSlug }) =>
+      `propose the draft with 'cctl spec plan propose ${specSlug}'`,
+  }),
+  refused: successHintRow({
+    after:
+      "workflow replace or edit on a managed draft (findings refuse propose)",
+    names: ["spec", "plan", "status"],
+    sampleTokens: { specSlug: "native-sdd" },
+    hint: ({ specSlug }) =>
+      `read what still refuses propose with 'cctl spec plan status ${specSlug}'`,
+  }),
+} as const;
 
 const GRAPH_PLANNING_SKILL = {
   name: "graph-workflow-planning",
@@ -135,6 +193,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       },
     ],
     skills: [GRAPH_PLANNING_SKILL],
+    successHints: [
+      WORKFLOW_MANAGED_PREFLIGHT_HINTS.clean,
+      WORKFLOW_MANAGED_PREFLIGHT_HINTS.refused,
+    ],
   },
   {
     path: ["workflow", "create"],
@@ -248,6 +310,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       },
     ],
     skills: [GRAPH_PLANNING_SKILL],
+    successHints: [
+      MANAGED_DRAFT_WRITE_HINTS.clean,
+      MANAGED_DRAFT_WRITE_HINTS.refused,
+    ],
   },
   {
     path: ["workflow", "review"],
@@ -491,6 +557,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       },
     ],
     skills: [GRAPH_PLANNING_SKILL],
+    successHints: [
+      MANAGED_DRAFT_WRITE_HINTS.clean,
+      MANAGED_DRAFT_WRITE_HINTS.refused,
+    ],
     domainContext:
       "A running execution uses its own working copy — editing the saved definition does not affect it; start a fresh execution to pick up the change.",
   },
