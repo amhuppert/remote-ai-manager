@@ -21,6 +21,7 @@ const captureScopeAmendmentResponseSchema = z
       .object({
         id: z.string().min(1),
         executionId: z.string().min(1),
+        workflowExecutionId: z.string().min(1),
         attemptId: z.string().min(1).nullable(),
         title: z.string().min(1),
       })
@@ -29,6 +30,7 @@ const captureScopeAmendmentResponseSchema = z
     replacement: z
       .object({
         abandonedExecutionId: z.string().min(1),
+        abandonedWorkflowExecutionId: z.string().min(1),
         replacementAttemptId: z.string().min(1),
       })
       .strict()
@@ -65,6 +67,8 @@ export default function SpecPostLaunchCapture({
     "capture-scope-amendment",
     captureScopeAmendmentResponseSchema,
   );
+  // The capture action addresses a run by its WORKFLOW execution id, so a
+  // running row that has not linked a lane yet is not addressable at all.
   const execution = [...detail.executions]
     .reverse()
     .find((candidate) => candidate.state === "running");
@@ -74,7 +78,7 @@ export default function SpecPostLaunchCapture({
     <PostLaunchCapturePaths
       projectName={projectName}
       slug={detail.spec.slug}
-      executionId={execution.id}
+      executionId={execution.workflowExecutionId}
       state="running"
       capturePending={capture.isPending}
       captureOutcomePath={outcomePath}

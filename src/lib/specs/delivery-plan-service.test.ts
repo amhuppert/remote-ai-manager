@@ -20,12 +20,26 @@ import {
   createDeliveryPlanTestRepos,
   createManagedDefinitionTestService,
   seedDeliveryPlanParents,
+  type TestManagedDefinitionService,
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
 import { _createTestDb } from "@/lib/state-store/state-db";
-import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowDefinitionRecord,
+  makeLaunchDocument,
+} from "@/lib/workflow-graph/test-fixtures";
 import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
 import { validateCharterSourceAuthoredShapes } from "@/lib/workflow-graph/validation";
-import type { ManagedWorkflowDefinitionService } from "./managed-workflow-definition-service";
+import {
+  NATIVE_SDD_CLAIMS_SOURCE_ID,
+  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+} from "./delivery-plan";
+import { renderSeededDeliveryPlanMission } from "./delivery-plan-charter-seed";
+import {
+  dedupeServerOwnedDeliveryPlanSources,
+  isServerOwnedDeliveryPlanSource,
+} from "./delivery-plan-finalization";
+import { mergeServerOwnedRegions } from "@/lib/workflow-graph/locked-regions";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import type { DeliveryPlanBinding } from "./delivery-plan";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import {
@@ -34,6 +48,9 @@ import {
   type DeliveryPlanServiceDeps,
 } from "./delivery-plan-service";
 import type { Spec, SpecRevisionSnapshot } from "./schemas";
+import type { DeliveryPlanView } from "./delivery-plan-views";
+import { createDeliveryPlanPreflightPort } from "./delivery-plan-preflight";
+import { CHARTER_UNAUTHORED_RATIONALE } from "./refusal-rationale";
 
 type Db = InstanceType<typeof Database>;
 
@@ -56,6 +73,21 @@ const SPEC: Spec = {
   updatedAt: NOW,
 };
 
+const INTENT_SECTIONS = [
+  {
+    id: "section-problem",
+    role: "intent_problem" as const,
+    title: "Problem",
+    body: "Planners pay an accidental cost on the native SDD path.",
+  },
+  {
+    id: "section-outcomes",
+    role: "intent_outcomes" as const,
+    title: "Outcomes",
+    body: "A planner authors one plan.json and proposes it.",
+  },
+];
+
 function pinnedRevision(): SpecRevisionSnapshot {
   return {
     revision: {
@@ -75,30 +107,52 @@ function pinnedRevision(): SpecRevisionSnapshot {
       createdAt: NOW,
     },
     assumptionCitations: [],
-    elements: ["criterion-one", "criterion-two"].map((id, index) => ({
-      element: {
-        id,
-        specId: SPEC_ID,
-        kind: "criterion" as const,
-        number: index + 1,
-        parentElementId: null,
-        createdAt: NOW,
-      },
-      version: {
-        revisionId: PINNED_REVISION_ID,
-        elementId: id,
-        position: index,
-        payload: {
-          kind: "criterion" as const,
-          text: id,
-          validationStrategy: { kinds: ["test_run" as const] },
+    elements: [
+      ...INTENT_SECTIONS.map(({ id, role, title, body }, index) => ({
+        element: {
+          id,
+          specId: SPEC_ID,
+          kind: "section" as const,
+          number: index + 1,
+          parentElementId: null,
+          createdAt: NOW,
         },
-        payloadHash: `sha256:${id}`,
-        elementVersion: 1,
-        createdAt: NOW,
-        updatedAt: NOW,
-      },
-    })),
+        version: {
+          revisionId: PINNED_REVISION_ID,
+          elementId: id,
+          position: index,
+          payload: { kind: "section" as const, role, title, body },
+          payloadHash: `sha256:${id}`,
+          elementVersion: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      })),
+      ...["criterion-one", "criterion-two"].map((id, index) => ({
+        element: {
+          id,
+          specId: SPEC_ID,
+          kind: "criterion" as const,
+          number: index + 1,
+          parentElementId: null,
+          createdAt: NOW,
+        },
+        version: {
+          revisionId: PINNED_REVISION_ID,
+          elementId: id,
+          position: INTENT_SECTIONS.length + index,
+          payload: {
+            kind: "criterion" as const,
+            text: id,
+            validationStrategy: { kinds: ["test_run" as const] },
+          },
+          payloadHash: `sha256:${id}`,
+          elementVersion: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      })),
+    ],
   };
 }
 
@@ -116,15 +170,20 @@ function deferredBinding(): DeliveryPlanBinding {
 interface World {
   service: DeliveryPlanService;
   repos: ReturnType<typeof createDeliveryPlanTestRepos>;
-  managedDefinitions: ManagedWorkflowDefinitionService;
+  managedDefinitions: TestManagedDefinitionService;
 }
 
 function createWorld(
   db: Db,
-  overrides: Partial<DeliveryPlanServiceDeps> = {},
+  overrides: Partial<Omit<DeliveryPlanServiceDeps, "managedDefinitions">> & {
+    managedDefinitions?: TestManagedDefinitionService;
+  } = {},
 ): World {
   const repos = createDeliveryPlanTestRepos(db);
-  const managedDefinitions = createManagedDefinitionTestService();
+  // The world hands back the SAME service its plan service reads, so a test
+  // that authors a charter through the replace path writes where propose looks.
+  const managedDefinitions =
+    overrides.managedDefinitions ?? createManagedDefinitionTestService();
   let sequence = 0;
   const service = createDeliveryPlanService({
     plans: repos.plans,
@@ -135,6 +194,7 @@ function createWorld(
     currentApprovedRevision: async () => pinnedRevision(),
     revisionSnapshot: async () => pinnedRevision(),
     launchedExecutionState: () => "running",
+    launchedWorkflowExecutionId: () => "workflow-execution-launched",
     lastDeliveryBasis: async () => ({
       ok: true,
       basis: { comparedExecutionId: null, criteria: [] },
@@ -161,9 +221,70 @@ function createWorld(
   return { service, repos, managedDefinitions };
 }
 
+const AUTHORED_MISSION =
+  "Deliver the withheld status line behind the memory gate.";
+const AUTHORED_SOURCE = {
+  rank: 1,
+  id: "design-doc",
+  label: "Memory design",
+  type: "document" as const,
+  locator: "docs/designs/memory.md",
+  description: "The decisions this delivery implements.",
+};
+
+/**
+ * The remedy a planner performs: `cctl workflow replace` with a bare plan
+ * carrying an authored charter. The route's own merge runs here — server-owned
+ * regions filled from the stored record, server-owned sources deduplicated —
+ * so the bytes this stores are the bytes the replace path would store.
+ */
+async function replaceWithAuthoredCharter(
+  world: World,
+  workflowDefinitionId: string,
+  charter: Partial<WorkflowDefinitionRecord["definition"]["charter"]> = {},
+) {
+  const existing = await world.managedDefinitions.get({
+    projectPath: PROJECT_PATH,
+    workflowDefinitionId,
+  });
+  if (existing === null) throw new Error("definition missing");
+  const {
+    origin: _origin,
+    lockedRegions: _lockedRegions,
+    approvalRequired: _approvalRequired,
+    ...authored
+  } = existing.definition;
+  const merged = mergeServerOwnedRegions(existing.definition, {
+    ...authored,
+    charter: {
+      mission: AUTHORED_MISSION,
+      sourcesOfTruth: [AUTHORED_SOURCE],
+      ...charter,
+    },
+  });
+  return world.managedDefinitions.replaceLaunch({
+    workflowDefinitionId,
+    launch: {
+      name: existing.name,
+      description: existing.description,
+      definition: {
+        ...merged,
+        charter: {
+          ...merged.charter,
+          sourcesOfTruth: dedupeServerOwnedDeliveryPlanSources(
+            merged.charter.sourcesOfTruth,
+          ),
+        },
+      },
+      layout: existing.layout,
+    },
+  });
+}
+
 async function openClean(world: World) {
   const opened = await world.service.open({ spec: SPEC, actor: AGENT });
   if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+  await replaceWithAuthoredCharter(world, opened.value.workflowDefinition.id);
   const edited = await world.service.edit({
     spec: SPEC,
     expectedDraftRevision: opened.value.attempt.draftRevision,
@@ -172,6 +293,33 @@ async function openClean(world: World) {
   });
   if (!edited.ok) throw new Error(edited.refusal.unmetConditions.join(" "));
   return edited.value;
+}
+
+/**
+ * Abandon transitions durably recorded against one attempt. Counted from the
+ * audit rows rather than the attempt status because an idempotent retirement
+ * and a double-recorded one leave the SAME status behind.
+ */
+function countAbandonTransitions(db: Db, attemptId: string): number {
+  const rows = db
+    .prepare(
+      "SELECT payload_json FROM spec_events WHERE event_type = 'spec-delivery-plan-transitioned'",
+    )
+    .all() as { payload_json: string }[];
+  return rows.filter((row) => {
+    const payload: unknown = JSON.parse(row.payload_json);
+    return (
+      typeof payload === "object" &&
+      payload !== null &&
+      "attemptId" in payload &&
+      payload.attemptId === attemptId &&
+      "transition" in payload &&
+      typeof payload.transition === "object" &&
+      payload.transition !== null &&
+      "kind" in payload.transition &&
+      payload.transition.kind === "abandon"
+    );
+  }).length;
 }
 
 describe("delivery-plan service v3 lifecycle", () => {
@@ -207,6 +355,41 @@ describe("delivery-plan service v3 lifecycle", () => {
         workflowDefinitionId: opened.value.workflowDefinition.id,
       }),
     ).resolves.toMatchObject({ id: opened.value.workflowDefinition.id });
+  });
+
+  it("seeds the mission from the pinned revision's intent and no authoring source", async () => {
+    const world = createWorld(db);
+
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const definition = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: opened.value.workflowDefinition.id,
+    });
+
+    expect(definition?.definition.charter.mission).toBe(
+      renderSeededDeliveryPlanMission({ pinnedRevision: pinnedRevision() }),
+    );
+    expect(definition?.definition.charter.mission).toContain(
+      "Planners pay an accidental cost on the native SDD path.",
+    );
+    expect(definition?.definition.charter.mission).not.toContain(
+      `Author the delivery launch for ${SPEC.slug}.`,
+    );
+    // A rename rewrites the spec's slug and name, so neither may appear in the
+    // text the charter rule later reconstructs and compares against.
+    expect(definition?.definition.charter.mission).not.toContain(SPEC.name);
+    expect(definition?.definition.charter.mission).not.toContain(SPEC.slug);
+    // Only the server-owned pair survives finalization, and each exactly once:
+    // the seeded pinned-spec entry is the one finalization deduplicates.
+    expect(
+      definition?.definition.charter.sourcesOfTruth.map((source) => source.id),
+    ).toEqual([NATIVE_SDD_PINNED_SPEC_SOURCE_ID, NATIVE_SDD_CLAIMS_SOURCE_ID]);
+    expect(
+      definition?.definition.charter.sourcesOfTruth.every((source) =>
+        isServerOwnedDeliveryPlanSource(source),
+      ),
+    ).toBe(true);
   });
 
   it("opens a first managed definition that satisfies authored charter validation", async () => {
@@ -271,6 +454,321 @@ describe("delivery-plan service v3 lifecycle", () => {
     if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
     expect(opened.value.attempt.id).toBe(orphan.id);
     expect(opened.value.workflowDefinition.id).toBe(orphan.id);
+  });
+
+  it("reports the unauthored charter in status and the edit receipt, and clears it through replace", async () => {
+    const world = createWorld(db);
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const edited = await world.service.edit({
+      spec: SPEC,
+      expectedDraftRevision: opened.value.attempt.draftRevision,
+      binding: deferredBinding(),
+      actor: AGENT,
+    });
+    if (!edited.ok) throw new Error(edited.refusal.unmetConditions.join(" "));
+    const status = await world.service.read({ spec: SPEC });
+    if (!status.ok) throw new Error(status.refusal.unmetConditions.join(" "));
+
+    const charterFindings = (
+      findings: DeliveryPlanView["health"]["findings"],
+    ) =>
+      findings.filter(
+        (finding) => finding.ruleId === "launch/charter-unauthored",
+      );
+    // One projection, so the receipt and the status read the same bytes — a
+    // status reporting nothing while propose refuses is the shape this rules out.
+    expect(charterFindings(edited.value.health.findings)).toEqual(
+      charterFindings(status.value.health.findings),
+    );
+    expect(
+      charterFindings(status.value.health.findings).map(
+        (finding) => finding.elementHandle,
+      ),
+    ).toEqual(["charter.mission", "charter.sourcesOfTruth"]);
+    expect(charterFindings(status.value.health.findings)[0]?.message).toContain(
+      `cctl workflow replace ${opened.value.workflowDefinition.id}`,
+    );
+    // The count a managed replace or edit receipt reports its delta against.
+    expect(edited.value.health.blocking).toBe(
+      charterFindings(edited.value.health.findings).length,
+    );
+
+    await replaceWithAuthoredCharter(world, opened.value.workflowDefinition.id);
+    const remedied = await world.service.read({ spec: SPEC });
+    if (!remedied.ok)
+      throw new Error(remedied.refusal.unmetConditions.join(" "));
+
+    expect(charterFindings(remedied.value.health.findings)).toEqual([]);
+    expect(remedied.value.health.blocking).toBe(0);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    expect(proposed.ok).toBe(true);
+  });
+
+  /**
+   * `spec rename` rewrites the spec's slug and name. A seed reconstructed from
+   * the current name would stop matching the text open actually wrote, and the
+   * stub the gate exists to catch would sail through — so the seed is rendered
+   * from the pinned revision alone, which no rename can move.
+   */
+  it("still refuses the seeded mission after the spec is renamed", async () => {
+    const world = createWorld(db);
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const definitionId = opened.value.workflowDefinition.id;
+    const seeded = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: definitionId,
+    });
+    if (seeded === null) throw new Error("definition missing");
+
+    // The bypass this pins: an authored source with the server's own mission
+    // left untouched, read back under the spec's new name.
+    await replaceWithAuthoredCharter(world, definitionId, {
+      mission: seeded.definition.charter.mission,
+    });
+    const renamed = { ...SPEC, slug: "renamed-plan", name: "Renamed plan" };
+    const status = await world.service.read({ spec: renamed });
+    if (!status.ok) throw new Error(status.refusal.unmetConditions.join(" "));
+
+    expect(
+      status.value.health.findings
+        .filter((finding) => finding.ruleId === "launch/charter-unauthored")
+        .map((finding) => finding.elementHandle),
+    ).toEqual(["charter.mission"]);
+  });
+
+  /**
+   * `one-propose-projection`: propose refuses on what status reports, so the
+   * two cannot disagree. An unavailable pinned revision used to travel a
+   * refusal path of its own, with wording the projection never produced.
+   */
+  it("refuses propose through the projection status reads", async () => {
+    let revisionAvailable = true;
+    const world = createWorld(db, {
+      revisionSnapshot: async () =>
+        revisionAvailable ? pinnedRevision() : null,
+    });
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    await replaceWithAuthoredCharter(world, opened.value.workflowDefinition.id);
+    revisionAvailable = false;
+
+    const status = await world.service.read({ spec: SPEC });
+    if (!status.ok) throw new Error(status.refusal.unmetConditions.join(" "));
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+
+    expect(proposed.ok).toBe(false);
+    if (proposed.ok) return;
+    expect(
+      status.value.health.findings.map((finding) => finding.ruleId),
+    ).toEqual(["plan/pinned-revision-unavailable"]);
+    expect(proposed.refusal.unmetConditions).toEqual(
+      status.value.health.findings.map((finding) => finding.message),
+    );
+  });
+
+  it("returns the identical finding set through validate preflight, status, and propose", async () => {
+    const world = createWorld(db);
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const definition = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: opened.value.workflowDefinition.id,
+    });
+    if (definition === null) throw new Error("definition missing");
+    const preflightPort = createDeliveryPlanPreflightPort({
+      findOwnerships: async () => [
+        {
+          projectPath: PROJECT_PATH,
+          specId: SPEC.id,
+          specSlug: SPEC.slug,
+          attemptId: opened.value.attempt.id,
+        },
+      ],
+      findSpec: async () => SPEC,
+      deliveryPlanFor: async () => world.service,
+    });
+
+    const preflight = await preflightPort.preflight({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: definition.id,
+      launch: definition,
+    });
+    const status = await world.service.read({ spec: SPEC });
+    if (!status.ok) throw new Error(status.refusal.unmetConditions.join(" "));
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+
+    expect(preflight.ok).toBe(true);
+    if (!preflight.ok) return;
+    expect(preflight.findings).toEqual(status.value.health.findings);
+    expect(proposed.ok).toBe(false);
+    if (proposed.ok) return;
+    expect(proposed.refusal.findings).toEqual(status.value.health.findings);
+  });
+
+  it.each([
+    {
+      ownerships: [],
+      code: "definition_not_managed" as const,
+      instruction: "cctl spec plan status <slug>",
+    },
+    {
+      ownerships: [
+        {
+          projectPath: "/another-project",
+          specId: "foreign-spec",
+          specSlug: "foreign-plan",
+          attemptId: "foreign-attempt",
+        },
+      ],
+      code: "definition_project_mismatch" as const,
+      instruction: "cctl spec plan status foreign-plan",
+    },
+  ])(
+    "refuses ownership lookup with $code and its status instruction",
+    async ({ ownerships, code, instruction }) => {
+      const preflightPort = createDeliveryPlanPreflightPort({
+        findOwnerships: async () => ownerships,
+        findSpec: async () => {
+          throw new Error("ownership refusal must not read a spec");
+        },
+        deliveryPlanFor: async () => {
+          throw new Error("ownership refusal must not create a service");
+        },
+      });
+
+      const preflight = await preflightPort.preflight({
+        projectPath: PROJECT_PATH,
+        workflowDefinitionId: "managed-wf",
+        launch: makeLaunchDocument(createWorkflowDefinitionRecord().definition),
+      });
+
+      expect(preflight).toMatchObject({
+        ok: false,
+        refusal: {
+          code,
+          instruction: expect.stringContaining(instruction),
+        },
+      });
+    },
+  );
+
+  it("refuses a proposed attempt with the reopen instruction and rationale", async () => {
+    const world = createWorld(db);
+    const clean = await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const definition = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: clean.attempt.workflowDefinitionId,
+    });
+    if (definition === null) throw new Error("definition missing");
+    const preflightPort = createDeliveryPlanPreflightPort({
+      findOwnerships: async () => [
+        {
+          projectPath: PROJECT_PATH,
+          specId: SPEC.id,
+          specSlug: SPEC.slug,
+          attemptId: clean.attempt.id,
+        },
+      ],
+      findSpec: async () => SPEC,
+      deliveryPlanFor: async () => world.service,
+    });
+
+    const preflight = await preflightPort.preflight({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: definition.id,
+      launch: definition,
+    });
+
+    expect(preflight).toMatchObject({
+      ok: false,
+      refusal: {
+        code: "delivery_plan_not_draft",
+        instruction: expect.stringContaining(
+          "cctl spec plan reopen delivery-plan",
+        ),
+        rationale:
+          "the signed candidate is immutable so sign-off approves exact bytes",
+      },
+    });
+  });
+
+  /**
+   * A graph the launch boundary refuses used to hide the charter refusal
+   * entirely, so a planner fixed the graph, proposed again, and met a second
+   * refusal about a charter that had been a stub the whole time.
+   */
+  it("refuses an inadmissible launch with the charter condition and its reason", async () => {
+    let admissible = true;
+    const world = createWorld(db, {
+      admitLaunch: async ({ launch }) =>
+        admissible
+          ? {
+              ok: true,
+              launch,
+              warnings: [],
+              stableAccountabilityContextIds: [],
+              accountabilityGroupAnalysis: [],
+            }
+          : {
+              ok: false,
+              issues: [
+                {
+                  path: "definition.executionContexts",
+                  message: "A launch needs at least one execution context.",
+                },
+              ],
+            },
+    });
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    admissible = false;
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+
+    expect(proposed.ok).toBe(false);
+    if (proposed.ok) return;
+    expect(proposed.refusal.unmetConditions).toContain(
+      "definition.executionContexts: A launch needs at least one execution context.",
+    );
+    expect(
+      proposed.refusal.unmetConditions.some((condition) =>
+        condition.startsWith("charter.mission:"),
+      ),
+    ).toBe(true);
+    expect(proposed.refusal.rationale).toBe(CHARTER_UNAUTHORED_RATIONALE);
+  });
+
+  it("refuses propose with the reason the seed stub cannot be signed", async () => {
+    const world = createWorld(db);
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const edited = await world.service.edit({
+      spec: SPEC,
+      expectedDraftRevision: opened.value.attempt.draftRevision,
+      binding: deferredBinding(),
+      actor: AGENT,
+    });
+    if (!edited.ok) throw new Error(edited.refusal.unmetConditions.join(" "));
+
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+
+    expect(proposed.ok).toBe(false);
+    if (proposed.ok) return;
+    expect(proposed.refusal.code).toBe("lint_blocked");
+    expect(proposed.refusal.rationale).toBe(CHARTER_UNAUTHORED_RATIONALE);
+    // The remedy the condition names has to be reachable from the refusal that
+    // carries it; `spec plan edit` cannot clear a charter finding.
+    expect(proposed.refusal.instruction).toContain("cctl workflow replace");
+    expect(
+      proposed.refusal.unmetConditions.some((condition) =>
+        condition.startsWith("charter.mission:"),
+      ),
+    ).toBe(true);
   });
 
   it("edits only binding bytes and proposes the frozen definition identity", async () => {
@@ -399,7 +897,7 @@ describe("delivery-plan service v3 lifecycle", () => {
   it("refuses sign-off and launch when the frozen definition identity no longer matches", async () => {
     const stored = createManagedDefinitionTestService();
     let rejectExactRead = false;
-    const guarded: ManagedWorkflowDefinitionService = {
+    const guarded: TestManagedDefinitionService = {
       ...stored,
       getExact: async (input) => {
         if (rejectExactRead) {
@@ -594,6 +1092,159 @@ describe("delivery-plan service v3 lifecycle", () => {
     expect(next.ok).toBe(true);
     if (!next.ok) return;
     expect(next.value.attempt.status).toBe("draft");
+  });
+
+  it("routes a retired launched attempt to `spec plan open`, not to sign-off", async () => {
+    const world = createWorld(db);
+    await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const candidateId = proposed.value.attempt.candidateId;
+    const candidateHash = proposed.value.attempt.candidateHash;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("Proposal did not freeze a candidate");
+    }
+    const candidate = { candidateId, candidateHash };
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      ...candidate,
+      actor: HUMAN,
+      approver: "Alex",
+    });
+    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const launched = await world.service.recordLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      candidate,
+      actor: AGENT,
+    });
+    if (!launched.ok)
+      throw new Error(launched.refusal.unmetConditions.join(" "));
+    expect(launched.value.nextAct.command).toBe(
+      `cctl spec status ${SPEC.slug}`,
+    );
+
+    const abandoned = await world.service.abandonLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      reason: "The run was abandoned.",
+      actor: AGENT,
+    });
+    if (!abandoned.ok)
+      throw new Error(abandoned.refusal.unmetConditions.join(" "));
+
+    const status = await world.service.read({ spec: SPEC });
+    expect(status.ok).toBe(false);
+    if (status.ok) throw new Error("A retired attempt still reads as live");
+    expect(status.refusal.instruction).toContain(
+      `cctl spec plan open ${SPEC.slug}`,
+    );
+
+    const relaunch = await world.service.resolveLaunch({ spec: SPEC });
+    expect(relaunch.kind).toBe("refused");
+    if (relaunch.kind === "ready") throw new Error("Launch was not refused");
+    expect(relaunch.refusal.instruction).toContain(
+      `cctl spec plan open ${SPEC.slug}`,
+    );
+    expect(relaunch.refusal.unmetConditions.join(" ")).not.toContain(
+      "not signed off",
+    );
+  });
+
+  it("refuses an edit of a launched attempt without naming the spec-side row id", async () => {
+    const world = createWorld(db);
+    const opened = await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const candidateId = proposed.value.attempt.candidateId;
+    const candidateHash = proposed.value.attempt.candidateHash;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("Proposal did not freeze a candidate");
+    }
+    const candidate = { candidateId, candidateHash };
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      ...candidate,
+      actor: HUMAN,
+      approver: "Alex",
+    });
+    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const launched = await world.service.recordLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      candidate,
+      actor: AGENT,
+    });
+    if (!launched.ok)
+      throw new Error(launched.refusal.unmetConditions.join(" "));
+
+    const edited = await world.service.edit({
+      spec: SPEC,
+      expectedDraftRevision: opened.attempt.draftRevision,
+      binding: deferredBinding(),
+      actor: AGENT,
+    });
+
+    expect(edited.ok).toBe(false);
+    if (edited.ok) throw new Error("A launched attempt accepted an edit");
+    const refusal = [
+      ...edited.refusal.unmetConditions,
+      edited.refusal.instruction,
+    ].join(" ");
+    // The storage-layer remedy used to interpolate `launched_execution_id`,
+    // the internal spec execution row id, producing a `--execution` command
+    // the resolver now refuses outright (design 3.5, D-B).
+    expect(refusal).not.toContain(LAUNCHED_EXECUTION_ID);
+    expect(refusal).toContain("cctl spec capture <slug> --file <task.json>");
+  });
+
+  it("retires a launched attempt idempotently, recording one abandon transition", async () => {
+    const world = createWorld(db);
+    await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    if (!proposed.ok)
+      throw new Error(proposed.refusal.unmetConditions.join(" "));
+    const candidateId = proposed.value.attempt.candidateId;
+    const candidateHash = proposed.value.attempt.candidateHash;
+    if (candidateId === null || candidateHash === null) {
+      throw new Error("Proposal did not freeze a candidate");
+    }
+    const candidate = { candidateId, candidateHash };
+    const signed = await world.service.signOff({
+      spec: SPEC,
+      ...candidate,
+      actor: HUMAN,
+      approver: "Alex",
+    });
+    if (!signed.ok) throw new Error(signed.refusal.unmetConditions.join(" "));
+    const launched = await world.service.recordLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      candidate,
+      actor: AGENT,
+    });
+    if (!launched.ok)
+      throw new Error(launched.refusal.unmetConditions.join(" "));
+    const attemptId = launched.value.attempt.id;
+
+    const first = await world.service.abandonLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      reason: "The run was abandoned.",
+      actor: AGENT,
+    });
+    if (!first.ok) throw new Error(first.refusal.unmetConditions.join(" "));
+    const second = await world.service.abandonLaunch({
+      spec: SPEC,
+      executionId: LAUNCHED_EXECUTION_ID,
+      reason: "The run was abandoned.",
+      actor: AGENT,
+    });
+
+    expect(second).toEqual({ ok: true, value: { attemptId } });
+    expect(countAbandonTransitions(db, attemptId)).toBe(1);
   });
 
   it("serializes every frozen-definition lifecycle transition", async () => {

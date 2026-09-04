@@ -275,7 +275,8 @@ function authoredSelectedEntries(
  * script gate, both agent-validation role selectors, the (workflow-only)
  * lane-merge selection, and each context's overrides. Field paths are
  * definition-relative (`workflowConfig.…` / `executionContexts.<index>.…`) so
- * the plan-validation issue mapper renders `definition.…` locators verbatim.
+ * the plan-validation issue mapper roots them at `definition.…` and annotates
+ * each indexed segment with the record's id.
  */
 export function collectUnknownValidationCommandIssues(
   definition: Pick<

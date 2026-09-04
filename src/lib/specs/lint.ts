@@ -24,6 +24,12 @@ export interface LintFinding {
   severity: LintSeverity;
   elementHandle: string;
   message: string;
+  /**
+   * One server-authored sentence saying what the rule protects, for the
+   * findings whose friction is the design rather than a defect. The refusal
+   * that carries the finding renders it as its `why:` line.
+   */
+  rationale?: string;
 }
 
 export interface RevisionElement extends ReferenceSourceElement {

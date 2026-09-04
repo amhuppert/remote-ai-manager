@@ -620,3 +620,31 @@ describe("workflow outline", () => {
     }
   });
 });
+
+describe("outline size lines name their selector (#80 I-18)", () => {
+  const text = renderOutline(parseOutlineRecord(RECORD)!);
+  const lineFor = (needle: string) =>
+    text.split("\n").find((line) => line.includes(needle)) ?? "";
+
+  it("ends the charter size line with the selector that reads it", () => {
+    expect(lineFor("charter: mission")).toMatch(/-> --charter$/);
+  });
+
+  it("names --context <id> on every context size line", () => {
+    expect(lineFor('"Plan the approach"')).toMatch(/-> --context plan$/);
+    expect(lineFor('"Implement"')).toMatch(/-> --context impl$/);
+  });
+
+  it("names --task <id> on every task size line", () => {
+    expect(lineFor("(612 chars)")).toMatch(/-> --task plan-survey$/);
+    expect(lineFor("(1.4k chars)")).toMatch(/-> --task impl-tokens$/);
+  });
+
+  it("names --config on the config overrides line", () => {
+    expect(lineFor("config overrides:")).toMatch(/-> --config$/);
+  });
+
+  it("keeps the selector hints free of rationale", () => {
+    expect(text).not.toContain("why:");
+  });
+});

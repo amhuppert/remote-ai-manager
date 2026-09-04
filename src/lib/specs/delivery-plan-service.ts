@@ -10,6 +10,10 @@ import type {
   AuthoredWorkflowModelSelectionAdmissionResult,
 } from "@/lib/workflow-graph/authored-launch-admission";
 import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/spec-bridge";
+import type {
+  ManagedDefinitionPreflightResult,
+  ManagedDefinitionPreflightSummary,
+} from "@/lib/workflow-graph/managed-definition-preflight";
 import {
   type WorkflowDefinitionDraft,
   type WorkflowDefinitionMutation,
@@ -47,11 +51,20 @@ import {
 } from "./delivery-plan-hash";
 import type { SpecEventsPublisher } from "./events";
 import { dialRequiresHumanApproval, resolveDial } from "./policy";
+import {
+  renderSeededDeliveryPlanMission,
+  seededDeliveryPlanCharterSources,
+} from "./delivery-plan-charter-seed";
 import { HUMAN_ACT_REQUIRED_RATIONALE } from "./refusal-rationale";
 import type { SpecPolicyAdmissionNotifier } from "./policy-admissions";
 import type { DeliveryPlanDocumentDiff } from "./delivery-plan-diff";
 import {
+  deliveryPlanRefusalRationale,
   projectDeliveryPlanDraftHealth,
+  LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+  LAUNCH_NOT_ADMISSIBLE_RULE_ID,
+  PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID,
+  PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID,
   type DeliveryPlanDraftHealth,
 } from "./delivery-plan-health";
 import {
@@ -124,6 +137,13 @@ export interface DeliveryPlanServiceDeps {
    * contradicting — the execution that owns that fact.
    */
   launchedExecutionState(executionId: string): SpecExecutionState | null;
+  /**
+   * The workflow execution id a launched spec execution is bound to, or null
+   * when it has none. Read rather than mirrored onto the attempt row because
+   * the execution owns the link, and a refusal that named a stale mirror would
+   * hand the reader an id no verb accepts.
+   */
+  launchedWorkflowExecutionId(executionId: string): string | null;
   admitLaunch(input: {
     spec: Spec;
     launch: WorkflowDefinitionMutation;
@@ -239,6 +259,12 @@ export interface DeliveryPlanService {
     input: ReopenDeliveryPlanServiceInput,
   ): Promise<PlanResult<DeliveryPlanMutationView>>;
   read(input: { spec: Spec }): Promise<PlanResult<DeliveryPlanView>>;
+  preflight(input: {
+    spec: Spec;
+    attemptId: string;
+    workflowDefinitionId: string;
+    launch: WorkflowDefinitionMutation;
+  }): Promise<ManagedDefinitionPreflightResult>;
   review(input: { spec: Spec }): Promise<PlanResult<DeliveryPlanReviewView>>;
   comment(
     input: CommentOnDeliveryPlanInput,
@@ -408,6 +434,7 @@ export function createDeliveryPlanService(
     attempt: SpecDeliveryPlanAttemptRow,
     spec: Spec,
     document: DeliveryPlanDocument,
+    submittedLaunch?: WorkflowDefinitionMutation,
   ): Promise<DeliveryPlanDraftHealth> {
     if (attempt.status !== "draft") {
       return { findings: [], unresolved: [], refusalConditions: [] };
@@ -420,7 +447,7 @@ export function createDeliveryPlanService(
       return {
         findings: [
           {
-            ruleId: "plan/pinned-revision-unavailable",
+            ruleId: PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID,
             severity: "blocks_propose",
             elementHandle: attempt.pinned_revision_id,
             message,
@@ -436,7 +463,7 @@ export function createDeliveryPlanService(
       return {
         findings: [
           {
-            ruleId: "plan/workflow-definition-unavailable",
+            ruleId: PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID,
             severity: "blocks_propose",
             elementHandle: attempt.id,
             message,
@@ -446,16 +473,79 @@ export function createDeliveryPlanService(
         refusalConditions: [message],
       };
     }
+    const launch = submittedLaunch ?? definition;
     return projectDeliveryPlanDraftHealth({
       pinnedRevision,
       binding: document.binding,
+      draftCharter: launch.definition.charter,
+      workflowDefinitionId: definition.id,
       admission: await deps.admitLaunch({
         spec,
-        launch: definition,
+        launch,
         accountabilityGroups: deliveryPlanBindingAccountabilityGroups(
           document.binding,
         ),
       }),
+    });
+  }
+
+  /**
+   * The refusal a blocking projection produces. Each class keeps the code its
+   * caller already handles — an unreadable draft is still `not_found`, a launch
+   * the graph boundary refuses is still an admission refusal — but every
+   * condition is the projection's own text, so `spec plan status` and this
+   * refusal can never word the same finding differently.
+   */
+  function proposeRefusal(
+    spec: Spec,
+    attempt: SpecDeliveryPlanAttemptRow,
+    health: DeliveryPlanDraftHealth,
+  ): PlanResult<never> | null {
+    if (health.refusalConditions.length === 0) return null;
+    const ruleIds = new Set(health.findings.map((finding) => finding.ruleId));
+    const unmetConditions = [...health.refusalConditions];
+    // The why: line belongs to the finding, not to the class of refusal that
+    // happens to carry it: a charter stub reported beside an inadmissible graph
+    // states its reason exactly as it does when it is the only condition.
+    const rationale = deliveryPlanRefusalRationale(health);
+    const reasoned = (refusal: Refusal): PlanResult<never> => ({
+      ok: false,
+      refusal: {
+        ...refusal,
+        findings: [...health.findings],
+        ...(rationale === undefined ? {} : { rationale }),
+      },
+    });
+
+    if (ruleIds.has(PLAN_PINNED_REVISION_UNAVAILABLE_RULE_ID)) {
+      return reasoned({
+        code: "not_found",
+        unmetConditions,
+        instruction: `Open a fresh attempt for ${spec.slug}.`,
+      });
+    }
+    if (ruleIds.has(PLAN_WORKFLOW_DEFINITION_UNAVAILABLE_RULE_ID)) {
+      // The code and instruction the caller already handles, over the
+      // projection's own condition: the refusal names the definition status
+      // reported, not a second sentence about the same absence.
+      return reasoned({ ...invalidCandidate(spec.slug), unmetConditions });
+    }
+    if (ruleIds.has(LAUNCH_NOT_ADMISSIBLE_RULE_ID)) {
+      return reasoned(admissionRefusal(spec.slug, unmetConditions));
+    }
+    logger.info("specs.delivery-plan.binding_lint_refused", {
+      specId: spec.id,
+      attemptId: attempt.id,
+      candidateId: attempt.workflow_definition_id,
+      issueCount: health.refusalConditions.length,
+    });
+    return reasoned({
+      code: "lint_blocked",
+      unmetConditions,
+      // The conditions come from two documents now, so the instruction names
+      // both surfaces: an agent told only about the binding cannot clear a
+      // charter finding at all.
+      instruction: `Correct each condition above — the binding in \`cctl spec plan edit ${spec.slug} --file <plan.json>\`, the charter through the \`cctl workflow replace\` its condition names — then propose again.`,
     });
   }
 
@@ -609,6 +699,93 @@ export function createDeliveryPlanService(
   }
 
   return {
+    async preflight(input) {
+      const attempt = deps.plans.findAttemptById(input.attemptId);
+      if (
+        attempt === null ||
+        attempt.spec_id !== input.spec.id ||
+        attempt.workflow_definition_id !== input.workflowDefinitionId
+      ) {
+        return {
+          ok: false,
+          refusal: {
+            code: "definition_not_managed",
+            message: `Workflow definition ${input.workflowDefinitionId} is not the current managed definition for ${input.spec.slug}.`,
+            instruction: `Run \`cctl spec plan status ${input.spec.slug}\` and use the workflow definition id it names.`,
+          },
+        };
+      }
+      if (attempt.status !== "draft") {
+        const reopenable = ["proposed", "approved", "parked"].includes(
+          attempt.status,
+        );
+        return {
+          ok: false,
+          refusal: {
+            code: "delivery_plan_not_draft",
+            message: `Delivery plan ${input.spec.slug} is ${attempt.status}, not draft.`,
+            instruction: reopenable
+              ? `Run \`cctl spec plan reopen ${input.spec.slug} --reason <why>\` before validating replacement bytes.`
+              : `Run \`cctl spec plan status ${input.spec.slug}\` to read the attempt's available next act.`,
+            ...(attempt.status === "abandoned"
+              ? {}
+              : {
+                  rationale:
+                    "the signed candidate is immutable so sign-off approves exact bytes",
+                }),
+          },
+        };
+      }
+
+      const document = deliveryPlanDocumentSchema.parse(
+        JSON.parse(attempt.content_json),
+      );
+      const health = await healthOf(
+        attempt,
+        input.spec,
+        document,
+        input.launch,
+      );
+      const selectedIds = new Set(
+        document.binding.dispositions.flatMap((disposition) =>
+          disposition.disposition === "in_scope"
+            ? [disposition.criterionElementId]
+            : [],
+        ),
+      );
+      const claimedIds = new Set(
+        document.binding.claims.flatMap((claim) =>
+          claim.criterionElementIds.filter((criterionElementId) =>
+            selectedIds.has(criterionElementId),
+          ),
+        ),
+      );
+      const summary: ManagedDefinitionPreflightSummary = {
+        selected: selectedIds.size,
+        claimed: claimedIds.size,
+        unclaimed: selectedIds.size - claimedIds.size,
+        dispositions: dispositionCounts(document.binding).map(
+          ({ disposition, count }) => ({ kind: disposition, count }),
+        ),
+        charter: {
+          state: health.findings.some(
+            (finding) => finding.ruleId === LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
+          )
+            ? "seed_stub"
+            : "authored",
+          invariantCount:
+            input.launch.definition.charter.invariants?.length ?? 0,
+          sourceCount: input.launch.definition.charter.sourcesOfTruth.length,
+        },
+      };
+      return {
+        ok: true,
+        specSlug: input.spec.slug,
+        findings: [...health.findings],
+        summary,
+      };
+    },
+
     async open(input) {
       return deps.managedDefinitions.runExclusive(
         `native-sdd-open:${input.spec.id}`,
@@ -801,21 +978,12 @@ export function createDeliveryPlanService(
           const document = deliveryPlanDocumentSchema.parse(
             JSON.parse(attempt.content_json),
           );
-          const pinnedRevision = await deps.revisionSnapshot(
-            attempt.pinned_revision_id,
-          );
-          if (pinnedRevision === null) {
-            return {
-              ok: false,
-              refusal: {
-                code: "not_found",
-                unmetConditions: [
-                  `Pinned revision ${attempt.pinned_revision_id} is unavailable.`,
-                ],
-                instruction: `Open a fresh attempt for ${input.spec.slug}.`,
-              },
-            };
-          }
+          // The refusal and `plan status` read the same projection through the
+          // same entry, so a draft that reads proposable cannot refuse here and
+          // a refusal always shows up on the next status.
+          const health = await healthOf(attempt, input.spec, document);
+          const blocked = proposeRefusal(input.spec, attempt, health);
+          if (blocked) return blocked;
           const definition = await workingDefinition(attempt, input.spec);
           if (definition === null) {
             return {
@@ -824,40 +992,6 @@ export function createDeliveryPlanService(
                 input.spec.slug,
                 "The managed workflow definition is missing.",
               ),
-            };
-          }
-          const admitted = await deps.admitLaunch({
-            spec: input.spec,
-            launch: definition,
-            accountabilityGroups: deliveryPlanBindingAccountabilityGroups(
-              document.binding,
-            ),
-          });
-          // The refusal and `plan status` read the same projection, so a draft that
-          // reads proposable cannot refuse here and a refusal always shows up on
-          // the next status.
-          const health = projectDeliveryPlanDraftHealth({
-            pinnedRevision,
-            binding: document.binding,
-            admission: admitted,
-          });
-          if (!admitted.ok) {
-            return admissionRefusal(input.spec.slug, health.refusalConditions);
-          }
-          if (health.refusalConditions.length > 0) {
-            logger.info("specs.delivery-plan.binding_lint_refused", {
-              specId: input.spec.id,
-              attemptId: attempt.id,
-              candidateId: definition.id,
-              issueCount: health.refusalConditions.length,
-            });
-            return {
-              ok: false,
-              refusal: {
-                code: "lint_blocked",
-                unmetConditions: [...health.refusalConditions],
-                instruction: `Correct the immutable binding in \`cctl spec plan edit ${input.spec.slug} --file <plan.json>\`, then propose again.`,
-              },
             };
           }
           try {
@@ -1472,16 +1606,20 @@ export function createDeliveryPlanService(
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
       if (attempt.status === "launched") {
+        const workflowExecutionId =
+          attempt.launched_execution_id === null
+            ? null
+            : deps.launchedWorkflowExecutionId(attempt.launched_execution_id);
         return {
           ok: false,
           refusal: {
             code: "plan_status_conflict",
             unmetConditions: [
-              `Attempt ${attempt.id} launched execution ${attempt.launched_execution_id}; a launched attempt is retired through its run, not from prelaunch.`,
+              `Attempt ${attempt.id} launched execution ${workflowExecutionId ?? "unknown"}; a launched attempt is retired through its run, not from prelaunch.`,
             ],
             instruction: postLaunchPathsSentence({
               slug: input.spec.slug,
-              executionId: attempt.launched_execution_id ?? "unknown",
+              workflowExecutionId: workflowExecutionId ?? "unknown",
             }),
           },
         };
@@ -1523,9 +1661,26 @@ export function createDeliveryPlanService(
       );
     },
 
+    /**
+     * Retiring the attempt an execution launched is idempotent, and it looks
+     * the attempt up by the execution it owns rather than by "whatever is live
+     * now": the abandon coordinator can be re-entered after a faulted phase,
+     * and by then a replacement attempt may already be open. A second call
+     * therefore reports the retirement that already happened instead of
+     * recording a second `abandon` transition against the same run.
+     */
     async abandonLaunch(input) {
-      const attempt = liveAttempt(input.spec.id);
+      const attempt =
+        deps.plans
+          .findAttemptsBySpecId(input.spec.id)
+          .find(
+            (candidate) =>
+              candidate.launched_execution_id === input.executionId,
+          ) ?? null;
       if (attempt === null) return noAttempt(input.spec.slug);
+      if (attempt.status === "abandoned") {
+        return { ok: true, value: { attemptId: attempt.id } };
+      }
       if (attempt.workflow_definition_id === null) {
         return {
           ok: false,
@@ -1535,16 +1690,16 @@ export function createDeliveryPlanService(
           ),
         };
       }
-      if (
-        attempt.status !== "launched" ||
-        attempt.launched_execution_id !== input.executionId
-      ) {
+      if (attempt.status !== "launched") {
         return {
           ok: false,
           refusal: {
             code: "plan_status_conflict",
             unmetConditions: [
-              `Attempt ${attempt.id} does not own launched execution ${input.executionId}.`,
+              // Named by status rather than by `input.executionId`: that is
+              // the internal spec execution row id, which no agent surface
+              // states (design 3.5, D-B).
+              `Attempt ${attempt.id} is ${attempt.status}, so it owns no launched run to retire.`,
             ],
             instruction: `Read the active attempt with \`cctl spec plan status ${input.spec.slug}\`.`,
           },
@@ -1881,18 +2036,8 @@ function initialDocumentForOpen(
         schemaVersion: 1,
         workflowConfig: {},
         charter: {
-          mission: `Author the delivery launch for ${spec.slug}.`,
-          sourcesOfTruth: [
-            {
-              rank: 1,
-              id: "delivery-plan-authoring",
-              label: "Delivery plan authoring",
-              type: "document",
-              locator: ".cc/graph-workflow-docs/delivery-plan-authoring.md",
-              description:
-                "The authored launch envelope is completed before proposal.",
-            },
-          ],
+          mission: renderSeededDeliveryPlanMission({ pinnedRevision }),
+          sourcesOfTruth: seededDeliveryPlanCharterSources(spec.slug),
         },
         executionContexts: [],
         tasks: [],
@@ -2166,14 +2311,11 @@ function humanReaffirmation(slug: string): PlanResult<never> {
 function admissionRefusal(
   slug: string,
   conditions: readonly string[],
-): PlanResult<never> {
+): Refusal {
   return {
-    ok: false,
-    refusal: {
-      code: "validation",
-      unmetConditions: [...conditions],
-      instruction: `Correct the graph launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
-    },
+    code: "validation",
+    unmetConditions: [...conditions],
+    instruction: `Correct the graph launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
   };
 }
 function seededOpenAdmissionRefusal(

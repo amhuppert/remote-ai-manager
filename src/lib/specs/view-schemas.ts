@@ -344,6 +344,7 @@ export const lintFindingSchema = z
     severity: z.enum(["blocks_propose", "blocks_signoff", "advisory"]),
     elementHandle: z.string(),
     message: z.string(),
+    rationale: z.string().min(1).optional(),
   })
   .strict();
 

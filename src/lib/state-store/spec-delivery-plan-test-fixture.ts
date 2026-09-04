@@ -42,7 +42,26 @@ export const PRIOR_REVISION_ID = "revision-delivery-plan-prior";
 export const EARLIER_EXECUTION_ID = "execution-delivery-plan-earlier";
 export const LAUNCHED_EXECUTION_ID = "execution-delivery-plan-launched";
 
-export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionService {
+/**
+ * The managed-definition service a delivery-plan test drives, plus the one
+ * write the service itself does not own: `workflow replace`, which reaches the
+ * stored record through the ordinary definition store rather than through any
+ * spec surface. A test that has to prove a charter remedy needs both halves
+ * against one set of records.
+ */
+export type TestManagedDefinitionService = ManagedWorkflowDefinitionService & {
+  /**
+   * The bytes `cctl workflow replace` stores: the submitted launch verbatim at
+   * the next revision. No finalization runs — the route merges the
+   * server-owned regions from the stored record and writes what it merged.
+   */
+  replaceLaunch(input: {
+    workflowDefinitionId: string;
+    launch: WorkflowDefinitionDraft;
+  }): WorkflowDefinitionRecord;
+};
+
+export function createManagedDefinitionTestService(): TestManagedDefinitionService {
   const records = new Map<string, WorkflowDefinitionRecord>();
   const save = (input: {
     specId: string;
@@ -135,6 +154,17 @@ export function createManagedDefinitionTestService(): ManagedWorkflowDefinitionS
       ) {
         throw new Error("definition identity mismatch");
       }
+      return record;
+    },
+    replaceLaunch: (input) => {
+      const existing = records.get(input.workflowDefinitionId);
+      if (!existing) throw new Error("definition missing");
+      const record: WorkflowDefinitionRecord = {
+        ...existing,
+        ...input.launch,
+        revision: existing.revision + 1,
+      };
+      records.set(record.id, record);
       return record;
     },
   };

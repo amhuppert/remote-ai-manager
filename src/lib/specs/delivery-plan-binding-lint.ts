@@ -4,19 +4,28 @@ import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/s
 import type { DeliveryPlanBinding } from "./delivery-plan";
 import type { SpecRevisionSnapshot } from "./schemas";
 
+/**
+ * Every code this lint can emit, as a value rather than a union alone: the
+ * published taxonomy derives its rows from this list, so a code that cannot be
+ * added without appearing here cannot be emitted unpublished.
+ */
+export const DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES = [
+  "binding/disposition-missing",
+  "binding/disposition-duplicate",
+  "binding/disposition-criterion-unknown",
+  "binding/selected-criterion-unclaimed",
+  "binding/selected-criterion-not-must-run",
+  "binding/claim-context-duplicate",
+  "binding/claim-context-unstable",
+  "binding/claim-criterion-duplicate",
+  "binding/claim-criterion-unknown",
+  "binding/claim-criterion-unselected",
+  "binding/pending-reaffirmation",
+  "binding/reaffirmed-without-delivery",
+] as const;
+
 export type DeliveryPlanBindingLintIssueCode =
-  | "binding/disposition-missing"
-  | "binding/disposition-duplicate"
-  | "binding/disposition-criterion-unknown"
-  | "binding/selected-criterion-unclaimed"
-  | "binding/selected-criterion-not-must-run"
-  | "binding/claim-context-duplicate"
-  | "binding/claim-context-unstable"
-  | "binding/claim-criterion-duplicate"
-  | "binding/claim-criterion-unknown"
-  | "binding/claim-criterion-unselected"
-  | "binding/pending-reaffirmation"
-  | "binding/reaffirmed-without-delivery";
+  (typeof DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES)[number];
 
 export interface DeliveryPlanBindingLintIssue {
   readonly code: DeliveryPlanBindingLintIssueCode;

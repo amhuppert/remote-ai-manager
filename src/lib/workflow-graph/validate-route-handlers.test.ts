@@ -23,6 +23,7 @@ import {
 } from "@/lib/shared/testing/capturing-logger";
 import { createAssignmentReferenceChecker } from "./assignment-references";
 import { SEEDED_WORKFLOW_DEFAULTS } from "./resolve-config";
+import type { ManagedDefinitionPreflightPort } from "./managed-definition-preflight";
 import { createGraphWorkflowValidateHandlers } from "./validate-route-handlers";
 
 const execFileAsync = promisify(execFile);
@@ -140,6 +141,8 @@ describe("graph-workflow validate route handler", () => {
   const readRepoConfig =
     vi.fn<(_projectPath: string) => Promise<PerRepoConfig | null>>();
   const readConfig = vi.fn<() => Promise<GlobalConfig>>();
+  const preflightManagedDefinition =
+    vi.fn<ManagedDefinitionPreflightPort["preflight"]>();
 
   let profileDir: string;
   let handlers: ReturnType<typeof createGraphWorkflowValidateHandlers>;
@@ -159,6 +162,22 @@ describe("graph-workflow validate route handler", () => {
         validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
       }),
     );
+    preflightManagedDefinition.mockResolvedValue({
+      ok: true,
+      specSlug: "delivery-plan",
+      findings: [],
+      summary: {
+        selected: 0,
+        claimed: 0,
+        unclaimed: 0,
+        dispositions: [],
+        charter: {
+          state: "authored",
+          invariantCount: 0,
+          sourceCount: 1,
+        },
+      },
+    });
     routeLog = createCapturingLogger();
 
     profileDir = await mkdtemp(path.join(tmpdir(), "cc-validate-profiles-"));
@@ -176,6 +195,9 @@ describe("graph-workflow validate route handler", () => {
           }),
         }),
       }),
+      managedDefinitionPreflight: {
+        preflight: preflightManagedDefinition,
+      },
     });
   });
 
@@ -225,7 +247,7 @@ describe("graph-workflow validate route handler", () => {
       issues: { path: string; message: string }[];
     };
     expect(body.issues.map((issue) => issue.path)).toContain(
-      "definition.executionContexts.0.contextValidator.assignments.0.profile",
+      "definition.executionContexts.0 (context-plan).contextValidator.assignments.0 (security).profile",
     );
     expect(body.issues[0]?.message).toContain("global:never-created");
     expect(body.issues[0]?.message).toContain("security");
@@ -302,6 +324,153 @@ describe("graph-workflow validate route handler", () => {
     expect(body).not.toHaveProperty("issues");
   });
 
+  it("runs the managed definition preflight against the admitted submitted plan", async () => {
+    preflightManagedDefinition.mockResolvedValue({
+      ok: true,
+      specSlug: "delivery-plan",
+      findings: [
+        {
+          ruleId: "binding/selected-criterion-unclaimed",
+          severity: "blocks_propose",
+          elementHandle: "R1.1",
+          message: "Selected criterion R1.1 has no accountability claim.",
+        },
+        {
+          ruleId: "launch/advisory",
+          severity: "advisory",
+          elementHandle: "context-verify",
+          message: "The verification context carries broad prose.",
+          recordId: "context-verify",
+        },
+      ],
+      summary: {
+        selected: 2,
+        claimed: 1,
+        unclaimed: 1,
+        dispositions: [{ kind: "in_scope", count: 2 }],
+        charter: {
+          state: "authored",
+          invariantCount: 1,
+          sourceCount: 2,
+        },
+      },
+    });
+    const plan = makePlan();
+
+    const response = await handlers.POST(
+      makeRequest(plan, "good-token", "?definition=managed-wf"),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(preflightManagedDefinition).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      workflowDefinitionId: "managed-wf",
+      launch: expect.objectContaining({ name: plan.name }),
+    });
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      preflight: {
+        specSlug: "delivery-plan",
+        findings: [
+          expect.objectContaining({
+            ruleId: "binding/selected-criterion-unclaimed",
+            severity: "blocks_propose",
+            elementHandle: "R1.1",
+          }),
+          expect.objectContaining({
+            ruleId: "launch/advisory",
+            severity: "advisory",
+            recordId: "context-verify",
+          }),
+        ],
+        summary: expect.objectContaining({
+          selected: 2,
+          claimed: 1,
+          unclaimed: 1,
+        }),
+      },
+    });
+  });
+
+  it("keeps structural record ids and paths ahead of the managed preflight", async () => {
+    const base = createWorkflowDefinition();
+    const firstTask = base.tasks[0];
+    if (firstTask === undefined) throw new Error("fixture has no task");
+    const definition = {
+      ...base,
+      tasks: base.tasks.map((task, index) =>
+        index === 0 ? { ...task, contextId: "missing-context" } : task,
+      ),
+    };
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(definition), "good-token", "?definition=managed-wf"),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      issues: expect.arrayContaining([
+        {
+          path: `definition.tasks.0 (${firstTask.id}).contextId`,
+          message: expect.stringContaining("missing-context"),
+          recordId: firstTask.id,
+        },
+      ]),
+    });
+    expect(preflightManagedDefinition).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "an unmanaged definition",
+      refusal: {
+        code: "definition_not_managed" as const,
+        message:
+          "Workflow definition ordinary-wf is not managed by a spec delivery plan.",
+        instruction:
+          "Read the managed draft with `cctl spec plan status <slug>` and use the workflow definition id it names.",
+      },
+      instruction: "cctl spec plan status <slug>",
+    },
+    {
+      label: "another project's definition",
+      refusal: {
+        code: "definition_project_mismatch" as const,
+        message: "Workflow definition foreign-wf belongs to another project.",
+        instruction:
+          "Switch to that project and run `cctl spec plan status delivery-plan`.",
+      },
+      instruction: "cctl spec plan status delivery-plan",
+    },
+    {
+      label: "a non-draft attempt",
+      refusal: {
+        code: "delivery_plan_not_draft" as const,
+        message: "Delivery plan delivery-plan is proposed, not draft.",
+        instruction:
+          "Run `cctl spec plan reopen delivery-plan --reason <why>` before validating replacement bytes.",
+        rationale:
+          "the signed candidate is immutable so sign-off approves exact bytes",
+      },
+      instruction: "cctl spec plan reopen delivery-plan",
+    },
+  ])("returns a typed refusal for $label", async ({ refusal, instruction }) => {
+    preflightManagedDefinition.mockResolvedValue({ ok: false, refusal });
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(), "good-token", "?definition=managed-wf"),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: refusal.code,
+      instruction: expect.stringContaining(instruction),
+    });
+  });
+
   it("returns the guard enum-coverage warnings alongside ok (R3.2)", async () => {
     const base = createWorkflowDefinition();
     const definition = {
@@ -347,7 +516,8 @@ describe("graph-workflow validate route handler", () => {
       ok: true,
       warnings: expect.arrayContaining([
         {
-          path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+          path: "definition.executionContexts[0] (context-plan).outputSchema.properties.verdict.enum",
+          recordId: "context-plan",
           message: expect.stringContaining('"hold"'),
         },
       ]),
@@ -381,8 +551,9 @@ describe("graph-workflow validate route handler", () => {
       ok: true,
       warnings: expect.arrayContaining([
         {
-          path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+          path: "definition.executionContexts.0 (context-plan).acceptanceCriteria.0 (ac-sweep).statement",
           message: expect.stringContaining("lint/open-quantifier"),
+          recordId: "ac-sweep",
         },
       ]),
     });
@@ -463,7 +634,8 @@ describe("graph-workflow validate route handler", () => {
           warnings?: { path: string; message: string }[];
         };
         expect(body.warnings).toContainEqual({
-          path: "definition.charter.sourcesOfTruth.0.locator",
+          path: "definition.charter.sourcesOfTruth.0 (canonical-only).locator",
+          recordId: "canonical-only",
           message: expect.stringMatching(
             new RegExp(
               `^lint/source-locator-unresolvable: .*branch "${sessionBranch}" at commit ${sessionRepo.sha}`,
@@ -540,9 +712,9 @@ describe("graph-workflow validate route handler", () => {
         )
         .map((warning) => warning.path);
       expect(sourceWarningPaths).toEqual([
-        "definition.charter.sourcesOfTruth.0.locator",
-        "definition.charter.sourcesOfTruth.1.locator",
-        "definition.charter.sourcesOfTruth.2.locator",
+        "definition.charter.sourcesOfTruth.0 (first).locator",
+        "definition.charter.sourcesOfTruth.1 (invalid-shape).locator",
+        "definition.charter.sourcesOfTruth.2 (last).locator",
       ]);
       expect(
         body.warnings.findIndex((warning) =>
@@ -793,7 +965,7 @@ describe("graph-workflow validate route handler", () => {
         issues: { path: string; message: string }[];
       };
       expect(body.issues.map((issue) => issue.path)).toContain(
-        "definition.executionContexts.0.contextValidator.assignments.0.profile",
+        "definition.executionContexts.0 (context-plan).contextValidator.assignments.0 (repo).profile",
       );
       expect(body.issues[0]?.message).toMatch(/project-tier/i);
       expect(body.issues[0]?.message).toContain("project:repo-reviewer");

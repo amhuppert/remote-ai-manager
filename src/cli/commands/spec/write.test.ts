@@ -1205,12 +1205,12 @@ function makeHost(
             execution_start_dial: "gate",
             workflow_definition_id: "workflow-1",
             workflow_definition_revision: 1,
-            workflow_execution_id: null,
+            workflow_execution_id: "workflow-execution-1",
             session_name: "feature-session",
             delivered_at: null,
             abandoned_reason: "Superseded",
             cleanup_phase: null,
-            linked_workflow_execution_id: null,
+            linked_workflow_execution_id: "workflow-execution-1",
             cleanup_last_error: null,
             cleanup_last_error_at: null,
             created_at: CREATED_AT,
@@ -1226,6 +1226,7 @@ function makeHost(
             discovery: {
               id: "discovery-1",
               executionId: "execution-1",
+              workflowExecutionId: "workflow-execution-1",
               attemptId: "attempt-1",
               title: "Handle the discovered migration",
             },
@@ -1233,6 +1234,7 @@ function makeHost(
             replacement: blocking
               ? {
                   abandonedExecutionId: "execution-1",
+                  abandonedWorkflowExecutionId: "workflow-execution-1",
                   replacementAttemptId: "attempt-2",
                 }
               : null,
@@ -3068,24 +3070,52 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("names the execution an abandon retired", async () => {
+  it("names the workflow execution an abandon retired and the attempt exit", async () => {
+    const host = makeHost();
     const result = await runCli(
       [
         "spec",
         "abandon",
         "native-sdd",
         "--execution",
-        "execution-1",
+        "workflow-execution-1",
         "--reason",
         "Superseded",
       ],
       baseEnv,
-      makeHost(),
+      host,
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("abandoned execution execution-1");
+    // The flag is forwarded verbatim: the id an agent holds is the workflow
+    // execution id, and the server resolves it through the binding.
+    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
+      executionId: "workflow-execution-1",
+      reason: "Superseded",
+    });
+    expect(result.stdout).toContain("abandoned execution workflow-execution-1");
+    expect(result.stdout).not.toContain("execution-1,");
     expect(result.stdout).toContain("acts next: agent");
+    // I-13: the working exit off an abandoned run is a fresh attempt.
+    expect(result.stdout).toContain("next: cctl spec plan open native-sdd");
+
+    const structured = await runCli(
+      [
+        "spec",
+        "abandon",
+        "native-sdd",
+        "--execution",
+        "workflow-execution-1",
+        "--reason",
+        "Superseded",
+        "--json",
+      ],
+      baseEnv,
+      makeHost(),
+    );
+    expect(JSON.parse(structured.stdout).tokens).toEqual({
+      execution: "workflow-execution-1",
+    });
   });
 
   it("offers the open-question path when whole-spec abandon is refused as human-only", async () => {
@@ -3196,14 +3226,19 @@ describe("cctl spec write verbs", () => {
       discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
       blockingReason: "Discovered work blocks the run",
     });
-    expect(result.stdout).toContain("abandoned execution execution-1");
+    expect(result.stdout).toContain("abandoned execution workflow-execution-1");
     expect(result.stdout).toContain("replacement attempt attempt-2");
     expect(result.stdout).toContain("This took the second post-launch path");
     expect(result.stdout).toContain("The other path");
     expect(result.stdout).toContain("is no longer available for it");
+    // The instruction used to name `replacement.abandonedExecutionId`, the
+    // internal spec execution row id, which no verb accepts. Boundary-matched
+    // because `execution-1` is also the tail of the workflow execution id this
+    // receipt is required to print.
+    expect(result.stdout).not.toMatch(/(?<![\w-])execution-1(?![\w-])/);
   });
 
-  it("forwards an explicit --execution for a legacy run with no attempt", async () => {
+  it("forwards an explicit --execution as the workflow execution id", async () => {
     const host = makeHost({
       files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
     });
@@ -3213,7 +3248,7 @@ describe("cctl spec write verbs", () => {
         "capture",
         "native-sdd",
         "--execution",
-        "execution-1",
+        "workflow-execution-1",
         "--file",
         TASK_FILE,
       ],
@@ -3223,8 +3258,37 @@ describe("cctl spec write verbs", () => {
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      executionId: "execution-1",
+      executionId: "workflow-execution-1",
       discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
+    });
+  });
+
+  it("names the workflow execution id in every capture receipt token", async () => {
+    const nonBlocking = await runCli(
+      ["spec", "capture", "native-sdd", "--file", TASK_FILE, "--json"],
+      baseEnv,
+      makeHost({ files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT } }),
+    );
+    expect(JSON.parse(nonBlocking.stdout).tokens).toMatchObject({
+      execution: "workflow-execution-1",
+    });
+
+    const blocking = await runCli(
+      [
+        "spec",
+        "capture",
+        "native-sdd",
+        "--file",
+        TASK_FILE,
+        "--blocking-reason",
+        "Discovered work blocks the run",
+        "--json",
+      ],
+      baseEnv,
+      makeHost({ files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT } }),
+    );
+    expect(JSON.parse(blocking.stdout).tokens).toMatchObject({
+      execution: "workflow-execution-1",
     });
   });
 
@@ -3359,11 +3423,13 @@ describe("cctl spec start against a delivery plan", () => {
       sessionName: "feature-session",
       parameters,
     });
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const parsed = JSON.parse(result.stdout);
+    // I-6/D-B: one execution id, the one every `workflow` verb takes. The
+    // spec-side row id is internal and appears in no token.
+    expect(parsed).toMatchObject({
       ok: true,
       tokens: {
-        execution: "execution-1",
-        workflowExecution: "workflow-execution-1",
+        execution: "workflow-execution-1",
         planAttempt: "attempt-1",
         candidate: "candidate-1",
         candidateHash: "sha256:candidate",
@@ -3373,6 +3439,25 @@ describe("cctl spec start against a delivery plan", () => {
         deliveryPlan: CANDIDATE,
       },
     });
+    expect(parsed.tokens).not.toHaveProperty("workflowExecution");
+    expect(Object.values(parsed.tokens)).not.toContain("execution-1");
+    expect(parsed.changed).toContain("launched execution workflow-execution-1");
+  });
+
+  it("labels the one execution id as the id the workflow verbs take", async () => {
+    const host = makeHost({ approved: true });
+
+    const result = await runCli(["spec", "start", "native-sdd"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("execution: workflow-execution-1");
+    expect(result.stdout).toContain("cctl workflow status");
+    expect(result.stdout).toContain("cctl workflow wait");
+    // The spec-side execution row id is internal: it appears nowhere in the
+    // text a reader would copy into the next command. Matched with a boundary
+    // rather than a substring, because `execution-1` is also the tail of the
+    // workflow execution id the receipt is REQUIRED to print.
+    expect(result.stdout).not.toMatch(/(?<![\w-])execution-1(?![\w-])/);
   });
 
   it("omits parameters when --inputs is absent", async () => {
@@ -3586,5 +3671,152 @@ describe("cctl spec plan abandon", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("--reason");
     expect(host.requests).toHaveLength(0);
+  });
+});
+
+describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
+  const PLAN_FILE = "/tmp/plan-edit.json";
+
+  function planView(
+    status: "draft" | "proposed",
+    draftRevision: number,
+  ): unknown {
+    return {
+      attempt: {
+        id: "attempt-1",
+        specSlug: "native-sdd",
+        status,
+        draftRevision,
+        pinnedRevisionId: "revision-approved",
+        deltaBasisExecutionId: null,
+        proposedSnapshotId: status === "proposed" ? "snapshot-1" : null,
+        candidateId: status === "proposed" ? "candidate-1" : null,
+        candidateHash: status === "proposed" ? "sha256:candidate" : null,
+        launchedExecutionId: null,
+        workflowDefinitionId: "wf-1",
+        createdAt: CREATED_AT,
+        updatedAt: CREATED_AT,
+      },
+      approval: null,
+      prelaunch: null,
+      document: { schemaVersion: 3, binding: { dispositions: [], claims: [] } },
+      workflowDefinition: {
+        id: "wf-1",
+        revision: 2,
+        definitionHash: `sha256:${"d".repeat(64)}`,
+        builderHref: "/workflows/wf-1",
+      },
+      health: { total: 0, blocking: 0, counts: [], findings: [] },
+      dispositionCounts: [],
+      unresolved: [],
+      snapshots: [],
+      nextAct: {
+        actor: "agent",
+        command: "cctl spec plan propose native-sdd",
+        reason: "The draft carries no blocking findings.",
+      },
+      previousHealth: null,
+      invalidatedApproval: null,
+      executionStartAdmission: null,
+    };
+  }
+
+  function planHost(
+    view: unknown,
+    files: Record<string, string> = {},
+  ): CliHost & { requests: RecordedRequest[] } {
+    const requests: RecordedRequest[] = [];
+    return {
+      requests,
+      async fetch(url, init) {
+        requests.push({ url, init });
+        return new Response(JSON.stringify(view), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      readTextFile: async (filePath) => files[filePath] ?? null,
+      readFileBytes: async () => null,
+      sleep: async () => {},
+      platform: "darwin",
+      homedir: "/Users/test",
+    };
+  }
+
+  it("names the token on the plan open receipt, in text and JSON", async () => {
+    const host = planHost(planView("draft", 1));
+    const text = await runCli(
+      ["spec", "plan", "open", "native-sdd"],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["spec", "plan", "open", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: expectedDraftRevision 1");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      expectedDraftRevision: 1,
+    });
+  });
+
+  it("names the token the following edit needs on the plan edit receipt", async () => {
+    const host = planHost(planView("draft", 4), {
+      [PLAN_FILE]: JSON.stringify({
+        expectedDraftRevision: 3,
+        binding: { dispositions: [], claims: [] },
+      }),
+    });
+    const text = await runCli(
+      ["spec", "plan", "edit", "native-sdd", "--file", PLAN_FILE],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["spec", "plan", "edit", "native-sdd", "--file", PLAN_FILE, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: expectedDraftRevision 4");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      expectedDraftRevision: 4,
+    });
+  });
+
+  it("names the token on the plan reopen receipt, in text and JSON", async () => {
+    const host = planHost(planView("draft", 5));
+    const text = await runCli(
+      ["spec", "plan", "reopen", "native-sdd", "--reason", "retune"],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["spec", "plan", "reopen", "native-sdd", "--reason", "retune", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: expectedDraftRevision 5");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      expectedDraftRevision: 5,
+    });
+  });
+
+  it("prints no draft token once propose has frozen the attempt", async () => {
+    const host = planHost(planView("proposed", 5));
+    const result = await runCli(
+      ["spec", "plan", "propose", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("next write:");
   });
 });

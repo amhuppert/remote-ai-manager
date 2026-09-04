@@ -30,6 +30,7 @@ import {
   createAssignmentReferenceChecker,
   type AssignmentReferenceChecker,
 } from "./assignment-references";
+import { locatePlanIssues } from "@/lib/workflows/plan-issue-locator";
 import {
   workflowDefinitionFilePath,
   workflowScopeFromDirName,
@@ -154,10 +155,13 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
     scope: WorkflowScope,
     definition: WorkflowSemanticDefinition,
   ): Promise<void> {
-    const issues = await assignmentReferences.checkDefinition(
+    const issues = locatePlanIssues(
+      await assignmentReferences.checkDefinition(
+        definition,
+        scope,
+        "definition",
+      ),
       definition,
-      scope,
-      "definition",
     );
     if (issues.length === 0) return;
 

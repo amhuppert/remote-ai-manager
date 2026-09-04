@@ -34,6 +34,23 @@ export const PLAN_IN_EVERGREEN_RATIONALE =
 export const PARENT_IMMUTABLE_RATIONALE =
   "containment is identity: a moved element would retroactively change what every frozen revision contained";
 
+/**
+ * Why a seed charter cannot be proposed. The charter is not documentation of
+ * the plan — it is the text every lane agent is governed by — so a stub that
+ * survives propose is frozen into the signed candidate and read by every
+ * implementer and validator of the run (#98).
+ */
+export const CHARTER_UNAUTHORED_RATIONALE =
+  "the charter is the governance every implementer and validator reads, and a seed stub would freeze into the signed candidate (#98)";
+
+/**
+ * Why a claimed criterion has to be reachable on every path. A guard that can
+ * skip the only claiming context turns an accountability claim into a promise
+ * the run may never be asked to keep.
+ */
+export const CRITERION_MUST_RUN_RATIONALE =
+  "a claimed criterion must be covered on every path so a skipped branch can never waive it silently";
+
 /** Why the proposing agent cannot withdraw an attempt a human has touched. */
 export const WITHDRAW_AFTER_ENGAGEMENT_RATIONALE =
   "an attempt a human has acted on ends on their terms, not by the author erasing it";

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
 
 import {
+  dedupeServerOwnedDeliveryPlanSources,
   finalizeAndAdmitDeliveryPlanLaunch,
   finalizeDeliveryPlanLaunch,
 } from "./delivery-plan-finalization";
@@ -213,6 +214,38 @@ describe("delivery-plan candidate finalization", () => {
     expect(refrozen.definition.lockedRegions?.map((l) => l.paths)).toEqual([
       ["/charter"],
       ["/origin", "/approvalRequired"],
+    ]);
+  });
+});
+
+describe("dedupeServerOwnedDeliveryPlanSources", () => {
+  const pinned = {
+    rank: 1,
+    id: "native-sdd-pinned-spec",
+    locator: ".cc/graph-workflow-docs/spec/direct-plan.md",
+  };
+  const claims = {
+    rank: 2,
+    id: "native-sdd-claims",
+    locator: ".cc/graph-workflow-docs/spec-bindings/c-1/claims.md",
+  };
+  const authored = { rank: 3, id: "design-doc", locator: "docs/design.md" };
+
+  it("keeps the first copy of each server-owned source and every authored one", () => {
+    expect(
+      dedupeServerOwnedDeliveryPlanSources([
+        pinned,
+        claims,
+        authored,
+        { ...pinned, rank: 9 },
+        { ...claims, rank: 10 },
+      ]),
+    ).toEqual([pinned, claims, authored]);
+  });
+
+  it("passes a plan that omits the server-owned pair through unchanged", () => {
+    expect(dedupeServerOwnedDeliveryPlanSources([authored])).toEqual([
+      authored,
     ]);
   });
 });

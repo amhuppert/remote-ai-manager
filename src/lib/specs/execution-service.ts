@@ -49,6 +49,7 @@ import {
   type SpecExecutionStartAttachment,
 } from "./execution-start-attachment";
 import { specExecutionBindingSnapshotV2Schema } from "./execution-binding";
+import { resolveSpecExecutionByWorkflowId } from "./execution-id-resolution";
 import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
 import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
 import type { SpecMeasureEventPayload } from "./measures";
@@ -377,6 +378,7 @@ export type ExecutionLifecycleDeps = Pick<
   | "policyNotifier"
   | "attentionNotifier"
   | "workflowCleanup"
+  | "deliveryPlanCapture"
 > & {
   lifecycleGate?: ExecutionLifecycleGatePort;
 };
@@ -546,6 +548,12 @@ export interface CapturedScopeAmendment {
   discovery: {
     id: string;
     executionId: string;
+    /**
+     * The id every receipt names and every verb accepts (design 3.5, D-B).
+     * `executionId` beside it is the internal row id, kept as data for the
+     * Spec Studio surfaces that already render it.
+     */
+    workflowExecutionId: string;
     /** Null when the run came from the legacy compiled path. */
     attemptId: string | null;
     title: string;
@@ -555,6 +563,7 @@ export interface CapturedScopeAmendment {
   /** The blocking path's outcome: what it retired and what it opened. */
   replacement: {
     abandonedExecutionId: string;
+    abandonedWorkflowExecutionId: string;
     replacementAttemptId: string;
   } | null;
 }
@@ -597,14 +606,37 @@ export function createExecutionService(
     getStatus(specExecutionId) {
       return reconcileStatus(deps, specExecutionId);
     },
-    abandonExecution(input) {
-      return abandonExecution(deps, input);
+    // `--execution` on both verbs takes the WORKFLOW execution id, resolved
+    // here rather than deeper down: the internal callers below (reconciliation
+    // and the capture path's own abandon) legitimately hold spec-side row ids,
+    // and pushing the resolution inward would make the boundary accept both.
+    async abandonExecution(input) {
+      const resolved = resolveSpecExecutionByWorkflowId(
+        deps,
+        input.executionId,
+      );
+      if (!resolved.ok) return { ok: false, refusal: resolved.refusal };
+      return abandonExecution(deps, {
+        ...input,
+        executionId: resolved.execution.id,
+      });
     },
     abandonSpec(input) {
       return abandonSpec(deps, input);
     },
-    captureScopeAmendment(input) {
-      return captureScopeAmendment(deps, input);
+    async captureScopeAmendment(input) {
+      if (input.executionId === undefined) {
+        return captureScopeAmendment(deps, input);
+      }
+      const resolved = resolveSpecExecutionByWorkflowId(
+        deps,
+        input.executionId,
+      );
+      if (!resolved.ok) return { ok: false, refusal: resolved.refusal };
+      return captureScopeAmendment(deps, {
+        ...input,
+        executionId: resolved.execution.id,
+      });
     },
   };
 }
@@ -1385,7 +1417,7 @@ async function runAbandonCoordinator(
           `Abandon coordinator tried to finalize from phase ${phase}`,
         );
       }
-      return await finalizeAbandon(deps, current, input, reason);
+      return await finalizeAbandon(deps, spec, current, input, reason);
     }
 
     if (act.kind !== "skip") {
@@ -1487,6 +1519,19 @@ function graphAbandonmentActor(
 }
 
 /**
+ * The same translation for the delivery-plan audit, whose persisted
+ * `ActorProvenance` has no `system` member either. A reconciliation that
+ * abandons a run whose workflow was aborted elsewhere still retires the
+ * attempt, and attributing that to `human` reads it as the server acting on
+ * the operator's behalf rather than inventing a third principal.
+ */
+function planTransitionActor(
+  actor: ActorProvenance | { kind: "system" },
+): ActorProvenance {
+  return actor.kind === "system" ? { kind: "human" } : actor;
+}
+
+/**
  * Accept the abandonment and pin the cleanup target. Re-entering an execution
  * already in `abandoning` keeps the recorded phase and the pinned id — that is
  * what makes retrying the same command a resume rather than a restart.
@@ -1502,11 +1547,20 @@ async function enterAbandoning(
     () =>
       deps.runInImmediateTransaction<LifecycleResult<SpecExecutionRow>>(() => {
         const current = deps.deliveryRepo.findExecutionById(input.executionId);
-        if (current === null) return lifecycleNotFound(input.executionId);
+        if (current === null) return lifecycleExecutionNotFound();
         if (current.state === "abandoned" || current.state === "delivered") {
+          // `input.executionId` is the INTERNAL row id by the time the
+          // coordinator runs — the public boundary resolved the caller's
+          // workflow execution id into it — so the refusal re-derives the
+          // addressable id from the row rather than echoing the input.
+          const named = addressableExecutionId(current);
           return lifecycleRefused(
             "gate_blocked",
-            [`Execution ${input.executionId} is terminal (${current.state}).`],
+            [
+              named === null
+                ? `This run is terminal (${current.state}).`
+                : `Execution ${named} is terminal (${current.state}).`,
+            ],
             "Use the terminal execution history or start a future execution from an approved revision.",
           );
         }
@@ -1576,12 +1630,68 @@ async function commitCleanupPhase(
   return updated;
 }
 
+/**
+ * Record the abandon transition on the attempt that launched this run, so
+ * `nextAct` reads `cctl spec plan open` rather than "the immutable launch is
+ * running" and `spec start` stops refusing "not signed off" (design 3.5, D-B).
+ *
+ * A run with no plan attempt behind it — the legacy compiled path, and any
+ * execution inserted without one — is not a fault: there is nothing to retire,
+ * so `not_found` skips. Every other refusal parks the abandonment, because a
+ * live attempt left reading `launched` is the exact stranding this exists to
+ * end. Re-entry is safe: `abandonLaunch` reports an already-abandoned attempt
+ * without recording a second transition.
+ */
+async function retireLaunchedAttempt(
+  deps: ExecutionLifecycleDeps,
+  spec: Spec,
+  execution: SpecExecutionRow,
+  reason: string,
+  actor: ActorProvenance | { kind: "system" },
+): Promise<PlanResult<{ attemptId: string } | null>> {
+  const capturePort = deps.deliveryPlanCapture;
+  if (capturePort === undefined) return { ok: true, value: null };
+  const retired = await capturePort.abandonLaunchedAttempt({
+    spec,
+    executionId: execution.id,
+    reason,
+    actor: planTransitionActor(actor),
+  });
+  if (!retired.ok && retired.refusal.code === "not_found") {
+    return { ok: true, value: null };
+  }
+  return retired;
+}
+
 async function finalizeAbandon(
   deps: ExecutionLifecycleDeps,
+  spec: Spec,
   execution: SpecExecutionRow,
   input: AbandonExecutionInternalInput,
   reason: string,
 ): Promise<LifecycleResult<SpecExecutionRow>> {
+  // Retirement runs BEFORE the execution row commits to `abandoned`, and the
+  // ordering is load-bearing: once the row is terminal `enterAbandoning`
+  // refuses `gate_blocked`, so a retirement that failed afterwards could never
+  // be retried and the attempt would read `launched` forever. Failing here
+  // instead parks the run at `finalize`, which the retry re-enters.
+  const retired = await retireLaunchedAttempt(
+    deps,
+    spec,
+    execution,
+    reason,
+    input.actor,
+  );
+  if (!retired.ok) {
+    return await recordCleanupFault(
+      deps,
+      execution,
+      input,
+      reason,
+      `The launched delivery-plan attempt could not be retired: ${retired.refusal.unmetConditions.join(" ")}`,
+      retired.refusal.instruction,
+    );
+  }
   const prepared: PreparedSpecEventPublication[] = [];
   const updated = await deps.writeQueue.withWriteQueueSync(
     `spec-execution-abandon-finalize[${execution.id}]`,
@@ -1811,18 +1921,42 @@ export function prelaunchRedirectRefusal(
  * session slot forever, so the refusal names the act that RESUMES the
  * coordinator from its durable phase instead.
  */
+/**
+ * The run re-pinned between the guard that judged the discovery's ids and the
+ * write that would have recorded it, so the judgment is stale.
+ *
+ * Named by `addressableExecutionId` rather than by `current.id`: the row id is
+ * internal, and a refusal that printed it would hand back an id no verb
+ * accepts (design 3.5, D-B).
+ */
+export function rePinnedCaptureRefusal(
+  slug: string,
+  judgedRevisionId: string,
+  current: SpecExecutionRow,
+): LifecycleResult<never> {
+  const named = addressableExecutionId(current);
+  return lifecycleRefused(
+    "gate_blocked",
+    [
+      `${named === null ? "The run" : `Execution ${named}`} re-pinned from revision ${judgedRevisionId} to ${current.revision_id} while the capture was being judged.`,
+    ],
+    `Nothing was captured. Re-run \`cctl spec capture ${slug} --file <task.json>\` so the discovered task is judged against the run's current pin.`,
+  );
+}
+
 export function notRunningCaptureRefusal(
   slug: string,
   execution: SpecExecutionRow,
 ): LifecycleResult<never> {
+  const named = addressableExecutionId(execution) ?? "this run";
   const remedy =
     execution.state === "abandoning"
-      ? `Nothing was captured. Execution ${execution.id} is mid-abandon: resume its cleanup with \`cctl spec abandon --execution ${execution.id} --reason <why>\` (it continues from the phase it reached), then open the replacement with \`cctl spec plan open ${slug}\` — any discovery already captured against it is durable and the seed places it.`
+      ? `Nothing was captured. Execution ${named} is mid-abandon: resume its cleanup with \`cctl spec abandon --execution ${named} --reason <why>\` (it continues from the phase it reached), then open the replacement with \`cctl spec plan open ${slug}\` — any discovery already captured against it is durable and the seed places it.`
       : `Nothing was captured. Plan the work directly instead: \`cctl spec plan open ${slug}\`.`;
   return lifecycleRefused(
     "gate_blocked",
     [
-      `Execution ${execution.id} is ${execution.state}, and discovered work can be captured only while it runs.`,
+      `Execution ${named} is ${execution.state}, and discovered work can be captured only while it runs.`,
     ],
     remedy,
   );
@@ -1880,16 +2014,33 @@ async function captureScopeAmendment(
   }
 
   const execution = deps.deliveryRepo.findExecutionById(executionId);
-  if (execution === null) return lifecycleNotFound(executionId);
+  if (execution === null) return lifecycleExecutionNotFound();
   if (execution.spec_id !== spec.id) {
+    // Named by its workflow execution id, the only id the caller passed and
+    // the only one any `cctl` verb takes.
+    const named = addressableExecutionId(execution);
     return lifecycleRefused(
       "gate_blocked",
-      [`Execution ${executionId} belongs to a different spec.`],
+      [
+        named === null
+          ? "The named run belongs to a different spec."
+          : `Execution ${named} belongs to a different spec.`,
+      ],
       `Nothing was captured. Re-run against the run this spec launched — \`cctl spec status ${spec.slug}\` names it.`,
     );
   }
   if (execution.state !== "running") {
     return notRunningCaptureRefusal(spec.slug, execution);
+  }
+  const workflowExecutionId = execution.workflow_execution_id;
+  if (workflowExecutionId === null) {
+    return lifecycleRefused(
+      "gate_blocked",
+      // The spec-side row id is deliberately unnamed: an agent only ever
+      // passes the workflow execution id, and this run has none to give.
+      [`This spec's running execution has no workflow lane linked.`],
+      `Nothing was captured. Read \`cctl spec status ${spec.slug}\` — a run with no lane is mid-recovery and has no id to capture against.`,
+    );
   }
 
   const discoveryId = deps.nextId("discovery");
@@ -1917,19 +2068,17 @@ async function captureScopeAmendment(
     `spec-capture[${execution.id}]`,
     () => {
       const current = deps.deliveryRepo.findExecutionById(execution.id);
-      if (current === null) return lifecycleNotFound(execution.id);
+      if (current === null) return lifecycleExecutionNotFound();
       if (current.state !== "running") {
         return notRunningCaptureRefusal(spec.slug, current);
       }
       // The pin is what the discovery's ids were judged against; a run that
       // re-pinned mid-capture would make that judgment stale.
       if (current.revision_id !== execution.revision_id) {
-        return lifecycleRefused(
-          "gate_blocked",
-          [
-            `Execution ${current.id} re-pinned from revision ${execution.revision_id} to ${current.revision_id} while the capture was being judged.`,
-          ],
-          `Nothing was captured. Re-run \`cctl spec capture ${spec.slug} --file <task.json>\` so the discovered task is judged against the run's current pin.`,
+        return rePinnedCaptureRefusal(
+          spec.slug,
+          execution.revision_id,
+          current,
         );
       }
       return {
@@ -1994,9 +2143,9 @@ async function captureScopeAmendment(
           code: abandoned.refusal.code,
           unmetConditions: [
             ...abandoned.refusal.unmetConditions,
-            `Discovery ${discovery.id} is already durable against execution ${execution.id}, so the work is not lost.`,
+            `Discovery ${discovery.id} is already durable against execution ${workflowExecutionId}, so the work is not lost.`,
           ],
-          instruction: `${abandoned.refusal.instruction} Then finish this capture's two remaining acts, in order: resume the abandon with \`cctl spec abandon --execution ${execution.id} --reason ${JSON.stringify(blockingReason)}\`, then open the replacement with \`cctl spec plan open ${spec.slug}\` — it places discovery ${discovery.id}. Do not re-run \`cctl spec capture\`: it would record the same work twice.`,
+          instruction: `${abandoned.refusal.instruction} Then finish this capture's two remaining acts, in order: resume the abandon with \`cctl spec abandon --execution ${workflowExecutionId} --reason ${JSON.stringify(blockingReason)}\`, then open the replacement with \`cctl spec plan open ${spec.slug}\` — it places discovery ${discovery.id}. Do not re-run \`cctl spec capture\`: it would record the same work twice.`,
         },
       };
     }
@@ -2005,7 +2154,7 @@ async function captureScopeAmendment(
       return lifecycleRefused(
         "gate_blocked",
         [
-          `Execution ${execution.id} was abandoned, but this composition cannot open its replacement plan.`,
+          `Execution ${workflowExecutionId} was abandoned, but this composition cannot open its replacement plan.`,
         ],
         `The discovery is durable. Open the replacement yourself with \`cctl spec plan open ${spec.slug}\` — the seed places it.`,
       );
@@ -2042,6 +2191,7 @@ async function captureScopeAmendment(
     }
     replacement = {
       abandonedExecutionId: execution.id,
+      abandonedWorkflowExecutionId: workflowExecutionId,
       replacementAttemptId: opened.value.attemptId,
     };
   }
@@ -2059,6 +2209,7 @@ async function captureScopeAmendment(
       discovery: {
         id: discovery.id,
         executionId: discovery.execution_id,
+        workflowExecutionId,
         attemptId: discovery.attempt_id,
         title: input.discoveredTask.title,
       },
@@ -2604,6 +2755,32 @@ function findExecutionMergeLink(
   });
 }
 
+/**
+ * The id an agent can address a run by: the workflow execution id, the only
+ * execution id any `cctl` verb takes (design 3.5, D-B). `null` when no lane is
+ * linked — the caller then states the fact without an id rather than falling
+ * back to the internal spec execution row id, which every input surface
+ * refuses and no agent can act on.
+ */
+function addressableExecutionId(execution: SpecExecutionRow): string | null {
+  return (
+    execution.workflow_execution_id ?? execution.linked_workflow_execution_id
+  );
+}
+
+/**
+ * A run whose row is gone. Deliberately id-free: the only id in hand at these
+ * call sites is the internal spec execution row id, and printing it would
+ * offer an id no verb accepts to retry with.
+ */
+function lifecycleExecutionNotFound(): LifecycleResult<never> {
+  return lifecycleRefused(
+    "not_found",
+    ["The spec execution named was not found."],
+    "Read `cctl spec status <slug>` for the runs this spec owns.",
+  );
+}
+
 function lifecycleNotFound(identifier: string): LifecycleResult<never> {
   return lifecycleRefused(
     "not_found",
@@ -2630,14 +2807,14 @@ function lifecycleRefused(
 async function seededDeliveryPlanInstruction(
   deps: Pick<ExecutionServiceDeps, "specsRepo">,
   specId: string,
-  abandonExecutionId?: string,
+  abandonWorkflowExecutionId?: string,
 ): Promise<string> {
   const spec = await deps.specsRepo.findById(specId);
   const target = spec?.slug ?? specId;
   const abandon =
-    abandonExecutionId === undefined
+    abandonWorkflowExecutionId === undefined
       ? ""
-      : `Abandon execution ${abandonExecutionId} with \`cctl spec abandon ${target} --execution ${abandonExecutionId} --reason <reason>\`, then `;
+      : `Abandon execution ${abandonWorkflowExecutionId} with \`cctl spec abandon ${target} --execution ${abandonWorkflowExecutionId} --reason <reason>\`, then `;
   return `${abandon}open a seeded attempt with \`cctl spec plan open ${target}\`, propose and sign its candidate off, then launch it with \`cctl spec start ${target}\`.`;
 }
 
@@ -2654,7 +2831,9 @@ function deliveryStateRefusal(
 ): LifecycleResult<never> {
   return lifecycleRefused(
     "gate_blocked",
-    [`Execution ${execution.id} is ${execution.state}, not running.`],
+    [
+      `Execution ${execution.workflow_execution_id ?? execution.id} is ${execution.state}, not running.`,
+    ],
     execution.state === "abandoned"
       ? "The execution is terminal; start a future execution only if the spec remains active."
       : "Start the linked workflow before recording successful delivery.",

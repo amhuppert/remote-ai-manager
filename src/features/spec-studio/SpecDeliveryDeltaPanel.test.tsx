@@ -16,6 +16,7 @@ function projection(
     base: { revisionId: "rev-2", revisionNumber: 2 },
     comparedExecution: {
       executionId: "exec-new",
+      workflowExecutionId: "workflow-exec-new",
       revisionId: "rev-2",
       state: "delivered",
       deliveredAt: "2026-08-04T00:00:00.000Z",

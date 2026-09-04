@@ -2064,6 +2064,306 @@ describe("cctl workflow validate", () => {
     ).toBe(true);
   });
 
+  it("sends --definition and groups its findings by the transition they block", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          ok: true,
+          preflight: {
+            specSlug: "delivery-plan",
+            findings: [
+              {
+                ruleId: "launch/advisory",
+                severity: "advisory",
+                elementHandle: "context-verify",
+                recordId: "context-verify",
+                message: "The verification context carries broad prose.",
+              },
+              {
+                ruleId: "9.8.rejected-cited-assumption",
+                severity: "blocks_signoff",
+                elementHandle: "A1",
+                message: "Assumption A1 was rejected.",
+              },
+              {
+                ruleId: "binding/selected-criterion-unclaimed",
+                severity: "blocks_propose",
+                elementHandle: "R1.1",
+                message: "Selected criterion R1.1 has no claim.",
+              },
+            ],
+            summary: {
+              selected: 2,
+              claimed: 1,
+              unclaimed: 1,
+              dispositions: [{ kind: "in_scope", count: 2 }],
+              charter: {
+                state: "authored",
+                invariantCount: 1,
+                sourceCount: 2,
+              },
+            },
+          },
+        }),
+      files,
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "validate",
+        "--file",
+        planFile,
+        "--definition",
+        "managed-wf",
+      ],
+      baseEnv,
+      host,
+    );
+
+    const url = new URL(host.requests[0]?.url ?? "");
+    expect(url.searchParams.get("definition")).toBe("managed-wf");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      [
+        "blocks_propose:",
+        "  R1.1 [binding/selected-criterion-unclaimed]: Selected criterion R1.1 has no claim.",
+        "blocks_signoff:",
+        "  A1 [9.8.rejected-cited-assumption]: Assumption A1 was rejected.",
+        "advisory:",
+        "  context-verify [launch/advisory]: The verification context carries broad prose.",
+      ].join("\n"),
+    );
+  });
+
+  it("prints the explicit clean verdict and replace hint for a managed definition", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          ok: true,
+          preflight: {
+            specSlug: "delivery-plan",
+            findings: [],
+            summary: {
+              selected: 2,
+              claimed: 2,
+              unclaimed: 0,
+              dispositions: [{ kind: "in_scope", count: 2 }],
+              charter: {
+                state: "authored",
+                invariantCount: 1,
+                sourceCount: 2,
+              },
+            },
+          },
+        }),
+      files,
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "validate",
+        "--file",
+        planFile,
+        "--definition",
+        "managed-wf",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("propose: nothing refuses");
+    expect(result.stdout).toContain(
+      `hint: valid — replace it with 'cctl workflow replace managed-wf --file ${planFile}'`,
+    );
+  });
+
+  it("carries transition-named severities and handles in --json", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          ok: true,
+          preflight: {
+            specSlug: "delivery-plan",
+            findings: [
+              {
+                ruleId: "binding/selected-criterion-unclaimed",
+                severity: "blocks_propose",
+                elementHandle: "R1.1",
+                recordId: "criterion-one",
+                message: "Selected criterion R1.1 has no claim.",
+              },
+            ],
+            summary: {
+              selected: 1,
+              claimed: 0,
+              unclaimed: 1,
+              dispositions: [{ kind: "in_scope", count: 1 }],
+              charter: {
+                state: "authored",
+                invariantCount: 1,
+                sourceCount: 2,
+              },
+            },
+          },
+        }),
+      files,
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "validate",
+        "--file",
+        planFile,
+        "--definition",
+        "managed-wf",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).findings).toEqual([
+      {
+        ruleId: "binding/selected-criterion-unclaimed",
+        severity: "blocks_propose",
+        handle: "R1.1",
+        recordId: "criterion-one",
+        message: "Selected criterion R1.1 has no claim.",
+      },
+    ]);
+  });
+
+  it.each([
+    {
+      code: "definition_not_managed",
+      instruction:
+        "Read the managed draft with `cctl spec plan status <slug>` and use the workflow definition id it names.",
+    },
+    {
+      code: "definition_project_mismatch",
+      instruction:
+        "Switch to that project and run `cctl spec plan status delivery-plan`.",
+    },
+    {
+      code: "delivery_plan_not_draft",
+      instruction:
+        "Run `cctl spec plan reopen delivery-plan --reason <why>` before validating replacement bytes.",
+    },
+  ])(
+    "preserves the typed $code refusal in --json",
+    async ({ code, instruction }) => {
+      const host = makeHost(
+        () =>
+          jsonResponse(
+            {
+              error: "The managed delivery draft cannot be preflighted.",
+              code,
+              instruction,
+            },
+            409,
+          ),
+        files,
+      );
+
+      const result = await runCli(
+        [
+          "workflow",
+          "validate",
+          "--file",
+          planFile,
+          "--definition",
+          "managed-wf",
+          "--json",
+        ],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({ code, instruction });
+    },
+  );
+
+  it("renders the non-draft refusal instruction and why line", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error: "Delivery plan delivery-plan is proposed, not draft.",
+            code: "delivery_plan_not_draft",
+            instruction:
+              "Run `cctl spec plan reopen delivery-plan --reason <why>` before validating replacement bytes.",
+            rationale:
+              "the signed candidate is immutable so sign-off approves exact bytes",
+          },
+          409,
+        ),
+      files,
+    );
+
+    const result = await runCli(
+      [
+        "workflow",
+        "validate",
+        "--file",
+        planFile,
+        "--definition",
+        "managed-wf",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "cctl spec plan reopen delivery-plan --reason <why>",
+    );
+    expect(result.stderr).toContain(
+      "why: the signed candidate is immutable so sign-off approves exact bytes",
+    );
+  });
+
+  it("refuses to report a clean gate when the server omits the requested preflight", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+
+    const result = await runCli(
+      [
+        "workflow",
+        "validate",
+        "--file",
+        planFile,
+        "--definition",
+        "managed-wf",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(
+      "The server did not return the requested managed definition preflight.",
+    );
+    expect(result.stdout).not.toContain("propose: nothing refuses");
+  });
+
+  it("keeps validate output byte-identical at this tip when --definition is absent", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.stdout).toBe(
+      `plan is valid\nhint: valid — create it with 'cctl workflow create --file ${planFile}'\n`,
+    );
+  });
+
   it("prints server warnings above the create hint and keeps exit 0 (R3.2)", async () => {
     const host = makeHost(
       () =>
@@ -2512,6 +2812,410 @@ describe("cctl workflow replace", () => {
       'warning: definition.charter.sourcesOfTruth.1.locator: lint/source-locator-unresolvable: charter source "acceptance-criteria" locator "context.acceptanceCriteria" does not resolve',
     );
     expect(result.stdout).toContain("revision: 4");
+  });
+});
+
+describe("cctl workflow id-bearing issue locators (#80 design 3.2)", () => {
+  const planFile = "/tmp/plan.json";
+  const files = {
+    [planFile]: JSON.stringify({ name: "X", definition: {}, layout: {} }),
+  };
+  const locatedIssues = [
+    {
+      path: "definition.tasks.2 (wire-routes).contextId",
+      message: 'Task "wire-routes" references missing context "ghost"',
+      recordId: "wire-routes",
+    },
+    { path: "definition.edges", message: "graph must be acyclic" },
+  ];
+  const locatedWarnings = [
+    {
+      path: "definition.executionContexts.9 (memory-cli).acceptanceCriteria",
+      message: "lint/criteria-density: too many criteria",
+      recordId: "memory-cli",
+    },
+    { path: "definition.parameters", message: "lint/open-quantifier: sweep" },
+  ];
+
+  it("carries recordId beside path on validate's refusal envelope", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          { error: "Workflow plan is invalid", issues: locatedIssues },
+          400,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).issues).toEqual(locatedIssues);
+  });
+
+  it("preserves validate's located refusal when --definition is present", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          { error: "Workflow plan is invalid", issues: locatedIssues },
+          400,
+        ),
+      files,
+    );
+    const result = await runCli(
+      [
+        "workflow",
+        "validate",
+        "--file",
+        planFile,
+        "--definition",
+        "managed-wf",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(
+      new URL(host.requests[0]?.url ?? "").searchParams.get("definition"),
+    ).toBe("managed-wf");
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stdout).issues).toEqual(locatedIssues);
+  });
+
+  it("carries recordId beside path on validate's warning envelope", async () => {
+    const host = makeHost(
+      () => jsonResponse({ ok: true, warnings: locatedWarnings }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).warnings).toEqual(locatedWarnings);
+  });
+
+  it("carries recordId beside path on create's warning envelope", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            item: { id: "wf-9", name: "X", revision: 1 },
+            warnings: locatedWarnings,
+          },
+          201,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "create", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).warnings).toEqual(locatedWarnings);
+  });
+
+  it("carries recordId beside path on replace's warning envelope", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item: { id: "wf-1", name: "X", revision: 4 },
+          warnings: locatedWarnings,
+        }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(JSON.parse(result.stdout).warnings).toEqual(locatedWarnings);
+  });
+
+  it("prints the id-bearing path on the text surfaces", async () => {
+    const host = makeHost(
+      () => jsonResponse({ ok: true, warnings: locatedWarnings }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.stdout).toContain(
+      "warning: definition.executionContexts.9 (memory-cli).acceptanceCriteria: lint/criteria-density: too many criteria",
+    );
+  });
+});
+
+describe("cctl workflow replace on a managed draft", () => {
+  const planFile = "/tmp/plan.json";
+  const files = {
+    [planFile]: JSON.stringify({ name: "X", definition: {}, layout: {} }),
+  };
+
+  it("renders a server-owned refusal as the omit instruction with its why: line", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error: "Managed delivery workflow locked regions cannot be edited.",
+            code: "region_locked",
+            lockedPath: "/origin",
+            sourceUri:
+              "spec-plan://spec-1/revisions/r-1/attempts/a-1/candidates/wf-1",
+            instruction: "/origin is server-owned; omit it from your plan.",
+            rationale:
+              "provenance and approval policy are stamped by the server so a signed candidate can prove where it came from",
+          },
+          409,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    const lines = result.stderr.trimEnd().split("\n");
+    expect(lines).toEqual([
+      "Managed delivery workflow locked regions cannot be edited.",
+      "why: provenance and approval policy are stamped by the server so a signed candidate can prove where it came from",
+      "instruction: /origin is server-owned; omit it from your plan.",
+    ]);
+  });
+
+  it("carries the rationale and code in the --json envelope", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error: "This managed delivery workflow definition is read-only.",
+            code: "managed_workflow_definition_read_only",
+            lifecycle: "in_review",
+            instruction:
+              "Reopen the delivery plan before editing its workflow definition.",
+            rationale:
+              "the signed candidate is immutable so sign-off approves exact bytes",
+          },
+          409,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      code: "managed_workflow_definition_read_only",
+      instruction:
+        "Reopen the delivery plan before editing its workflow definition.",
+      rationale:
+        "the signed candidate is immutable so sign-off approves exact bytes",
+    });
+  });
+});
+
+describe("cctl workflow replace and edit receipts on a managed definition", () => {
+  const planFile = "/tmp/plan.json";
+  const opsFile = "/tmp/ops.json";
+  const files = {
+    [planFile]: JSON.stringify({ name: "X", definition: {}, layout: {} }),
+    [opsFile]: JSON.stringify({
+      expectedRevision: 1,
+      operations: [{ type: "update-workflow", name: "Renamed" }],
+    }),
+  };
+  const management = {
+    kind: "native_sdd_delivery",
+    specSlug: "native-sdd",
+    lifecycle: "draft",
+    editable: true,
+  };
+  const item = { id: "wf-1", name: "Auth Setup", revision: 2, management };
+
+  it("replace prints the findings delta and points at plan status while findings remain", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item,
+          proposeGate: { blockingBefore: 2, blockingAfter: 1 },
+        }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trimEnd().split("\n")).toEqual([
+      "replaced Auth Setup (revision: 2)",
+      "next write: expectedRevision 2",
+      "propose findings: 2 -> 1 (blocks_propose)",
+      "hint: read what still refuses propose with 'cctl spec plan status native-sdd'",
+    ]);
+  });
+
+  it("replace reports nothing refuses and points at propose when the gate is clean, in --json too", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item,
+          proposeGate: { blockingBefore: 1, blockingAfter: 0 },
+        }),
+      files,
+    );
+    const text = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile],
+      baseEnv,
+      host,
+    );
+    const json = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.stdout.trimEnd().split("\n")).toEqual([
+      "replaced Auth Setup (revision: 2)",
+      "next write: expectedRevision 2",
+      "propose: nothing refuses",
+      "hint: propose the draft with 'cctl spec plan propose native-sdd'",
+    ]);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      ok: true,
+      revision: 2,
+      blockingBefore: 1,
+      blockingAfter: 0,
+      hint: "propose the draft with 'cctl spec plan propose native-sdd'",
+    });
+  });
+
+  it("edit prints the findings delta and the status hint, and carries both counts in --json", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item: { ...item, name: "Renamed" },
+          applied: 1,
+          proposeGate: { blockingBefore: 3, blockingAfter: 3 },
+        }),
+      files,
+    );
+    const text = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile],
+      baseEnv,
+      host,
+    );
+    const json = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout.trimEnd().split("\n")).toEqual([
+      'edited "Renamed": 1 operation applied, revision 2',
+      "next write: expectedRevision 2",
+      "propose findings: 3 -> 3 (blocks_propose)",
+      "hint: read what still refuses propose with 'cctl spec plan status native-sdd'",
+    ]);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      ok: true,
+      workflowId: "wf-1",
+      applied: 1,
+      revision: 2,
+      blockingBefore: 3,
+      blockingAfter: 3,
+      hint: "read what still refuses propose with 'cctl spec plan status native-sdd'",
+    });
+  });
+
+  it("edit reports nothing refuses and the propose hint when the gate is clean", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item: { ...item, name: "Renamed" },
+          applied: 1,
+          proposeGate: { blockingBefore: 1, blockingAfter: 0 },
+        }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.stdout.trimEnd().split("\n")).toEqual([
+      'edited "Renamed": 1 operation applied, revision 2',
+      "next write: expectedRevision 2",
+      "propose: nothing refuses",
+      "hint: propose the draft with 'cctl spec plan propose native-sdd'",
+    ]);
+  });
+
+  it("a managed receipt without a gate reading prints no gate line and still points at plan status", async () => {
+    const host = makeHost(() => jsonResponse({ item, applied: 1 }), files);
+    const result = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope).toMatchObject({
+      ok: true,
+      hint: "read what still refuses propose with 'cctl spec plan status native-sdd'",
+    });
+    expect(envelope).not.toHaveProperty("blockingBefore");
+    expect(envelope).not.toHaveProperty("blockingAfter");
+  });
+
+  it("an unmanaged edit prints neither line and no hint, and keeps today's envelope", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          item: { id: "wf-1", name: "Renamed", revision: 2 },
+          applied: 1,
+        }),
+      files,
+    );
+    const text = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile],
+      baseEnv,
+      host,
+    );
+    const json = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.stdout).toBe(
+      'edited "Renamed": 1 operation applied, revision 2\nnext write: expectedRevision 2\n',
+    );
+    expect(JSON.parse(json.stdout)).toEqual({
+      ok: true,
+      workflowId: "wf-1",
+      applied: 1,
+      revision: 2,
+      expectedRevision: 2,
+    });
   });
 });
 
@@ -3210,5 +3914,95 @@ describe("cctl workflow collab request", () => {
     expect(result.stderr).toContain(
       "does not allow agent-initiated collaboration",
     );
+  });
+});
+
+describe("write receipts name the next write's token (#80 I-7)", () => {
+  const planFile = "/tmp/plan.json";
+  const opsFile = "/tmp/ops.json";
+  const files = {
+    [planFile]: JSON.stringify({ name: "X", definition: {}, layout: {} }),
+    [opsFile]: JSON.stringify({
+      expectedRevision: 3,
+      operations: [{ type: "update-workflow", name: "X" }],
+    }),
+  };
+
+  it("names expectedRevision on the create receipt, in text and JSON", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          { item: { id: "wf-9", name: "Auth Setup", revision: 1 } },
+          201,
+        ),
+      files,
+    );
+    const text = await runCli(
+      ["workflow", "create", "--file", planFile],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["workflow", "create", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: expectedRevision 1");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      expectedRevision: 1,
+    });
+  });
+
+  it("names expectedRevision on the replace receipt, in text and JSON", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({ item: { id: "wf-1", name: "Auth Setup", revision: 4 } }),
+      files,
+    );
+    const text = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["workflow", "replace", "wf-1", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: expectedRevision 4");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      expectedRevision: 4,
+    });
+  });
+
+  it("names expectedRevision on the edit receipt, in text and JSON", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          applied: 1,
+          item: { id: "wf-1", name: "Auth Setup", revision: 4 },
+        }),
+      files,
+    );
+    const text = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["workflow", "edit", "wf-1", "--file", opsFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("next write: expectedRevision 4");
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      expectedRevision: 4,
+    });
   });
 });

@@ -84,6 +84,11 @@ import {
   type ArtifactManifest,
   type Omission,
 } from "../../disclosure";
+import {
+  buildOutlineData,
+  parseOutlineRecord,
+  renderOutline,
+} from "../workflow-outline";
 import { deliveryPlanPreviewText } from "./plan-preview-text";
 import {
   approvalLedgerLines,
@@ -320,8 +325,15 @@ function phaseQualifier(executions: readonly ActiveExecution[]): string {
   return clauses.length === 0 ? "" : ` (${clauses.join(", ")})`;
 }
 
+/**
+ * The row is addressed by the workflow execution id, the one execution id a
+ * reader passes to any verb (design 3.5, D-B). A run with no lane yet has no
+ * addressable id at all, so the row says that rather than offering the
+ * internal row id every surface refuses.
+ */
 function executionLine(execution: ActiveExecution): string {
-  return `  ${execution.id}: ${execution.state} — ${describeExecution(execution).detail}`;
+  const named = execution.workflowExecutionId ?? "(no workflow lane)";
+  return `  ${named}: ${execution.state} — ${describeExecution(execution).detail}`;
 }
 
 /**
@@ -2365,6 +2377,31 @@ async function runDeliveryPlanPreview(
     hasLaunch: preview.launch !== null,
     approvable: preview.approvable,
   });
+  // --outline: the launch envelope read through the graph's own outline
+  // renderer instead of whole (#80 I-18) — a real delivery plan's envelope runs
+  // to tens of kilobytes, and the outline is the same navigation map
+  // `cctl workflow get` prints for the definition this launch becomes. The
+  // attempt's draft revision stands in for the definition revision the launch
+  // does not have yet.
+  const outlineRecord =
+    values["outline"] === undefined
+      ? null
+      : parseOutlineRecord({
+          id: preview.launch.layout.workflowId,
+          name: preview.launch.name,
+          revision: preview.draftRevision,
+          definition: preview.launch.definition,
+        });
+  if (outlineRecord) {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, renderOutline(outlineRecord), {
+        ok: true,
+        outline: buildOutlineData(outlineRecord),
+      }),
+      stderr: "",
+    };
+  }
   return {
     exitCode: EXIT_OK,
     stdout: render(json, deliveryPlanPreviewText(preview), {
@@ -2561,7 +2598,7 @@ function deltaHumanText(projection: DeliveryDeltaProjection): string {
   const header =
     compared === null
       ? `${projection.specSlug}: revision ${projection.current.revisionNumber} has no delivered execution to compare against — every element is new work.`
-      : `${projection.specSlug}: revision ${projection.current.revisionNumber} vs execution ${compared.executionId} (pinned revision ${projection.base?.revisionNumber ?? "unknown"}, ${compared.state}${
+      : `${projection.specSlug}: revision ${projection.current.revisionNumber} vs ${compared.workflowExecutionId === null ? "an execution with no workflow lane" : `execution ${compared.workflowExecutionId}`} (pinned revision ${projection.base?.revisionNumber ?? "unknown"}, ${compared.state}${
           compared.deliveredAt === null ? "" : ` ${compared.deliveredAt}`
         })`;
 
@@ -2738,11 +2775,18 @@ function planNextActLines(view: DeliveryPlanView): string[] {
 }
 
 function planHealthLines(view: DeliveryPlanView): string[] {
-  if (view.health.total === 0) return ["plan findings: 0 total, 0 blocking"];
-  return [
-    `plan findings: ${view.health.total} total, ${view.health.blocking} blocking`,
-    ...view.health.counts.map((entry) => `  ${entry.severity}: ${entry.count}`),
-  ];
+  const lines =
+    view.health.total === 0
+      ? ["plan findings: 0 total, 0 blocking"]
+      : [
+          `plan findings: ${view.health.total} total, ${view.health.blocking} blocking`,
+          ...view.health.counts.map(
+            (entry) => `  ${entry.severity}: ${entry.count}`,
+          ),
+        ];
+  return view.health.blocking === 0
+    ? [...lines, "propose: nothing refuses"]
+    : lines;
 }
 
 function planStatusText(view: DeliveryPlanView): string {

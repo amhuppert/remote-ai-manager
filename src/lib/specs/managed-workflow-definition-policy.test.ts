@@ -186,3 +186,87 @@ describe("native SDD managed workflow definition policy", () => {
     expect(detail?.changes).toMatchObject({ claims: true });
   });
 });
+
+describe("native SDD managed workflow definition policy: propose gate", () => {
+  const binding = {
+    schemaVersion: 3,
+    binding: { dispositions: [], claims: [] },
+  };
+
+  function insertAttempt(status: "draft" | "proposed") {
+    db.prepare(
+      `INSERT INTO spec_delivery_plan_attempts (
+         id, spec_id, pinned_revision_id, status, draft_revision, content_json,
+         workflow_definition_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 2, ?, ?, ?, ?)`,
+    ).run(
+      "attempt-1",
+      SPEC_ID,
+      PINNED_REVISION_ID,
+      status,
+      stableStringify(binding),
+      "definition-current",
+      "2026-08-31T10:00:00.000Z",
+      "2026-08-31T10:00:00.000Z",
+    );
+  }
+
+  function specSlug(): string {
+    const row = db.prepare("SELECT slug FROM specs WHERE id = ?").get(SPEC_ID);
+    if (
+      typeof row !== "object" ||
+      row === null ||
+      !("slug" in row) ||
+      typeof row.slug !== "string"
+    ) {
+      throw new Error("fixture spec row lacks a slug");
+    }
+    return row.slug;
+  }
+
+  it("reads a current draft's gate through the spec's draft health, keyed by the spec slug", async () => {
+    insertAttempt("draft");
+    const reads: Array<[string, string]> = [];
+    const policy = createNativeSddManagedWorkflowDefinitionPolicy({
+      db,
+      resolveProjectName: () => "repo",
+      draftBlockingCount: async (projectPath, slug) => {
+        reads.push([projectPath, slug]);
+        return 2;
+      },
+    });
+
+    await expect(
+      policy.proposeBlockingCount(PROJECT_PATH, "definition-current"),
+    ).resolves.toBe(2);
+    expect(reads).toEqual([[PROJECT_PATH, specSlug()]]);
+  });
+
+  it("reports null for an unmanaged id, a proposed candidate, and without a reader", async () => {
+    insertAttempt("proposed");
+    const reads: string[] = [];
+    const policy = createNativeSddManagedWorkflowDefinitionPolicy({
+      db,
+      resolveProjectName: () => "repo",
+      draftBlockingCount: async (_projectPath, slug) => {
+        reads.push(slug);
+        return 2;
+      },
+    });
+    const readerless = createNativeSddManagedWorkflowDefinitionPolicy({
+      db,
+      resolveProjectName: () => "repo",
+    });
+
+    await expect(
+      policy.proposeBlockingCount(PROJECT_PATH, "definition-unknown"),
+    ).resolves.toBeNull();
+    await expect(
+      policy.proposeBlockingCount(PROJECT_PATH, "definition-current"),
+    ).resolves.toBeNull();
+    await expect(
+      readerless.proposeBlockingCount(PROJECT_PATH, "definition-current"),
+    ).resolves.toBeNull();
+    expect(reads).toEqual([]);
+  });
+});

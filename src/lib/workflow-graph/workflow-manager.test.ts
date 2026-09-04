@@ -1268,7 +1268,8 @@ describe("graph workflow manager", () => {
       });
       expect(outcome.warnings).toEqual([
         {
-          path: "definition.charter.sourcesOfTruth.0.locator",
+          path: "definition.charter.sourcesOfTruth.0 (authored-design).locator",
+          recordId: "authored-design",
           message: expect.stringContaining(
             `session "${TEMPLATE_SESSION}" on branch "csm/${TEMPLATE_SESSION}" at commit launch-sha`,
           ),
@@ -1346,8 +1347,8 @@ describe("graph workflow manager", () => {
       expect(launchProbe.getHeadCommit).toHaveBeenCalledTimes(1);
       expect(probedPaths).toEqual(["docs/bound.md", "docs/static.md"]);
       expect(outcome.warnings?.map((warning) => warning.path)).toEqual([
-        "definition.charter.sourcesOfTruth.0.locator",
-        "definition.charter.sourcesOfTruth.1.locator",
+        "definition.charter.sourcesOfTruth.0 (bound-source).locator",
+        "definition.charter.sourcesOfTruth.1 (static-source).locator",
       ]);
       for (const warning of outcome.warnings ?? []) {
         expect(warning.message).toContain(`session "${INLINE_SESSION}"`);

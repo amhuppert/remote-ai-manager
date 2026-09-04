@@ -20,7 +20,19 @@ import {
   createRootIndependentWarningDefinition,
 } from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
-import { StaleWorkflowDefinitionError } from "@/lib/workflow-graph/storage";
+import {
+  StaleWorkflowDefinitionError,
+  type WorkflowDefinitionDraft,
+} from "@/lib/workflow-graph/storage";
+import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
+import {
+  NATIVE_SDD_CLAIMS_SOURCE_ID,
+  NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+} from "@/lib/specs/delivery-plan";
+import {
+  authoredDeliveryPlanSources,
+  finalizeDeliveryPlanLaunch,
+} from "@/lib/specs/delivery-plan-finalization";
 import type { NativeSddWorkflowManagementDetail } from "@/lib/workflow-graph/managed-definition";
 
 // The POST bodies below are authored plans: create refuses the legacy source
@@ -341,6 +353,7 @@ describe("workflow definition route handlers", () => {
     const managedDefinitions = {
       list: async () => new Map([[record.id, projection]]),
       get: async () => projection,
+      proposeBlockingCount: async () => null,
     };
     const managedHandlers = createWorkflowDefinitionRouteHandlers({
       resolveProjectPath,
@@ -698,9 +711,9 @@ describe("workflow definition route handlers", () => {
         )
         .map((warning) => warning.path);
       expect(sourcePaths).toEqual([
-        "definition.charter.sourcesOfTruth.1.locator",
-        "definition.charter.sourcesOfTruth.2.locator",
-        "definition.charter.sourcesOfTruth.3.locator",
+        "definition.charter.sourcesOfTruth.1 (url).locator",
+        "definition.charter.sourcesOfTruth.2 (absolute).locator",
+        "definition.charter.sourcesOfTruth.3 (traversal).locator",
       ]);
       expect(warnings).toEqual(
         expect.arrayContaining([
@@ -804,7 +817,7 @@ describe("workflow definition route handlers", () => {
     [
       "no placement at all",
       { id: "context-plan", title: "Plan", acceptanceCriteria: "Documented" },
-      "definition.executionContexts.0.placement",
+      "definition.executionContexts.0 (context-plan).placement",
     ],
     [
       "a lane name outside the lane-id charset",
@@ -814,7 +827,7 @@ describe("workflow definition route handlers", () => {
         acceptanceCriteria: "Documented",
         placement: { lane: "plan lane", mode: "full" },
       },
-      "definition.executionContexts.0.placement.lane",
+      "definition.executionContexts.0 (context-plan).placement.lane",
     ],
     [
       "a write-capable context on the reserved session lane",
@@ -824,7 +837,7 @@ describe("workflow definition route handlers", () => {
         acceptanceCriteria: "Documented",
         placement: { lane: "session", mode: "full" },
       },
-      "definition.executionContexts.0.placement.lane",
+      "definition.executionContexts.0 (context-plan).placement.lane",
     ],
     [
       "an owned path naming repository metadata",
@@ -834,7 +847,7 @@ describe("workflow definition route handlers", () => {
         acceptanceCriteria: "Documented",
         placement: { lane: "plan", mode: "owned", ownedPaths: [".git/config"] },
       },
-      "definition.executionContexts.0.placement.ownedPaths.0",
+      "definition.executionContexts.0 (context-plan).placement.ownedPaths.0",
     ],
     [
       "a read-only context with no output contract",
@@ -844,7 +857,7 @@ describe("workflow definition route handlers", () => {
         acceptanceCriteria: "Documented",
         placement: { lane: "session", mode: "readOnly" },
       },
-      "definition.executionContexts.0.outputSchema",
+      "definition.executionContexts.0 (context-plan).outputSchema",
     ],
   ])(
     "returns 400 from create when a context declares %s",
@@ -1342,8 +1355,9 @@ describe("create/replace review advisory", () => {
         warnings?: { path: string; message: string }[];
       };
       expect(body.warnings).toContainEqual({
-        path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+        path: "definition.executionContexts.0 (context-plan).acceptanceCriteria.0 (ac-sweep).statement",
         message: expect.stringContaining("lint/open-quantifier"),
+        recordId: "ac-sweep",
       });
       // Advisory to the last: the plan is still persisted.
       expect(createDefinition).toHaveBeenCalled();
@@ -1360,8 +1374,9 @@ describe("create/replace review advisory", () => {
         warnings?: { path: string; message: string }[];
       };
       expect(body.warnings).toContainEqual({
-        path: "definition.executionContexts.0.acceptanceCriteria.0.statement",
+        path: "definition.executionContexts.0 (context-plan).acceptanceCriteria.0 (ac-sweep).statement",
         message: expect.stringContaining("lint/open-quantifier"),
+        recordId: "ac-sweep",
       });
       expect(updateDefinition).toHaveBeenCalled();
     });
@@ -1395,6 +1410,421 @@ describe("create/replace review advisory", () => {
 
       expect(response.status).toBe(201);
       expect(await response.json()).not.toHaveProperty("warnings");
+    });
+  });
+});
+
+describe("managed draft replace (one write path)", () => {
+  const SOURCE_URI =
+    "spec-plan://spec-1/revisions/revision-1/attempts/attempt-1/candidates/workflow-1";
+  const DRAFT_WHY =
+    "provenance and approval policy are stamped by the server so a signed candidate can prove where it came from";
+  const CANDIDATE_WHY =
+    "the signed candidate is immutable so sign-off approves exact bytes";
+
+  /** The stored shape `spec plan open` leaves: injected sources, provenance lock, origin. */
+  function storedDraft(): WorkflowDefinitionRecord {
+    const record = createWorkflowDefinitionRecord();
+    const finalized = finalizeDeliveryPlanLaunch({
+      specId: "spec-1",
+      specSlug: "native-sdd",
+      pinnedRevisionId: "revision-1",
+      attemptId: "attempt-1",
+      candidateId: record.id,
+      launch: {
+        name: record.name,
+        description: record.description,
+        definition: record.definition,
+        layout: record.layout,
+      },
+      stage: "draft",
+    });
+    return createWorkflowDefinitionRecord({ ...finalized });
+  }
+
+  /** What a planner authors: no server-owned fields, no injected sources. */
+  function barePlan(record: WorkflowDefinitionRecord, expectedRevision = 1) {
+    const {
+      origin: _origin,
+      approvalRequired: _approvalRequired,
+      lockedRegions: _lockedRegions,
+      ...definition
+    } = record.definition;
+    return {
+      expectedRevision,
+      name: record.name,
+      description: record.description,
+      definition: {
+        ...definition,
+        charter: {
+          ...definition.charter,
+          sourcesOfTruth: authoredDeliveryPlanSources(
+            definition.charter.sourcesOfTruth,
+          ),
+        },
+      },
+      layout: record.layout,
+    };
+  }
+
+  function draftStore(initial: WorkflowDefinitionRecord) {
+    let stored = initial;
+    return {
+      read: () => stored,
+      getDefinition: async () => stored,
+      updateDefinition: vi.fn(
+        async (
+          _projectPath: string,
+          _workflowId: string,
+          expectedRevision: number,
+          draft: WorkflowDefinitionDraft,
+        ) => {
+          stored = { ...stored, ...draft, revision: expectedRevision + 1 };
+          return stored;
+        },
+      ),
+    };
+  }
+
+  /**
+   * A propose-gate reader that answers the given counts in order and records
+   * the stored revision at each read, so a test can prove the before read
+   * preceded the write and the after read followed it.
+   */
+  function gateReads(
+    store: ReturnType<typeof draftStore>,
+    ...counts: Array<number | null>
+  ) {
+    const revisionsAtRead: number[] = [];
+    const pending = [...counts];
+    return {
+      revisionsAtRead,
+      proposeBlockingCount: async () => {
+        revisionsAtRead.push(store.read().revision);
+        return pending.shift() ?? null;
+      },
+    };
+  }
+
+  function managedHandlers(
+    store: ReturnType<typeof draftStore>,
+    projection: NativeSddWorkflowManagementDetail | null = managedProjection(),
+    gate: ReturnType<typeof gateReads> = gateReads(store, 0, 0),
+  ) {
+    return createWorkflowDefinitionRouteHandlers({
+      resolveProjectPath: async () => "/repo",
+      readConfig: async () => MOCK_CONFIG,
+      readRepoConfig: async () => null,
+      listDefinitions: async () => [],
+      getDefinition: store.getDefinition,
+      createDefinition: vi.fn(),
+      updateDefinition: store.updateDefinition,
+      deleteDefinition: vi.fn(),
+      planReviews: unreviewedPlanReviewLookup,
+      managedDefinitions: {
+        list: async () => new Map(),
+        get: async () => projection,
+        proposeBlockingCount: gate.proposeBlockingCount,
+      },
+    });
+  }
+
+  function put(handlers: ReturnType<typeof managedHandlers>, body: unknown) {
+    return handlers.UPDATE(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", body),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+  }
+
+  function patch(handlers: ReturnType<typeof managedHandlers>, body: unknown) {
+    return handlers.EDIT(
+      makeRequest(
+        "/api/projects/repo/workflows/workflow-1/edit",
+        "PATCH",
+        body,
+      ),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+  }
+
+  const RENAME_OPS = {
+    expectedRevision: 1,
+    operations: [{ type: "update-workflow", name: "Renamed" }],
+  };
+
+  it("accepts a bare plan and keeps the stored origin, approvalRequired and lockedRegions", async () => {
+    const record = storedDraft();
+    const store = draftStore(record);
+    const handlers = managedHandlers(store);
+    const plan = barePlan(record);
+
+    const response = await put(handlers, plan);
+
+    expect(response.status).toBe(200);
+    expect(store.read().definition.origin).toEqual(record.definition.origin);
+    expect(store.read().definition.approvalRequired).toBe(
+      record.definition.approvalRequired,
+    );
+    expect(store.read().definition.lockedRegions).toEqual(
+      record.definition.lockedRegions,
+    );
+    // The authored sources are stored as submitted: nothing re-injected here.
+    expect(store.read().definition.charter.sourcesOfTruth).toEqual(
+      plan.definition.charter.sourcesOfTruth,
+    );
+
+    const reread = await handlers.GET(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "GET"),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+    expect(await reread.json()).toMatchObject({
+      item: {
+        revision: 2,
+        definition: {
+          origin: { sourceUri: SOURCE_URI },
+          approvalRequired: false,
+          lockedRegions: record.definition.lockedRegions,
+        },
+      },
+    });
+  });
+
+  it("accepts a plan whose server-owned fields equal the stored values", async () => {
+    const record = storedDraft();
+    const store = draftStore(record);
+
+    const response = await put(managedHandlers(store), {
+      expectedRevision: 1,
+      name: record.name,
+      description: record.description,
+      definition: record.definition,
+      layout: record.layout,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).not.toHaveProperty("code");
+    expect(store.updateDefinition).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["/origin", { origin: { sourceUri: "spec-plan://elsewhere" } }],
+    ["/approvalRequired", { approvalRequired: true }],
+    ["/lockedRegions", { lockedRegions: [] }],
+  ])(
+    "refuses a present-and-different %s by path with the omit instruction and its why-line",
+    async (lockedPath, different) => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const plan = barePlan(record);
+
+      const response = await put(managedHandlers(store), {
+        ...plan,
+        definition: { ...plan.definition, ...different },
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "region_locked",
+        lockedPath,
+        instruction: `${lockedPath} is server-owned; omit it from your plan.`,
+        rationale: DRAFT_WHY,
+      });
+      expect(store.updateDefinition).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses replace and edit on a proposed candidate with the reopen instruction and its why-line", async () => {
+    const record = storedDraft();
+    const store = draftStore(record);
+    const handlers = managedHandlers(
+      store,
+      managedProjection({ lifecycle: "in_review", editable: false }),
+    );
+
+    const replaceResponse = await put(handlers, barePlan(record));
+    const editResponse = await handlers.EDIT(
+      makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
+        expectedRevision: 1,
+        operations: [{ type: "update-workflow", name: "Blocked" }],
+      }),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    for (const response of [replaceResponse, editResponse]) {
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "managed_workflow_definition_read_only",
+        instruction:
+          "Reopen the delivery plan before editing its workflow definition.",
+        rationale: CANDIDATE_WHY,
+      });
+    }
+    expect(store.updateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("stores the submitted plan's edge ids unchanged", async () => {
+    const record = storedDraft();
+    const store = draftStore(record);
+    const plan = barePlan(record);
+    const edges = [
+      {
+        id: "edge-plan-to-implement",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      },
+      {
+        id: "edge-implement-to-verify",
+        sourceContextId: "context-implement",
+        targetContextId: "context-verify",
+      },
+    ];
+
+    const response = await put(managedHandlers(store), {
+      ...plan,
+      definition: { ...plan.definition, edges },
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.read().definition.edges).toEqual(edges);
+  });
+
+  it("stores each injected source id at most once when the plan carries them", async () => {
+    const record = storedDraft();
+    const store = draftStore(record);
+    const pinned = record.definition.charter.sourcesOfTruth.find(
+      (source) => source.id === NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+    );
+    if (pinned === undefined) throw new Error("fixture lacks the pinned spec");
+    const plan = barePlan(record);
+
+    const response = await put(managedHandlers(store), {
+      ...plan,
+      definition: {
+        ...plan.definition,
+        charter: {
+          ...plan.definition.charter,
+          // A round-tripped `get --full` carries the pair; a second copy of
+          // one of them at a free rank is what a planner's merge can produce.
+          sourcesOfTruth: [
+            ...record.definition.charter.sourcesOfTruth,
+            { ...pinned, rank: 9 },
+          ],
+        },
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const storedIds = store
+      .read()
+      .definition.charter.sourcesOfTruth.map((source) => source.id);
+    expect(
+      storedIds.filter((id) => id === NATIVE_SDD_PINNED_SPEC_SOURCE_ID),
+    ).toHaveLength(1);
+    expect(
+      storedIds.filter((id) => id === NATIVE_SDD_CLAIMS_SOURCE_ID),
+    ).toHaveLength(1);
+    expect(storedIds).toContain("design-doc");
+  });
+
+  describe("propose-gate receipt", () => {
+    it("reports the propose gate a replace moved, read before and after the write", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const gate = gateReads(store, 2, 1);
+
+      const response = await put(
+        managedHandlers(store, managedProjection(), gate),
+        barePlan(record),
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        item: { revision: 2, management: { specSlug: "native-sdd" } },
+        proposeGate: { blockingBefore: 2, blockingAfter: 1 },
+      });
+      expect(gate.revisionsAtRead).toEqual([1, 2]);
+    });
+
+    it("reports the propose gate a persisted edit moved and carries management on its item", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const gate = gateReads(store, 1, 0);
+
+      const response = await patch(
+        managedHandlers(store, managedProjection(), gate),
+        RENAME_OPS,
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        item: {
+          name: "Renamed",
+          revision: 2,
+          management: { specSlug: "native-sdd", lifecycle: "draft" },
+        },
+        applied: 1,
+        proposeGate: { blockingBefore: 1, blockingAfter: 0 },
+      });
+      expect(gate.revisionsAtRead).toEqual([1, 2]);
+    });
+
+    it("reads no gate and reports none on a dry-run edit", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+      const gate = gateReads(store, 1, 0);
+
+      const response = await patch(
+        managedHandlers(store, managedProjection(), gate),
+        { ...RENAME_OPS, dryRun: true },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({ dryRun: true });
+      expect(body).not.toHaveProperty("proposeGate");
+      expect(gate.revisionsAtRead).toEqual([]);
+    });
+
+    it("omits the gate but keeps management when the projection cannot be read", async () => {
+      const record = storedDraft();
+      const store = draftStore(record);
+
+      const response = await put(
+        managedHandlers(store, managedProjection(), gateReads(store, null, 1)),
+        barePlan(record),
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        item: { management: { specSlug: "native-sdd" } },
+      });
+      expect(body).not.toHaveProperty("proposeGate");
+    });
+
+    it("reads no gate and reports none on an unmanaged definition", async () => {
+      const record = createWorkflowDefinitionRecord();
+      const store = draftStore(record);
+      const gate = gateReads(store, 1, 0);
+      const handlers = managedHandlers(store, null, gate);
+
+      const replaced = await put(handlers, {
+        expectedRevision: 1,
+        name: record.name,
+        description: record.description,
+        definition: record.definition,
+        layout: record.layout,
+      });
+      const edited = await patch(handlers, {
+        ...RENAME_OPS,
+        expectedRevision: 2,
+      });
+
+      expect(replaced.status).toBe(200);
+      expect(edited.status).toBe(200);
+      expect(await replaced.json()).not.toHaveProperty("proposeGate");
+      expect(await edited.json()).not.toHaveProperty("proposeGate");
+      expect(gate.revisionsAtRead).toEqual([]);
     });
   });
 });

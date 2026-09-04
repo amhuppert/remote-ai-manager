@@ -145,6 +145,9 @@ function respondLiveEditFailure(failure: LiveEditFailure): Response {
   if (failure.instruction) {
     body["instruction"] = failure.instruction;
   }
+  if (failure.rationale) {
+    body["rationale"] = failure.rationale;
+  }
   return NextResponse.json(body, { status: failure.status });
 }
 

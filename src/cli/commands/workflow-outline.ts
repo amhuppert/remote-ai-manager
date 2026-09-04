@@ -413,7 +413,13 @@ export function buildOutlineData(record: OutlineRecord): OutlineData {
   };
 }
 
-/** Render the outline as the compact text navigation map. */
+/**
+ * Render the outline as the compact text navigation map. Every size line ends
+ * with the selector that reads the prose behind it (#80 I-18): a reader who can
+ * see that a charter is 646 characters still has to discover `--charter`
+ * elsewhere, and the discovery is what costs. These are hint-tier — they name a
+ * next read and carry no rationale.
+ */
 export function renderOutline(record: OutlineRecord): string {
   const data = buildOutlineData(record);
   const lines: string[] = [];
@@ -431,7 +437,7 @@ export function renderOutline(record: OutlineRecord): string {
         ? `  [${context.overrides.join(", ")} override]`
         : "";
     lines.push(
-      `  ${context.id.padEnd(idWidth)}  "${context.title}"  deps=${deps}  tasks=${context.taskCount}  criteria=${context.criteria.length}${outputSchema}${overrides}`,
+      `  ${context.id.padEnd(idWidth)}  "${context.title}"  deps=${deps}  tasks=${context.taskCount}  criteria=${context.criteria.length}${outputSchema}${overrides}  -> --context ${context.id}`,
     );
   }
 
@@ -460,7 +466,7 @@ export function renderOutline(record: OutlineRecord): string {
       const label = task.contextId === lastContextId ? "" : task.contextId;
       lastContextId = task.contextId;
       lines.push(
-        `  ${label.padEnd(ctxWidth)}  ${task.order} ${task.id.padEnd(taskIdWidth)}  "${task.title}"  (${formatCharCount(task.instructionChars)} chars)`,
+        `  ${label.padEnd(ctxWidth)}  ${task.order} ${task.id.padEnd(taskIdWidth)}  "${task.title}"  (${formatCharCount(task.instructionChars)} chars)  -> --task ${task.id}`,
       );
     }
   }
@@ -475,7 +481,7 @@ export function renderOutline(record: OutlineRecord): string {
   if (data.charter.knownAmbiguities > 0)
     charterParts.push(`knownAmbiguities ${data.charter.knownAmbiguities}`);
   charterParts.push(`sources ${data.charter.sources}`);
-  lines.push(`charter: ${charterParts.join(" · ")}`);
+  lines.push(`charter: ${charterParts.join(" · ")} -> --charter`);
 
   if (data.charter.invariants.some((invariant) => invariant.contextIds)) {
     const invariantScopes = data.charter.invariants.map((invariant) =>
@@ -522,7 +528,7 @@ export function renderOutline(record: OutlineRecord): string {
           .join(", ")
       : "-";
   lines.push(
-    `config overrides: workflow=${workflowOverrides} · contexts: ${contextOverrides}`,
+    `config overrides: workflow=${workflowOverrides} · contexts: ${contextOverrides} -> --config`,
   );
 
   const validationLine = renderValidationSelections(

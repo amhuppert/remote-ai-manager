@@ -101,6 +101,7 @@ import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { lintCommittedSourceLocators as defaultLintCommittedSourceLocators } from "@/lib/workflows/committed-source-locator-lint";
+import { locatePlanIssues } from "@/lib/workflows/plan-issue-locator";
 import type {
   GraphWorkflowAbandonment,
   GraphWorkflowDefinitionApprovalClaim,
@@ -1818,18 +1819,22 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
+    const authoredDefinition = {
+      ...pendingExecution.workingDefinition,
+      charter: pendingExecution.charter,
+    };
     const sourceWarnings =
       session === null
         ? []
-        : await (
-            deps.lintCommittedSourceLocators ??
-            defaultLintCommittedSourceLocators
-          )(
-            {
-              ...pendingExecution.workingDefinition,
-              charter: pendingExecution.charter,
-            },
-            session,
+        : locatePlanIssues(
+            await (
+              deps.lintCommittedSourceLocators ??
+              defaultLintCommittedSourceLocators
+            )(authoredDefinition, session),
+            // The same id-bearing locator `workflow validate` renders (#80
+            // design 3.2): a source warning names the charter source it is
+            // about, not the position it happens to occupy.
+            authoredDefinition,
           );
     logger.info("graph-workflow.start.source_check", {
       projectPath: input.projectPath,

@@ -435,6 +435,12 @@ export async function createProductionSpecRouteServices(
     launchedExecutionState(executionId) {
       return deliveryRepo.findExecutionById(executionId)?.state ?? null;
     },
+    launchedWorkflowExecutionId(executionId) {
+      return (
+        deliveryRepo.findExecutionById(executionId)?.workflow_execution_id ??
+        null
+      );
+    },
     lastDeliveryBasis({ spec, pinnedRevision }) {
       return loadDeliveryPlanSeedBasis(
         {

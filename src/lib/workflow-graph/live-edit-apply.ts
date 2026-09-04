@@ -232,6 +232,8 @@ export interface LiveEditFailure {
   issues?: WorkflowGraphValidationError[];
   currentLiveRevision?: number;
   instruction?: string;
+  /** Why the refused constraint exists; rendered as the CLI's `why:` line. */
+  rationale?: string;
 }
 
 /**
@@ -398,6 +400,7 @@ function evaluateLiveEditRequest(
         error: "live edit was rejected",
         issues: applied.issues,
         ...(applied.instruction ? { instruction: applied.instruction } : {}),
+        ...(applied.rationale ? { rationale: applied.rationale } : {}),
       },
     };
   }

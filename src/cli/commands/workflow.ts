@@ -9,6 +9,7 @@ import {
 } from "@/lib/workflow-graph/schemas";
 import { graphWorkflowBoundaryKindSchema } from "@/lib/workflow-graph/event-schemas";
 import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
+import { managedDefinitionPreflightSuccessSchema } from "@/lib/workflow-graph/managed-definition-preflight";
 import {
   planReviewAcknowledgementRefusalSchema,
   planReviewAdvisorySchema,
@@ -40,6 +41,7 @@ import {
   failureFromRequest,
   failureFromRequestNotFoundAsUsage,
   issueDetailLines,
+  nextWriteToken,
   readJsonObjectFile,
   render,
   resolveCliPrincipalCapabilities,
@@ -57,6 +59,7 @@ import {
   type GlobalFlags,
   type JsonEnvelope,
   type LaneContext,
+  type NextWriteToken,
   type ProjectContext,
   type SessionContext,
 } from "../shared";
@@ -222,19 +225,71 @@ function projectScopeRunFailure(json: boolean): CliResult {
 const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
 const CALLER_BACKEND_HEADER = "x-cc-agent-backend";
 
+/**
+ * The management a managed definition's receipt carries on its item. Only the
+ * slug is read here: it names the spec verb that follows the write.
+ */
+const managedReceiptSchema = z.object({ specSlug: z.string() });
+
+/**
+ * What a managed write did to the propose gate: the blocking count the server
+ * read through the draft-health projection before and after the write.
+ */
+const proposeGateSchema = z.object({
+  blockingBefore: z.number().int().nonnegative(),
+  blockingAfter: z.number().int().nonnegative(),
+});
+type ProposeGate = z.infer<typeof proposeGateSchema>;
+
 /** JSON-object plan file the author flow (validate/create/replace) reads. */
 const definitionItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   revision: z.number(),
+  management: managedReceiptSchema.optional(),
 });
+
+/**
+ * The closed loop a managed write prints (design 3.1): what the write did to
+ * the propose gate, and the spec verb that follows. The hint names propose only
+ * once nothing refuses it; while findings remain — or when the gate could not
+ * be read, since an unmeasured gate is not a clean one — it names the status
+ * read that lists them. An ordinary definition has no gate and prints nothing.
+ */
+function managedReceipt(
+  management: { specSlug: string } | undefined,
+  gate: ProposeGate | undefined,
+): { text: string; fields: Record<string, unknown> } {
+  if (management === undefined) return { text: "", fields: {} };
+  const clean = gate !== undefined && gate.blockingAfter === 0;
+  const text =
+    gate === undefined
+      ? ""
+      : clean
+        ? "propose: nothing refuses\n"
+        : `propose findings: ${gate.blockingBefore} -> ${gate.blockingAfter} (blocks_propose)\n`;
+  return {
+    text,
+    fields: {
+      ...(gate === undefined ? {} : gate),
+      hint: clean
+        ? `propose the draft with 'cctl spec plan propose ${management.specSlug}'`
+        : `read what still refuses propose with 'cctl spec plan status ${management.specSlug}'`,
+    },
+  };
+}
 
 /**
  * An authoring warning: located exactly like an issue, but never a refusal —
  * the guard enum-coverage lint and the semantic authoring lints (#69 change 6)
  * both arrive in this shape, from validate and from create/replace alike.
  */
-const planWarningSchema = z.object({ path: z.string(), message: z.string() });
+const planWarningSchema = z.object({
+  path: z.string(),
+  message: z.string(),
+  /** The addressed record's id, when the server names one (#80 design 3.2). */
+  recordId: z.string().optional(),
+});
 type PlanWarning = z.infer<typeof planWarningSchema>;
 
 const cliGraphWorkflowLaunchReceiptSchema =
@@ -263,6 +318,12 @@ const mutationResponseSchema = z.object({
    * a save with nothing to warn about.
    */
   warnings: z.array(planWarningSchema).optional(),
+  /**
+   * The propose-gate delta of a managed write. Absent on an ordinary
+   * definition, on a server that predates it, and when the server could not
+   * read the gate on both sides of the write.
+   */
+  proposeGate: proposeGateSchema.optional(),
 });
 
 /** One advisory line beside a save. Never an error, never an exit code. */
@@ -338,7 +399,58 @@ function planBodyWithAcknowledgement(
  */
 const validateResponseSchema = z.object({
   warnings: z.array(planWarningSchema).optional(),
+  preflight: managedDefinitionPreflightSuccessSchema
+    .omit({ ok: true })
+    .optional(),
 });
+
+const VALIDATE_FINDING_SEVERITIES = [
+  "blocks_propose",
+  "blocks_signoff",
+  "advisory",
+] as const;
+
+interface RenderedValidateFinding {
+  readonly ruleId: string;
+  readonly severity: (typeof VALIDATE_FINDING_SEVERITIES)[number];
+  readonly handle: string;
+  readonly recordId?: string;
+  readonly message: string;
+}
+
+function renderedValidateFindings(
+  preflight: z.infer<typeof managedDefinitionPreflightSuccessSchema> | null,
+): RenderedValidateFinding[] {
+  if (preflight === null) return [];
+  return preflight.findings.map((finding) => ({
+    ruleId: finding.ruleId,
+    severity: finding.severity,
+    handle: finding.elementHandle,
+    ...(finding.recordId === undefined ? {} : { recordId: finding.recordId }),
+    message: finding.message,
+  }));
+}
+
+function validateFindingLines(
+  findings: readonly RenderedValidateFinding[],
+): string {
+  const lines: string[] = [];
+  if (!findings.some((finding) => finding.severity === "blocks_propose")) {
+    lines.push("propose: nothing refuses");
+  }
+  for (const severity of VALIDATE_FINDING_SEVERITIES) {
+    const group = findings.filter((finding) => finding.severity === severity);
+    if (group.length === 0) continue;
+    lines.push(`${severity}:`);
+    lines.push(
+      ...group.map(
+        (finding) =>
+          `  ${finding.handle} [${finding.ruleId}]: ${finding.message}`,
+      ),
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
 
 const TEMPLATE_TIERS = ["global", "project"] as const;
 type TemplateTier = (typeof TEMPLATE_TIERS)[number];
@@ -363,9 +475,10 @@ function resolveTierFlag(
 }
 
 const editResponseSchema = z.object({
-  item: z.object({ id: z.string(), name: z.string(), revision: z.number() }),
+  item: definitionItemSchema,
   applied: z.number(),
   dryRun: z.boolean().optional(),
+  proposeGate: proposeGateSchema.optional(),
 });
 
 const definitionSummarySchema = z.object({
@@ -647,6 +760,19 @@ async function runWorkflowValidate(
   // plan the save then refuses (R4.2).
   const tier = resolveTierFlag(values, json);
   if (!tier.ok) return tier.result;
+  const workflowDefinitionId = values["definition"]?.trim();
+  if (
+    values["definition"] !== undefined &&
+    workflowDefinitionId?.length === 0
+  ) {
+    return usageFailure("--definition must be a non-empty id", json);
+  }
+  if (workflowDefinitionId !== undefined && tier.tier === "global") {
+    return usageFailure(
+      "--definition cannot be combined with --tier global because managed delivery drafts are project-scoped",
+      json,
+    );
+  }
 
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
@@ -657,12 +783,18 @@ async function runWorkflowValidate(
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
 
+  const query = new URLSearchParams();
+  if (tier.tier === "global") query.set("tier", "global");
+  if (workflowDefinitionId !== undefined) {
+    query.set("definition", workflowDefinitionId);
+  }
+  const queryString = query.size === 0 ? "" : `?${query.toString()}`;
   const result = await cliRequest(host, {
     server: context.server,
     token: context.token,
     tokenSource: context.tokenSource,
     method: "POST",
-    path: `${graphWorkflowPath(context)}/validate${tier.tier === "global" ? "?tier=global" : ""}`,
+    path: `${graphWorkflowPath(context)}/validate${queryString}`,
     body: plan.value,
   });
   // A 400 carries { error, issues[] }; the shared mapping renders each issue on
@@ -670,21 +802,53 @@ async function runWorkflowValidate(
   if (result.kind !== "ok") return workflowFailure(result, json);
 
   const parsed = validateResponseSchema.safeParse(result.body);
+  if (
+    workflowDefinitionId !== undefined &&
+    (!parsed.success || parsed.data.preflight === undefined)
+  ) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message:
+        "The server did not return the requested managed definition preflight.",
+      code: "managed_definition_preflight_missing",
+      json,
+    });
+  }
   const warnings = parsed.success ? (parsed.data.warnings ?? []) : [];
+  const preflight = parsed.success ? (parsed.data.preflight ?? null) : null;
+  const findings = renderedValidateFindings(
+    preflight === null ? null : { ok: true, ...preflight },
+  );
+  const preflightText =
+    workflowDefinitionId === undefined ? "" : validateFindingLines(findings);
+  const hint =
+    workflowDefinitionId === undefined
+      ? tier.tier === "global"
+        ? "valid as a global-scope template — note 'cctl workflow create' saves under this project, not the global library"
+        : `valid — create it with 'cctl workflow create --file ${filePath}'`
+      : `valid — replace it with 'cctl workflow replace ${workflowDefinitionId} --file ${filePath}'`;
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, `${planWarningLines(warnings)}plan is valid\n`, {
-      ok: true,
-      ...(warnings.length > 0 ? { warnings } : {}),
-      // `workflow create` writes into THIS project, so it is not the next step
-      // for a plan validated as a global template — hinting it would send the
-      // author to the wrong tier after they deliberately selected the other one.
-      hint:
-        tier.tier === "global"
-          ? "valid as a global-scope template — note 'cctl workflow create' saves under this project, not the global library"
-          : `valid — create it with 'cctl workflow create --file ${filePath}'`,
-    }),
+    stdout: render(
+      json,
+      `${planWarningLines(warnings)}plan is valid\n${preflightText}`,
+      {
+        ok: true,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(preflight === null
+          ? {}
+          : {
+              specSlug: preflight.specSlug,
+              findings,
+              summary: preflight.summary,
+            }),
+        // `workflow create` writes into THIS project, so it is not the next step
+        // for a plan validated as a global template — hinting it would send the
+        // author to the wrong tier after they deliberately selected the other one.
+        hint,
+      },
+    ),
     stderr: "",
   };
 }
@@ -736,6 +900,9 @@ async function runWorkflowCreate(
   const humanLine = item
     ? `created ${item.name} (id: ${item.id})\n`
     : "workflow created\n";
+  const nextWrite = item
+    ? nextWriteToken("expectedRevision", item.revision)
+    : null;
   const advisoryLine =
     reviewStatus === undefined ? "" : planReviewAdvisoryLine(reviewStatus);
 
@@ -746,12 +913,13 @@ async function runWorkflowCreate(
     // for the first time.
     stdout: render(
       json,
-      `${planWarningLines(warnings)}${humanLine}${advisoryLine}`,
+      `${planWarningLines(warnings)}${humanLine}${nextWrite ? `${nextWrite.line}\n` : ""}${advisoryLine}`,
       {
         ok: true,
         ...(warnings.length > 0 ? { warnings } : {}),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
         ...(item ? { workflowId: item.id } : {}),
+        ...(nextWrite ? nextWrite.field : {}),
         ...(item
           ? {
               hint: `review it in the visual builder, then start it with 'cctl workflow start ${item.id}'`,
@@ -815,19 +983,30 @@ async function runWorkflowReplace(
   const humanLine = item
     ? `replaced ${item.name} (revision: ${item.revision})\n`
     : `replaced ${id}\n`;
+  const nextWrite = item
+    ? nextWriteToken("expectedRevision", item.revision)
+    : null;
   const advisoryLine =
     reviewStatus === undefined ? "" : planReviewAdvisoryLine(reviewStatus);
-  // No hint — replace is a revision, not a step in the author-then-start chain.
+  // No hint on an ordinary definition — replace is a revision, not a step in
+  // the author-then-start chain. A managed draft's receipt closes the loop
+  // instead: the gate it moved, and the spec verb that follows.
+  const receipt = managedReceipt(
+    item?.management,
+    parsed.success ? parsed.data.proposeGate : undefined,
+  );
   return {
     exitCode: EXIT_OK,
     stdout: render(
       json,
-      `${planWarningLines(warnings)}${humanLine}${advisoryLine}`,
+      `${planWarningLines(warnings)}${humanLine}${nextWrite ? `${nextWrite.line}\n` : ""}${advisoryLine}${receipt.text}`,
       {
         ok: true,
         ...(warnings.length > 0 ? { warnings } : {}),
         ...(item ? { revision: item.revision } : {}),
+        ...(nextWrite ? nextWrite.field : {}),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
+        ...receipt.fields,
       },
     ),
     stderr: "",
@@ -1168,17 +1347,25 @@ async function fullRecordResult(input: {
   /** The envelope's named payload fields — also the artifact's document. */
   readonly payload: Record<string, unknown>;
   readonly inlineText: string;
+  /**
+   * The token the next write against this record must carry. It rides both
+   * disclosure paths: a spilled record is still the map an edit is addressed
+   * from, so the manifest owes its reader the same token the inline form does.
+   */
+  readonly nextWrite?: NextWriteToken | null;
 }): Promise<CliResult> {
   const view = input.view ?? "full";
-  const envelope: JsonEnvelope = { ...input.payload, ok: true };
+  const tokenLine = input.nextWrite ? `${input.nextWrite.line}\n` : "";
+  const tokenField = input.nextWrite ? input.nextWrite.field : {};
+  const envelope: JsonEnvelope = { ...input.payload, ...tokenField, ok: true };
   const widestBytes = Math.max(
-    Buffer.byteLength(input.inlineText, "utf8"),
+    Buffer.byteLength(`${input.inlineText}${tokenLine}`, "utf8"),
     Buffer.byteLength(`${JSON.stringify(envelope)}\n`, "utf8"),
   );
   if (widestBytes < STDOUT_BUDGET_BYTES) {
     return {
       exitCode: EXIT_OK,
-      stdout: render(input.json, input.inlineText, envelope),
+      stdout: render(input.json, `${input.inlineText}${tokenLine}`, envelope),
       stderr: "",
     };
   }
@@ -1213,13 +1400,14 @@ async function fullRecordResult(input: {
     exitCode: EXIT_OK,
     stdout: render(
       input.json,
-      fullArtifactText(input.command, view, outcome.manifest),
+      `${fullArtifactText(input.command, view, outcome.manifest)}${tokenLine}`,
       {
         ok: true,
         command: input.command,
         view,
         storage: "artifact",
         artifact: outcome.manifest,
+        ...tokenField,
       },
     ),
     stderr: "",
@@ -1415,16 +1603,33 @@ async function runWorkflowEdit(
   const humanLine = dryRun
     ? `dry-run OK${opCount ? `: ${opCount} would apply` : ""}\n`
     : `edited ${name ? `"${name}"` : id}${opCount ? `: ${opCount} applied` : ""}${revision !== undefined ? `, revision ${revision}` : ""}\n`;
+  // A dry run moved nothing, so the revision it reports is still the one the
+  // real write must carry — the same token either way.
+  const nextWrite =
+    revision === undefined
+      ? null
+      : nextWriteToken("expectedRevision", revision);
+  // A dry run persists nothing, so it moved no gate worth reporting.
+  const receipt =
+    dryRun || !parsed.success
+      ? { text: "", fields: {} }
+      : managedReceipt(parsed.data.item.management, parsed.data.proposeGate);
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, humanLine, {
-      ok: true,
-      workflowId: id,
-      ...(applied !== undefined ? { applied } : {}),
-      ...(revision !== undefined ? { revision } : {}),
-      ...(dryRun ? { dryRun: true } : {}),
-    }),
+    stdout: render(
+      json,
+      `${humanLine}${nextWrite ? `${nextWrite.line}\n` : ""}${receipt.text}`,
+      {
+        ok: true,
+        workflowId: id,
+        ...(applied !== undefined ? { applied } : {}),
+        ...(revision !== undefined ? { revision } : {}),
+        ...(nextWrite ? nextWrite.field : {}),
+        ...(dryRun ? { dryRun: true } : {}),
+        ...receipt.fields,
+      },
+    ),
     stderr: "",
   };
 }
@@ -2841,7 +3046,19 @@ async function runWorkflowLiveGet(
     body !== null && typeof body === "object"
       ? { ...(body as Record<string, unknown>) }
       : {};
-  const envelope: JsonEnvelope = { ...payload, ok: true };
+  // The outline IS the edit map, so it is where the token an edit must carry is
+  // read from. Only the header-bearing projections have one; a section slice
+  // carries no header and so names no token.
+  const liveRevision = liveOutlineRevision(body);
+  const nextWrite =
+    liveRevision === null
+      ? null
+      : nextWriteToken("baseLiveRevision", liveRevision);
+  const envelope: JsonEnvelope = {
+    ...payload,
+    ...(nextWrite ? nextWrite.field : {}),
+    ok: true,
+  };
 
   // --full expands every context, so it is the one selector whose response has
   // no bound at all; the disclosure primitive decides inline versus artifact.
@@ -2853,6 +3070,7 @@ async function runWorkflowLiveGet(
       namePrefix: "workflow-live-get-full",
       payload,
       inlineText: `${JSON.stringify(liveOutlineSectionValue(body), null, 2)}\n`,
+      nextWrite,
     });
   }
 
@@ -2894,9 +3112,32 @@ async function runWorkflowLiveGet(
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, humanText, envelope),
+    stdout: render(
+      json,
+      `${humanText}${nextWrite ? `${nextWrite.line}\n` : ""}`,
+      envelope,
+    ),
     stderr: "",
   };
+}
+
+/**
+ * The live revision on a header-bearing live-outline response (the default
+ * outline and `--full`), or null for a section slice, which carries no header.
+ */
+function liveOutlineRevision(body: unknown): number | null {
+  if (body === null || typeof body !== "object") return null;
+  const record = body as { outline?: unknown; header?: unknown };
+  for (const candidate of [
+    record.header,
+    (record.outline as { header?: unknown } | undefined)?.header,
+  ]) {
+    if (candidate !== null && typeof candidate === "object") {
+      const revision = (candidate as { liveRevision?: unknown }).liveRevision;
+      if (typeof revision === "number") return revision;
+    }
+  }
+  return null;
 }
 
 /**
@@ -3097,16 +3338,25 @@ async function runWorkflowLiveEdit(
   const humanLine = dryRun
     ? `dry-run OK: ${opCount} would apply${revSuffix}\n`
     : `applied ${opCount}${revSuffix}\n`;
+  const nextWrite =
+    liveRevision === undefined
+      ? null
+      : nextWriteToken("baseLiveRevision", liveRevision);
 
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, humanLine, {
-      ok: true,
-      ...(applied !== undefined ? { applied } : {}),
-      ...(liveRevision !== undefined ? { liveRevision } : {}),
-      affectedContextIds,
-      ...(dryRun ? { dryRun: true } : {}),
-    }),
+    stdout: render(
+      json,
+      `${humanLine}${nextWrite ? `${nextWrite.line}\n` : ""}`,
+      {
+        ok: true,
+        ...(applied !== undefined ? { applied } : {}),
+        ...(liveRevision !== undefined ? { liveRevision } : {}),
+        ...(nextWrite ? nextWrite.field : {}),
+        affectedContextIds,
+        ...(dryRun ? { dryRun: true } : {}),
+      },
+    ),
     stderr: "",
   };
 }

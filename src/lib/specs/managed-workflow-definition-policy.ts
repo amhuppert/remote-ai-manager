@@ -127,6 +127,15 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
     projectPath: string,
     workflowId: string,
   ): Promise<WorkflowDefinitionRecord | null>;
+  /**
+   * The propose gate of a spec's live draft as `spec plan status` reports it:
+   * how many findings block propose, or null when the plan cannot be read.
+   * Absent, every gate read answers null and receipts report no gate.
+   */
+  draftBlockingCount?(
+    projectPath: string,
+    specSlug: string,
+  ): Promise<number | null>;
 }): ManagedWorkflowDefinitionPolicy {
   const ownershipSql = `
     SELECT
@@ -228,6 +237,14 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
   }
 
   return {
+    async proposeBlockingCount(projectPath, workflowId) {
+      if (deps.draftBlockingCount === undefined) return null;
+      const row = readOwnership(projectPath, workflowId);
+      // Only the current draft has a gate to move: a candidate is frozen and a
+      // superseded definition is history, so neither owes a count.
+      if (row === null || lifecycle(row) !== "draft") return null;
+      return deps.draftBlockingCount(projectPath, row.spec_slug);
+    },
     async list(projectPath, workflowIds) {
       const projectName = deps.resolveProjectName(projectPath);
       const projections = new Map<string, NativeSddWorkflowManagementCompact>();

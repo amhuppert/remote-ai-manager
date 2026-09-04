@@ -71,6 +71,7 @@ import {
   failure,
   failureFromRequest,
   invalidResponseFailure,
+  nextWriteToken,
   readJsonObjectFile,
   render,
   resolveConversationContext,
@@ -82,6 +83,7 @@ import {
   type CliHost,
   type CliRequestResult,
   type CliResult,
+  type NextWriteToken,
   type ProjectConversationContext,
   type GlobalFlags,
 } from "../../shared";
@@ -248,6 +250,7 @@ const captureResponseSchema = z
       .object({
         id: z.string().min(1),
         executionId: z.string().min(1),
+        workflowExecutionId: z.string().min(1),
         attemptId: z.string().min(1).nullable(),
         title: z.string().min(1),
       })
@@ -256,6 +259,7 @@ const captureResponseSchema = z
     replacement: z
       .object({
         abandonedExecutionId: z.string().min(1),
+        abandonedWorkflowExecutionId: z.string().min(1),
         replacementAttemptId: z.string().min(1),
       })
       .strict()
@@ -770,6 +774,12 @@ interface MutationOutcome {
   readonly recovery?: string;
   readonly next: string;
   readonly instruction?: string;
+  /**
+   * The compare-and-swap token the next write against this surface must carry,
+   * named rather than left as a bare revision number (#80 I-7). Only outcomes
+   * that leave the subject writable carry one.
+   */
+  readonly nextWrite?: NextWriteToken;
 }
 
 /** `workflowDefinition` → `workflow definition`, for the text rendering only. */
@@ -798,6 +808,7 @@ function mutationResult(
           "tokens:",
           ...tokens.map(([key, token]) => `  ${tokenLabel(key)}: ${token}`),
         ]),
+    ...(outcome.nextWrite === undefined ? [] : [outcome.nextWrite.line]),
     `acts next: ${outcome.actsNext}${outcome.blocked === null ? "" : ` — ${outcome.blocked}`}`,
     ...(outcome.detail ?? []),
     ...(outcome.recovery === undefined
@@ -825,6 +836,7 @@ function mutationResult(
             },
           }),
       tokens: outcome.tokens,
+      ...(outcome.nextWrite === undefined ? {} : outcome.nextWrite.field),
       actsNext: outcome.actsNext,
       blocked: outcome.blocked,
       ...(outcome.recovery === undefined ? {} : { recovery: outcome.recovery }),
@@ -3480,11 +3492,10 @@ export async function runSpecStart(
   return mutationResult(
     json,
     {
-      changed: `launched execution ${execution.id} from plan attempt ${deliveryPlan.attemptId} — the approved candidate ${deliveryPlan.candidateId} ran unchanged`,
+      changed: `launched execution ${deliveryPlan.workflowExecutionId} from plan attempt ${deliveryPlan.attemptId} — the approved candidate ${deliveryPlan.candidateId} ran unchanged`,
       state: `execution ${execution.state}, managed workflow definition ${workflowLaunch} at candidate hash ${deliveryPlan.candidateHash}`,
       tokens: {
-        execution: execution.id,
-        workflowExecution: deliveryPlan.workflowExecutionId,
+        execution: deliveryPlan.workflowExecutionId,
         workflowLaunch,
         planAttempt: deliveryPlan.attemptId,
         candidate: deliveryPlan.candidateId,
@@ -3493,6 +3504,13 @@ export async function runSpecStart(
       },
       actsNext: "agent",
       blocked: null,
+      // The one id an agent holds after a launch, said once and labelled with
+      // the verbs that take it (design 3.5, decision D-B). Before this the
+      // receipt printed the spec-side row id beside it and neither was
+      // labelled, so the next command was a guess between two ids.
+      detail: [
+        `execution ${deliveryPlan.workflowExecutionId} is the id \`cctl workflow status\`, \`cctl workflow wait\`, \`cctl spec abandon --execution\` and \`cctl spec capture --execution\` take`,
+      ],
       next: `cctl spec status ${slug.value} — reports the run's lane position`,
     },
     "execution",
@@ -3579,7 +3597,7 @@ export async function runSpecCapture(
   const { discovery, replacement } = captured;
   const paths = postLaunchPathActs({
     slug: slug.value,
-    executionId: discovery.executionId,
+    workflowExecutionId: discovery.workflowExecutionId,
   });
   const nonBlockingGuidance = `The run keeps its pinned scope — no capture form mutates it. The post-launch paths are: ${paths.join(
     "; ",
@@ -3588,11 +3606,11 @@ export async function runSpecCapture(
     return mutationResult(
       json,
       {
-        changed: `recorded discovery ${discovery.id} ("${discovery.title}") against running execution ${discovery.executionId}`,
-        state: `the discovery is queued for the next plan; execution ${discovery.executionId} keeps its pinned scope`,
+        changed: `recorded discovery ${discovery.id} ("${discovery.title}") against running execution ${discovery.workflowExecutionId}`,
+        state: `the discovery is queued for the next plan; execution ${discovery.workflowExecutionId} keeps its pinned scope`,
         tokens: {
           discovery: discovery.id,
-          execution: discovery.executionId,
+          execution: discovery.workflowExecutionId,
           ...(discovery.attemptId === null
             ? {}
             : { attempt: discovery.attemptId }),
@@ -3609,11 +3627,11 @@ export async function runSpecCapture(
   return mutationResult(
     json,
     {
-      changed: `recorded discovery ${discovery.id} ("${discovery.title}"), abandoned execution ${replacement.abandonedExecutionId}, and opened seeded replacement attempt ${replacement.replacementAttemptId}`,
-      state: `execution ${replacement.abandonedExecutionId} is retired; attempt ${replacement.replacementAttemptId} carries the discovery as planned work`,
+      changed: `recorded discovery ${discovery.id} ("${discovery.title}"), abandoned execution ${replacement.abandonedWorkflowExecutionId}, and opened seeded replacement attempt ${replacement.replacementAttemptId}`,
+      state: `execution ${replacement.abandonedWorkflowExecutionId} is retired; attempt ${replacement.replacementAttemptId} carries the discovery as planned work`,
       tokens: {
         discovery: discovery.id,
-        execution: replacement.abandonedExecutionId,
+        execution: replacement.abandonedWorkflowExecutionId,
         attempt: replacement.replacementAttemptId,
       },
       actsNext: "agent",
@@ -3622,7 +3640,7 @@ export async function runSpecCapture(
       // The other path is named rather than re-offered: the run it
       // address is retired, so re-listing them as live options would send the
       // operator at an execution that no longer exists.
-      instruction: `This took the second post-launch path — ${paths[1]}. The other path — ${paths[0]} — addressed execution ${replacement.abandonedExecutionId}, which is now retired, so it is no longer available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, edit it with \`cctl spec plan edit ${slug.value} --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
+      instruction: `This took the second post-launch path — ${paths[1]}. The other path — ${paths[0]} — addressed execution ${replacement.abandonedWorkflowExecutionId}, which is now retired, so it is no longer available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, edit it with \`cctl spec plan edit ${slug.value} --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
     },
     "captured",
     captured,
@@ -3730,12 +3748,12 @@ export async function runSpecAbandon(
     return mutationResult(
       json,
       {
-        changed: `abandoned execution ${abandoned.id}`,
+        changed: `abandoned execution ${executionId}`,
         state: `execution ${abandoned.state}, reason recorded`,
-        tokens: { execution: abandoned.id },
+        tokens: { execution: executionId },
         actsNext: "agent",
         blocked: null,
-        next: `cctl spec status ${slug.value} — the spec keeps its content; only this run was retired`,
+        next: `cctl spec plan open ${slug.value}`,
       },
       "abandoned",
       abandoned,
@@ -3822,6 +3840,17 @@ function planMutationResult(
           ? {}
           : { candidateHash: attempt.candidateHash }),
       },
+      // Only a draft attempt admits another `plan edit`; once propose has
+      // frozen it, the draft revision guards nothing and naming it would point
+      // at a write this attempt no longer accepts.
+      ...(attempt.status === "draft"
+        ? {
+            nextWrite: nextWriteToken(
+              "expectedDraftRevision",
+              attempt.draftRevision,
+            ),
+          }
+        : {}),
       actsNext: view.nextAct.actor,
       blocked:
         view.health.blocking === 0

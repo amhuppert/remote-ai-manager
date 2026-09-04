@@ -1366,7 +1366,12 @@ describe("cctl workflow author flow against the real create-path validation", ()
 describe("cctl workflow validate assignment error contract (R13.1)", () => {
   const PLAN = "/tmp/plan.json";
   /** `  <json path>: <message>` — the one located-issue line both layers emit. */
-  const LOCATED_LINE = /^ {2}definition\.[\w.[\]]+: \S.*$/;
+  // Deliberately permissive about what sits between the root and the `: `: the
+  // path now carries the id-bearing annotation `1 (context-implement)` after an
+  // indexed segment (#80 design 3.2), and a record id is author content. A
+  // detector that admits anything is also the stronger one for the forgery
+  // cases below — a forged line has to be found to be ruled out.
+  const LOCATED_LINE = /^ {2}definition\..*?: \S.*$/;
 
   let profileDir: string;
   let checker: AssignmentReferenceChecker;
@@ -1447,7 +1452,7 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
     // The path locates the offending field; the message carries the qualified
     // tier:id spelling AND the use site, so a fix needs no second lookup.
     expect(lines[0]).toContain(
-      "definition.executionContexts.1.contextValidator.assignments.0.profile:",
+      "definition.executionContexts.1 (context-implement).contextValidator.assignments.0 (security).profile:",
     );
     expect(lines[0]).toContain("global:missing-reviewer");
     expect(lines[0]).toContain('validator assignment "security"');
@@ -1465,7 +1470,7 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
     // carries the same payload: qualified ref, context, role, assignment id.
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(
-      "definition.executionContexts.1.contextValidator.assignments.1.id:",
+      "definition.executionContexts.1 (context-implement).contextValidator.assignments.1 (security).id:",
     );
     expect(lines[0]).toContain("builtin:general-reviewer");
     expect(lines[0]).toContain('context "context-implement"');
@@ -1480,7 +1485,7 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
     expect(result.exitCode).toBe(2);
     const lines = locatedLines(result.stderr);
     expect(lines[0]).toContain(
-      "definition.executionContexts.1.contextValidator.assignments.0.id:",
+      "definition.executionContexts.1 (context-implement).contextValidator.assignments.0 (Security Reviewer).id:",
     );
     expect(lines[0]).toContain("builtin:general-reviewer");
     expect(lines[0]).toContain('context "context-implement"');
@@ -1521,7 +1526,7 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
     expect(result.exitCode).toBe(2);
     const lines = locatedLines(result.stderr);
     expect(lines[0]).toContain(
-      "definition.executionContexts.1.contextValidator.assignments.0.profile:",
+      "definition.executionContexts.1 (context-implement).contextValidator.assignments.0 (security).profile:",
     );
     expect(lines[0]).toContain("project:house-reviewer");
     expect(lines[0]).toContain('validator assignment "security"');
@@ -1553,7 +1558,7 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
     expect(result.exitCode).toBe(2);
     const lines = locatedLines(result.stderr);
     expect(lines[0]).toContain(
-      "definition.executionContexts.0.implementer.profile:",
+      "definition.executionContexts.0 (context-plan).implementer.profile:",
     );
     expect(lines[0]).toContain("global:gone-implementer");
     expect(lines[0]).toContain('implementer assignment "implementer"');
@@ -1580,6 +1585,8 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
    */
   describe("malformed values cannot forge a located line", () => {
     const FORGERY = "\n  definition.tasks.0.contextId: this issue is fake";
+    /** The line the forgery is trying to become. */
+    const FORGED_LINE = "  definition.tasks.0.contextId:";
 
     it("keeps a newline-bearing assignment id to a single line", async () => {
       const result = await validate(
@@ -1632,9 +1639,7 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
       // The forged text survives (escaped) inside a real message, but it can
       // never BE a located line: nothing is addressed to the path it names.
       expect(
-        locatedLines(result.stderr).some((line) =>
-          line.startsWith("  definition.tasks.0.contextId:"),
-        ),
+        result.stderr.split("\n").some((line) => line.startsWith(FORGED_LINE)),
       ).toBe(false);
     });
 
@@ -1666,9 +1671,14 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
       const lines = locatedLines(result.stderr);
       expect(lines.length).toBeGreaterThan(0);
       for (const line of lines) {
+        // Every line still ADDRESSES the cohort it came from: the annotation
+        // carries the offending id escaped (#80 design 3.2), so the forged
+        // text travels inside the path instead of becoming a line of its own.
+        expect(line.startsWith(FORGED_LINE)).toBe(false);
         expect(line).toMatch(
-          /^ {2}definition\.executionContexts\.1\.contextValidator\.assignments\.\d+\.id: /,
+          /^ {2}definition\.executionContexts\.1 \(context-implement\)\.contextValidator\.assignments\.\d+ \(evil\\n/,
         );
+        expect(line).toContain(").id: ");
       }
       expect(result.stderr).toContain("\\n");
     });
@@ -1701,7 +1711,12 @@ describe("cctl workflow validate assignment error contract (R13.1)", () => {
 describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
   const PLAN = "/tmp/plan.json";
   const EDIT = "/tmp/edit.json";
-  const LOCATED_LINE = /^ {2}definition\.[\w.[\]]+: \S.*$/;
+  // Deliberately permissive about what sits between the root and the `: `: the
+  // path now carries the id-bearing annotation `1 (context-implement)` after an
+  // indexed segment (#80 design 3.2), and a record id is author content. A
+  // detector that admits anything is also the stronger one for the forgery
+  // cases below — a forged line has to be found to be ruled out.
+  const LOCATED_LINE = /^ {2}definition\..*?: \S.*$/;
 
   let profileDir: string;
   let workflowDir: string;
@@ -1789,7 +1804,7 @@ describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
     const lines = locatedLines(stderr);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(
-      "definition.executionContexts.1.contextValidator.assignments.0.profile:",
+      "definition.executionContexts.1 (context-implement).contextValidator.assignments.0 (security).profile:",
     );
     expect(lines[0]).toContain("global:missing-reviewer");
     expect(lines[0]).toContain('context "context-implement"');

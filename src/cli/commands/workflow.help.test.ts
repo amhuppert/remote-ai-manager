@@ -191,6 +191,35 @@ describe("acknowledgement gate help contract", () => {
 });
 
 /**
+ * A managed delivery draft is authored as an ordinary plan.json (design 3.1):
+ * the server-owned fields and the injected sources are not the planner's to
+ * write, so `replace --help` has to say what to leave out before a refusal
+ * does — a refusal is a poor first place to learn a rule.
+ */
+describe("managed draft omit shape in replace help", () => {
+  const entry = workflowHelpEntries.find(
+    (candidate) => candidate.path.join(" ") === "workflow replace",
+  );
+
+  it("names every server-owned field and injected source a managed plan omits, and the by-path refusal", () => {
+    const description = entry?.description ?? "";
+    for (const omitted of [
+      "origin",
+      "approvalRequired",
+      "lockedRegions",
+      "native-sdd-pinned-spec",
+      "native-sdd-claims",
+    ]) {
+      expect(description).toContain(omitted);
+    }
+    expect(description).toMatch(/omit/);
+    expect(description).toMatch(
+      /present-and-different[^.]*refused[^.]*by path/,
+    );
+  });
+});
+
+/**
  * The review protocol lives in its own skill, and the planning skill delegates
  * to it rather than restating it. A reviewer who reaches for `--help` on the
  * verb that records the verdict is therefore one hop from the rules unless the

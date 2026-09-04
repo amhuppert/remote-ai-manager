@@ -45,6 +45,7 @@ import {
 import { staleWorkflowDefinitionResponse } from "@/lib/workflow-graph/stale-workflow-definition";
 import {
   managedWorkflowReadOnlyInstruction,
+  managedWorkflowReadOnlyRationale,
   type ManagedWorkflowDefinitionPolicy,
   type NativeSddWorkflowManagementCompact,
 } from "@/lib/workflow-graph/managed-definition";
@@ -54,10 +55,16 @@ import {
 } from "@/lib/workflow-graph/definition-mutation-coordinator";
 import {
   findChangedLockedRegion,
+  isServerOwnedRegionPath,
+  mergeServerOwnedRegions,
   regionLockedInstruction,
+  type LockedRegionMatch,
 } from "@/lib/workflow-graph/locked-regions";
 import { getStateDb } from "@/lib/state-store/store";
+import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
 import { createNativeSddManagedWorkflowDefinitionPolicy } from "@/lib/specs/managed-workflow-definition-policy";
+import { dedupeServerOwnedDeliveryPlanSources } from "@/lib/specs/delivery-plan-finalization";
 
 const logger = createLogger("workflow-graph");
 
@@ -240,26 +247,50 @@ export interface WorkflowDefinitionRouteDeps {
 }
 
 const defaultStorage = createWorkflowStorageService();
+
+/**
+ * The propose gate of a managed draft exactly as `spec plan status` reads it:
+ * the delivery-plan service's health projection for the spec the ownership row
+ * names. Composed here rather than in workflow-graph so the graph keeps only
+ * the port and specs keeps the one projection. Loaded lazily, the way the spec
+ * route handlers load the same factory.
+ */
+async function productionDraftBlockingCount(
+  projectPath: string,
+  specSlug: string,
+): Promise<number | null> {
+  const { createProductionSpecRouteServices } =
+    await import("@/lib/specs/service-factory");
+  const [services, spec] = await Promise.all([
+    createProductionSpecRouteServices(projectPath),
+    createSpecsRepo(getStateDb(), getSharedWriteQueue()).resolve(
+      projectPath,
+      specSlug,
+    ),
+  ]);
+  if (spec === null) return null;
+  const plan = await services.deliveryPlan.read({ spec });
+  return plan.ok ? plan.value.health.blocking : null;
+}
+
+/** Built per call: the state database is opened per request, not at import. */
+function defaultPolicy(): ManagedWorkflowDefinitionPolicy {
+  return createNativeSddManagedWorkflowDefinitionPolicy({
+    db: getStateDb(),
+    resolveProjectName: getProjectDisplayName,
+    getWorkflowDefinition: (path, definitionId) =>
+      defaultStorage.get({ kind: "project", projectPath: path }, definitionId),
+    draftBlockingCount: productionDraftBlockingCount,
+  });
+}
+
 const defaultManagedDefinitions: ManagedWorkflowDefinitionPolicy = {
-  list(projectPath, workflowIds) {
-    return createNativeSddManagedWorkflowDefinitionPolicy({
-      db: getStateDb(),
-      resolveProjectName: getProjectDisplayName,
-      getWorkflowDefinition: (path, workflowId) =>
-        defaultStorage.get({ kind: "project", projectPath: path }, workflowId),
-    }).list(projectPath, workflowIds);
-  },
-  get(projectPath, workflowId) {
-    return createNativeSddManagedWorkflowDefinitionPolicy({
-      db: getStateDb(),
-      resolveProjectName: getProjectDisplayName,
-      getWorkflowDefinition: (path, definitionId) =>
-        defaultStorage.get(
-          { kind: "project", projectPath: path },
-          definitionId,
-        ),
-    }).get(projectPath, workflowId);
-  },
+  list: (projectPath, workflowIds) =>
+    defaultPolicy().list(projectPath, workflowIds),
+  get: (projectPath, workflowId) =>
+    defaultPolicy().get(projectPath, workflowId),
+  proposeBlockingCount: (projectPath, workflowId) =>
+    defaultPolicy().proposeBlockingCount(projectPath, workflowId),
 };
 
 const defaultDeps: WorkflowDefinitionRouteDeps = {
@@ -318,6 +349,10 @@ function managedMutationRefusal(
     operation === "delete"
       ? "Abandon the delivery plan from its managed header; candidate definition files are retained as history."
       : managedWorkflowReadOnlyInstruction(management);
+  const rationale =
+    operation === "delete"
+      ? null
+      : managedWorkflowReadOnlyRationale(management);
   logger.warn("workflow-graph.definition-mutation.managed-refused", {
     workflowId,
     attemptId: management.attemptId,
@@ -334,6 +369,68 @@ function managedMutationRefusal(
       code,
       lifecycle: management.lifecycle,
       instruction,
+      ...(rationale === null ? {} : { rationale }),
+    },
+    { status: 409 },
+  );
+}
+
+/**
+ * The propose-gate delta a managed write reports (design 3.1): the blocking
+ * count read through the draft-health projection before and after the write.
+ * Present only when both reads answered — a receipt never prints a delta it
+ * half measured — and never on an ordinary definition, which has no gate.
+ */
+function proposeGateFields(
+  blockingBefore: number | null,
+  blockingAfter: number | null,
+): { proposeGate?: { blockingBefore: number; blockingAfter: number } } {
+  if (blockingBefore === null || blockingAfter === null) return {};
+  return { proposeGate: { blockingBefore, blockingAfter } };
+}
+
+/**
+ * Why a managed draft's server-owned region cannot be authored. Stated once,
+ * at the refusal, so the constraint reads as the design rather than as a
+ * missing capability (design 3.1).
+ */
+const SERVER_OWNED_REGION_RATIONALE =
+  "provenance and approval policy are stamped by the server so a signed candidate can prove where it came from";
+
+/**
+ * The region_locked refusal for a managed definition, stage-aware: on a draft,
+ * a server-owned path was never the author's to write, so the remedy is to
+ * omit it from the plan and the reason is stated; any other lock keeps the
+ * escape its declarer wrote (the charter lock's reopen-and-re-propose line).
+ */
+function regionLockedRefusal(
+  workflowId: string,
+  management: NativeSddWorkflowManagementCompact,
+  locked: LockedRegionMatch,
+): Response {
+  const serverOwnedOnDraft =
+    management.lifecycle === "draft" &&
+    isServerOwnedRegionPath(locked.lockedPath);
+  logger.warn("workflow-graph.definition-replace.region_locked", {
+    workflowId,
+    attemptId: management.attemptId,
+    lifecycle: management.lifecycle,
+    lockedPath: locked.lockedPath,
+    serverOwned: serverOwnedOnDraft,
+    code: "region_locked",
+  });
+  return NextResponse.json(
+    {
+      error: "Managed delivery workflow locked regions cannot be edited.",
+      code: "region_locked",
+      lockedPath: locked.lockedPath,
+      sourceUri: locked.sourceUri,
+      instruction: serverOwnedOnDraft
+        ? `${locked.lockedPath} is server-owned; omit it from your plan.`
+        : regionLockedInstruction(locked),
+      ...(serverOwnedOnDraft
+        ? { rationale: SERVER_OWNED_REGION_RATIONALE }
+        : {}),
     },
     { status: 409 },
   );
@@ -546,50 +643,61 @@ export function createWorkflowDefinitionRouteHandlers(
       return await coordinator.run(
         `${projectPath}\0${workflowId}`,
         async () => {
-          const management = await deps.managedDefinitions?.get(
-            projectPath,
-            workflowId,
-          );
+          const policy = deps.managedDefinitions;
+          const management = await policy?.get(projectPath, workflowId);
           if (management && !management.editable) {
             return managedMutationRefusal(workflowId, management, "update");
           }
+          let launch = validation.launch;
           if (management) {
             const existing = await deps.getDefinition(projectPath, workflowId);
             if (!existing) return notFound("Workflow not found");
-            const locked = findChangedLockedRegion(
+            // The plan is authored without the server-owned fields; fill them
+            // from the stored record so only a present-and-different value
+            // reaches the lock, and store the injected sources at most once.
+            const merged = mergeServerOwnedRegions(
               existing.definition,
-              validation.launch.definition,
+              launch.definition,
             );
+            const locked = findChangedLockedRegion(existing.definition, merged);
             if (locked) {
-              return NextResponse.json(
-                {
-                  error:
-                    "Managed delivery workflow locked regions cannot be edited.",
-                  code: "region_locked",
-                  lockedPath: locked.lockedPath,
-                  sourceUri: locked.sourceUri,
-                  instruction: regionLockedInstruction(locked),
-                },
-                { status: 409 },
-              );
+              return regionLockedRefusal(workflowId, management, locked);
             }
+            launch = {
+              ...launch,
+              definition: {
+                ...merged,
+                charter: {
+                  ...merged.charter,
+                  sourcesOfTruth: dedupeServerOwnedDeliveryPlanSources(
+                    merged.charter.sourcesOfTruth,
+                  ),
+                },
+              },
+            };
           }
 
+          // Read on both sides of the write so the receipt reports the count
+          // it moved from, which is what makes a partial correction legible.
+          const gate =
+            management && policy
+              ? () => policy.proposeBlockingCount(projectPath, workflowId)
+              : null;
+          const blockingBefore = gate ? await gate() : null;
           const item = await deps.updateDefinition(
             projectPath,
             workflowId,
             revision.data.expectedRevision,
-            validation.launch,
+            launch,
           );
-          const nextManagement = await deps.managedDefinitions?.get(
-            projectPath,
-            workflowId,
-          );
+          const nextManagement = await policy?.get(projectPath, workflowId);
+          const blockingAfter = gate ? await gate() : null;
           return NextResponse.json({
             item: nextManagement
               ? { ...item, management: nextManagement }
               : item,
             ...saveAdvisoryFields(review, validation.warnings),
+            ...proposeGateFields(blockingBefore, blockingAfter),
           });
         },
       );
@@ -623,13 +731,18 @@ export function createWorkflowDefinitionRouteHandlers(
 
     const rawBody = await request.json().catch(() => undefined);
     return coordinator.run(`${projectPath}\0${workflowId}`, async () => {
-      const management = await deps.managedDefinitions?.get(
-        projectPath,
-        workflowId,
-      );
+      const policy = deps.managedDefinitions;
+      const management = await policy?.get(projectPath, workflowId);
       if (management && !management.editable) {
         return managedMutationRefusal(workflowId, management, "edit");
       }
+      // The gate is read inside persist rather than up front: a dry run or a
+      // refused batch writes nothing, so there is nothing it could have moved.
+      const gate =
+        management && policy
+          ? () => policy.proposeBlockingCount(projectPath, workflowId)
+          : null;
+      let blockingBefore: number | null = null;
       return runDefinitionEditRequest({
         rawBody,
         notFoundError: "Workflow not found",
@@ -649,13 +762,27 @@ export function createWorkflowDefinitionRouteHandlers(
             assignmentReferences,
           });
         },
-        persist: (draft, expectedRevision) =>
-          deps.updateDefinition(
+        persist: async (draft, expectedRevision) => {
+          blockingBefore = gate ? await gate() : null;
+          const item = await deps.updateDefinition(
             projectPath,
             workflowId,
             expectedRevision,
             draft,
-          ),
+          );
+          const nextManagement = management
+            ? await policy?.get(projectPath, workflowId)
+            : null;
+          return nextManagement
+            ? { ...item, management: nextManagement }
+            : item;
+        },
+        ...(gate
+          ? {
+              receiptFields: async () =>
+                proposeGateFields(blockingBefore, await gate()),
+            }
+          : {}),
       });
     });
   }

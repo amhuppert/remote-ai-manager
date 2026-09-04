@@ -20,6 +20,10 @@ import {
 } from "@/lib/workflow-graph/assignment-reference-labels";
 import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
 import { lintPlanSemantics } from "./plan-lints";
+import {
+  locatePlanIssuePath,
+  type LocatedPlanIssuePath,
+} from "./plan-issue-locator";
 import type { WorkflowPlanIssue } from "./plan-validation-schemas";
 
 export {
@@ -82,7 +86,8 @@ const STRUCTURAL_FIELD_BY_CODE: Record<string, string> = {
  * Map a structural (graph) validation error to a JSON path rooted at the request
  * body. Structural errors carry entity locators (`taskId`/`edgeId`/`contextId`)
  * or a positional `field` (prerequisites/parameters); we resolve those to array
- * indices so the CLI can print `definition.tasks.2.contextId`-style locations.
+ * indices so the CLI can print `definition.tasks.2.contextId`-style locations,
+ * which the shared locator then annotates with the addressed record's id.
  * The graph-wide `cycle-detected` error has no entity, so it points at `edges`.
  */
 function structuralIssuePath(
@@ -129,6 +134,21 @@ function structuralIssuePath(
   }
   // No entity locator (e.g. `cycle-detected`): the dependency graph is the edges.
   return "definition.edges";
+}
+
+/**
+ * The located form of a structural error: its index path, rendered through the
+ * shared id-bearing formatter so an author reads the record's id rather than
+ * counting array elements (#80 design 3.2).
+ */
+function locatedIssuePath(
+  error: WorkflowGraphValidationError,
+  definition: WorkflowSemanticDefinition,
+): LocatedPlanIssuePath {
+  return locatePlanIssuePath(
+    structuralIssuePath(error, definition),
+    definition,
+  );
 }
 
 // ============================================================
@@ -297,19 +317,57 @@ export function validateWorkflowPlan(
   // actionable refusal R3.2 requires — and it is a refusal, never a rewrite.
   const legacyAgentShapes = findLegacyAgentShapes(rawBody);
   if (legacyAgentShapes.length > 0) {
-    return { ok: false, issues: legacyAgentShapes };
+    const rawDefinition = readField(rawBody, "definition");
+    return {
+      ok: false,
+      issues: legacyAgentShapes.map((issue) => {
+        const located = locatePlanIssuePath(issue.path, rawDefinition);
+        return {
+          ...located,
+          // The detector spells its own locator into the message. Rewriting it
+          // to the located form keeps one refusal from naming two different
+          // spellings of the same place.
+          message: issue.message.replaceAll(issue.path, located.path),
+        };
+      }),
+    };
   }
 
   const parsed = workflowDefinitionMutationSchema.safeParse(rawBody);
   if (!parsed.success) {
+    // Located against the RAW definition: the parse failed, so there is no
+    // typed value to walk. That is exactly what the locator tolerates, and
+    // annotating here is what keeps one refusal indistinguishable from
+    // another (R13.1) — a shape refusal and a reference refusal on the same
+    // assignment must not print two different spellings of its location.
+    const rawDefinition = readField(rawBody, "definition");
     return {
       ok: false,
       issues: parsed.error.issues.map((issue) => ({
-        path: issue.path.join("."),
+        ...locatePlanIssuePath(issue.path.join("."), rawDefinition),
         message: withUseSite(issue.message, rawBody, issue.path),
       })),
     };
   }
+
+  // This is the ONE place prose acceptance criteria become records (#69
+  // change 4 stage 1): the accepted draft is what create/replace persist and
+  // what a launch seeds from, while stored/working-definition parses stay
+  // tolerant unions so a reload never rewrites a stored shape
+  // (no-read-renormalization). The semantic lints read THIS value rather than
+  // the raw parse, so a prose criterion is judged as the single record the
+  // context will actually run with — and every locator below resolves against
+  // it for the same reason: a criterion locator names the record the context
+  // runs with, not an element of a shape that was normalized away.
+  const canonicalDefinition = {
+    ...parsed.data.definition,
+    executionContexts: parsed.data.definition.executionContexts.map(
+      (context) => ({
+        ...context,
+        acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
+      }),
+    ),
+  };
 
   const structural = validateAuthoredDefinition(parsed.data.definition);
   const commandSelectionErrors = options.validationCommandPreflight
@@ -329,7 +387,7 @@ export function validateWorkflowPlan(
         ? { code: VALIDATION_COST_EXCEEDS_LIMIT_CODE }
         : {}),
       issues: errors.map((error) => ({
-        path: structuralIssuePath(error, parsed.data.definition),
+        ...locatedIssuePath(error, canonicalDefinition),
         message: error.message,
       })),
       ...(commandSelectionErrors.length === 0
@@ -337,29 +395,12 @@ export function validateWorkflowPlan(
         : {
             commandIssues: commandSelectionErrors.map((error) => ({
               code: error.code,
-              path: structuralIssuePath(error, parsed.data.definition),
+              ...locatedIssuePath(error, canonicalDefinition),
               message: error.message,
             })),
           }),
     };
   }
-
-  // This is the ONE place prose acceptance criteria become records (#69
-  // change 4 stage 1): the accepted draft is what create/replace persist and
-  // what a launch seeds from, while stored/working-definition parses stay
-  // tolerant unions so a reload never rewrites a stored shape
-  // (no-read-renormalization). The semantic lints read THIS value rather than
-  // the raw parse, so a prose criterion is judged as the single record the
-  // context will actually run with.
-  const canonicalDefinition = {
-    ...parsed.data.definition,
-    executionContexts: parsed.data.definition.executionContexts.map(
-      (context) => ({
-        ...context,
-        acceptanceCriteria: criterionRecordsOf(context.acceptanceCriteria),
-      }),
-    ),
-  };
 
   return {
     ok: true,
@@ -374,10 +415,16 @@ export function validateWorkflowPlan(
         parsed.data.definition.executionContexts,
         parsed.data.definition.edges,
       ).map((warning) => ({
-        path: structuralIssuePath(warning, parsed.data.definition),
+        ...locatedIssuePath(warning, canonicalDefinition),
         message: warning.message,
       })),
-      ...lintPlanSemantics(canonicalDefinition),
+      // The semantic lints produce index-only locators and this is where they
+      // are rendered, so warnings and issues cannot drift into two spellings
+      // of the same location.
+      ...lintPlanSemantics(canonicalDefinition).map((warning) => ({
+        ...locatePlanIssuePath(warning.path, canonicalDefinition),
+        message: warning.message,
+      })),
     ],
   };
 }

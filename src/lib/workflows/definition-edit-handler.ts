@@ -32,11 +32,11 @@ const persistedItemSchema = z.object({
 });
 
 function formatAdmissionIssueForEdit(
-  issue: { path: string; message: string },
+  issue: WorkflowPlanIssue,
   commandIssues:
     | ReadonlyArray<{ path: string; message: string; code: string }>
     | undefined,
-): { path: string; message: string } {
+): WorkflowPlanIssue {
   const code = commandIssues?.find(
     (commandIssue) =>
       commandIssue.path === issue.path &&
@@ -64,6 +64,13 @@ export interface DefinitionEditRequestParams {
     draft: WorkflowDefinitionDraft,
     expectedRevision: number,
   ): Promise<unknown>;
+  /**
+   * Fields merged into the receipt of a PERSISTED edit, beside `item` and
+   * `applied`. Called after the write so they can report its effect (a managed
+   * draft's propose gate); never on a dry run or a refusal, which change
+   * nothing to report on.
+   */
+  receiptFields?(): Promise<Record<string, unknown>>;
 }
 
 /**
@@ -227,9 +234,13 @@ export async function runDefinitionEditRequest(
     operationCount,
     revision: summary.success ? summary.data.revision : null,
   });
+  const receiptFields = params.receiptFields
+    ? await params.receiptFields()
+    : {};
   return NextResponse.json({
     item: persisted,
     applied: operationCount,
     ...authoredLaunchWarningFields(admissionWarnings),
+    ...receiptFields,
   });
 }

@@ -115,7 +115,8 @@ describe("validateWorkflowPlan", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues).toContainEqual({
-      path: "definition.executionContexts.1.scriptValidator.commands.1",
+      path: "definition.executionContexts.1 (context-implement).scriptValidator.commands.1",
+      recordId: "context-implement",
       message: expect.stringMatching(
         /script-validator command "test".*lane-merge barrier/i,
       ),
@@ -188,7 +189,7 @@ describe("validateWorkflowPlan", () => {
     if (!result.ok) return;
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.path).toBe(
-      "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+      "definition.executionContexts[0] (context-plan).outputSchema.properties.verdict.enum",
     );
     expect(result.warnings[0]?.message).toContain('"hold"');
     expect(result.warnings[0]?.message).toContain('"stop"');
@@ -263,8 +264,9 @@ describe("validateWorkflowPlan", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues).toContainEqual({
-      path: "definition.charter.invariants.0.appliesTo.contextIds.0",
+      path: "definition.charter.invariants.0 (targeted-implementation).appliesTo.contextIds.0",
       message: expect.stringContaining("context-missing"),
+      recordId: "targeted-implementation",
     });
   });
 
@@ -403,8 +405,9 @@ describe("validateWorkflowPlan", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.issues).toContainEqual({
-        path: "definition.executionContexts.0.acceptanceCriteria.1.id",
+        path: "definition.executionContexts.0 (context-plan).acceptanceCriteria.1 (same-id).id",
         message: expect.stringContaining("duplicate criterion id 'same-id'"),
+        recordId: "same-id",
       });
     });
   });
@@ -423,7 +426,9 @@ describe("validateWorkflowPlan", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       const paths = result.issues.map((i) => i.path);
-      expect(paths).toContain("definition.executionContexts.0.title");
+      expect(paths).toContain(
+        "definition.executionContexts.0 (context-plan).title",
+      );
       for (const issue of result.issues) {
         expect(issue.message.length).toBeGreaterThan(0);
       }
@@ -443,7 +448,7 @@ describe("validateWorkflowPlan", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       const issue = result.issues.find(
-        (i) => i.path === "definition.tasks.0.contextId",
+        (i) => i.path === "definition.tasks.0 (task-plan-1).contextId",
       );
       expect(issue).toBeDefined();
       expect(issue?.message).toMatch(/context-does-not-exist/);
@@ -513,7 +518,7 @@ describe("validateWorkflowPlan", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.issues.map((issue) => issue.path)).toContain(
-        "definition.executionContexts.1.contextValidator.assignments",
+        "definition.executionContexts.1 (context-implement).contextValidator.assignments",
       );
       expect(result.issues[0]?.message).toMatch(/at least one/);
     });
@@ -529,7 +534,7 @@ describe("validateWorkflowPlan", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.issues.map((issue) => issue.path)).toContain(
-        "definition.executionContexts.1.contextValidator.assignments.1.id",
+        "definition.executionContexts.1 (context-implement).contextValidator.assignments.1 (general).id",
       );
     });
 
@@ -544,7 +549,7 @@ describe("validateWorkflowPlan", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.issues.map((issue) => issue.path)).toContain(
-        "definition.executionContexts.1.contextValidator.assignments.0.id",
+        "definition.executionContexts.1 (context-implement).contextValidator.assignments.0 (General Reviewer).id",
       );
     });
 
@@ -586,7 +591,7 @@ describe("validateWorkflowPlan", () => {
         const issue = result.issues.find(
           (i) =>
             i.path ===
-            "definition.executionContexts.1.contextValidator.assignments.1.id",
+            "definition.executionContexts.1 (context-implement).contextValidator.assignments.1 (security).id",
         );
         expect(issue?.message).toContain('context "context-implement"');
         expect(issue?.message).toContain('validator assignment "security"');
@@ -603,7 +608,7 @@ describe("validateWorkflowPlan", () => {
         const issue = result.issues.find(
           (i) =>
             i.path ===
-            "definition.executionContexts.1.contextValidator.assignments",
+            "definition.executionContexts.1 (context-implement).contextValidator.assignments",
         );
         expect(issue?.message).toContain('context "context-implement"');
         expect(issue?.message).toContain("validator cohort");
@@ -633,7 +638,9 @@ describe("validateWorkflowPlan", () => {
         expect(result.ok).toBe(false);
         if (result.ok) return;
         const issue = result.issues.find(
-          (i) => i.path === "definition.executionContexts.0.implementer.id",
+          (i) =>
+            i.path ===
+            "definition.executionContexts.0 (context-plan).implementer.id",
         );
         expect(issue?.message).toContain('context "context-plan"');
         expect(issue?.message).toContain("implementer assignment");
@@ -661,7 +668,7 @@ describe("validateWorkflowPlan", () => {
         const issue = result.issues.find(
           (i) =>
             i.path ===
-            "definition.workflowConfig.contextValidator.assignments.1.id",
+            "definition.workflowConfig.contextValidator.assignments.1 (general).id",
         );
         expect(issue?.message).toContain("workflow-tier");
         expect(issue?.message).toContain('validator assignment "general"');
@@ -707,7 +714,8 @@ describe("validateWorkflowPlan", () => {
         expect(result.ok).toBe(false);
         if (result.ok) return;
         const issue = result.issues.find(
-          (i) => i.path === "definition.executionContexts.0.title",
+          (i) =>
+            i.path === "definition.executionContexts.0 (context-plan).title",
         );
         // A shape refusal mounted on the context itself — a bad title, an absent
         // placement — reads identically wherever it was authored, and an array
@@ -771,7 +779,7 @@ describe("validateWorkflowPlan", () => {
       );
       // Index 1 is `context-implement` — the context the declaration is on.
       expect(issue?.path).toBe(
-        "definition.executionContexts[1].outputSchema.properties.verdict.format",
+        "definition.executionContexts[1] (context-implement).outputSchema.properties.verdict.format",
       );
       expect(issue?.message).toMatch(/format/);
     });
@@ -784,7 +792,7 @@ describe("validateWorkflowPlan", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.issues.map((issue) => issue.path)).toContain(
-        "definition.executionContexts[1].outputSchema",
+        "definition.executionContexts[1] (context-implement).outputSchema",
       );
     });
 
@@ -802,7 +810,7 @@ describe("validateWorkflowPlan", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.issues.map((issue) => issue.path)).toContain(
-        'definition.executionContexts[1].outputSchema.properties["http.status"].format',
+        'definition.executionContexts[1] (context-implement).outputSchema.properties["http.status"].format',
       );
     });
 
@@ -841,10 +849,17 @@ describe("validateWorkflowPlan post-cutover refusal", () => {
     if (result.ok) return;
     const issue = result.issues.find(
       (candidate) =>
-        candidate.path === "definition.executionContexts.1.implementer",
+        candidate.path ===
+        "definition.executionContexts.1 (context-implement).implementer",
     );
     expect(issue).toBeDefined();
     expect(issue?.message).toContain("profile");
+    expect(issue?.recordId).toBe("context-implement");
+    // The detector spells its own locator into the message; both spellings
+    // name the record so a reader is never told two different locations.
+    expect(issue?.message).toContain(
+      "definition.executionContexts.1 (context-implement).implementer",
+    );
   });
 
   it("refuses a legacy singleton validator with a located error naming the cohort form", () => {
@@ -871,10 +886,12 @@ describe("validateWorkflowPlan post-cutover refusal", () => {
     if (result.ok) return;
     const issue = result.issues.find(
       (candidate) =>
-        candidate.path === "definition.executionContexts.0.contextValidator",
+        candidate.path ===
+        "definition.executionContexts.0 (context-plan).contextValidator",
     );
     expect(issue).toBeDefined();
     expect(issue?.message).toContain("assignments");
+    expect(issue?.recordId).toBe("context-plan");
   });
 
   it("never normalizes a legacy shape into an assignment", () => {
@@ -960,16 +977,19 @@ describe("validateWorkflowPlan semantic lints", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.warnings).toContainEqual({
-      path: "definition.executionContexts.0.acceptanceCriteria",
+      path: "definition.executionContexts.0 (context-plan).acceptanceCriteria",
       message: expect.stringContaining("lint/criteria-density"),
+      recordId: "context-plan",
     });
     expect(result.warnings).toContainEqual({
-      path: "definition.tasks.0.instructions",
+      path: "definition.tasks.0 (task-plan-1).instructions",
       message: expect.stringContaining("lint/oversized-prose"),
+      recordId: "task-plan-1",
     });
     expect(result.warnings).toContainEqual({
-      path: "definition.charter.sourcesOfTruth.0.locator",
+      path: "definition.charter.sourcesOfTruth.0 (design-doc).locator",
       message: expect.stringContaining("lint/source-locator-unresolvable"),
+      recordId: "design-doc",
     });
   });
 
@@ -1007,5 +1027,138 @@ describe("validateWorkflowPlan semantic lints", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.warnings).toEqual([]);
+  });
+});
+
+// ============================================================
+// Id-bearing issue locators (#80 design 3.2)
+// ============================================================
+
+describe("validateWorkflowPlan id-bearing issue locators", () => {
+  /** The one located issue at `path`, so a failure names the whole issue list. */
+  function issueAt(
+    result: ReturnType<typeof validateWorkflowPlan>,
+    path: string,
+  ) {
+    if (result.ok) throw new Error("expected an invalid plan");
+    const found = result.issues.find((issue) => issue.path === path);
+    if (!found) {
+      throw new Error(
+        `no issue at ${path}; got ${result.issues.map((issue) => issue.path).join(", ")}`,
+      );
+    }
+    return found;
+  }
+
+  it("names the task an indexed task locator addresses", () => {
+    const definition = createWorkflowDefinition();
+    definition.tasks[2] = { ...definition.tasks[2]!, contextId: "ghost" };
+
+    const issue = issueAt(
+      validateWorkflowPlan(makePlan(definition)),
+      "definition.tasks.2 (task-verify-1).contextId",
+    );
+    expect(issue).toEqual({
+      path: "definition.tasks.2 (task-verify-1).contextId",
+      message: expect.stringContaining("task-verify-1"),
+      recordId: "task-verify-1",
+    });
+  });
+
+  it("names the execution context an indexed context locator addresses", () => {
+    const definition = createWorkflowDefinition();
+    // A duplicate id is the case the annotation is worth most on: the locator
+    // resolves to the FIRST context carrying the id, so the index alone leaves
+    // an author counting elements to find which record it means.
+    definition.executionContexts = [
+      ...definition.executionContexts,
+      { ...definition.executionContexts[1]!, title: "Implement again" },
+    ];
+
+    const issue = issueAt(
+      validateWorkflowPlan(makePlan(definition)),
+      "definition.executionContexts.1 (context-implement).id",
+    );
+    expect(issue.recordId).toBe("context-implement");
+  });
+
+  it("names the edge an indexed edge locator addresses", () => {
+    const definition = createWorkflowDefinition();
+    definition.edges[1] = {
+      ...definition.edges[1]!,
+      targetContextId: "ghost",
+    };
+
+    const issue = issueAt(
+      validateWorkflowPlan(makePlan(definition)),
+      "definition.edges.1 (edge-implement-verify).targetContextId",
+    );
+    expect(issue.recordId).toBe("edge-implement-verify");
+  });
+
+  it("names the charter source an indexed source locator addresses", () => {
+    const definition = createWorkflowDefinition();
+    definition.charter.sourcesOfTruth[1] = {
+      ...definition.charter.sourcesOfTruth[1]!,
+      accessPolicy: "worktree-relative",
+    };
+
+    const issue = issueAt(
+      validateWorkflowPlan(makePlan(definition)),
+      "definition.charter.sourcesOfTruth.1 (acceptance-criteria).accessPolicy",
+    );
+    expect(issue.recordId).toBe("acceptance-criteria");
+  });
+
+  it("leaves an indexed segment whose record carries no id alone", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        scriptValidator: { commands: ["typecheck", "ghost"] },
+      },
+    });
+
+    const issue = issueAt(
+      validateWorkflowPlan(makePlan(definition), {
+        validationCommandPreflight: {
+          commandCosts: { typecheck: 2 },
+          concurrencyLimit: 8,
+        },
+      }),
+      "definition.workflowConfig.scriptValidator.commands.1",
+    );
+    expect(issue).not.toHaveProperty("recordId");
+  });
+
+  it("leaves a locator with no indexed record segment byte-identical", () => {
+    const definition = createWorkflowDefinition();
+    definition.edges = [
+      ...definition.edges,
+      {
+        id: "edge-verify-plan",
+        sourceContextId: "context-verify",
+        targetContextId: "context-plan",
+      },
+    ];
+
+    const issue = issueAt(
+      validateWorkflowPlan(makePlan(definition)),
+      "definition.edges",
+    );
+    expect(issue.message).toContain("acyclic");
+    expect(issue).not.toHaveProperty("recordId");
+  });
+
+  it("locates a lint warning through the same id-bearing formatter", () => {
+    const result = validateWorkflowPlan(
+      makePlan(createLintTrippingDefinition()),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toContainEqual({
+      path: "definition.executionContexts.0 (context-plan).acceptanceCriteria",
+      message: expect.stringContaining("lint/criteria-density"),
+      recordId: "context-plan",
+    });
   });
 });

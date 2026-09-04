@@ -2906,6 +2906,21 @@ describe("applyLiveExecutionEdits — the server-derived structural exception (R
     }
   });
 
+  // #80 I-12: "quiescent" was read as "no started context" because the refusal
+  // named the rule and never the reason. The rationale travels with the
+  // rejection so every surface that renders a why-line has one to render.
+  it("carries the reason quiescence is required and the act that satisfies it", () => {
+    const result = apply(runningExecution(), [ADD_CONTEXT]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("requires_pause");
+    expect(result.rationale).toBe(
+      "structural edits apply atomically against a quiescent scheduler so no lane reads a half-applied definition",
+    );
+    expect(result.instruction).toContain("pause, edit, resume");
+  });
+
   it("lets both server-derived paths append to a running graph", () => {
     for (const structuralSource of [
       "lane-agent-expansion",

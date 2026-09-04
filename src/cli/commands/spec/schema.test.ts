@@ -329,7 +329,11 @@ describe("cctl spec schema", () => {
             z.object({ ruleId: z.string(), severity: z.string() }),
           ),
           deliveryPlan: z.array(
-            z.object({ ruleId: z.string(), severity: z.string() }),
+            z.object({
+              ruleId: z.string(),
+              severity: z.string(),
+              note: z.string().optional(),
+            }),
           ),
         }),
       })
@@ -344,7 +348,25 @@ describe("cctl spec schema", () => {
     expect(
       reference.lintTaxonomy.evergreen.map(({ severity }) => severity),
     ).not.toContain("blocks_claim");
-    expect(reference.lintTaxonomy.deliveryPlan).toEqual([]);
+    // The propose gate's own codes, published: the taxonomy is what makes the
+    // refusal readable before a planner triggers it.
+    expect(
+      reference.lintTaxonomy.deliveryPlan.map(({ ruleId }) => ruleId),
+    ).toEqual(
+      NATIVE_SDD_GUIDANCE.lintTaxonomy.deliveryPlan.map(({ ruleId }) => ruleId),
+    );
+    expect(reference.lintTaxonomy.deliveryPlan).toContainEqual({
+      ruleId: "launch/charter-unauthored",
+      severity: "blocks_propose",
+    });
+
+    // Severity alone would mislead on the two reaffirmation codes: they block
+    // propose, but no agent write clears them, so the note must say where the
+    // rows come from and what the per-row note marks.
+    const notes = guidance?.notes.join(" ") ?? "";
+    expect(notes).not.toContain("empty delivery-plan lint taxonomy");
+    expect(notes).toContain("blocks_propose");
+    expect(notes).toContain("human act");
   });
 
   /**

@@ -336,9 +336,9 @@ describe("template library route handlers — global-tier CRUD", () => {
         )
         .map((warning) => warning.path);
       expect(sourcePaths).toEqual([
-        "definition.charter.sourcesOfTruth.1.locator",
-        "definition.charter.sourcesOfTruth.2.locator",
-        "definition.charter.sourcesOfTruth.3.locator",
+        "definition.charter.sourcesOfTruth.1 (url).locator",
+        "definition.charter.sourcesOfTruth.2 (absolute).locator",
+        "definition.charter.sourcesOfTruth.3 (traversal).locator",
       ]);
       expect(warnings).toEqual(
         expect.arrayContaining([
@@ -459,7 +459,7 @@ describe("template library route handlers — global-tier CRUD", () => {
           expect.objectContaining({
             // Bracket-indexed, matching the `prerequisites[0]` locator the
             // other semantic validators already emit.
-            path: "definition.executionContexts[0].outputSchema.properties.verdict.format",
+            path: "definition.executionContexts[0] (context-plan).outputSchema.properties.verdict.format",
             message: expect.stringContaining('Context "context-plan"'),
           }),
         ]),

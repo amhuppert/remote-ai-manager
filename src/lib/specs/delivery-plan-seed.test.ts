@@ -4,6 +4,8 @@ import {
   maximalPlanDocument,
   maximalWorkflowLaunch,
 } from "@/lib/state-store/spec-delivery-plan-test-fixture";
+import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
+import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 import { seedDeliveryPlanFromLast } from "./delivery-plan-seed";
 
 describe("seedDeliveryPlanFromLast", () => {
@@ -153,6 +155,72 @@ describe("seedDeliveryPlanFromLast", () => {
         contextId: "fixture-context",
         criterionElementIds: ["criterion-selected"],
       },
+    ]);
+  });
+
+  it("keeps authored edge ids through a reseed so a later remove-edge by id succeeds", () => {
+    // An authored-valid launch (the maximal persisted fixture carries legacy
+    // shapes an edit's post-validation refuses), with the planner's edge ids.
+    const record = createWorkflowDefinitionRecord();
+    const launch = {
+      name: record.name,
+      description: record.description,
+      definition: {
+        ...record.definition,
+        origin: { sourceUri: "spec-plan://spec-1/candidates/candidate-1" },
+        approvalRequired: false,
+        edges: [
+          {
+            id: "edge-plan-to-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-implement-to-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      },
+      layout: record.layout,
+    };
+
+    const seeded = seedDeliveryPlanFromLast({
+      source: {
+        candidateId: "candidate-1",
+        launch,
+        binding: maximalPlanDocument().binding,
+      },
+      dispositions: [],
+    });
+
+    expect(seeded.launch.definition.edges.map((edge) => edge.id)).toEqual([
+      "edge-plan-to-implement",
+      "edge-implement-to-verify",
+    ]);
+
+    const reopened = { ...record, ...seeded.launch, id: "reopened-draft" };
+    const byId = applyDefinitionEdits(reopened, [
+      { type: "remove-edge", edgeId: "edge-plan-to-implement" },
+    ]);
+    expect(byId).toEqual({ ok: true, record: expect.anything() });
+    if (!byId.ok) return;
+    expect(byId.record.definition.edges.map((edge) => edge.id)).toEqual([
+      "edge-implement-to-verify",
+    ]);
+
+    // The endpoint-pair form stays the documented fallback.
+    const byEndpoints = applyDefinitionEdits(reopened, [
+      {
+        type: "remove-edge",
+        sourceContextId: "context-implement",
+        targetContextId: "context-verify",
+      },
+    ]);
+    expect(byEndpoints).toEqual({ ok: true, record: expect.anything() });
+    if (!byEndpoints.ok) return;
+    expect(byEndpoints.record.definition.edges.map((edge) => edge.id)).toEqual([
+      "edge-plan-to-implement",
     ]);
   });
 });

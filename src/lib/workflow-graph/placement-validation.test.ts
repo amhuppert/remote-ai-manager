@@ -103,8 +103,9 @@ describe("placement grammar validation (R1)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues).toContainEqual({
-      path: "definition.executionContexts.0.placement",
+      path: "definition.executionContexts.0 (context-solo).placement",
       message: expect.stringContaining('context "context-solo"'),
+      recordId: "context-solo",
     });
   });
 
@@ -295,7 +296,7 @@ describe("owned path grammar (R1.2)", () => {
     if (result.ok) return;
     expect(result.issues).toContainEqual(
       expect.objectContaining({
-        path: "definition.executionContexts.0.placement.ownedPaths.0",
+        path: "definition.executionContexts.0 (context-owned).placement.ownedPaths.0",
       }),
     );
   });
@@ -307,7 +308,7 @@ describe("owned path grammar (R1.2)", () => {
     if (result.ok) return;
     expect(result.issues).toContainEqual(
       expect.objectContaining({
-        path: "definition.executionContexts.0.placement.ownedPaths",
+        path: "definition.executionContexts.0 (context-owned).placement.ownedPaths",
         message: expect.stringContaining("readOnly"),
       }),
     );
@@ -343,7 +344,9 @@ describe("owned path grammar (R1.2)", () => {
       if (result.ok) return;
       expect(
         result.issues.some((issue) =>
-          issue.path.startsWith("definition.executionContexts.0.placement"),
+          issue.path.startsWith(
+            "definition.executionContexts.0 (context-solo).placement",
+          ),
         ),
       ).toBe(true);
     },
