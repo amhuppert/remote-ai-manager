@@ -32,6 +32,7 @@ Run `cctl workflow validate --file <plan.json>` before reading closely. Structur
 - *Misplaced obligation*: a criterion homed where it cannot be satisfied — an end-state invariant binding a mid-migration context, wiring demanded of a context that does not own the call site, a whole-repo script gate on an intentionally invalid intermediate state.
 - *Contradictory phase*: two attached sources, or two criteria, requiring incompatible states of the same surface. Execution has no arbiter; the disagreement resolves differently in each context and collides at a join.
 - *Redundant criterion*: two records that can only pass or fail together, a criterion restating a charter invariant, or a criterion asking an LLM validator to re-judge what a script gate decides deterministically.
+- *Process criterion*: a record or invariant that names how the work must be produced (a failing test first, a command order) rather than what must be true afterwards. Validators cannot verify process on the finished candidate, so honest work fails for lacking proof. Repair: move it to `charter.conventions`, or restate it as the outcome it protects.
 
 The second lens is not the junior partner. A review that can only add obligations inflates the plan it was meant to make executable — that one-sided incentive is the incident this protocol corrects.
 

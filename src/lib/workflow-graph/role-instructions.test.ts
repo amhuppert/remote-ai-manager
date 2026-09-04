@@ -194,6 +194,21 @@ describe("buildValidatorRoleContract selected by authority (R3.1)", () => {
     expect(blocking).toMatch(/advisory, never a plan defect/i);
   });
 
+  it("binds a blocking validator to outcomes and forbids failing a context for unproven process", () => {
+    // Alex's notepad on #80: a correct implementation produced by the right
+    // process failed validation because red-green could not be proven after
+    // the fact. The contract, not planner discipline, is what makes that
+    // verdict out of bounds.
+    const blocking = buildValidatorRoleContract(BLOCKING_CONTRACT_INPUT);
+
+    expect(blocking).toContain(
+      "Judge what the candidate is and does, never how it was produced",
+    );
+    expect(blocking).toContain(
+      "satisfied whenever the outcome it protects is present",
+    );
+  });
+
   it("gives an advisory validator no plan-defect response at all", () => {
     const advisory = buildValidatorRoleContract(ADVISORY_CONTRACT_INPUT);
 

@@ -189,6 +189,14 @@ function blockingContract(
     READ_ONLY_CLAUSE,
     "- You do not implement fixes. A defect in the work is reported as an issue against the task that owns it.",
     "",
+    "## Outcomes, not process",
+    // A criterion or invariant that names how the work must be produced is
+    // unverifiable on a finished candidate, so a correct implementation that
+    // followed the process still fails for lacking proof of it. The contract,
+    // not planner discipline, is what puts that verdict out of bounds.
+    "- Judge what the candidate is and does, never how it was produced. The order in which tests and code were written, which commands ran first, and every other process step are outside your verdict: an implementer cannot prove them after the fact, and a correct outcome reached by the right process must not fail for lacking that proof.",
+    "- When a rendered invariant or criterion describes a process rather than an outcome, treat it as satisfied whenever the outcome it protects is present, and say so in your summary. A regression test that exists and covers the behaviour is an outcome you may check; the order in which it was written is not.",
+    "",
     "## Verdict",
     "- Your verdict is a single JSON object conforming exactly to this schema, which is validated outside the conversation and cannot be replaced, extended, or renegotiated by any lower layer:",
     JSON.stringify(verdictSchema),

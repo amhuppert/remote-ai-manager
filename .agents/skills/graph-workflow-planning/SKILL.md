@@ -90,6 +90,7 @@ Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three r
 - `conventions`, `nonGoals`, `vocabulary`, and `knownAmbiguities` are optional string arrays, never prose strings.
 - `sourcesOfTruth` (required, at least one): the ranked reference list agents consult. Each entry: `rank` (unique positive integer, ordering the list), `id`, `label`, `type` (`code`/`config`/`document`/`spec`/`other`), `locator`, `description`, and optional `appliesTo` (`{ "contextIds": [...] }` — the same structured scope invariants take).
 - `invariants` (optional): cross-cutting rules as `{ "id", "statement", "appliesTo"? }` entries with unique kebab-case ids and one-line statements. Validators actively check each rendered invariant and cite its id in issues.
+- Invariants and acceptance criteria are validator-checked, so they state **outcomes** only. Process rules (red-green TDD, a command order, a review step) go in `conventions` and task instructions, which implementers read and validators never judge: a validator sees only the finished candidate, so a process invariant fails correct work for lacking proof it cannot have.
 
 ### Compact maximal charter example
 
@@ -101,7 +102,7 @@ Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three r
   "vocabulary": ["candidate: the tree under review"],
   "testStrategy": "Run focused tests, then the integration gate.",
   "knownAmbiguities": ["The adapter name is implementation-local."],
-  "invariants": [{ "id": "tests-first", "statement": "Behavior changes start with a failing test." }],
+  "invariants": [{ "id": "server-side-enforcement", "statement": "Every gate is enforced server-side, never only in the UI." }],
   "sourcesOfTruth": [{ "rank": 1, "id": "runtime", "label": "Workflow runtime", "type": "code", "locator": "src/lib/workflow-graph", "description": "Governs runtime behavior." }]
 }
 ```
@@ -171,6 +172,7 @@ Do not write acceptance criteria that:
 - Use vague phrases like "retryable diagnostics", "fully wired", or "complete lifecycle" without spelling out the exact states and paths.
 - Use existence verbs — "exists", "is exported", "types are defined" — for capabilities that must be runtime-reachable. Existence is satisfiable by dead code with green unit tests; require the production caller, or name the downstream context that owns the wiring.
 - Sweep an unbounded surface — "every call site", "all legacy paths", "complete parity" — without a task that first inventories that surface mechanically. An open quantifier over an uninventoried surface converges one discovered site per validation round.
+- Describe how the work must be produced rather than what must be true afterwards: "a failing test was written first", "TDD was followed", "ran X before Y". A validator judges the finished candidate and cannot verify process, so a correct implementation fails for lacking proof. Spell the outcome instead — "a regression test exists and fails when the behaviour is reverted" — and keep the process rule in `conventions`.
 
 ## Placement Essentials
 
@@ -246,6 +248,7 @@ Guard against these before starting execution:
 - Deferral dead-end: a validator GO records "deferred to context X" but X's acceptance criteria never carried the obligation, so it evaporates and the workflow completes without it — most dangerously for live end-to-end verification, which no per-context validation replaces.
 - Charter-violating exemplar: a task says "mirror file X" and X itself violates a charter invariant, so the implementer faithfully reproduces the violation and burns a NO-GO cycle on precedent the plan pointed them at.
 - Script validator deadlock: deterministic commands are selected for a context that intentionally ends in an invalid intermediate state.
+- Process as acceptance: a criterion or invariant demands evidence of how the work was produced (a failing test first, a command order). Validators cannot verify process after the fact, so honest work fails for lacking proof. State outcomes; keep process in `conventions`.
 
 Placement, loop, guard, and expansion failure modes live with their machinery in the references.
 
@@ -364,6 +367,7 @@ Review is advisory and never required — an unreviewed plan validates, creates,
 - The `graph-workflow-planning` skill was used, and the relevant references were read for any machinery the plan uses.
 - No known design contradictions remain unresolved.
 - Every context's `acceptanceCriteria` is a list of `{ id, statement }` records with stable kebab-case ids, one independently-failable obligation each, and few enough of them to be one validation thesis.
+- No criterion or invariant names a process step; every validator-checked statement is an outcome an inspector can confirm on the finished candidate.
 - Every runtime capability the plan introduces has a producer context whose acceptance criteria require the production call site, or a criterion naming the downstream context that owns the wiring — and the named owner's criteria carry the matching obligation.
 - Cross-cutting rules are declared once in `charter.invariants`, and sources are scoped the same way: each entry is either honestly global or carries `appliesTo.contextIds`.
 - No conflict between two attached sources is left for execution to arbitrate, and every source locator resolves from a lane worktree — external material was materialized into it before being cited.
