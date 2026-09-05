@@ -37,13 +37,94 @@ const descriptionFlag = {
 
 export const ticketHelpEntries: CommandHelpEntry[] = [
   {
+    path: ["ticket", "export"],
+    summary: "export one portable ticket bundle",
+    description:
+      "Capture a ticket and its full linked context. Missing content requires acknowledgment of the exact prepared archive; preparations expire after 24 hours.",
+    usage: [
+      "cctl ticket export <number | project#number> --out <archive.cc-ticket.gz> [--prepared <id> --acknowledge <digest>]",
+    ],
+    flags: [
+      {
+        name: "out",
+        kind: "value",
+        valuePlaceholder: "<path>",
+        description: "destination archive file",
+      },
+      {
+        name: "prepared",
+        kind: "value",
+        valuePlaceholder: "<id>",
+        description:
+          "reuse the immutable preparation returned by an earlier export",
+      },
+      {
+        name: "acknowledge",
+        kind: "value",
+        valuePlaceholder: "<digest>",
+        description: "acknowledge this prepared archive's listed omissions",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl ticket export 7 --out ticket.cc-ticket.gz",
+        explanation:
+          "Capture the ticket; review and acknowledge any reported omissions before download.",
+      },
+    ],
+    related: [
+      { command: "ticket import", oneLiner: "import into a local project" },
+    ],
+  },
+  {
+    path: ["ticket", "import"],
+    summary: "import a portable bundle as an independent ticket",
+    description:
+      "Create a local ticket with indexed historical documents. Source sessions are not resumed. Duplicate source tickets require --allow-duplicate.",
+    usage: [
+      "cctl ticket import --file <archive.cc-ticket.gz> [--allow-duplicate]",
+      "cctl ticket import --prepared <id> [--allow-duplicate]",
+    ],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<path>",
+        description: "archive to upload",
+      },
+      {
+        name: "prepared",
+        kind: "value",
+        valuePlaceholder: "<id>",
+        description: "reuse an uploaded archive",
+      },
+      {
+        name: "allow-duplicate",
+        kind: "boolean",
+        description:
+          "confirm another copy of an already imported source ticket",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl ticket import --file ticket.cc-ticket.gz --project my-project",
+        explanation:
+          "Create an independent ticket in the destination checkout.",
+      },
+    ],
+    related: [
+      { command: "ticket export", oneLiner: "capture a source ticket" },
+    ],
+  },
+  {
     path: ["ticket"],
     summary:
       "create, list, read, update, link, post updates to, and attach context to work tickets",
     description:
       "Manage Command Center tickets — durable work items owned by one project, identified as <project>#<number>.",
     usage: [
-      "cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment>",
+      "cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment|export|import>",
     ],
     flags: [],
     examples: [],

@@ -48,6 +48,7 @@ import {
   TICKET_WORK_TYPE_LABELS,
   TICKET_WORK_TYPE_ORDER,
 } from "@/lib/tickets/ticket-visuals";
+import TicketBundleControl from "./TicketBundleControl";
 import AttachmentIndex from "./AttachmentIndex";
 import TicketRelationships from "./TicketRelationships";
 import TicketStatusUpdates from "./TicketStatusUpdates";
@@ -299,7 +300,7 @@ export function TicketDossier({
           <Badge tier="type" kind={detail.workType}>
             {TICKET_WORK_TYPE_LABELS[detail.workType]}
           </Badge>
-          <div className="ml-auto flex items-center gap-sm max-768:w-full max-768:flex-wrap">
+          <div className="ml-auto flex items-center gap-sm max-768:grid max-768:w-full max-768:grid-cols-2">
             <CopyTicketReferenceButton
               projectName={detail.projectName}
               ticketNumber={detail.number}
@@ -326,10 +327,15 @@ export function TicketDossier({
               )}
               Start work
             </Button>
+            <TicketBundleControl
+              projectName={detail.projectName}
+              number={detail.number}
+            />
             <IconButton
               variant="square"
               tone="danger"
               aria-label="Delete ticket"
+              layoutClassName="max-768:justify-self-end"
               onClick={() => setDeleteOpen(true)}
             >
               <TrashIcon />

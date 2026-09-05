@@ -1,3 +1,4 @@
+import type { BundleTransferEvent } from "@/lib/tickets/bundle-transfer-schemas";
 import { z } from "zod";
 import type {
   ConversationBackgroundActivityEvent,
@@ -289,6 +290,7 @@ export type SSEEvent =
   | SessionAlignmentUpdatedEvent
   | ContextArtifactStatusEvent
   | TicketChangedEvent
+  | BundleTransferEvent
   | NotepadChangedEvent
   | MemoryChangedEvent
   | AgentProfileLibraryChangedEvent

@@ -1,3 +1,7 @@
+import {
+  bundleTransferSchema,
+  type BundleTransfer,
+} from "@/lib/tickets/bundle-transfer-schemas";
 import path from "node:path";
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
@@ -364,6 +368,8 @@ export async function runTicket(
     rest,
     json: flags.json,
     handlers: {
+      export: (r) => runTicketBundle("export", r, flags, values, env, host),
+      import: (r) => runTicketBundle("import", r, flags, values, env, host),
       create: (r) => runTicketCreate(r, flags, values, env, host),
       list: (r) => runTicketList(r, flags, values, env, host),
       get: (r) => runTicketGet(r, flags, values, env, host),
@@ -2613,6 +2619,220 @@ async function runTicketAttachmentVerb(
       json,
       `removed attachment ${attachmentId} from ${identifier}\n`,
       { ok: true, removed: parsed.data },
+    ),
+    stderr: "",
+  };
+}
+
+async function runTicketBundle(
+  mode: "export" | "import",
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, `ticket ${mode}`, json);
+  if (denied) return denied;
+  let target: TicketTarget;
+  let number: number | undefined;
+  if (mode === "export") {
+    const ref = ticketRefArgument(rest, mode, json);
+    if (!ref.ok) return ref.result;
+    const resolved = await resolveTicketTarget(ref.ref, flags, env, host);
+    if (!resolved.ok) return resolved.result;
+    target = resolved.target;
+    number = ref.ref.number;
+    if (!values["out"])
+      return usageFailure("ticket export requires --out <path>", json);
+    if (values["acknowledge"] && !values["prepared"])
+      return usageFailure(
+        "--acknowledge requires --prepared so it names the reviewed archive",
+        json,
+      );
+  } else {
+    if (rest.length || Boolean(values["file"]) === Boolean(values["prepared"]))
+      return usageFailure(
+        "ticket import requires exactly one of --file <path> or --prepared <id>",
+        json,
+      );
+    const resolved = await resolveProjectContext(flags, env, host);
+    if (!resolved.ok) return resolved.result;
+    target = { ...resolved.context, projectName: resolved.context.project };
+  }
+  const base = `/api/projects/${encodePathSegment(target.projectName)}/ticket-bundles`;
+  async function requestTransfer(
+    url: string,
+    body?: unknown,
+  ): Promise<
+    { ok: true; transfer: BundleTransfer } | { ok: false; result: CliResult }
+  > {
+    const result = await cliRequest(host, {
+      ...target,
+      path: url,
+      method: body === undefined ? "GET" : "POST",
+      ...(body === undefined ? {} : { body }),
+    });
+    if (result.kind !== "ok")
+      return { ok: false, result: failureFromRequest(result, json) };
+    const parsed = bundleTransferSchema.safeParse(result.body);
+    if (!parsed.success)
+      return {
+        ok: false,
+        result: invalidResponseFailure({
+          what: "ticket bundle",
+          issues: parsed.error.issues,
+          json,
+        }),
+      };
+    return { ok: true, transfer: parsed.data };
+  }
+  let uploaded: string | undefined;
+  if (mode === "import" && values["file"]) {
+    const bytes = await host.readFileBytes(values["file"]);
+    if (!bytes) return usageFailure("Cannot read the ticket bundle file", json);
+    uploaded = Buffer.from(bytes).toString("base64");
+  }
+  const prepared = values["prepared"];
+  let result = prepared
+    ? await requestTransfer(`${base}/${encodePathSegment(prepared)}`)
+    : mode === "export"
+      ? await requestTransfer(
+          `${ticketPath(target.projectName, number)}/bundle`,
+          {},
+        )
+      : await requestTransfer(base, { archive: uploaded });
+  if (!result.ok) return result.result;
+  async function wait(initial: BundleTransfer) {
+    let current = initial;
+    for (
+      let attempt = 0;
+      attempt < 600 && ["preparing", "importing"].includes(current.status);
+      attempt++
+    ) {
+      await host.sleep(1000);
+      const next = await requestTransfer(`${base}/${current.id}`);
+      if (!next.ok) return next;
+      current = next.transfer;
+    }
+    return { ok: true as const, transfer: current };
+  }
+  result = await wait(result.transfer);
+  if (!result.ok) return result.result;
+  let transfer = result.transfer;
+  const report = () =>
+    [
+      transfer.error ?? "",
+      ...transfer.omissions.map((item) => `${item.source}: ${item.reason}`),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  if (transfer.mode !== mode)
+    return usageFailure(
+      "Prepared bundle belongs to a different operation",
+      json,
+    );
+  if (["failed", "preparing", "importing"].includes(transfer.status))
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message:
+        transfer.error ??
+        "Bundle is still running; retry with --prepared " + transfer.id,
+      json,
+      details: { transferId: transfer.id },
+    });
+  if (mode === "export") {
+    if (transfer.omissions.length && values["acknowledge"] !== transfer.digest)
+      return failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: "Export requires acknowledgment of missing content",
+        detail: report(),
+        hint: `repeat ticket export ${rest[0]} --out <path> --prepared ${transfer.id} --acknowledge ${transfer.digest}`,
+        json,
+        code: "bundle_acknowledgment_required",
+        details: {
+          transferId: transfer.id,
+          digest: transfer.digest,
+          omissions: transfer.omissions,
+        },
+      });
+    const download = await cliRequest(host, {
+      ...target,
+      method: "GET",
+      path: `${base}/${transfer.id}/download?format=json&acknowledge=${encodeURIComponent(values["acknowledge"] ?? "")}`,
+    });
+    if (download.kind !== "ok") return failureFromRequest(download, json);
+    const parsed = z.object({ archive: z.string() }).safeParse(download.body);
+    if (!parsed.success)
+      return invalidResponseFailure({
+        what: "ticket archive",
+        issues: parsed.error.issues,
+        json,
+      });
+    if (!host.writeFileBytes)
+      return usageFailure(
+        "This CLI host cannot write binary output files",
+        json,
+      );
+    try {
+      await host.writeFileBytes(
+        values["out"]!,
+        Buffer.from(parsed.data.archive, "base64"),
+      );
+    } catch {
+      return failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message:
+          "Could not write archive; retry with --prepared " + transfer.id,
+        json,
+      });
+    }
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(
+        json,
+        `exported ${values["out"]} (${transfer.documentCount} documents)\n`,
+        {
+          ok: true,
+          filePath: values["out"],
+          documentCount: transfer.documentCount,
+          omissions: transfer.omissions,
+        },
+      ),
+      stderr: "",
+    };
+  }
+  if (transfer.status !== "imported") {
+    result = await requestTransfer(`${base}/${transfer.id}/import`, {
+      digest: transfer.digest,
+      allowDuplicate: values["allow-duplicate"] === "true",
+    });
+    if (!result.ok) return result.result;
+    result = await wait(result.transfer);
+    if (!result.ok) return result.result;
+    transfer = result.transfer;
+  }
+  if (transfer.status !== "imported")
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: transfer.error ?? "Import has not completed",
+      detail: report(),
+      hint: `retry ticket import --prepared ${transfer.id}${transfer.status === "duplicate" ? " --allow-duplicate" : ""}`,
+      json,
+      details: { transferId: transfer.id },
+    });
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      `imported ${target.projectName}#${transfer.ticketNumber}\n${report()}\n`,
+      {
+        ok: true,
+        projectName: target.projectName,
+        number: transfer.ticketNumber,
+        omissions: transfer.omissions,
+      },
     ),
     stderr: "",
   };

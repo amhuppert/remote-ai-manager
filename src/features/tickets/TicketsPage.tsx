@@ -1,5 +1,6 @@
 "use client";
 
+import TicketBundleControl from "./components/TicketBundleControl";
 import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -211,6 +212,7 @@ function TicketsPageInner({
             data-ticket-page-actions
             className="flex shrink-0 items-center gap-sm max-768:w-full max-768:justify-between"
           >
+            <TicketBundleControl />
             <Button variant="primary" size="sm" onClick={handleNewTicket}>
               <PlusIcon />
               New ticket

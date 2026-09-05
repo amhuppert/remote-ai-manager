@@ -440,7 +440,12 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl conversation compaction list <conversation-id> [--json]`
 
 - `cctl ticket` — create, list, read, update, link, post updates to, and attach context to work tickets
-  - `cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment>`
+  - `cctl ticket <create|list|get|update|delete|start|relation|status-update|attach|attachment|export|import>`
+- `cctl ticket export` — export one portable ticket bundle
+  - `cctl ticket export <number | project#number> --out <archive.cc-ticket.gz> [--prepared <id> --acknowledge <digest>]`
+- `cctl ticket import` — import a portable bundle as an independent ticket
+  - `cctl ticket import --file <archive.cc-ticket.gz> [--allow-duplicate]`
+  - `cctl ticket import --prepared <id> [--allow-duplicate]`
 - `cctl ticket create` — create a ticket in the ambient project
   - `cctl ticket create --title "<title>" --type <feature|bug|research|tech_debt|performance> [--description "<markdown>"] [--status <not_started|in_progress|done|blocked|closed>]`
 - `cctl ticket list` — list tickets with filters

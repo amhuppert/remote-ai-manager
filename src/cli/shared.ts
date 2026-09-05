@@ -105,6 +105,8 @@ export interface CliHost {
    * null when it does not exist / is unreadable.
    */
   readFileBytes(filePath: string): Promise<Uint8Array<ArrayBuffer> | null>;
+  /** Write an explicit binary output artifact without lossy text conversion. */
+  writeFileBytes?(filePath: string, bytes: Uint8Array): Promise<void>;
   /** Write a UTF-8 output file for commands with an explicit output target. */
   writeTextFile?(filePath: string, content: string): Promise<void>;
   /** Persist a secret-bearing UTF-8 file with owner-only permissions. */

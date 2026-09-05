@@ -90,6 +90,10 @@ const result = await runCli(process.argv.slice(2), process.env, {
       return null;
     }
   },
+  async writeFileBytes(filePath, bytes) {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, bytes, { mode: 0o600 });
+  },
   async writeTextFile(filePath, content) {
     // Commands derive output paths (e.g. `spec export` into .cc/temp/), so the
     // parent directory is not guaranteed to exist yet.

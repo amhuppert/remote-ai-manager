@@ -2725,6 +2725,13 @@ const SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_tickets_project_status_type_updated
     ON tickets (project_path, status, work_type, updated_at DESC);
 
+  CREATE TABLE IF NOT EXISTS ticket_bundle_imports (
+    ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
+    source_ticket_id TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ticket_bundle_imports_source
+    ON ticket_bundle_imports(source_ticket_id);
+
   CREATE TABLE IF NOT EXISTS ticket_attachments (
     id           TEXT PRIMARY KEY,
     ticket_id    TEXT NOT NULL,

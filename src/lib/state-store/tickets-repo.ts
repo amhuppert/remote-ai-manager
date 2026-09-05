@@ -272,11 +272,25 @@ export class ConversationSnapshotSwapError extends Error {
 /** Focused per-turn ticket view; session history is intentionally excluded. */
 export type LinkedTicketContext = Omit<TicketDetail, "sessions">;
 
+export interface TicketBundleImportSource {
+  sourceTicketId: string;
+  allowDuplicate: boolean;
+}
+
+export class TicketAlreadyImportedError extends Error {
+  constructor() {
+    super(
+      "This source ticket was already imported into this project. Confirm another copy to continue.",
+    );
+  }
+}
+
 export interface TicketsRepo {
   create(input: PersistTicketInput): Promise<Ticket>;
   createWithAttachments(
     input: PersistTicketInput,
     attachments: TicketAttachment[],
+    importSource?: TicketBundleImportSource,
   ): Promise<TicketDetail>;
   list(query: TicketListQuery): Promise<TicketListItem[]>;
   findListItem(
@@ -723,8 +737,25 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
     (
       input: PersistTicketInput,
       attachments: TicketAttachment[],
+      importSource?: TicketBundleImportSource,
     ): TicketDetail => {
+      if (
+        importSource &&
+        !importSource.allowDuplicate &&
+        db
+          .prepare(
+            `SELECT 1 FROM ticket_bundle_imports i JOIN tickets t ON t.id = i.ticket_id
+         WHERE i.source_ticket_id = ? AND t.project_path = ? LIMIT 1`,
+          )
+          .get(importSource.sourceTicketId, input.projectPath)
+      ) {
+        throw new TicketAlreadyImportedError();
+      }
       const number = insertTicket(input);
+      if (importSource)
+        db.prepare(
+          "INSERT INTO ticket_bundle_imports (ticket_id, source_ticket_id) VALUES (?, ?)",
+        ).run(input.id, importSource.sourceTicketId);
       for (const attachment of attachments) {
         insertAttachmentStmt.run(attachmentBind(attachment));
       }
@@ -1311,7 +1342,7 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
       });
     },
 
-    async createWithAttachments(input, attachments) {
+    async createWithAttachments(input, attachments, importSource) {
       const validatedInput = persistTicketInputSchema.parse(input);
       const validatedAttachments = ticketAttachmentSchema
         .array()
@@ -1339,6 +1370,7 @@ export function createTicketsRepo(db: Db, writeQueue: WriteQueue): TicketsRepo {
               createWithAttachmentsTx.immediate(
                 validatedInput,
                 validatedAttachments,
+                importSource,
               ),
           );
         },

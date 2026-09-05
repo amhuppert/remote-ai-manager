@@ -291,6 +291,7 @@ describe("booleanFlagNames() over the real registry", () => {
   it("is exactly the union of every boolean flag across all commands", () => {
     expect(booleanFlagNames().sort()).toEqual([
       "all",
+      "allow-duplicate",
       "archived",
       "attachments",
       "charter",
