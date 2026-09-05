@@ -12,6 +12,12 @@ const nextConfig: NextConfig = {
     "*": ["./.worktrees/**"],
   },
   experimental: {
+    // `src/middleware.ts` matches `/api/:path*`, so Next buffers a clone of
+    // every API request body and truncates it at the 10 MB default — the route
+    // handler, not just the middleware, receives the cut body. Ticket bundle
+    // uploads declare a 256 MiB archive (`MAX_BUNDLE_BYTES`) that base64
+    // inflates to ~342 MB inside the JSON envelope; this ceiling clears it.
+    proxyClientMaxBodySize: "344mb",
     // Persist Turbopack's compile cache to disk so warm builds skip
     // recompiling unchanged modules (cache lives under .next/cache).
     turbopackFileSystemCacheForBuild: true,
