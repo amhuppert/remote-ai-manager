@@ -2,7 +2,7 @@
 
 Reference for [graph-workflow-planning](../SKILL.md). Read this when selecting script-gate commands, tuning agent command access or lane-merge validation, staffing non-default implementers or validator cohorts, or aligning validators with acceptance criteria in detail.
 
-Graph workflows have three distinct validation configuration blocks. Keep their decisions independent.
+Graph workflows have three distinct validation configuration blocks. Keep their decisions independent. Command names in examples are illustrative: select the target project's actual registered names with `cctl validate list`.
 
 ## Script gate: `scriptValidator.commands`
 
@@ -30,7 +30,15 @@ Every name must exist in the project's `validation.commands` registry. Select co
 
 ### Script validator decision rule
 
-Select commands in `scriptValidator.commands` only when the codebase is expected to satisfy them after completing all tasks in that execution context.
+Select commands by placement grade and the candidate the context will leave:
+
+- Every `full`-grade context expected to leave the tree valid carries cheap deterministic gates from `cctl validate list`, such as compilation and architecture checks when the project registers them. Use a workflow default when most contexts share that selection, then override exceptions explicitly. This is an authoring default; the engine's seeded selection remains `[]`.
+- `owned` and `readOnly` contexts follow the lane barrier coverage rule above. A `full` context on an ordered shared lane still runs its own selected gate.
+- Select the project's registered test command at contexts with a bounded diff and once at final verification. Give implementers access to the registered test command for file-scoped red-green loops independently of the context gate.
+
+Check the target project's registered scope behavior before scheduling broad runs: `cctl validate run <test-command> --scope changed` can cover the whole feature if its wrapper compares against the target-branch merge base, approaching full-suite cost. Use an explicit single test-file path during TDD when the command supports path scoping; otherwise choose the narrowest registered check. Reserve broader runs for context checkpoints and an explicit `--scope full` pass at final verification. The script gate selects command names, not CLI flags; put the full-scope invocation in the final task's verification instructions.
+
+The final context's [baseline policy](../SKILL.md#final-verification-context) determines who owns pre-existing failures.
 
 Do not enable `scriptValidator` for a context intentionally planned to end in an invalid intermediate state, such as:
 
@@ -103,7 +111,7 @@ Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:rev
   "implementer": {
     "id": "implementer",                                   // stable, kebab-case, unique at its use site
     "profile": { "tier": "builtin", "id": "general-implementer" },
-    "focus": "state-store persistence",                    // optional use-site steer
+    "focus": "database persistence",                    // optional use-site steer
     "agent": {
       "backend": "claude",
       "modelSelection": {

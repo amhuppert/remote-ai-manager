@@ -44,7 +44,7 @@ const leaf: CommandHelpEntry = {
     {
       name: "graph-workflow-planning",
       loadWhen: "before authoring or revising plan.json",
-      path: ".claude/skills/graph-workflow-planning/SKILL.md",
+      path: "plugins/command-center/command-center/skills/graph-workflow-planning/SKILL.md",
     },
   ],
 };

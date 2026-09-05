@@ -39,6 +39,9 @@ import {
 const COMPLETE_TASK_COMMAND =
   'cctl workflow task complete <taskId> --summary "<what you changed and how you verified it>"';
 
+const SELF_DISCOVERED_GAP_RULE =
+  "A gap you discover against this context's own acceptance criteria is an open task, not a handoff note. Fix it or leave the owning task open and say why; do not run `cctl workflow task complete` for work with a known gap. A residual in a summary does not satisfy the criterion.";
+
 function buildCharterSection(
   charter: WorkflowCharter,
   contextId: string,
@@ -471,6 +474,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       "## Required Protocol",
       "Follow these steps exactly:",
       "1. Work through the tasks in order, completing each one before moving to the next.",
+      SELF_DISCOVERED_GAP_RULE,
       `2. Run \`${COMPLETE_TASK_COMMAND}\` after finishing each task, using the task's id from the list above.`,
       "3. If `cctl workflow task complete` prints a stop instruction (CONTEXT LIMIT REACHED …), end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
       "",
@@ -634,6 +638,7 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
   sections.push(
     ["## Remaining Tasks", ...taskLines].join("\n"),
     `Please continue working through them in order, running \`cctl workflow task complete\` for each.`,
+    SELF_DISCOVERED_GAP_RULE,
     `This is follow-up attempt ${input.attemptNumber} of ${input.maxAttempts}.`,
     "The workflow cannot progress until tasks are completed via `cctl workflow task complete`. Without it, the workflow will stall.",
   );

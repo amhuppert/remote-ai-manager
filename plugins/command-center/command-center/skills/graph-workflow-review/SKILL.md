@@ -18,7 +18,7 @@ Read, in order: the `plan.json`, its `definition.charter` (mission, invariants, 
 
 Run `cctl workflow validate --file <plan.json>` before reading closely. Structural refusals and `warning:` lines are mechanical pre-clearing, and a plan too malformed to parse cannot be hashed — the review commands themselves reject it as an invalid plan. Spending review attention on what the validator already prints wastes the pass.
 
-## Two lenses, weighted equally
+## Three lenses, weighted equally
 
 **Completeness — does the plan deliver the objective?**
 
@@ -34,7 +34,15 @@ Run `cctl workflow validate --file <plan.json>` before reading closely. Structur
 - *Redundant criterion*: two records that can only pass or fail together, a criterion restating a charter invariant, or a criterion asking an LLM validator to re-judge what a script gate decides deterministically.
 - *Process criterion*: a record or invariant that names how the work must be produced (a failing test first, a command order) rather than what must be true afterwards. Validators cannot verify process on the finished candidate, so honest work fails for lacking proof. Repair: move it to `charter.conventions`, or restate it as the outcome it protects.
 
-The second lens is not the junior partner. A review that can only add obligations inflates the plan it was meant to make executable — that one-sided incentive is the incident this protocol corrects.
+Weigh executability alongside completeness: adding obligations without considering scope can make a complete plan impractical to execute.
+
+**Feasibility — are the premises true and the proof surface bounded?**
+
+- For every criterion that displays, reconstructs, audits, or asserts runtime state, open each cited source and confirm the premise against the authoritative record and field, the transition in the state machine, or state the embedder controls. A planner's **verified** label is a claim to check, not evidence by itself. An unreadable citation, a source that does not establish the claimed fact, or an inferred premise is a blocking finding: record `changes-requested` until it is verified or the criterion is repaired. This blocks review approval under the existing advisory review protocol; it adds no launch gate.
+- For provider-owned or remote-mutable state, check that the criterion requires the strongest exposed control, enumerates higher-precedence sources, and discloses the residual. For intentionally introduced data or transitions, check the named producer's criterion and dependency instead of assuming the feature already exists.
+- For several surfaces or verbs, require a surface-by-verb matrix with named tests or a split. A context with two authoritative data models or two proof strategies needs separate validation boundaries; a small record count does not discharge breadth.
+
+This lens applies the planning skill's **Premise rule**.
 
 ## Findings are phrased as repairs
 
@@ -42,7 +50,7 @@ Prefer **move, delete, defer, split — before add.** Reach for an addition only
 
 Each finding names three things:
 
-1. **Lens** — completeness or executability.
+1. **Lens** — completeness, executability, or feasibility.
 2. **Location** — the `contextId`, plus the `criterionId` when the finding is about one acceptance criterion; a charter-level finding names the invariant id or source id instead.
 3. **Recommended repair** — concrete enough for the planner to apply without a follow-up conversation, in the move/delete/defer/split/add vocabulary.
 
@@ -73,7 +81,7 @@ Read mode prints the verdict, the reviewer, when it was reached, the revision ha
 
 ## Two hard rules
 
-**Terminal verdicts only.** Record nothing until the review is finished. An aborted, interrupted, or partial review leaves NO record — a canceled review passed off as a completed verdict is the incident that earned this skill. There is no draft state and no in-progress verdict, by design: the only thing worse than an unreviewed plan is a plan everyone believes was reviewed.
+**Terminal verdicts only.** Record nothing until the review is finished. An aborted, interrupted, or partial review leaves NO record. There is no draft state or in-progress verdict; recording a verdict means the review of that revision is finished.
 
 **Hash binding.** The verdict binds to the exact plan content reviewed. Reformatting or reordering the same plan finds the same review; changing one word finds none. Any repair therefore invalidates the review — the repaired plan is a different revision, and the final revision the planner submits is the one that needs a verdict on it. Re-review that revision; a verdict never carries forward by hand.
 

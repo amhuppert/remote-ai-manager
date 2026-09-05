@@ -71,7 +71,7 @@ export const MANAGED_DRAFT_WRITE_HINTS = {
 const GRAPH_PLANNING_SKILL = {
   name: "graph-workflow-planning",
   loadWhen: "before authoring or revising a plan.json",
-  path: ".claude/skills/graph-workflow-planning/SKILL.md",
+  path: "plugins/command-center/command-center/skills/graph-workflow-planning/SKILL.md",
 } as const;
 
 /**
@@ -84,7 +84,7 @@ const GRAPH_PLANNING_SKILL = {
 const GRAPH_REVIEW_SKILL = {
   name: "graph-workflow-review",
   loadWhen: "before reviewing a plan.json or recording a verdict",
-  path: ".claude/skills/graph-workflow-review/SKILL.md",
+  path: "plugins/command-center/command-center/skills/graph-workflow-review/SKILL.md",
 } as const;
 
 /**

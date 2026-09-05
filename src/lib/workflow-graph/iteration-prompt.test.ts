@@ -181,6 +181,35 @@ function makeLatestContextValidationFailure() {
 }
 
 describe("buildIterationPrompt", () => {
+  it("keeps self-discovered criterion gaps open on initial and continuation turns", () => {
+    const prompts = [
+      buildIterationPrompt({
+        context: makeContext(),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments: [],
+        allowAgentTaskAdd: false,
+      }),
+      buildFollowUpPrompt({
+        remainingTasks: [makeTask()],
+        taskStates: {},
+        attemptNumber: 1,
+        maxAttempts: 2,
+      }),
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toContain("this context's own acceptance criteria");
+      expect(prompt).toContain("an open task, not a handoff note");
+      expect(prompt).toContain(
+        "Fix it or leave the owning task open and say why",
+      );
+      expect(prompt).toContain(
+        "A residual in a summary does not satisfy the criterion",
+      );
+    }
+  });
+
   it("requires resolved validation selections", () => {
     expectTypeOf<
       BuildIterationPromptInput["validationSelections"]

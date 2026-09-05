@@ -5,11 +5,17 @@
 import type { ModelReasoningEffort } from "@openai/codex-sdk";
 import type { CodexReasoningEffort } from "@/lib/agent-backends/schemas";
 
-/** Converts a validated CC reasoning-effort value to the SDK representation. */
+/**
+ * Converts a validated CC reasoning-effort value to the SDK representation.
+ *
+ * The SDK forwards this value verbatim to the Codex CLI, but its exported type
+ * omits CLI-supported model-specific levels. Callers validate the value against
+ * both the CC schema and the selected model before it reaches this boundary.
+ */
 export function toSdkModelReasoningEffort(
   effort: CodexReasoningEffort,
 ): ModelReasoningEffort {
-  return effort;
+  return effort as ModelReasoningEffort;
 }
 
 /** Converts an env record (with possible `undefined` values) to a plain string record. */

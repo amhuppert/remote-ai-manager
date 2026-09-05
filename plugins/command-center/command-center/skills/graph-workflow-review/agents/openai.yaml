@@ -1,0 +1,3 @@
+interface:
+  display_name: "Graph Workflow Review"
+  short_description: "Reviewer protocol for graph workflow plans: three lenses, findings artifact, and the hash-bound terminal verdict."

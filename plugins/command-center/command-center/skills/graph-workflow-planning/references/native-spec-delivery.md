@@ -23,9 +23,7 @@ The link is authored, not derived. The plan's `binding` gives every pinned
 criterion a disposition, and its claims name the stable authored contexts
 accountable for the selected ones; a criterion reaches a context because a claim
 says so. Nothing infers accountability from topology, lineage, or runtime
-expansion. A follow-up ticket replaces this authored link with a per-criterion
-`covers` annotation on the context, so treat claims in the `binding` as the
-whole mechanism until that ships.
+expansion. Claims in the `binding` are the accountability mechanism.
 
 Shape the graph knowing a claim has to be reachable: the
 `binding/selected-criterion-not-must-run` finding names a claimed criterion the

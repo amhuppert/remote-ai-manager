@@ -1,6 +1,6 @@
 # Native SDD delivery planning: remove the indirection between specs and graph workflows (command-center#80)
 
-Status: DECIDED, revision 2, 2026-09-03; all six decisions in section 8 settled by Alex on 2026-09-03 with the recommended option. Design only. The one change already shipped under this ticket is the outcomes-only validator rule (section 3.9), which is independent of everything else here.
+Status: IMPLEMENTED for sequencing steps 1 to 3, revision 2. Decisions D-A to D-F were settled by Alex on 2026-09-03. Steps 1 to 3 were delivered by graph workflow execution `773a058c` (11 contexts, 2026-09-04 02:12Z to 12:33Z) and merged to main in `3142bcbf` on 2026-09-04; section 10 records what landed against each design section. Steps 4 to 6 are tracked in command-center#109. The outcomes-only validator rule (section 3.9) shipped earlier under this ticket.
 
 Revision 2 folds in the fourteen findings of the review against the agentic-engineering-principles skills (same day): a preflight with gate parity and a published rule catalogue (3.3), gate deltas and ledger framing on writes (3.1, 3.5), why-lines in every refusal that enforces a kept constraint (3.1, 3.3, 3.5), a hint chain replacing three prose copies of the launch sequence (3.6), one execution id with no dual acceptance (3.5), server-side verdict attribution (3.3), telemetry for planning-phase friction (3.10), round-trip and remedy-proof tests plus a live scenario list (6), an explicit implementation split (7), and a sixth decision (8).
 
@@ -164,7 +164,7 @@ The launch sequence has one owning document and is walked by hints, never copied
 
 ### 3.8 Engine: pause before provisioning (I-11)
 
-A pause taken while no lane has been provisioned must resume into the scheduler's initial dispatch, not into the completion-invariant guard. On resume, when `startedContexts` is empty and no lane exists, the loop re-runs the initial batch scheduling as if the execution had just started. This is a small change at the resume entry in `execution-loop.ts`, but it is engine work with its own reproduction (start, pause immediately, resume), so it is filed as its own ticket and sequenced first, because every recovery recipe in this design assumes a pause is always safe.
+A pause taken while no lane has been provisioned must resume into the scheduler's initial dispatch, not into the completion-invariant guard. On resume, when `startedContexts` is empty and no lane exists, the loop re-runs the initial batch scheduling as if the execution had just started. This is engine work with its own reproduction (start, pause immediately, resume) and was sequenced first, because every recovery recipe in this design assumes a pause is always safe. Delivered inside execution `773a058c` as context `engine-pause-before-provisioning`, in the lane-provisioning path of `workflow-manager.ts`, rather than as a separate ticket; live scenario S2 passed.
 
 ### 3.9 Outcomes only in validator-checked text (shipped)
 
@@ -252,9 +252,9 @@ Small, independently landable steps, ordered by leverage and by what the next st
 5. 3.4 excerpts, seeded documents, locator lint, `accessPolicy` removal. Live scenario S5.
 6. 3.7 authored-subset hash and the review line on propose.
 
-**Scope under this ticket:** steps 1 to 3. They need no decision from section 8, and together they remove most of the measured accidental cost: after them a spec delivery is authored as a `plan.json`, preflighted with gate parity, and walked by hints.
+**Scope under this ticket, delivered:** steps 1 to 3. They needed no decision from section 8, and together they remove most of the measured accidental cost: a spec delivery is now authored as a `plan.json`, preflighted with gate parity, and walked by hints.
 
-**Follow-up ticket:** steps 4 to 6. The decisions they depend on are settled (section 8); they change the binding schema and the review hash and are worth their own design review before implementation.
+**Follow-up ticket, command-center#109:** steps 4 to 6. The decisions they depend on are settled (section 8); they change the binding schema and the review hash and are worth their own design review before implementation.
 
 ## 8. Decisions (settled by Alex, 2026-09-03)
 
@@ -272,3 +272,24 @@ Each was asked with its alternative and tradeoff; Alex chose the recommended opt
 - The delivery gate's post-run behaviour (`spec status` reporting coverage 0/31 until the session branch publishes) is designed and unchanged.
 - The four planning-quality recommendations in the retrospective that are not SDD-specific (premise rule and feasibility lens, validator class enumeration, implementer residual rule, grade-aware gates) are tracked there and are not part of this design.
 - Renaming the three compare-and-swap tokens; the labelled-receipt change in 3.5 is the cheaper fix and can be revisited if labels prove insufficient.
+
+## 10. Implementation record (2026-09-04)
+
+Delivered by graph workflow execution `773a058c` (definition `4ceb1362` revision 2) on the #80 session, 2026-09-04 02:12Z to 12:33Z, two lanes (`gate`, `integration`), merged to the session branch by join `5d5d3c37` and to main in `3142bcbf`. Ledger facts: 11 contexts, 20 validation rounds of which 11 failed (eight contexts took one first-round NO-GO; `engine-pause-before-provisioning` took three), no plan-defect halts, no circuit breaker, five operator live edits. Final verification passed live scenarios S1 to S3.
+
+| Design section | Delivering context | Status | Notes |
+|---|---|---|---|
+| 3.1 replace merges server-owned fields, gate deltas, edge ids | `managed-replace`, `hint-chain-and-ledger` | done | `mergeServerOwnedRegions` in `locked-regions.ts`; `blockingBefore`/`blockingAfter` on replace and edit; `workflow.replace.server_fields_merged` event |
+| 3.2 id-bearing issue locators | `issue-locators` | done | `recordId` in the envelope; text paths carry the record id |
+| 3.3 preflight with parity, blocked-transition findings, published catalogue, ledger lines | `validate-definition-preflight`, `hint-chain-and-ledger` | done for the existing `binding/*` rules | `cctl workflow validate --definition <id>`, `spec plan status` and propose share `delivery-plan-preflight.ts`; `DELIVERY_PLAN_LINT_RULES` published through `cctl spec schema guidance` |
+| 3.3 `covers`, derived claims, `coverage/*` codes, server-side attribution, binding v4, delete `spec plan edit` | none | pending, command-center#109 | the `native-spec-delivery` reference says so explicitly until it ships |
+| 3.4 per-context excerpts, seeded documents, locator-lint exemption, `accessPolicy` removal | none | pending, command-center#109 | |
+| 3.5 one execution id, labelled tokens, abandon retires the attempt, `requires-pause` reason, seed charter and `launch/charter-unauthored`, draft `nextAct`, outline hints | `execution-identity`, `receipt-tokens-and-outline`, `charter-seed-and-check` | done | `execution-id-resolution.ts`, `retireLaunchedAttempt` in `execution-service.ts`, `delivery-plan-charter-seed.ts`, `delivery-plan-next-act.ts`, `refusal-rationale.ts` |
+| 3.6 hint chain, one owning skill section, routing from `/spec` and the native-sdd skill | `guidance-routing`, `hint-chain-and-ledger` | done | `references/native-spec-delivery.md` in all three planning-skill copies; `.claude/commands/spec.md` and the native-sdd skill point at it |
+| 3.7 review hash over the authored subset | none | pending, command-center#109 | |
+| 3.8 pause before provisioning | `engine-pause-before-provisioning` | done | lane-provisioning path in `workflow-manager.ts`; live scenario S2 |
+| 3.9 outcomes only | shipped earlier under #80 | done | |
+| 3.10 telemetry | `planning-telemetry` | done | five events catalogued in `.kiro/steering/logs.md`; `planning-telemetry.ts` in both `specs` and `workflow-graph` |
+
+Not yet done from section 6: live scenarios S4 and S5 belong to the pending steps. No workflow audit of execution `773a058c` has been written; one is owed before the next planning-skill revision, per the retrospective loop this ticket adopted.
+

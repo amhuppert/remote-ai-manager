@@ -22,8 +22,8 @@ This core file covers the ordinary planning path end to end: decompose the objec
 - A graph workflow is a DAG of execution contexts.
 - Each execution context runs as an independent agent session.
 - Tasks inside one context run sequentially, in array order, inside that same agent session.
-- Each task should be achievable in roughly 10-30 minutes of focused work.
-- Dependency edges make one context wait for another context to complete.
+- Each task should be achievable in roughly 10-30 minutes of focused work. The engine honors token-limit rotation at task boundaries, so task grain is the context-budget control: a multi-hour task can run past the limit until it completes.
+- Dependency edges make one context wait for another context to complete. Ordinary edges deliver each direct predecessor's validated captured output under **Inputs from upstream** as verbatim JSON with schema fields; predecessors without captured output are omitted, and skipped predecessors are named **Skipped — branch not taken**, with no payload. Prompt injection has no 64 KiB substitution; the `cctl workflow result` envelope separately replaces each top-level value above 64 KiB UTF-8 with an addressed retrieval command. Keep captured output bounded at authoring time.
 - Every context declares where it runs and what it may write: a lane, a grade, and — for an owning context — its owned paths. Several contexts can share one lane. See [Placement Essentials](#placement-essentials).
 - Context IDs and task IDs should be stable, kebab-case, and content-specific, such as `runtime-apply-contracts` or `wire-route-handlers`.
 - The executing agent sees the workflow definition and codebase, **not the planning conversation**. Task instructions must be self-contained.
@@ -59,7 +59,7 @@ This core file covers the ordinary planning path end to end: decompose the objec
    - For any plan with approval, gate, or attribution semantics, include an evidence-legality invariant: integration evidence must flow through production-legal, human-attributed paths — no fixture shortcuts through service internals, no unauthenticated stand-in calls.
 
 6. Choose execution contexts around validation boundaries.
-   - Each context should have one coherent validation thesis.
+   - Each context should have one coherent validation thesis: one authoritative data model and one proof strategy. Split contexts that require two unrelated models or proof strategies.
    - Split broad lifecycle work into smaller contexts such as contracts, mutation fanout, backend-specific lifecycle, turn-start behavior, diagnostics, and UI/API wiring.
    - Avoid contexts whose acceptance criteria require the validator to understand several unrelated subsystems at once.
    - Count the independently-failable obligations in each context's criteria, not the paragraphs. A context whose criteria hide a dozen separately checkable requirements is several contexts wearing one id.
@@ -81,7 +81,7 @@ This core file covers the ordinary planning path end to end: decompose the objec
    - Group contexts that implement disjoint blocks of one change onto a shared lane; keep same-file competition, dependency-mutating work, and self-verifying contexts on their own.
    - Do this AFTER the edges exist: only same-lane members that nothing orders must be disjoint, so a dependency edge is often the cheaper fix for an overlap — and a member ordered against every lane-mate needs no `ownedPaths` at all (`full`).
 
-Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three release blockers (a gate with no production grant path, events no production code ever published, notification adapters no runtime component imported) shipped past green per-context validation because every acceptance criterion was satisfiable by exported, unit-tested code — and five NO-GO classes recurred independently across contexts because the shared rules lived only in deep spec documents.
+For example, an exported event publisher can pass its unit tests while no production code calls it. Require the production caller in the owning context, and declare shared constraints once so every applicable context checks the same contract.
 
 ## The Charter
 
@@ -95,6 +95,8 @@ Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three r
 
 ### Compact maximal charter example
 
+Paths and names in examples are illustrative; replace them with sources you opened in the target project.
+
 ```json
 {
   "mission": "Ship a trustworthy workflow.",
@@ -104,7 +106,7 @@ Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three r
   "testStrategy": "Run focused tests, then the integration gate.",
   "knownAmbiguities": ["The adapter name is implementation-local."],
   "invariants": [{ "id": "server-side-enforcement", "statement": "Every gate is enforced server-side, never only in the UI." }],
-  "sourcesOfTruth": [{ "rank": 1, "id": "runtime", "label": "Workflow runtime", "type": "code", "locator": "src/lib/workflow-graph", "description": "Governs runtime behavior." }]
+  "sourcesOfTruth": [{ "rank": 1, "id": "runtime", "label": "Application runtime", "type": "code", "locator": "src/runtime", "description": "Governs runtime behavior." }]
 }
 ```
 
@@ -149,8 +151,8 @@ Acceptance criteria are the shared contract between implementer and validator. `
 ```
 
 - Ids are kebab-case and unique within the context. Keep them stable across revisions — verdicts, repair diagnoses, and remediation all address criteria by id, so a renamed id orphans every citation that named it.
-- **One independently-failable obligation per record.** If a record can pass in one half and fail in the other, it is two records. The old advice to number your clauses is now the schema, not a formatting preference.
-- **Record count is the context-split signal.** A coherent validation thesis is a handful of records; a context carrying a dozen-plus is several contexts wearing one id. Density is visible while you author now — read it before you submit, because the validator reads it after.
+- **One independently-failable obligation per record.** If a record can pass in one half and fail in the other, it is two records.
+- **Proof breadth is the context-split signal.** Record count is only a warning dial: a few records can hide many independent states, surfaces, and verbs. Enumerate those obligations before deciding that one context can validate them.
 - Prose is still accepted on the authored write paths and wraps as exactly one record, `ac-1`. That is a migration affordance, not a second dialect: one record holding a paragraph of obligations reproduces exactly the blob records exist to remove.
 - Live-edit and plan repair replace the WHOLE list (`update-context`); there are no per-criterion operations. Such an edit must restate every record the context keeps, verbatim.
 
@@ -175,6 +177,18 @@ Do not write acceptance criteria that:
 - Sweep an unbounded surface — "every call site", "all legacy paths", "complete parity" — without a task that first inventories that surface mechanically. An open quantifier over an uninventoried surface converges one discovered site per validation round.
 - Describe how the work must be produced rather than what must be true afterwards: "a failing test was written first", "TDD was followed", "ran X before Y". A validator judges the finished candidate and cannot verify process, so a correct implementation fails for lacking proof. Spell the outcome instead — "a regression test exists and fails when the behaviour is reverted" — and keep the process rule in `conventions`.
 
+### Premise rule
+
+For a criterion that displays, reconstructs, audits, or asserts runtime state, bind it only to premises the planner has checked:
+
+- **Data:** open the authoritative record and field; confirm retention and availability at the point the criterion needs them. A record that retains only the latest result cannot support a historical timeline without an explicit storage deliverable.
+- **Lifecycle:** read the transition in the state machine, including identity across revisions. Check whether a revision updates an existing record or replaces it before requiring stable identity.
+- **Control:** assert only state the embedder controls. For provider-owned or remote-mutable state, require that the implementation sets the strongest control the SDK exposes, enumerates higher-precedence sources once, and discloses the residual.
+
+Label each such premise **verified** with a `file:symbol` and the observed fact, or **inferred**, in the context description or a cited source document; keep `sourcesOfTruth.locator` a worktree-relative path. These are prose labels, not schema fields. An inferred premise is not execution-ready: verify it or repair the criterion before submission. For a record or transition the feature must introduce, name the producer context and its criterion instead of presenting the addition as existing behavior.
+
+For a criterion covering several surfaces or verbs, enumerate a surface-by-verb matrix (including negative states) with named tests, or split it. A criterion count cannot substitute for that inventory.
+
 ## Placement Essentials
 
 Every execution context declares `placement`: which **lane** it runs on, and what it may write there. There is no default and no inference — a plan whose contexts do not all carry placement is refused. A lane is one git worktree on one branch; a lane hosting N contexts costs one worktree and one fan-in join for the whole group.
@@ -190,11 +204,11 @@ Core rules:
 - Put readers on the `session` lane: `{ "lane": "session", "mode": "readOnly" }` costs no worktree and no merge.
 - `ownedPaths` is a concurrency mechanism, not a scoping mechanism: declare `mode: "owned"` only for two-plus write-capable members of one lane that no dependency edge orders. A context alone on its lane, ordered against every lane-mate, or parallel with contexts on OTHER lanes takes `full` — a list where no race exists buys no parallelism, and its first unforeseen legitimate write is a denied tool call or an `ownership_violation` halt.
 - Share a lane to save worktrees and joins: ordered `full` members for sequential work, disjoint `owned` members for genuinely parallel blocks of one change. Give a context its own lane for same-file competition, dependency-mutating work (lockfiles, codegen), or a verification boundary it must own.
-- Where ownership does apply, prefer **directory-grain ownership** (`src/lib/state-store`, not eleven file paths inside it): red-green implementers create files that did not exist when you planned, and a file-grain entry denies exactly those writes mid-task.
+- Where ownership does apply, prefer **directory-grain ownership** (`src/storage`, not eleven file paths inside it): red-green implementers create files that did not exist when you planned, and a file-grain entry denies exactly those writes mid-task.
 - Same-lane members that nothing orders must own pairwise-disjoint prefixes; a shared surface (a barrel, a lockfile, a shared `schemas.ts`) has exactly one owner — home it upstream or dependency-order the members.
 - The envelope is mechanical: agents cannot commit (never write task instructions asking an implementer to commit, stash, or rebase), and an enveloped context's whole-repo verification happens at its lane's join, not per context.
 
-Full grade semantics, lane-sharing decision rules, the write envelope, accept-time `placement-*` refusal codes, and parallel-vs-sequential guidance: [references/placement-and-parallelism.md](references/placement-and-parallelism.md).
+For cross-lane dependencies, read [Lane visibility and fork points](references/placement-and-parallelism.md#lane-visibility-and-fork-points): committed ancestry, forks, and joins decide which files a consumer sees; captured output is a separate channel. The same reference covers full grade semantics, lane sharing, write envelopes, and `placement-*` refusals.
 
 ## Defaults and Payloads
 
@@ -210,7 +224,7 @@ Create workflows with default implementer and validator settings unless the user
 - `placement` is required on every execution context too, and it does not default or cascade — decide it deliberately per context.
 - Both mutability flags default to `false`. A final verification context that may add remediation tasks but must not expand the graph uses exactly `{"allowAgentTaskAdd":true,"allowAgentContextAdd":false}`.
 - Minimal payloads are preferred because global and workflow defaults cascade into each context at execution seed time.
-- Exception to the "use defaults" rule: select the appropriate registered commands in `scriptValidator.commands` for the **final** execution context unless there is a specific reason to leave the gate empty.
+- Exception to the "use defaults" rule: every `full`-grade context expected to leave the tree valid carries the project's cheap deterministic gates: use `cctl validate list` to select available checks, such as compilation or architecture checks, appropriate to the context. Put tests where the diff is bounded and once at final verification. For `owned` and `readOnly`, use the lane barrier policy in [validation and staffing](references/validation-and-staffing.md#script-validator-decision-rule); intentionally invalid intermediate states defer checks to the integration context that makes them valid.
 
 ## Validation Essentials
 
@@ -218,7 +232,7 @@ Three independent validation surfaces exist; keep their decisions separate. The 
 
 - `contextValidator` — an ordered cohort of LLM validator assignments judging the intent of the context's acceptance criteria. Default staffing (a single general reviewer) is right for most contexts; staff a specialist cohort only when a context genuinely needs a second lens. That default seat judges the criteria themselves, so each of its blocking issues cites the failing criterion's id; a specialist cites its own assigned mandate instead and names a criterion only when its finding also contradicts one.
 - `scriptValidator.commands` — the deterministic registered-command gate run after the context's tasks complete. Select commands only for a context expected to leave those checks green; never gate an intentionally invalid intermediate state (a schema landed before its callers migrate) — put the deterministic thesis on a later integration context or the lane's merge barrier instead. Every name must exist in the project's `validation.commands` registry.
-- `laneMergeValidation` — the deterministic barrier protecting the shared fan-in target; global/workflow tier only. For contexts sharing a lane this barrier IS where whole-repo verification happens, and an enveloped context's `scriptValidator.commands` must be empty or a subset of it.
+- `laneMergeValidation` — the deterministic barrier protecting the shared fan-in target; global/workflow tier only. Enveloped (`owned` or `readOnly`) contexts defer repository gating here, and their `scriptValidator.commands` must be empty or a subset of it. A `full` context still runs its selected context gate, including on an ordered shared lane.
 
 Script validation runs before agent validation; a failed command skips agent validation for that iteration. Validators respect context scope boundaries and do not fail a context for work intentionally assigned downstream — provided the deferral is named as [Planning Procedure](#planning-procedure) step 4 requires.
 
@@ -263,6 +277,7 @@ The final context should:
 - Verify that each implemented surface is connected to the runtime path the user will exercise.
 - Check that gated or unavailable behavior is honestly represented.
 - Select `scriptValidator.commands` only if the whole workflow should satisfy those checks at that point.
+- State whether this context owns pre-existing failures, proves non-regression against a captured baseline, or escalates them for a scope decision. For non-regression, assign baseline capture to a context preceding implementation; attribute any failure to the workflow diff before assigning unrelated cleanup. A baseline does not waive a configured failing gate; an accepted failure needs an explicit scope/gate decision. Require settled results for every launched check before completion.
 - Own live end-to-end verification explicitly when the workflow ships user-visible or end-to-end behavior: a task plus an acceptance criterion that require driving the real running feature, not static code tracing. If no context owns a live pass, the plan is declaring the feature will ship untested end to end — make that trade-off consciously, not by omission.
 
 The final verification context is **defense in depth** for reachability, not the primary proof — each capability context proves its own production wiring or names its downstream owner. Bound the review's acceptance criteria: enumerate the surfaces to check rather than writing "every implemented surface", and route large gaps into remediation tasks with their own bounded criteria. An unbounded audit-and-remediate predicate is a scope ratchet a circuit breaker will eventually halt mid-convergence.
@@ -312,7 +327,7 @@ A plan is a JSON object the validate, create, replace, and run endpoints all acc
 ### Launch parameters and prerequisites
 
 - `definition.parameters` declares typed launch inputs (`string`, `text`, or `enum` — each with `name`, `label`, `required`, optional `default` and constraints) so one plan can be launched repeatedly with run-specific values. Reference them as `{{inputs.<name>}}` — the only valid token form — inside task instructions, context titles/descriptions/acceptance criteria, and charter text fields; values substitute at execution seed time. A malformed token or a reference to an undeclared parameter is refused at accept time.
-- `definition.prerequisites` declares environment requirements checked before launch: `{ "kind": "path", "path": "<worktree-relative>" }` for a file/directory that must exist, or `{ "kind": "skill", "skill": "<name>", "backend"? }` for an agent skill the project must provide. An unmet prerequisite rejects the launch rather than failing mid-run.
+- `definition.prerequisites` declares environment requirements checked before launch: `{ "kind": "path", "path": "<worktree-relative>" }` for a file/directory that must exist, or `{ "kind": "skill", "skill": "<name>", "backend"? }` for an agent skill the project must provide. Skill probes reuse the runtime skill-discovery service for the applicable backend, including project-local skills; a discovered normalized name satisfies the prerequisite. An unmet prerequisite rejects the launch rather than failing mid-run.
 - Author a global cross-project template (`{{inputs.<name>}}`-parameterized) through the Templates UI, not this project-scoped create flow.
 
 ### Submit flow
@@ -338,7 +353,7 @@ Alongside the structural checks, `validate` runs four semantic lints over the pl
 | `lint/source-locator-unresolvable` | a charter source whose locator is not a contained worktree-relative path, or is absent from the committed session tree when a verified session substrate is available |
 | `lint/oversized-prose` | task instructions longer than 8000 characters, or a context description longer than 2000 — durable reference material that belongs in a shared document |
 
-Those numbers are dials, not judgments: each is the point past which a real execution's plan stopped being reviewable, and a plan can cross one for a good reason. The `lint/` prefix marks advice, so it is never mistaken for a structural warning.
+Those numbers are heuristic warning thresholds; a plan can cross one for a good reason. The `lint/` prefix marks advice, so it is never mistaken for a structural warning.
 
 Exact UI/output copy containing a quantifier must be syntactically quoted with balanced straight quotes, curly quotes, or backticks. Suppression is match-local: only a quantifier match inside its own proven literal span is discharged; unmatched delimiters suppress nothing, and lexical phrase allowlists are forbidden.
 
@@ -352,7 +367,7 @@ Answer each one rather than ignoring it — the same rule the submit checklist a
 
 Review is advisory and never required — an unreviewed plan validates, creates, replaces, and starts freely. When a plan IS reviewed, the verdict binds to the exact revision (the plan's canonical content hash, computed server-side), so get the revision you actually intend to submit reviewed, not an intermediate draft.
 
-- Hand the reviewer the final `.cc/temp/plan.json` and point them at the `graph-workflow-review` skill. The review protocol — the two lenses, the findings artifact, the recording flags — lives there, not here.
+- Hand the reviewer the final `.cc/temp/plan.json` and point them at the `graph-workflow-review` skill. The review protocol — the three lenses, the findings artifact, the recording flags — lives there, not here.
 - Check the verdict yourself with `cctl workflow review --file .cc/temp/plan.json`. It reads rather than records unless `--verdict` is passed, and exits 0 either way. A reviewed revision prints the verdict, the reviewer conversation, when it was reached, the revision hash, the findings artifact in full, and ready-to-run commands that open the reviewer's own conversation (`cctl conversation read <id> --outline`, plus `cctl conversation compaction get <id> --json` when a completed compaction exists) — that is how you recover findings in a fresh session. An unreviewed one prints `plan review: none recorded for this revision (advisory)`.
 - `cctl workflow create` and `cctl workflow replace` each print one advisory line for the revision they just saved: none recorded, `approved`, or `changes_requested` with the reviewer and the time. It is a status line; it never changes the exit code.
 
@@ -369,6 +384,7 @@ Review is advisory and never required — an unreviewed plan validates, creates,
 - No known design contradictions remain unresolved.
 - Every context's `acceptanceCriteria` is a list of `{ id, statement }` records with stable kebab-case ids, one independently-failable obligation each, and few enough of them to be one validation thesis.
 - No criterion or invariant names a process step; every validator-checked statement is an outcome an inspector can confirm on the finished candidate.
+- Runtime-state criteria pass the [Premise rule](#premise-rule): cited premises are verified, and breadth is inventoried or split.
 - Every runtime capability the plan introduces has a producer context whose acceptance criteria require the production call site, or a criterion naming the downstream context that owns the wiring — and the named owner's criteria carry the matching obligation.
 - Cross-cutting rules are declared once in `charter.invariants`, and sources are scoped the same way: each entry is either honestly global or carries `appliesTo.contextIds`.
 - No conflict between two attached sources is left for execution to arbitrate, and every source locator resolves from a lane worktree — external material was materialized into it before being cited.

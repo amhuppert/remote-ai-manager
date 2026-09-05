@@ -1,6 +1,6 @@
 # Graph workflow planning retrospective: consolidated findings and recommendations
 
-Ticket: command-center#80 · Written 2026-09-03, revised the same day to add FM-11 and R13 · Tree: main at `c31d7126`
+Ticket: command-center#80 · Written 2026-09-03, revised the same day to add FM-11 and R13; implementation status appended 2026-09-04 (section 11) · Tree at writing: main `c31d7126`
 
 This report consolidates the six attachments on #80 (a tournament-pattern authoring field report, the five-run execution retrospective, two planning retrospectives and the workflow audit from the memory delivery, and the memory-delivery planning conversation), cross-checks them against two earlier workflow audits (`docs/reports/workflow-audits/2026-08-28-notepad-slice2-review-loop.md`, `docs/reports/workflow-audits/2026-07-19-native-sdd-execution-audit.md`), re-derives every load-bearing number from the event ledger and workflow logs, and verifies each reported friction against the code and guidance on main today. Section 8 is the independent analysis: what to change, who owns it, and which of the agents' own remedies not to adopt.
 
@@ -365,3 +365,26 @@ Records, total statement characters, tasks, validation rounds, failed rounds, an
 ## Appendix C: charter shape per run
 
 Mission characters, sources (scoped), invariants (scoped): `81d48065` 798, 8 (6), 7 (5) · `6068bd10` 672, 5 (2), 5 (3) · `29e46e86` 537, 14 (12), 7 (4) · `e39cc5c0` 350, 12 (11), 6 (5) · `37d48541` 673, 4 (0), 2 (0) · `24771b4f` 646, 12 (9), 5 (5). Scoping is being used; the "keep the charter small" advice is being followed.
+
+## 11. Implementation status (2026-09-04)
+
+Recorded after the native-SDD design (`docs/designs/ticket80-native-sdd-planning-simplification.md`) shipped its steps 1 to 3 through execution `773a058c`, merged to main in `3142bcbf`.
+
+| Recommendation | Status | Where |
+|---|---|---|
+| R1 one write path for managed definitions; id-bearing locators | done | #80, execution `773a058c` (design 3.1, 3.2) |
+| R2 premise rule in the planning skill; feasibility lens in the review skill | not started | remains under #80 |
+| R3 validator enumerates the class; implementer residual blocks completion; outcomes-only | outcomes-only done; the other two not started | remains under #80 (engine prompts) |
+| R4 task-grain rationale in the skill | not started | remains under #80 |
+| R5 grade-aware gate defaults; final-verification baseline policy; lane-aware changed scope | not started | remains under #80 (skill); changed-scope tooling unticketed |
+| R6 structured deferral field | not started; needs a decision | remains under #80 |
+| R7 legibility fixes | outline hints, one execution id, labelled tokens, `requires-pause` reason, abandon exit, published catalogue, phase-scoped authoring documented: done. Locator-lint exemption and `accessPolicy` removal: #109. Upstream-inputs contract, skill-prerequisite resolution and lane-visibility pointer in the planning skill: not started | #80 done part; #109; remains under #80 (docs) |
+| R8 seeded documents for every plan | pending | #109 (design 3.4) |
+| R9 spec planning as ordinary planning | routing and the `native-spec-delivery` reference done; `covers`, derived claims and per-context excerpts pending | #80 done part; #109 (design 3.3, 3.4) |
+| R10 engine items | pause-before-provisioning done; rotation mid-iteration, pause/resume preserving an in-flight iteration, shared-document clobbering, no finalize with an unsettled gate, repair-agent inputs: not started | #80 done part; the rest unticketed |
+| R11 audit extractor gaps | not started | unticketed |
+| R12 bounded re-review | not started | unticketed |
+| R13 no process language in validator-checked text | contract, prompts, skills and example done; the warning-tier lint not built | #80 done part; lint remains optional |
+
+Two facts worth carrying forward: the spec-graph boundary architecture test that command-center#107 lists as red passes on the merged tree, and no workflow audit of execution `773a058c` exists yet.
+

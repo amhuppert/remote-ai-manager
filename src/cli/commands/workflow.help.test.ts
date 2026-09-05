@@ -12,6 +12,20 @@ const REPO_ROOT = path.resolve(
 );
 
 describe("workflow live-edit assignment help", () => {
+  it("points planning and review callers to the managed plugin skills", () => {
+    for (const name of ["graph-workflow-planning", "graph-workflow-review"]) {
+      const refs = workflowHelpEntries.flatMap((entry) =>
+        (entry.skills ?? []).filter((skill) => skill.name === name),
+      );
+      expect(refs.length).toBeGreaterThan(0);
+      for (const ref of refs) {
+        expect(ref.path).toBe(
+          `plugins/command-center/command-center/skills/${name}/SKILL.md`,
+        );
+      }
+    }
+  });
+
   it("ships an example that the current live-edit request schema accepts", () => {
     const entry = workflowHelpEntries.find(
       (candidate) => candidate.path.join(" ") === "workflow live edit",

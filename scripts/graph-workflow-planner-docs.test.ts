@@ -33,6 +33,7 @@ import {
   LOOP_HISTORY_MAX_PASSES,
   LOOP_HISTORY_MAX_SECTION_BYTES,
 } from "../src/lib/workflow-graph/loop-history";
+import { GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES } from "../src/lib/workflow-graph/result-output-contract";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../src/lib/workflow-graph/resolve-config";
 import { collectEnvelopedScriptCoverageIssues } from "../src/lib/workflow-graph/command-selector-validation";
 import {
@@ -68,30 +69,15 @@ const REPO_ROOT = path.resolve(
   "..",
 );
 
-/**
- * Every deployed copy of the planning skill. They are provisioned to different
- * agents (Claude Code, Codex, the shipped CC plugin), so guidance that lands in
- * one and not the others is guidance most of the fleet never sees.
- */
 const SKILL_DIRS = [
-  ".claude/skills/graph-workflow-planning",
-  ".agents/skills/graph-workflow-planning",
   "plugins/command-center/command-center/skills/graph-workflow-planning",
 ] as const;
 
-/**
- * The reviewer-facing sibling (ticket #69 change 5). Same three roots for the
- * same reason: a reviewer runs on whichever agent the operator reached for, and
- * a protocol that lands in one root is a protocol most reviews never apply.
- */
 const REVIEW_SKILL_DIRS = [
-  ".claude/skills/graph-workflow-review",
-  ".agents/skills/graph-workflow-review",
   "plugins/command-center/command-center/skills/graph-workflow-review",
 ] as const;
 
-/** Every deployed skill package, canonical copy first. */
-const SKILL_PACKAGES = [SKILL_DIRS, REVIEW_SKILL_DIRS] as const;
+const SKILL_PACKAGES = [...SKILL_DIRS, ...REVIEW_SKILL_DIRS];
 
 const STEERING = ".kiro/steering/workflows.md";
 
@@ -737,9 +723,9 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       {
         rank: 1,
         id: "runtime",
-        label: "Workflow runtime",
+        label: "Application runtime",
         type: "code",
-        locator: "src/lib/workflow-graph",
+        locator: "src/runtime",
         description: "Governs runtime behavior.",
       },
     ]);
@@ -785,6 +771,63 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       "different authoring session",
     ]) {
       expectDocuments(placement, phrase, why);
+    }
+  });
+
+  it("teaches task grain, grade-aware gates, and an explicit final baseline", () => {
+    const core = read(`${SKILL_DIRS[0]}/SKILL.md`);
+    const validation = read(
+      `${SKILL_DIRS[0]}/references/validation-and-staffing.md`,
+    );
+    for (const phrase of [
+      "rotation at task boundaries",
+      "context-budget control",
+      "multi-hour task",
+      "every `full`-grade context",
+      "cheap deterministic gates",
+      "pre-existing failures",
+      "captured baseline",
+      "non-regression",
+      "escalates",
+    ]) {
+      expectDocuments(core, phrase, "gate and baseline defaults (#80 R4/R5)");
+    }
+    for (const phrase of [
+      "typecheck",
+      "cctl validate list",
+      "`owned`",
+      "`readOnly`",
+      "bounded diff",
+      "--scope changed",
+      "whole feature",
+      "--scope full",
+      "intentionally invalid intermediate state",
+    ]) {
+      expectDocuments(
+        validation,
+        phrase,
+        "grade-aware validation policy (#80 R5)",
+      );
+    }
+    expect(core).not.toContain("for the **final** execution context unless");
+  });
+
+  it("corrects ordinary-edge inputs, project skill resolution, and lane visibility in the core", () => {
+    const core = read(`${SKILL_DIRS[0]}/SKILL.md`);
+    for (const phrase of [
+      "Inputs from upstream",
+      "direct predecessor",
+      "verbatim JSON",
+      "Prompt injection has no 64 KiB substitution",
+      `${GRAPH_WORKFLOW_RESULT_OUTPUT_MAX_BYTES / 1024} KiB`,
+      "cctl workflow result",
+      "Skipped — branch not taken",
+      "without captured output are omitted",
+      "runtime skill-discovery service",
+      "project-local skills",
+      "references/placement-and-parallelism.md#lane-visibility-and-fork-points",
+    ]) {
+      expectDocuments(core, phrase, "wrong-model corrections (#80 R7)");
     }
   });
 
@@ -954,7 +997,7 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
   );
 
   it.each(REVIEW_SKILL_DIRS)(
-    "%s carries the two-lens protocol and the terminal-only rule",
+    "%s carries the three-lens protocol and the terminal-only rule",
     (dir) => {
       const skill = read(`${dir}/SKILL.md`);
       const why = "the review protocol";
@@ -992,6 +1035,51 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       // Terminal only: an aborted review records nothing at all.
       expectDocuments(skill, "Terminal verdicts only", why);
       expectDocuments(skill, "leaves NO record", why);
+    },
+  );
+
+  it.each(SKILL_DIRS)(
+    "%s grounds runtime criteria in verified premises",
+    (dir) => {
+      const skill = read(`${dir}/SKILL.md`);
+      for (const phrase of [
+        "Premise rule",
+        "authoritative record and field",
+        "transition in the state machine",
+        "state the embedder controls",
+        "strongest control the SDK exposes",
+        "higher-precedence sources",
+        "verified",
+        "file:symbol",
+        "inferred",
+        "not execution-ready",
+        "context description",
+        "surface-by-verb matrix",
+        "named tests",
+      ]) {
+        expectDocuments(skill, phrase, "premise and breadth rules (#80 R2)");
+      }
+      expect(skill).not.toContain("Record count is the context-split signal");
+    },
+  );
+
+  it.each(REVIEW_SKILL_DIRS)(
+    "%s blocks approval on an inferred premise",
+    (dir) => {
+      const skill = read(`${dir}/SKILL.md`);
+      for (const phrase of [
+        "Three lenses",
+        "Feasibility",
+        "open each cited source",
+        "inferred premise is a blocking finding",
+        "changes-requested",
+        "surface-by-verb matrix",
+        "named tests",
+        "two authoritative data models",
+        "feasibility",
+      ]) {
+        expectDocuments(skill, phrase, "feasibility review lens (#80 R2)");
+      }
     },
   );
 
@@ -1052,20 +1140,20 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     },
   );
 
-  it.each([
-    ...SKILL_PACKAGES.flatMap((dirs) => dirs.map((dir) => `${dir}/SKILL.md`)),
-    STEERING,
-  ])("%s only cites cctl commands the help registry resolves", (doc) => {
-    const cited = citedCctlCommands(read(doc));
+  it.each([...SKILL_PACKAGES.map((dir) => `${dir}/SKILL.md`), STEERING])(
+    "%s only cites cctl commands the help registry resolves",
+    (doc) => {
+      const cited = citedCctlCommands(read(doc));
 
-    expect(cited.length).toBeGreaterThan(0);
-    for (const command of cited) {
-      expect(
-        REGISTRY_KEYS.has(command),
-        `\`cctl ${command}\` is cited but has no help-registry entry`,
-      ).toBe(true);
-    }
-  });
+      expect(cited.length).toBeGreaterThan(0);
+      for (const command of cited) {
+        expect(
+          REGISTRY_KEYS.has(command),
+          `\`cctl ${command}\` is cited but has no help-registry entry`,
+        ).toBe(true);
+      }
+    },
+  );
 
   it.each(
     SKILL_DIRS.flatMap((dir) =>
@@ -1153,18 +1241,11 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     expectDocuments(guidance, mustRun, why);
   });
 
-  it("notes the covers follow-up in one sentence and instructs nothing about it", () => {
+  it("documents the shipped coverage mechanism without a future authoring dialect", () => {
     const guidance = nativeSpecDeliveryGuidance();
 
-    const mentions = guidance.match(/`covers`/gu) ?? [];
-    expect(
-      mentions.length,
-      "the covers note is one sentence about a follow-up ticket, not guidance for a field this run does not ship",
-    ).toBe(1);
-
-    const sentence =
-      guidance.replace(/\s+/gu, " ").match(/[^.]*`covers`[^.]*\./u)?.[0] ?? "";
-    expect(sentence).toMatch(/follow-up ticket/u);
+    expect(guidance).not.toContain("`covers`");
+    expect(guidance).not.toContain("follow-up ticket");
   });
 
   it("keeps the core SKILL.md a bounded single pass with discoverable references", () => {
@@ -1187,22 +1268,27 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     }
   });
 
-  it("keeps every skill package's copies in sync file by file", () => {
-    for (const dirs of SKILL_PACKAGES) {
-      const [canonicalDir, ...deployedDirs] = dirs;
-      const canonicalFiles = skillFiles(canonicalDir);
-
-      for (const dir of deployedDirs) {
-        expect(skillFiles(dir), `${dir} ships a different file set`).toEqual(
-          canonicalFiles,
-        );
-        for (const file of canonicalFiles) {
-          expect(
-            read(`${dir}/${file}`),
-            `${dir}/${file} diverges from ${canonicalDir}/${file}`,
-          ).toBe(read(`${canonicalDir}/${file}`));
-        }
+  it("keeps managed skills exclusively in the plugin source", () => {
+    const sourceRoot = "plugins/command-center/command-center/skills";
+    for (const name of readdirSync(path.join(REPO_ROOT, sourceRoot))) {
+      for (const root of [".agents/skills", ".claude/skills"]) {
+        const duplicate = path.join(root, name);
+        expect(
+          existsSync(path.join(REPO_ROOT, duplicate)),
+          `${duplicate} duplicates the managed plugin skill`,
+        ).toBe(false);
       }
+    }
+  });
+
+  it.each(SKILL_PACKAGES)("%s is portable across managed projects", (dir) => {
+    const historicalOrProjectLocal =
+      /\b[0-9a-f]{8}\b|earned by|incident (?:that|this)|consolidated retrospective|follow-up ticket|docs\/reports\/|src\/lib\/(?:workflow-graph|state-store)|\bseams\b|tournament guesses|21-context execution/gi;
+    for (const file of skillFiles(dir)) {
+      expect(
+        read(`${dir}/${file}`).match(historicalOrProjectLocal),
+        `${dir}/${file} contains project-specific history or instructions`,
+      ).toBeNull();
     }
   });
 

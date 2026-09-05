@@ -135,6 +135,23 @@ describe("composeWorkflowRoleInstructions", () => {
 });
 
 describe("buildValidatorRoleContract selected by authority (R3.1)", () => {
+  it.each([undefined, MANDATE])(
+    "requires a blocking seat to enumerate the finding class within its mandate (%s)",
+    (mandate) => {
+      const contract = buildValidatorRoleContract({
+        ...BLOCKING_CONTRACT_INPUT,
+        mandate,
+      });
+
+      expect(contract).toContain("enumerate every sibling instance");
+      expect(contract).toContain("before returning");
+      expect(contract).toContain("one issue per class");
+      expect(contract).toContain("listing its instances");
+      expect(contract).toContain("within this context and your mandate");
+      expect(contract).toContain("different taskId or criterionId");
+    },
+  );
+
   it("gives the two authorities different contracts, not one contract with a flag", () => {
     const blocking = buildValidatorRoleContract(BLOCKING_CONTRACT_INPUT);
     const advisory = buildValidatorRoleContract(ADVISORY_CONTRACT_INPUT);

@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   readlink,
   rm,
   symlink,
@@ -16,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ManagedSkillBundle } from "@/lib/managed-skills/schemas";
+import { publishManagedSkillBundle } from "@/lib/managed-skills/publisher";
 import { setPublishedManagedSkillBundle } from "@/lib/managed-skills/service";
 
 import {
@@ -141,6 +143,47 @@ describe("ensureCodexManagedSkillsBridge", () => {
     expect(
       (await git(checkout, ["diff", "--cached", "--name-only"])).trim(),
     ).toBe("");
+  });
+
+  it("loads the published planning packages in a project without local skill copies", async () => {
+    const sourceDir = path.join(
+      process.cwd(),
+      "plugins/command-center/command-center",
+    );
+    const published = await publishManagedSkillBundle({
+      sourceDir,
+      configDir: path.join(tempDir, "published-config"),
+    });
+    expect(published.published).toBe(true);
+    if (!published.published) return;
+
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle: published.bundle,
+    });
+    expect(result.status).toBe("linked");
+
+    for (const name of ["graph-workflow-planning", "graph-workflow-review"]) {
+      const source = path.join(sourceDir, "skills", name);
+      const files = ["SKILL.md", "agents/openai.yaml"];
+      if (existsSync(path.join(source, "references"))) {
+        files.push(
+          ...(await readdir(path.join(source, "references"))).map(
+            (file) => `references/${file}`,
+          ),
+        );
+      }
+      expect(published.bundle.skillNames).toContain(name);
+      for (const file of files) {
+        expect(await readFile(path.join(linkPath(), name, file), "utf8")).toBe(
+          await readFile(path.join(source, file), "utf8"),
+        );
+      }
+      for (const root of [".agents/skills", ".claude/skills"]) {
+        expect(existsSync(path.join(checkout, root, name))).toBe(false);
+      }
+    }
+    expect((await git(checkout, ["status", "--porcelain"])).trim()).toBe("");
   });
 
   it("is idempotent when the expected link already exists", async () => {

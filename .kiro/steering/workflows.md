@@ -448,11 +448,14 @@ Codex validator lanes have no real CC conversation and never see the tool.
 
 ## Planning source of truth
 
-Use the `graph-workflow-planning` Codex skill before creating, replacing, or
+Use the `command-center:graph-workflow-planning` managed skill before creating, replacing, or
 diagnosing graph workflow plans. That skill owns the rules for decomposition,
 acceptance criteria, validator alignment, script validator eligibility, context
 sharing, defaults, lane-placement judgment (which grade, which lane, which owned
-paths), and parallelization.
+paths), and parallelization. Its source is
+`plugins/command-center/command-center/skills/graph-workflow-planning/`;
+the managed bundle delivers it to agents across projects. Edit that source,
+and keep project-specific rationale in repository design and report documents.
 
 This steering section is runtime/config reference only.
 

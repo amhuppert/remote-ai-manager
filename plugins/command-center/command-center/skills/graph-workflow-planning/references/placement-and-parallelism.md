@@ -18,7 +18,7 @@ A lane is one git worktree on one branch, and several contexts may share it. Tha
   // one of several unordered "impl" members — that race is why it declares ownedPaths
   "acceptanceCriteria": [ { "id": "round-trips-new-fields", "statement": "…" } ],
   "placement": { "lane": "impl", "mode": "owned",
-                 "ownedPaths": ["src/lib/state-store", "docs/persistence.md"] } }
+                 "ownedPaths": ["src/storage", "docs/persistence.md"] } }
 
 { "id": "dependency-bump", "title": "Bump the SDK",
   "acceptanceCriteria": [ { "id": "lockfile-matches-manifest", "statement": "…" } ],
@@ -58,7 +58,7 @@ Give a context an **isolated single-member lane** when sharing would be wrong ra
 
 - **Same-file competition.** Tournament candidates, competing refactors, two designs of one module — anything whose whole point is that both write the same paths. Ownership cannot be disjoint there, so separate lanes are the answer and the LLM resolver handles the overlap at the joins.
 - **Dependency-mutating work.** A lockfile update, a dependency bump, a codegen or barrel regeneration, a migration that renumbers — work whose effects are not confined to the paths it names. A member that reinstalls dependencies changes what its lane-mates are building against mid-flight.
-- **A lane that must run its own verification.** Whole-repo verification runs once per lane, at its join. A context that needs `typecheck` or `test` green at ITS OWN boundary — because a later context depends on that fact — needs a lane whose barrier it owns.
+- **Verification requiring an isolated candidate.** Use a separate lane when checks must exclude concurrent work. A `full` context on an ordered shared lane can still run its selected script gate at its own boundary.
 
 Put readers on the `session` lane. Fan-out readers, judges, and synthesis inputs need to see the repository, not change it, and a write-capable placement buys them a worktree and a merge for nothing. Put a reader on a GROUP lane only when it must read that lane's in-progress tree — a reviewer of work its lane-mates have not published yet.
 
@@ -68,7 +68,7 @@ Everything in this section applies to the unordered write-capable members of a s
 
 An `ownedPaths` entry is a normalized repo-relative POSIX path covering itself and everything beneath it, compared at segment boundaries — `src/lib` does not swallow the sibling `src/libraries`. There are no globs: a metacharacter is an ordinary filename character here, and the write-policy adapter refuses one outright.
 
-Prefer **directory-grain ownership** over file lists. An implementer working red-green creates files that did not exist when you wrote the plan — the new test beside the module, a new schema file — and a file-grain entry denies exactly those writes at the tool boundary, mid-task. Own `src/lib/state-store`, not eleven paths inside it.
+Prefer **directory-grain ownership** over file lists. An implementer working red-green creates files that did not exist when you wrote the plan — the new test beside the module, a new schema file — and a file-grain entry denies exactly those writes at the tool boundary, mid-task. Own `src/storage`, not eleven paths inside it.
 
 Rules a plan is checked against:
 

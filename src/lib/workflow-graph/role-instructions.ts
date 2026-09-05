@@ -188,6 +188,7 @@ function blockingContract(
     "- A concern your mandate does not clearly cover is an advisory, never an issue: report it in `advisories` and leave it to the implementer. Blocking this context is reserved for a failure of the mandate itself.",
     READ_ONLY_CLAUSE,
     "- You do not implement fixes. A defect in the work is reported as an issue against the task that owns it.",
+    "- After finding a defect, enumerate every sibling instance of the same kind in the candidate before returning, within this context and your mandate. Report one issue per class listing its instances and locations; split the class only where a different taskId or criterionId is needed to preserve ownership and the required blocking basis. Report the whole class in this verdict so remediation can address it in one round.",
     "",
     "## Outcomes, not process",
     // A criterion or invariant that names how the work must be produced is
