@@ -1,23 +1,24 @@
 # AI-DLC and Spec-Driven Development
 
-Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life Cycle)
+Specs are authored and delivered through Command Center's native SDD surface (`cctl spec`). `.kiro/` remains the home of steering.
 
 ## Project Context
 
 ### Paths
 
 - Steering: `.kiro/steering/`
-- Specs: `.kiro/specs/`
+- Specs: durable native objects, read and authored through `cctl spec` (Spec Studio is the human's review surface)
 
 ### Steering vs Specification
 
 **Steering** (`.kiro/steering/`) - Guide AI with project-wide rules and context
-**Specs** (`.kiro/specs/`) - Formalize development process for individual features
+**Specs** (`cctl spec`) - Formalize development process for individual features
 
 ### Active Specifications
 
-- Check `.kiro/specs/` for active specifications
-- Use `$kiro-spec-status [feature-name]` to check progress
+- `cctl spec list` is this project's durable spec inventory, with each spec's phase and approval summary
+- `cctl spec status <slug>` reports one spec's phase and gate readiness
+- `.kiro/specs/` holds the Kiro-era spec artifacts. Work already governed by one of them keeps its approvals; new specs are authored natively and never written into that directory
 
 ## Development Guidelines
 
@@ -25,27 +26,22 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 
 ## Minimal Workflow
 
-- Phase 0 (optional): `$kiro-steering`, `$kiro-steering-custom`
-- Phase 0.5 (optional discovery): `$kiro-discovery <idea>` — produces `brief.md` and `roadmap.md` when scope is unclear (one spec vs many vs none)
-- Phase 1 (Specification):
-  - `$kiro-spec-init "description"`
-  - `$kiro-spec-requirements {feature}`
-  - `$kiro-validate-gap {feature}` (optional: for existing codebase)
-  - `$kiro-spec-design {feature} [-y]`
-  - `$kiro-validate-design {feature}` (optional: design review)
-  - `$kiro-spec-tasks {feature} [-y]`
-  - Alternative for multi-feature work: `$kiro-spec-batch` (parallel spec creation + cross-spec review)
-  - Fast path (single spec, intentional): `$kiro-spec-quick <what-to-build> [--auto]`
-- Phase 2 (Implementation): `$kiro-impl {feature} [tasks]`
-  - `$kiro-validate-impl {feature}` (optional: after implementation)
-  - `kiro-debug` (failure investigation), `kiro-review` (task review against specs), `kiro-verify-completion` (evidence-based completion check)
-- Progress check: `$kiro-spec-status {feature}` (use anytime)
+Invoke `/spec` to author in this conversation; it carries the shared spec guidance, and the `native-sdd-authoring` skill is the full reference. Read `cctl spec --help` and the relevant leaf help before composing payloads — every verb documents its own flags, refusals, and next step.
+
+- Steering (optional): `$kiro-steering`, `$kiro-steering-custom` maintain `.kiro/steering/`
+- Specification:
+  - `cctl spec list` and `cctl spec search --all <query>` first, so you do not open a competing spec for work that already has one
+  - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <first-element.json>` once the first element is ready
+  - Continue element by element with `cctl spec draft`; `cctl spec lint <slug>` prints what would block a propose
+  - `cctl spec propose <slug>` concludes a stage and files its gate-scoped approval request
+- Delivery: `cctl spec plan open <slug>` → `cctl spec plan edit` → `cctl spec plan propose` → human sign-off → `cctl spec start <slug>`
+- Progress check: `cctl spec status <slug>` (use anytime)
 
 ## Development Rules
 
-- 3-phase approval workflow: Requirements → Design → Tasks → Implementation
-- Human review required each phase; use `-y` only for intentional fast-track
-- Keep steering current and verify alignment with `$kiro-spec-status`
+- Staged authoring: Requirements → Design, then a delivery plan attempt. The authoring stage is a server-enforced write boundary
+- Approvals, plan sign-off, and assumption disposition are human-only Spec Studio acts. Never perform them on the user's behalf
+- Keep steering current and verify alignment with `cctl spec status <slug>`
 - Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
 
 ## Worktree Isolation

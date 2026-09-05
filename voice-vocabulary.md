@@ -70,20 +70,8 @@ bypassPermissions
 settingSources
 preMergeCommand
 /ui-design
+/spec
 /kiro-steering
 /kiro-steering-custom
-/kiro-discovery
-/kiro-spec-init
-/kiro-spec-requirements
-/kiro-validate-gap
-/kiro-spec-design
-/kiro-validate-design
-/kiro-spec-tasks
-/kiro-spec-batch
-/kiro-spec-quick
-/kiro-impl
-/kiro-validate-impl
-/kiro-debug
-/kiro-review
-/kiro-verify-completion
-/kiro-spec-status
+cctl spec
+Spec Studio

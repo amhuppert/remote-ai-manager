@@ -20,7 +20,7 @@ const logger = createLogger("commands");
 
 /**
  * Scan a directory recursively for .md command files.
- * Subdirectories create namespace prefixes (e.g., kiro/spec-init.md → /kiro:spec-init).
+ * Subdirectories create namespace prefixes (e.g., review/security.md → /review:security).
  */
 async function scanCommandDir(
   dirPath: string,

@@ -13,7 +13,7 @@ const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
 
 /**
  * Pattern that matches plain text slash commands typed by users.
- * Example: "/kiro:spec-requirements voice-transcription-integration"
+ * Example: "/spec voice-transcription-integration"
  * Requires the message to start with "/" followed by a command name
  * (letters, digits, colons, hyphens).
  */
@@ -37,7 +37,7 @@ export function parseCommandContent(
     return { type: "command" as const, name: `/${name}`, args };
   }
 
-  // Then try plain text slash commands (e.g., "/commit", "/kiro:spec-init feature")
+  // Then try plain text slash commands (e.g., "/commit", "/spec feature")
   const plainMatch = content.trim().match(PLAIN_COMMAND_RE);
   if (plainMatch) {
     const name = plainMatch[1]!;

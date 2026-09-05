@@ -27,10 +27,11 @@ Command Center (CC) is a web-based control plane for managing remote Claude Code
 ## Terminology
 
 - **CC** - Command Center; the app itself.
-- **Kiro** - the Kiro-style spec-driven development methodology used here. Often mis-transcribed as "Cairo" or "Keiro".
+- **Kiro** - the `.kiro/` directory, which holds steering (and the superseded spec artifacts). Often mis-transcribed as "Cairo" or "Keiro".
 - **AI-DLC** - AI Development Life Cycle.
 - **steering** - project-wide guidance docs in `.kiro/steering/`.
-- **spec** / **specs** - feature specifications in `.kiro/specs/`.
+- **spec** / **specs** - durable native specs, read and authored through `cctl spec`.
+- **Spec Studio** - the UI surface where a human reviews, approves, and browses specs.
 - **EARS** - the EARS-format requirements syntax.
 - **worktree** - a git worktree; each session is isolated in one.
 - **SSE** - Server-Sent Events (real-time conversation/job/workflow broadcasts).
@@ -64,27 +65,13 @@ Command Center (CC) is a web-based control plane for managing remote Claude Code
 
 ### Commands (`.claude/commands/`)
 
+- **/spec** - Author a durable native Command Center spec in this conversation.
 - **/ui-design** - Design a new UI feature using Storybook for prototyping.
 
-### Kiro spec-driven workflow skills
+### Steering skills
 
 - **/kiro-steering** - Maintain `.kiro/steering/` as persistent project memory (bootstrap/sync).
 - **/kiro-steering-custom** - Create custom steering documents for specialized contexts.
-- **/kiro-discovery** - Entry point for new work; determine the action path or work decomposition.
-- **/kiro-spec-init** - Initialize a new specification from a detailed project description.
-- **/kiro-spec-requirements** - Generate EARS-format requirements from description + steering.
-- **/kiro-validate-gap** - Analyze the gap between requirements and the existing codebase.
-- **/kiro-spec-design** - Generate the technical design (architecture) from requirements.
-- **/kiro-validate-design** - Interactive technical design quality review.
-- **/kiro-spec-tasks** - Generate actionable implementation tasks from requirements + design.
-- **/kiro-spec-batch** - Create complete specs for all roadmap features via parallel subagents.
-- **/kiro-spec-quick** - Quick single-spec generation (interactive or automatic).
-- **/kiro-impl** - Implement approved tasks using TDD with subagent dispatch.
-- **/kiro-validate-impl** - Validate feature-level integration after all tasks are implemented.
-- **/kiro-debug** - Investigate implementation failures with root-cause-first debugging.
-- **/kiro-review** - Review a task implementation against approved specs and evidence.
-- **/kiro-verify-completion** - Verify completion and success claims with fresh evidence.
-- **/kiro-spec-status** - Show specification status and progress.
 
 ### CC tooling skills (`.claude/skills/` + plugin)
 
@@ -94,6 +81,7 @@ Command Center (CC) is a web-based control plane for managing remote Claude Code
 - **cc-rebuild-restart** - Rebuild CC in the main worktree and restart the running server.
 - **debug-logs** - Trace CC issues through logs and state (failures, lock contention, prompt errors).
 - **graph-workflow-planning** - Plan, revise, or diagnose graph workflow execution graphs.
+- **native-sdd-authoring** - Author and review native specs and their managed graph delivery workflows.
 - **nextjs-mcp** - Diagnose app/runtime/build errors and inspect routes via Next.js dev tools.
 - **playwright-cli** - Automate browser interactions and test web pages with Playwright.
 - **react-scan** - Measure and diff React render counts to find unnecessary re-renders.
