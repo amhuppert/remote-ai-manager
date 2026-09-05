@@ -66,7 +66,7 @@ const MAIN_CLASS =
   "flex-1 w-full min-h-0 overflow-hidden p-0 bg-bg-base animate-[fadeIn_0.2s_ease]";
 
 const CONTENT_CLASS =
-  "p-2xl max-768:pb-[calc(var(--spacing-3xl)+var(--touch-target-min))]";
+  "p-2xl max-768:px-sm max-768:pt-md max-768:pb-[calc(120px+env(safe-area-inset-bottom,0px))]";
 
 export default function ConfigPage(): React.JSX.Element {
   const configQuery = useFullConfigQuery();

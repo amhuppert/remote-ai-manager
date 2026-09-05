@@ -43,10 +43,10 @@ export interface ConversationTabStripProps {
 const UNTITLED = "Untitled conversation";
 
 const stripClass =
-  "flex items-center gap-2xs h-[36px] px-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-base overflow-x-auto";
+  "flex items-center gap-2xs h-[36px] max-768:h-[48px] px-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-base overflow-x-auto";
 
 const addClass =
-  "inline-flex items-center justify-center w-[24px] h-[24px] border border-solid border-border-dim rounded-md bg-transparent text-text-secondary font-mono text-[0.9rem] leading-none cursor-pointer shrink-0 transition-colors duration-150 ease-[ease] " +
+  "inline-flex items-center justify-center w-[24px] h-[24px] max-768:size-[44px] border border-solid border-border-dim rounded-md bg-transparent text-text-secondary font-mono text-[0.9rem] leading-none cursor-pointer shrink-0 transition-colors duration-150 ease-[ease] " +
   "enabled:hover:bg-bg-hover enabled:hover:border-border-strong enabled:hover:text-text-primary " +
   "disabled:opacity-40 disabled:cursor-not-allowed";
 

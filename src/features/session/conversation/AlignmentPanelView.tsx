@@ -130,7 +130,7 @@ function DiffControls({
   if (versions.length < 2) return null;
 
   const selectClass =
-    "rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[4px] font-mono text-[0.72rem] text-text-primary focus:border-cyan focus:outline-none";
+    "max-768:min-h-[44px] rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[4px] font-mono text-[0.72rem] text-text-primary focus:border-cyan focus:outline-none";
 
   return (
     <div className="flex flex-col gap-sm">
@@ -168,6 +168,7 @@ function DiffControls({
           </select>
         </label>
         <Button
+          touch
           variant="ghost"
           size="sm"
           disabled={from === "" || to === ""}
@@ -177,7 +178,10 @@ function DiffControls({
         </Button>
       </div>
       {diff && (
-        <div data-testid="alignment-diff" className="grid grid-cols-2 gap-sm">
+        <div
+          data-testid="alignment-diff"
+          className="grid grid-cols-2 gap-sm max-768:grid-cols-1"
+        >
           <div className="rounded-md border border-solid border-border-subtle bg-bg-base">
             <div className="border-x-0 border-t-0 border-b border-solid border-border-subtle px-[8px] py-[4px] font-mono text-[0.7rem] text-text-tertiary">
               v{diff.from}
@@ -251,6 +255,7 @@ function HistorySection({
             )}
             {v.version != null && v.version !== activeVersion && (
               <Button
+                touch
                 variant="ghost"
                 size="sm"
                 layoutClassName="ml-auto"

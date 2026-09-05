@@ -38,8 +38,6 @@ import {
   useCloseDevServerDrawer,
 } from "@/stores/dev-server-drawer.store";
 
-type MobilePanel = "chat" | "diff" | "docs" | "notepad" | "specs" | "info";
-
 export function useSessionPageStoreBundle(conversationId: string) {
   const layout = useLayout();
   const sidebarCollapsed = useSidebarCollapsed();
@@ -53,18 +51,8 @@ export function useSessionPageStoreBundle(conversationId: string) {
 
   const switchLayout = useSwitchLayout();
   const hydrateLayout = useHydrateLayout();
-  const switchMobilePanelRaw = useSwitchMobilePanel();
+  const switchMobilePanel = useSwitchMobilePanel();
   const switchRightPaneTab = useSwitchRightPaneTab();
-  const switchMobilePanel = useCallback(
-    (panel: MobilePanel) => {
-      switchMobilePanelRaw(panel);
-      if (panel === "docs") switchRightPaneTab("docs");
-      if (panel === "diff") switchRightPaneTab("diff");
-      if (panel === "specs") switchRightPaneTab("specs");
-      if (panel === "notepad") switchRightPaneTab("notepad");
-    },
-    [switchMobilePanelRaw, switchRightPaneTab],
-  );
 
   // In-flight actions are keyed per conversation; bind them to this
   // workspace's conversation so consumers keep their arg-less signatures.

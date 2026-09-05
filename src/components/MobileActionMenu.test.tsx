@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import MobileActionMenu from "./MobileActionMenu";
 
 const baseProps = {
@@ -10,6 +11,17 @@ const baseProps = {
 };
 
 describe("MobileActionMenu", () => {
+  it("contains keyboard focus while open and returns it to More on Escape", async () => {
+    const user = userEvent.setup();
+    render(<MobileActionMenu {...baseProps} />);
+    const trigger = screen.getByRole("button", { name: "Session actions" });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Session actions" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
   it("renders close button when open", () => {
     render(<MobileActionMenu {...baseProps} />);
     // Open the menu
@@ -35,16 +47,12 @@ describe("MobileActionMenu", () => {
     // Open: the sheet exposes its state via data-open, the backdrop via .visible.
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
     expect(document.body.querySelector('[data-open="true"]')).not.toBeNull();
-    expect(
-      document.body.querySelector(".mobile-action-backdrop.visible"),
-    ).not.toBeNull();
+    expect(document.body.querySelector("[data-cc-modal-scrim]")).not.toBeNull();
 
     // Close via button
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
     expect(document.body.querySelector('[data-open="true"]')).toBeNull();
-    expect(
-      document.body.querySelector(".mobile-action-backdrop.visible"),
-    ).toBeNull();
+    expect(document.body.querySelector("[data-cc-modal-scrim]")).toBeNull();
   });
 
   it("does not render Commit or Merge actions", () => {

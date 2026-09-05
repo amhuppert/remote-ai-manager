@@ -132,6 +132,7 @@ function StatusFilterMenu({
           const isChecked = checked.includes(status);
           return (
             <DropdownMenuCheckboxItem
+              layoutClassName="max-768:min-h-[44px]"
               key={status}
               checked={isChecked}
               disabled={isChecked && checked.length === 1}
@@ -249,7 +250,7 @@ export default function TicketFilters({
       {filtersActive && (
         <button
           type="button"
-          className="inline-flex h-[26px] cursor-pointer items-center rounded-sm border border-solid border-border-subtle bg-transparent px-[8px] font-mono text-[0.68rem] font-medium text-text-secondary transition-colors duration-150 ease-[ease] hover:border-border-strong hover:text-text-primary"
+          className="inline-flex h-[26px] cursor-pointer items-center rounded-sm border border-solid border-border-subtle bg-transparent px-[8px] font-mono text-[0.68rem] font-medium text-text-secondary transition-colors duration-150 ease-[ease] hover:border-border-strong hover:text-text-primary max-768:min-h-[44px]"
           onClick={() => onFiltersChange(defaultTicketFilters(filters))}
         >
           Clear filters

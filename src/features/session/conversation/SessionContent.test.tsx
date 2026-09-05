@@ -523,6 +523,37 @@ describe("SessionContent", () => {
       expect(getByRole("button", { name: "Add conversation" })).toHaveFocus();
     });
 
+    it.each(["alignment", "memory", "specs", "docs", "diff"] as const)(
+      "opens the mobile %s panel with no conversation tabs open",
+      (mobilePanel) => {
+        vi.stubGlobal("matchMedia", () => ({
+          matches: true,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }));
+        try {
+          const { getByTestId, queryByTestId, queryByText } = renderWithQuery(
+            <SessionContent
+              {...makeProps({
+                layout: "conversation",
+                mobilePanel,
+                openTabs: makeOpenTabs({ workingSet: [] }),
+                promptInputSlot: <div data-testid="composer-slot" />,
+              })}
+            />,
+          );
+          expect(getByTestId("stub-right-pane")).toBeInTheDocument();
+          expect(queryByTestId("composer-slot")).not.toBeInTheDocument();
+          expect(
+            queryByTestId("stub-conversation-panel"),
+          ).not.toBeInTheDocument();
+          expect(queryByText("No conversations open")).not.toBeInTheDocument();
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      },
+    );
+
     it("maximizing a pane activates it and drops to the conversation-only layout (not the diff-split layout)", () => {
       const onLayoutChange = vi.fn();
       const openTabs = makeOpenTabs();

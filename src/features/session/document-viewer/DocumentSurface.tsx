@@ -164,7 +164,10 @@ function CommentCardLayer({
     if (rect) {
       // Below the passage, left-aligned to its start (matching the create
       // popover), clamped to stay on-screen; flip above when there isn't room.
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 340));
+      const left = Math.max(
+        8,
+        Math.min(rect.left, window.innerWidth - el.offsetWidth - 8),
+      );
       const height = el.offsetHeight;
       const below = rect.bottom + 6;
       const top =
@@ -174,8 +177,8 @@ function CommentCardLayer({
       el.style.top = `${top}px`;
       el.style.left = `${left}px`;
     } else {
-      el.style.top = "80px";
-      el.style.left = `${Math.max(8, window.innerWidth / 2 - 160)}px`;
+      el.style.top = `${Math.max(8, Math.min(80, window.innerHeight - el.offsetHeight - 8))}px`;
+      el.style.left = `${Math.max(8, (window.innerWidth - el.offsetWidth) / 2)}px`;
     }
     el.style.visibility = "visible";
   }, [comment, contentRef]);

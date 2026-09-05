@@ -18,9 +18,9 @@ export function ConfigSaveBar({
   const invalid = invalidCount > 0;
   const hasLocalChanges = dirty || invalid;
   return (
-    <div className="sticky bottom-0 z-sticky mt-xl flex flex-none items-center justify-end gap-md rounded-md border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-void px-2xl py-[12px] [backdrop-filter:blur(16px)_saturate(140%)] max-768:fixed max-768:right-0 max-768:bottom-0 max-768:left-0 max-768:rounded-none max-768:p-md">
+    <div className="sticky bottom-0 z-sticky mt-xl flex flex-none items-center justify-end gap-md rounded-md border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-void px-2xl py-[12px] [backdrop-filter:blur(16px)_saturate(140%)] max-768:fixed max-768:right-0 max-768:bottom-0 max-768:left-0 max-768:flex-wrap max-768:rounded-none max-768:p-md max-768:pb-[calc(var(--spacing-md)+env(safe-area-inset-bottom,0px))]">
       <div
-        className="mr-auto flex items-center gap-[6px] font-mono text-[0.76rem] whitespace-nowrap text-text-secondary"
+        className="mr-auto flex items-center gap-[6px] font-mono text-[0.76rem] whitespace-nowrap text-text-secondary max-768:basis-full"
         role="status"
         aria-live="polite"
       >
@@ -49,6 +49,7 @@ export function ConfigSaveBar({
         <Button
           variant="ghost"
           size="sm"
+          touch
           disabled={!hasLocalChanges || saving}
           onClick={onRevert}
           type="button"
@@ -58,6 +59,7 @@ export function ConfigSaveBar({
         <Button
           variant="primary"
           size="sm"
+          touch
           disabled={!dirty || invalid || saving}
           onClick={onSave}
           type="button"

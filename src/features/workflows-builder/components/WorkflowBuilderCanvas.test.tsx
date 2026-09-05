@@ -107,6 +107,79 @@ describe("WorkflowBuilderCanvas — context menu", () => {
   });
 });
 
+describe("WorkflowBuilderCanvas — mobile dependencies", () => {
+  beforeEach(resetStore);
+
+  it("removes and restores an incoming dependency through touch controls", async () => {
+    loadDraft();
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas isMobile />
+      </ReactFlowProvider>,
+    );
+    const trigger = screen.getByRole("button", {
+      name: "Dependencies for Implement",
+    });
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove dependency from Plan" }),
+    );
+    expect(edgeIds()).not.toContain("edge-plan-implement");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add dependency from Plan" }),
+    );
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.edges,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceContextId: "context-plan",
+          targetContextId: "context-implement",
+        }),
+      ]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("does not expose dependency editing in read-only mode", () => {
+    loadDraft();
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas isMobile readOnly />
+      </ReactFlowProvider>,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Dependencies for/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets a phone user rename and remove an empty lane", () => {
+    loadDraft();
+    act(() =>
+      _useGraphWorkflowBuilderStore.setState({
+        ephemeralLanes: [{ id: "empty-lane", name: "draft-lane" }],
+      }),
+    );
+    renderWithQuery(
+      <ReactFlowProvider>
+        <WorkflowBuilderCanvas isMobile />
+      </ReactFlowProvider>,
+    );
+    const name = screen.getByRole("textbox", { name: "Lane name" });
+    fireEvent.change(name, { target: { value: "release" } });
+    fireEvent.keyDown(name, { key: "Enter" });
+    expect(_useGraphWorkflowBuilderStore.getState().ephemeralLanes).toEqual([
+      { id: "empty-lane", name: "release" },
+    ]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove lane release" }),
+    );
+    expect(_useGraphWorkflowBuilderStore.getState().ephemeralLanes).toEqual([]);
+  });
+});
+
 describe("WorkflowBuilderCanvas — scope highlights", () => {
   beforeEach(resetStore);
 

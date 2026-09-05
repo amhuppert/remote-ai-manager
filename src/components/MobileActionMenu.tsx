@@ -1,12 +1,25 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { createPortal } from "react-dom";
+import { useState, useCallback } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/Dialog";
+import { CloseIcon } from "@/components/icons";
+import { IconButton } from "@/components/ui/IconButton";
 import TddToggle from "@/components/TddToggle";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
 import { cn } from "@/lib/ui/cn";
+import { Button } from "@/components/ui/Button";
+import { createClientLogger } from "@/lib/logging/client-logger";
+
+const log = createClientLogger("mobile-action-menu");
 
 interface MobileActionMenuProps {
+  triggerLabel?: string;
+  panelActions?: { label: string; active: boolean; onSelect: () => void }[];
+  onRebase?: () => void;
   /** Whether TDD mode is enabled */
   tddEnabled: boolean;
   /** Callback for TDD toggle */
@@ -28,127 +41,131 @@ export default function MobileActionMenu({
   onDelete,
   devServerCounts,
   onDevServers,
+  triggerLabel,
+  panelActions,
+  onRebase,
 }: MobileActionMenuProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
 
   const handleClose = useCallback(() => setOpen(false), []);
 
-  const handleAction = useCallback((action: () => void) => {
+  const handleAction = useCallback((action: () => void, label: string) => {
     setOpen(false);
+    log.debug("action.selected", { action: label });
     action();
   }, []);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [open]);
-
-  useOverlayScope(open);
-
   return (
-    <>
-      <button
-        className="hidden max-768:flex max-768:h-[36px] max-768:w-[36px] max-768:shrink-0 max-768:cursor-pointer max-768:items-center max-768:justify-center max-768:rounded-sm max-768:border max-768:border-solid max-768:border-border-subtle max-768:bg-transparent max-768:p-0 max-768:text-[1.1rem] max-768:leading-none max-768:tracking-[2px] max-768:text-text-secondary max-768:transition-all max-768:duration-150 max-768:ease-[ease] max-768:hover:border-border-default max-768:hover:bg-bg-hover max-768:hover:text-text-primary"
-        onClick={() => setOpen(true)}
-        aria-label="Session actions"
-        type="button"
-      >
-        &#8943;
-      </button>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          className="hidden focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:flex max-768:min-h-[44px] max-768:min-w-[44px] max-768:shrink-0 max-768:cursor-pointer max-768:items-center max-768:justify-center max-768:gap-xs max-768:rounded-sm max-768:border max-768:border-solid max-768:border-border-subtle max-768:bg-transparent max-768:px-sm max-768:font-mono max-768:text-[0.7rem] max-768:text-text-primary max-768:hover:bg-bg-hover"
+          aria-label="Session actions"
+          aria-expanded={open}
+          type="button"
+        >
+          {triggerLabel ?? "More"} <span aria-hidden="true">&#8943;</span>
+        </button>
+      </DialogTrigger>
 
       {/* The bottom bar's backdrop filter can make fixed descendants relative
           to the bar instead of the viewport, so the overlay escapes to body. */}
-      {open &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <>
-            {/* Backdrop keeps the shared `.mobile-action-backdrop` rule: its scrim color
-                (rgba(6,9,15,0.7)) has no Tailwind-scale or existing token, and the rule
-                is cross-owned with MobilePromptToolbar, so it stays in CSS until that
-                owner migrates (consumer-gated). */}
-            <div
-              className="mobile-action-backdrop visible"
-              onClick={handleClose}
-            />
-
-            {/* Action sheet */}
-            <div
-              data-open="true"
-              className={cn(
-                "fixed right-0 bottom-0 left-0 z-[201] max-h-[70vh] animate-[slideUpSheet_0.25s_ease] overflow-y-auto rounded-t-lg rounded-b-none border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface p-md pb-[calc(var(--space-lg)_+_env(safe-area-inset-bottom,0))]",
-                "flex flex-col gap-sm",
-              )}
-            >
-              <div className="relative mb-xs flex shrink-0 items-center justify-center">
-                <div className="h-[4px] w-[36px] shrink-0 rounded-[2px] bg-border-default" />
-                <button
-                  className="absolute top-1/2 right-0 flex h-[32px] w-[32px] -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border-none bg-transparent text-[1rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary"
-                  onClick={handleClose}
-                  aria-label="Close menu"
-                  type="button"
-                >
-                  {"\u2715"}
-                </button>
-              </div>
-
-              {/* Settings section */}
-              <div className="flex flex-col gap-[2px]">
-                <div className="px-sm py-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
-                  Settings
-                </div>
-                {/* `mobile-action-tdd-row` is a bare hook (no backing rule) for
+      <DialogContent
+        unstyled
+        anchor="stretch"
+        aria-describedby={undefined}
+        data-open="true"
+        contentClassName={cn(
+          "fixed right-0 bottom-0 left-0 z-[201] max-h-[85dvh] overflow-y-auto overscroll-contain rounded-t-lg rounded-b-none border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface p-md pb-[calc(var(--space-lg)_+_env(safe-area-inset-bottom,0))] motion-safe:animate-[slideUpSheet_0.25s_ease]",
+          "flex flex-col gap-sm",
+        )}
+      >
+        <div className="flex items-start justify-between gap-sm">
+          <DialogTitle>Session actions</DialogTitle>
+          <IconButton
+            size="touch"
+            aria-label="Close menu"
+            onClick={handleClose}
+          >
+            <CloseIcon />
+          </IconButton>
+        </div>
+        {/* Settings section */}
+        {panelActions && (
+          <div
+            className="grid grid-cols-2 gap-sm"
+            aria-label="Conversation panels"
+          >
+            {panelActions.map((panel) => (
+              <Button
+                key={panel.label}
+                touch
+                aria-pressed={panel.active}
+                onClick={() => handleAction(panel.onSelect, panel.label)}
+              >
+                {panel.label}
+              </Button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-col gap-[2px]">
+          <div className="px-sm py-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+            Settings
+          </div>
+          {/* `mobile-action-tdd-row` is a bare hook (no backing rule) for
                     TddToggle's `[.mobile-action-tdd-row_&]:` parent-variant overrides;
                     the container box styling is reproduced by the utilities here. */}
-                <div className="mobile-action-tdd-row flex min-h-[44px] items-center gap-sm px-sm py-xs">
-                  <TddToggle
-                    enabled={tddEnabled}
-                    onChange={onTddToggle}
-                    disabled={tddDisabled}
-                  />
-                </div>
-                {onDevServers && (
-                  <button
-                    className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-text-primary transition-[background] duration-100 ease-[ease] hover:bg-bg-hover"
-                    onClick={() => handleAction(onDevServers)}
-                    type="button"
-                  >
-                    <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
-                      {"\u2630"}
-                    </span>
-                    <span className="flex-1">Dev Servers</span>
-                    {devServerCounts && devServerCounts.total > 0 && (
-                      <span className="shrink-0 text-[0.7rem] text-text-tertiary">
-                        {devServerCounts.running}/{devServerCounts.total}
-                      </span>
-                    )}
-                  </button>
-                )}
-              </div>
+          <div className="mobile-action-tdd-row flex min-h-[44px] items-center gap-sm px-sm py-xs">
+            <TddToggle
+              enabled={tddEnabled}
+              onChange={onTddToggle}
+              disabled={tddDisabled}
+            />
+          </div>
+          {onDevServers && (
+            <button
+              className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-text-primary transition-[background] duration-100 ease-[ease] hover:bg-bg-hover"
+              onClick={() => handleAction(onDevServers, "dev-servers")}
+              type="button"
+            >
+              <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
+                {"\u2630"}
+              </span>
+              <span className="flex-1">Dev Servers</span>
+              {devServerCounts && devServerCounts.total > 0 && (
+                <span className="shrink-0 text-[0.7rem] text-text-tertiary">
+                  {devServerCounts.running}/{devServerCounts.total}
+                </span>
+              )}
+            </button>
+          )}
+          {panelActions && (
+            <Button
+              touch
+              disabled={!onRebase}
+              onClick={() => onRebase && handleAction(onRebase, "rebase")}
+            >
+              Rebase session
+            </Button>
+          )}
+        </div>
 
-              <div className="my-xs h-px bg-border-subtle" />
+        <div className="my-xs h-px bg-border-subtle" />
 
-              {/* Danger zone */}
-              <div className="flex flex-col gap-[2px]">
-                <button
-                  className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-red-text transition-[background] duration-100 ease-[ease] hover:bg-red-glow"
-                  onClick={() => handleAction(onDelete)}
-                  type="button"
-                >
-                  <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
-                    {"\u2715"}
-                  </span>
-                  <span className="flex-1">Delete session</span>
-                </button>
-              </div>
-            </div>
-          </>,
-          document.body,
-        )}
-    </>
+        {/* Danger zone */}
+        <div className="flex flex-col gap-[2px]">
+          <button
+            className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-red-text transition-[background] duration-100 ease-[ease] hover:bg-red-glow"
+            onClick={() => handleAction(onDelete, "delete-session")}
+            type="button"
+          >
+            <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
+              {"\u2715"}
+            </span>
+            <span className="flex-1">Delete session</span>
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

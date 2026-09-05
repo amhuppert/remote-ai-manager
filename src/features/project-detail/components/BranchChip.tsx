@@ -16,7 +16,7 @@ const COPY_FEEDBACK_MS = 1200;
 // `.v3-row .v3-branch .s-branch` rule; baked in here because BranchChip only
 // renders inside a session row.
 const chipBase =
-  "group inline-flex items-center gap-[6px] py-[3px] pr-[8px] pl-[9px] bg-bg-base hover:bg-bg-hover border border-solid rounded-full font-mono text-[0.7rem] max-w-[240px] cursor-pointer transition-[background,border-color,color] duration-[120ms] ease-[ease] max-768:max-w-full max-768:text-[0.68rem] max-768:py-[2px] max-768:pr-[7px] max-768:pl-[8px]";
+  "group inline-flex items-center gap-[6px] py-[3px] pr-[8px] pl-[9px] bg-bg-base hover:bg-bg-hover border border-solid rounded-full font-mono text-[0.7rem] max-w-[240px] cursor-pointer transition-[background,border-color,color] duration-[120ms] ease-[ease] max-768:min-h-[44px] max-768:max-w-full max-768:text-[0.68rem] max-768:py-[2px] max-768:pr-[7px] max-768:pl-[8px]";
 const chipRest =
   "border-border-subtle text-text-secondary hover:border-border-default hover:text-text-primary";
 const chipCopied = "border-green text-green";
@@ -51,7 +51,9 @@ export default function BranchChip({
       onClick={handleCopy}
       aria-label="Copy branch name"
     >
-      <span className="min-w-0 flex-1 truncate">{branch}</span>
+      <span className="min-w-0 flex-1 truncate max-768:overflow-visible max-768:text-left max-768:[overflow-wrap:anywhere] max-768:whitespace-normal">
+        {branch}
+      </span>
       <span
         className={cn(
           "inline-flex size-[16px] shrink-0 items-center justify-center transition-colors duration-[120ms] ease-[ease]",

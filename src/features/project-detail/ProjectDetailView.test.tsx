@@ -205,8 +205,15 @@ describe("ProjectDetailView", () => {
     expect(screen.getByText("session-3")).toBeInTheDocument();
     expect(screen.getByText("csm/session-1")).toBeInTheDocument();
     expect(screen.getByText("csm/session-2")).toBeInTheDocument();
-    expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getAllByText("awaiting")).toHaveLength(2);
+    expect(titleLink?.closest('[data-testid="session-card"]')).toHaveAttribute(
+      "data-status",
+      "running",
+    );
+    for (const name of ["session-2", "session-3"]) {
+      expect(
+        screen.getByText(name).closest('[data-testid="session-card"]'),
+      ).toHaveAttribute("data-status", "awaiting");
+    }
 
     const quickLink = screen.getAllByLabelText("Open in Conversations")[0]!;
     expect(quickLink.getAttribute("href")).toBe(

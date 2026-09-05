@@ -371,7 +371,7 @@ export default function ProjectDetailView({
                       ·
                     </span>
                   </div>
-                  <span className="inline-flex max-w-[min(48vw,58ch)] min-w-0 items-center overflow-hidden font-mono text-[0.72rem] text-ellipsis whitespace-nowrap text-text-tertiary max-768:max-w-full max-768:basis-full">
+                  <span className="inline-flex max-w-[min(48vw,58ch)] min-w-0 items-center overflow-hidden font-mono text-[0.72rem] text-ellipsis whitespace-nowrap text-text-tertiary max-768:max-w-full max-768:basis-full max-768:[overflow-wrap:anywhere] max-768:whitespace-normal">
                     {projectPath ?? projectName}
                   </span>
                   {runningCount > 0 && (

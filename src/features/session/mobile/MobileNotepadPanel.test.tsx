@@ -90,7 +90,13 @@ function notepadBody(overrides: Record<string, unknown> = {}) {
 }
 
 function renderPanel() {
-  return renderWithQuery(<MobileNotepadPanel projectName="p1" />);
+  return renderWithQuery(
+    <MobileNotepadPanel
+      projectName="p1"
+      sessionName="sess-1"
+      conversationId="conv-1"
+    />,
+  );
 }
 
 describe("MobileNotepadPanel — browse", () => {
@@ -263,6 +269,23 @@ function openReadView(
 }
 
 describe("MobileNotepadPanel — reading view", () => {
+  it("opens the full editor and history tools, then returns to reading the same note", async () => {
+    openReadView();
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: "checklist" });
+    await user.click(screen.getByRole("button", { name: "Manage notepads" }));
+    expect(await screen.findByTestId("notepad-editor-surface")).toBeVisible();
+    expect(screen.getByRole("button", { name: "History" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Back to reading" }));
+    expect(
+      await screen.findByRole("heading", { name: "checklist" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByTestId("notepad-editor-surface"),
+    ).not.toBeInTheDocument();
+    expect(useSessionDetailStore.getState().openNotepadId).toBe("np-a");
+  });
+
   it("renders the notepad through the preview pipeline: structure, chips, images", async () => {
     openReadView();
 

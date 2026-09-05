@@ -1,9 +1,13 @@
 "use client";
 
+import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
+import ConversationProfileChip from "@/components/conversation/ConversationProfileChip";
+import { deriveConversationProfileChipState } from "@/components/conversation/conversation-profile-chip-state";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import { memo, useCallback, useState } from "react";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 
 // All of MobileInfoPanel's chrome lived inside session.css's `@media (max-width:
@@ -11,7 +15,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 // only laid out when the mobile shell exposes the info tab — transcribed 1:1 as
 // the shell-state arbitrary variant `[.app[data-mobile-panel=info]_&]`.
 const PANEL_CLASS =
-  "max-768:[.app[data-mobile-panel=info]_&]:flex max-768:[.app[data-mobile-panel=info]_&]:min-h-0 max-768:[.app[data-mobile-panel=info]_&]:flex-1 max-768:[.app[data-mobile-panel=info]_&]:flex-col max-768:[.app[data-mobile-panel=info]_&]:gap-[2px] max-768:[.app[data-mobile-panel=info]_&]:overflow-y-auto max-768:[.app[data-mobile-panel=info]_&]:px-sm max-768:[.app[data-mobile-panel=info]_&]:py-md";
+  "hidden max-768:[.app[data-mobile-panel=info]_&]:flex max-768:[.app[data-mobile-panel=info]_&]:min-h-0 max-768:[.app[data-mobile-panel=info]_&]:flex-1 max-768:[.app[data-mobile-panel=info]_&]:flex-col max-768:[.app[data-mobile-panel=info]_&]:gap-[2px] max-768:[.app[data-mobile-panel=info]_&]:overflow-y-auto max-768:[.app[data-mobile-panel=info]_&]:px-sm max-768:[.app[data-mobile-panel=info]_&]:py-md";
 const ROW_CLASS =
   "max-768:flex max-768:items-center max-768:gap-sm max-768:rounded-sm max-768:p-sm max-768:font-mono max-768:text-[0.78rem] max-768:odd:bg-[var(--cc-bg-surface-a30)]";
 const COPYABLE_CLASS =
@@ -19,11 +23,13 @@ const COPYABLE_CLASS =
 const LABEL_CLASS =
   "max-768:min-w-[80px] max-768:shrink-0 max-768:text-[0.7rem] max-768:font-semibold max-768:uppercase max-768:tracking-[0.06em] max-768:text-text-tertiary";
 const VALUE_CLASS =
-  "max-768:min-w-0 max-768:flex-1 max-768:overflow-hidden max-768:text-ellipsis max-768:whitespace-nowrap max-768:text-text-secondary";
+  "max-768:min-w-0 max-768:flex-1 max-768:[overflow-wrap:anywhere] max-768:text-text-secondary";
 const COPY_ICON_CLASS =
   "max-768:w-[20px] max-768:shrink-0 max-768:text-center max-768:text-[0.8rem] max-768:text-text-tertiary";
 const ACTIONS_CLASS =
   "max-768:border-x-0 max-768:border-b-0 max-768:border-t max-768:border-solid max-768:border-border-subtle max-768:px-sm max-768:py-md";
+
+const log = createClientLogger("mobile-info-panel");
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -38,27 +44,33 @@ function formatDate(iso: string): string {
 function MobileInfoCopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div
-      className={`${ROW_CLASS} ${COPYABLE_CLASS}`}
+    <button
+      type="button"
+      className={`${ROW_CLASS} ${COPYABLE_CLASS} w-full border-0 bg-transparent text-left focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]`}
       onClick={() => {
-        void navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
+        void navigator.clipboard
+          .writeText(value)
+          .then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          })
+          .catch(() => {
+            log.warn("copy.failed", { field: label });
+          });
       }}
-      role="button"
-      tabIndex={0}
     >
       <span className={LABEL_CLASS}>{label}</span>
       <span className={VALUE_CLASS}>{value}</span>
       <span className={COPY_ICON_CLASS}>{copied ? "✓" : "⎘"}</span>
-    </div>
+    </button>
   );
 }
 
 interface MobileInfoPanelProps {
+  projectName?: string;
+  sessionName?: string;
   session: SessionState;
-  activeConversation: ConversationState | undefined;
+  activeConversation: PublicConversationState | undefined;
   conversationId: string;
   statusDotClass: string;
   displayStatus: string;
@@ -68,6 +80,8 @@ interface MobileInfoPanelProps {
 }
 
 function MobileInfoPanel({
+  projectName,
+  sessionName,
   session,
   activeConversation,
   conversationId,
@@ -81,10 +95,13 @@ function MobileInfoPanel({
   const handleCopyContext = useCallback(() => {
     const text = buildContext();
     if (text === null) return;
-    void navigator.clipboard.writeText(text).then(() => {
-      setContextCopied(true);
-      setTimeout(() => setContextCopied(false), 1500);
-    });
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setContextCopied(true);
+        setTimeout(() => setContextCopied(false), 1500);
+      })
+      .catch(() => log.warn("copy.failed", { field: "context" }));
   }, [buildContext]);
 
   const backendRefDisplay = activeConversation?.backendRef
@@ -142,6 +159,23 @@ function MobileInfoPanel({
           <span className={VALUE_CLASS}>
             <ContextFillIndicator percentage={contextPercent} />
           </span>
+        </div>
+      )}
+      <div className={ROW_CLASS}>
+        <span className={LABEL_CLASS}>Profile</span>
+        <ConversationProfileChip
+          state={deriveConversationProfileChipState(
+            activeConversation?.redactedProfileSnapshot,
+          )}
+        />
+      </div>
+      {projectName && sessionName && (
+        <div className={ACTIONS_CLASS}>
+          <ScopedAgentCapabilitiesConfig
+            level="session"
+            projectName={projectName}
+            sessionName={sessionName}
+          />
         </div>
       )}
       <div className={ACTIONS_CLASS}>

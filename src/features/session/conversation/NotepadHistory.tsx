@@ -261,6 +261,7 @@ export default function NotepadHistory({
         </pre>
         <div className="flex flex-wrap items-center gap-sm">
           <Button
+            touch
             variant="default"
             size="sm"
             disabled={selectedIsHead || restorePending}
@@ -313,7 +314,7 @@ export default function NotepadHistory({
                     setSelectedRevision(isSelected ? null : revision.revision)
                   }
                   className={cn(
-                    "flex w-full cursor-pointer items-baseline gap-sm border-0 border-b border-solid border-border-subtle bg-transparent px-[12px] py-[6px] text-left transition-colors duration-150 ease-[ease] hover:bg-bg-hover focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]",
+                    "flex w-full cursor-pointer items-baseline gap-sm border-0 border-b border-solid border-border-subtle bg-transparent px-[12px] py-[6px] text-left transition-colors duration-150 ease-[ease] hover:bg-bg-hover focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px] max-768:min-h-[44px] max-768:flex-wrap",
                     isSelected && "bg-bg-hover",
                   )}
                 >

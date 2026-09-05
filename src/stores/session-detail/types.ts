@@ -19,6 +19,9 @@ export type MobilePanel =
   | "docs"
   | "notepad"
   | "specs"
+  | "alignment"
+  | "artifact"
+  | "memory"
   | "info";
 export type RightPaneTab =
   | "diff"

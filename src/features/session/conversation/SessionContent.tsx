@@ -15,8 +15,8 @@ import { DocumentScopeProvider } from "@/components/conversation/document-scope"
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { PublicConversationState } from "@/lib/conversations/schemas";
-
-type MobilePanel = "chat" | "diff" | "docs" | "notepad" | "specs" | "info";
+import type { MobilePanel } from "@/stores/session-detail/types";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 
 type PanelContainerProps = ComponentProps<typeof ConversationPanelContainer>;
 type SessionInfoStripProps = ComponentProps<typeof SessionInfoStrip>;
@@ -27,7 +27,7 @@ type SessionInfoStripProps = ComponentProps<typeof SessionInfoStrip>;
 // file as intentional without a UTILITY_FIRST_PATHS allowlist entry — the same
 // pattern DebugStructuredCard uses.
 const DETAIL_LAYOUT_CLASS =
-  "session-detail-layout stagger-in grid min-h-[500px] min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr] gap-0 h-[calc(100dvh-var(--topbar-height))] data-[finished=true]:grid-rows-[auto_auto_1fr] data-[tab-strip=true]:grid-rows-[auto_auto_1fr] data-[finished=true]:data-[tab-strip=true]:grid-rows-[auto_auto_auto_1fr] max-768:h-[calc(100dvh-var(--topbar-height)-48px)] max-768:min-h-[300px] max-768:gap-0";
+  "session-detail-layout stagger-in grid min-h-[500px] min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr] gap-0 h-[calc(100dvh-var(--topbar-height))] data-[finished=true]:grid-rows-[auto_auto_1fr] data-[tab-strip=true]:grid-rows-[auto_auto_1fr] data-[finished=true]:data-[tab-strip=true]:grid-rows-[auto_auto_auto_1fr] max-768:h-[calc(100dvh-var(--topbar-height)-52px-env(safe-area-inset-bottom,0px))] max-768:min-h-0 max-768:gap-0";
 const TAB_STRIP_HOST_CLASS =
   "conversation-tab-strip-host relative shrink-0 max-768:[.session-detail-layout[data-tab-strip=true]>&]:row-[1/2] max-768:[.session-detail-layout[data-finished=true][data-tab-strip=true]>&]:row-[2/3]";
 const DOCKED_STAGE_CLASS =
@@ -129,12 +129,18 @@ export default function SessionContent({
   onDelete,
   onRebase,
 }: SessionContentProps): React.JSX.Element {
-  const isPanes = layout === "panes";
+  const isMobile = useIsMobile();
+  const effectiveLayout =
+    isMobile && layout === "panes" ? "conversation" : layout;
+  const isPanes = effectiveLayout === "panes";
   const workingSet = openTabs?.workingSet ?? [];
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const showTabStrip = !isPanes && !!openTabs && workingSet.length > 0;
   const showEmptyWorkingSet =
     openTabs !== undefined && openTabs.hydrated && workingSet.length === 0;
+  const showEmptyState =
+    showEmptyWorkingSet &&
+    (!isMobile || mobilePanel === "chat" || mobilePanel === "notepad");
   const handleCloseTab = (id: string): void => {
     if (!openTabs) return;
     const closesFinalPane =
@@ -222,7 +228,7 @@ export default function SessionContent({
           the peek (`.peek__stage`) and per-panel (`.conversation-stage`)
           stages. Without it the overlay has no positioned ancestor. */}
         <div className={DOCKED_STAGE_CLASS}>
-          {showEmptyWorkingSet && openTabs ? (
+          {showEmptyState && openTabs ? (
             <>
               <EmptyConversationWorkingSet
                 addableConversations={openTabs.addableConversations}
@@ -233,12 +239,16 @@ export default function SessionContent({
                 shell-gates itself off this surface, and the panel hides itself
                 above the mobile breakpoint. */}
               {mobilePanel === "notepad" && (
-                <MobileNotepadPanel projectName={projectName} />
+                <MobileNotepadPanel
+                  projectName={projectName}
+                  sessionName={sessionName}
+                  conversationId={conversationId}
+                />
               )}
             </>
           ) : (
             <>
-              <div className={CONTENT_AREA_CLASS} data-layout={layout}>
+              <div className={CONTENT_AREA_CLASS} data-layout={effectiveLayout}>
                 {isPanes && openTabs ? (
                   // Panes replaces the single-conversation panel + diff with a
                   // full-width grid of every open conversation.
@@ -266,12 +276,14 @@ export default function SessionContent({
                   />
                 ) : (
                   <>
-                    <ConversationPanelContainer {...panelContainerProps} />
+                    {!showEmptyWorkingSet && (
+                      <ConversationPanelContainer {...panelContainerProps} />
+                    )}
 
-                    {(layout !== "conversation" ||
-                      mobilePanel === "diff" ||
-                      mobilePanel === "docs" ||
-                      mobilePanel === "specs") && (
+                    {(effectiveLayout !== "conversation" ||
+                      (mobilePanel !== "chat" &&
+                        mobilePanel !== "info" &&
+                        mobilePanel !== "notepad")) && (
                       <RightPane
                         projectName={projectName}
                         sessionName={session.sessionName}
@@ -292,6 +304,8 @@ export default function SessionContent({
                         displayStatus={displayStatus}
                         contextPercent={contextPercent}
                         buildContext={buildContext}
+                        projectName={projectName}
+                        sessionName={sessionName}
                       />
                     )}
                   </>
@@ -302,11 +316,17 @@ export default function SessionContent({
                   (whose grid shell-gates itself off this surface). The panel
                   hides itself above the mobile breakpoint. */}
                 {mobilePanel === "notepad" && (
-                  <MobileNotepadPanel projectName={projectName} />
+                  <MobileNotepadPanel
+                    projectName={projectName}
+                    sessionName={sessionName}
+                    conversationId={conversationId}
+                  />
                 )}
               </div>
 
-              <div className={PROMPT_SLOT_CLASS}>{promptInputSlot}</div>
+              {!showEmptyWorkingSet && (
+                <div className={PROMPT_SLOT_CLASS}>{promptInputSlot}</div>
+              )}
             </>
           )}
         </div>

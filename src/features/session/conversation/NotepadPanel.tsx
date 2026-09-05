@@ -155,14 +155,14 @@ function NotepadBrowseView({
 
   return (
     <>
-      <div className="flex shrink-0 items-center gap-sm border-0 border-b border-solid border-border-subtle px-[12px] py-[8px]">
+      <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-[12px] py-[8px]">
         <span className="font-mono text-[0.72rem] font-semibold tracking-[0.05em] text-text-secondary uppercase">
           Notepads
         </span>
         <span className="font-mono text-[0.7rem] text-text-tertiary">
           {rows.length}
         </span>
-        <div className="ml-auto flex items-center gap-sm">
+        <div className="ml-auto flex flex-wrap items-center gap-sm">
           <SegmentedControl
             value={sort}
             onValueChange={(value) => {
@@ -174,6 +174,7 @@ function NotepadBrowseView({
             <SegmentedControlItem value="name">name</SegmentedControlItem>
           </SegmentedControl>
           <Button
+            touch
             variant="ghost"
             size="sm"
             aria-pressed={showArchived}
@@ -181,7 +182,12 @@ function NotepadBrowseView({
           >
             Archived
           </Button>
-          <Button variant="default" size="sm" onClick={() => setCreating(true)}>
+          <Button
+            touch
+            variant="default"
+            size="sm"
+            onClick={() => setCreating(true)}
+          >
             New
           </Button>
         </div>
@@ -213,7 +219,12 @@ function NotepadBrowseView({
             Durable, reference-aware notes. They outlive this session and follow
             the project.
           </EmptyStateDesc>
-          <Button variant="default" size="sm" onClick={() => setCreating(true)}>
+          <Button
+            touch
+            variant="default"
+            size="sm"
+            onClick={() => setCreating(true)}
+          >
             New notepad
           </Button>
         </EmptyState>
@@ -319,7 +330,7 @@ function NotepadRow({
         onClick={onOpen}
         className="flex min-h-[36px] min-w-0 flex-1 cursor-pointer items-baseline gap-sm border-0 bg-transparent px-[12px] py-[7px] text-left transition-colors duration-150 ease-[ease] hover:bg-bg-hover focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px] max-768:min-h-[44px]"
       >
-        <span className="min-w-0 flex-1 truncate font-mono text-[0.78rem] font-medium text-text-primary">
+        <span className="min-w-0 flex-1 truncate font-mono text-[0.78rem] font-medium text-text-primary max-768:[overflow-wrap:anywhere] max-768:whitespace-normal">
           {row.name}
         </span>
         {row.scope === "global" ? (
@@ -336,20 +347,22 @@ function NotepadRow({
           <button
             type="button"
             aria-label={`Actions for ${row.name}`}
-            className="mr-[8px] inline-flex h-[24px] w-[24px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-transparent bg-transparent font-mono text-[0.78rem] text-text-tertiary transition-colors duration-150 ease-[ease] group-hover:border-border-default hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]"
+            className="mr-[8px] inline-flex h-[24px] w-[24px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-transparent bg-transparent font-mono text-[0.78rem] text-text-tertiary transition-colors duration-150 ease-[ease] group-hover:border-border-default hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px] max-768:size-[44px]"
           >
             ⋯
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={onStartRename}>Rename</DropdownMenuItem>
-          <DropdownMenuItem onSelect={onTogglePin}>
+          <DropdownMenuItem touch onSelect={onStartRename}>
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem touch onSelect={onTogglePin}>
             {row.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onToggleArchive}>
+          <DropdownMenuItem touch onSelect={onToggleArchive}>
             {row.archived ? "Unarchive" : "Archive"}
           </DropdownMenuItem>
-          <DropdownMenuItem danger onSelect={onDelete}>
+          <DropdownMenuItem touch danger onSelect={onDelete}>
             Delete…
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -454,11 +467,12 @@ function NotepadCreateForm({
           <SegmentedControlItem value="project">project</SegmentedControlItem>
           <SegmentedControlItem value="global">global</SegmentedControlItem>
         </SegmentedControl>
-        <div className="ml-auto flex items-center gap-sm">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
+        <div className="ml-auto flex flex-wrap items-center gap-sm">
+          <Button touch variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
           <Button
+            touch
             variant="default"
             size="sm"
             disabled={createMutation.isPending || name.trim().length === 0}

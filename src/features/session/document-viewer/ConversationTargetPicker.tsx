@@ -187,7 +187,7 @@ export function createConversationTargetPicker(deps: ConversationTargetDeps) {
             </span>
           </Button>
         </PopoverTrigger>
-        <PopoverContent layoutClassName="w-[360px]">
+        <PopoverContent layoutClassName="w-[360px] max-w-[calc(100vw-16px)]">
           <input
             type="text"
             role="combobox"

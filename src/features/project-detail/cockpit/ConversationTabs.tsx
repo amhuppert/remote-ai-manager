@@ -36,7 +36,7 @@ const TAB_STRIP_CLASS =
 // data-active values so the result is independent of utility emission order. The
 // cyan top-edge is the active ::before bar.
 const TAB_CLASS =
-  "relative inline-flex items-center gap-xs px-sm py-xs rounded-sm border-0 bg-transparent " +
+  "relative inline-flex max-768:min-h-[44px] items-center gap-xs px-sm py-xs rounded-sm border-0 bg-transparent " +
   "font-mono text-[0.74rem] font-medium text-text-secondary cursor-pointer whitespace-nowrap " +
   "transition-[background,color] duration-150 ease-[ease] " +
   "data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary " +
@@ -45,11 +45,11 @@ const TAB_CLASS =
   "data-[active=true]:before:top-0 data-[active=true]:before:h-[2px] data-[active=true]:before:bg-cyan data-[active=true]:before:rounded-t-sm";
 
 const TAB_CLOSE_CLASS =
-  "inline-flex items-center justify-center size-[16px] border-0 bg-transparent text-text-tertiary " +
+  "inline-flex items-center justify-center size-[16px] max-768:size-[44px] border-0 bg-transparent text-text-tertiary " +
   "cursor-pointer rounded-sm hover:bg-bg-elevated hover:text-text-primary";
 
 const TAB_NEWCHAT_CLASS =
-  "inline-flex items-center gap-2xs px-sm py-xs rounded-sm border border-dashed border-border-subtle " +
+  "inline-flex max-768:min-h-[44px] items-center gap-2xs px-sm py-xs rounded-sm border border-dashed border-border-subtle " +
   "bg-transparent text-text-secondary font-mono text-[0.74rem] cursor-pointer " +
   "transition-[background,color,border-color] duration-150 ease-[ease] " +
   "hover:bg-bg-hover hover:text-text-primary hover:border-border-default " +

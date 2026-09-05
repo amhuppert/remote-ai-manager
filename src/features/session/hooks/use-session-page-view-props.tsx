@@ -132,6 +132,7 @@ export function useSessionPageViewProps(
         total: devServers.dsServers.length,
       },
       onDevServers: store.dsToggle,
+      onRebase,
     },
     dialogsProps: {
       sessionName: identity.session.sessionName,

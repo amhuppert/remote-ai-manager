@@ -19,7 +19,7 @@ const labelClass =
   "font-mono text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-secondary";
 const countClass = "font-mono text-[0.7rem] text-text-tertiary";
 const linkClass =
-  "font-mono text-[0.7rem] text-text-secondary bg-transparent border-0 px-[6px] hover:text-cyan";
+  "font-mono text-[0.7rem] text-text-secondary bg-transparent border-0 px-[6px] max-768:min-h-[44px] hover:text-cyan";
 
 export default function SectionHeader({
   filteredCount,
@@ -36,7 +36,7 @@ export default function SectionHeader({
   if (selectionSize > 0) {
     return (
       <div
-        className="mx-xl flex items-center gap-md rounded-md border border-solid border-cyan-dim bg-bg-elevated px-[12px] py-[8px] shadow-[inset_0_0_14px_-6px_var(--color-cyan-glow)] transition-[background,border-color] duration-150 ease-[ease] max-768:mx-md"
+        className="mx-xl flex items-center gap-md rounded-md border border-solid border-cyan-dim bg-bg-elevated px-[12px] py-[8px] shadow-[inset_0_0_14px_-6px_var(--color-cyan-glow)] transition-[background,border-color] duration-150 ease-[ease] max-768:mx-md max-768:flex-wrap"
         role="region"
         aria-label="Bulk actions"
       >
@@ -48,7 +48,7 @@ export default function SectionHeader({
         <span className="font-mono text-[0.8rem] font-semibold text-cyan">
           sessions selected
         </span>
-        <div className="ml-auto flex items-center gap-[6px]">
+        <div className="ml-auto flex flex-wrap items-center gap-[6px] max-768:basis-full">
           <button type="button" className={linkClass} onClick={onDeselect}>
             Deselect all
           </button>

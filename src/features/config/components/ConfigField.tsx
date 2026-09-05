@@ -7,7 +7,7 @@ const FIELD_BASE =
   "border-y-0 border-r-0 border-l-2 border-solid " +
   "transition-[border-color,padding-left] duration-150 ease-[ease]";
 const FIELD_LABEL =
-  "font-mono text-[0.7rem] font-semibold tracking-[0.06em] uppercase text-text-secondary whitespace-nowrap";
+  "font-mono text-[0.7rem] font-semibold tracking-[0.06em] uppercase text-text-secondary [overflow-wrap:anywhere]";
 const FIELD_BADGE_BASE =
   "ml-auto px-[7px] py-[2px] rounded-full border border-solid border-border-subtle text-text-tertiary font-mono text-[0.7rem] font-semibold tracking-[0.08em] uppercase";
 
@@ -37,7 +37,7 @@ export function ConfigField({
       )}
       data-field={fieldPath}
     >
-      <div className="mb-sm flex min-h-[18px] items-center gap-sm">
+      <div className="mb-sm flex min-h-[18px] flex-wrap items-center gap-sm">
         <span id={`${fieldPath}-label`} className={FIELD_LABEL}>
           {label}
         </span>

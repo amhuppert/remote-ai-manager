@@ -16,6 +16,16 @@ import {
   type EdgeTypes,
 } from "@xyflow/react";
 import { LayoutIcon } from "@/components/icons";
+import { Button } from "@/components/ui/Button";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from "@/components/ui/Dialog";
+import { createClientLogger } from "@/lib/logging/client-logger";
+import { useOpenerFocus } from "@/hooks/use-opener-focus";
 import AutoLayout from "@/components/workflow-graph/AutoLayout";
 import ExecutionContextNode from "@/components/workflow-graph/ExecutionContextNode";
 import CanvasControls from "@/components/workflow-graph/CanvasControls";
@@ -23,6 +33,7 @@ import ContextEdge from "@/components/workflow-graph/ContextEdge";
 import LaneBandLayer from "@/components/workflow-graph/LaneBandLayer";
 import LaneDropOverlay from "@/components/workflow-graph/LaneDropOverlay";
 import WorkflowMobileGraph from "@/components/workflow-graph/WorkflowMobileGraph";
+import EphemeralLaneBand from "@/components/workflow-graph/EphemeralLaneBand";
 import { deriveDefinitionLaneBands } from "@/lib/workflow-graph/lane-bands";
 import { withEphemeralLaneBands } from "@/lib/workflow-graph/ephemeral-lanes";
 import {
@@ -71,6 +82,8 @@ const edgeTypes = { contextEdge: ContextEdge } as unknown as EdgeTypes;
 // controls off-screen with it.
 const CANVAS_WRAPPER_CLASS =
   "relative flex min-h-0 min-w-0 flex-1 flex-col max-768:[.app[data-page=workflow-builder][data-mobile-panel=inspector]_&]:hidden";
+
+const log = createClientLogger("workflow-builder");
 
 interface WorkflowBuilderCanvasProps {
   onSelectContext?: (contextId: string | null) => void;
@@ -168,6 +181,11 @@ export default function WorkflowBuilderCanvas({
   );
   /** The context whose lane picker is open — touch re-placement (README §12). */
   const [movingContextId, setMovingContextId] = useState<string | null>(null);
+  const [dependencyContextId, setDependencyContextId] = useState<string | null>(
+    null,
+  );
+  const { captureOpener, restoreOpener } = useOpenerFocus();
+  const refusedEdits = _useGraphWorkflowBuilderStore((s) => s.refusedEdits);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<
     Node<ExecutionContextNodeData>
@@ -419,8 +437,17 @@ export default function WorkflowBuilderCanvas({
         connection.target,
       );
       if (result.ok) {
+        log.info("dependency.added", {
+          sourceContextId: connection.source,
+          targetContextId: connection.target,
+        });
         updateDefinition(result.definition);
       } else {
+        log.info("dependency.refused", {
+          sourceContextId: connection.source,
+          targetContextId: connection.target,
+          errors: result.errors,
+        });
         setRefusedEdits(result.errors);
       }
     },
@@ -468,6 +495,7 @@ export default function WorkflowBuilderCanvas({
       let def = draftDefinition;
       for (const edge of deletedEdges) {
         def = removeContextDependency(def, edge.id);
+        log.info("dependency.removed", { edgeId: edge.id });
       }
       updateDefinition(def);
     },
@@ -567,18 +595,31 @@ export default function WorkflowBuilderCanvas({
           (context) => context.id === contextId,
         )?.title ?? contextId;
       return (
-        <button
-          type="button"
-          aria-label={`Move “${title}” to a lane`}
-          onClick={() => setMovingContextId(contextId)}
-          className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-xs rounded-md border border-solid border-border-subtle bg-bg-surface px-[10px] py-[6px] font-mono text-[0.7rem] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]"
-        >
-          <LayoutIcon size={12} />
-          Move to lane…
-        </button>
+        <div className="flex flex-col gap-xs">
+          <button
+            type="button"
+            aria-label={`Move “${title}” to a lane`}
+            onClick={() => setMovingContextId(contextId)}
+            className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-xs rounded-md border border-solid border-border-subtle bg-bg-surface px-[10px] py-[6px] font-mono text-[0.7rem] font-medium text-text-secondary transition-colors duration-150 hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]"
+          >
+            <LayoutIcon size={12} />
+            Move to lane…
+          </button>
+          <Button
+            touch
+            aria-label={`Dependencies for ${title}`}
+            onClick={() => {
+              captureOpener();
+              setRefusedEdits([]);
+              setDependencyContextId(contextId);
+            }}
+          >
+            Dependencies…
+          </Button>
+        </div>
       );
     },
-    [draftDefinition],
+    [draftDefinition, setRefusedEdits, captureOpener],
   );
 
   // Faithful transcription of the legacy `.wb-empty-state`/`-text` recipe
@@ -642,11 +683,91 @@ export default function WorkflowBuilderCanvas({
             ? {
                 onLongPressContext: setMovingContextId,
                 renderMemberActions: renderMemberMoveAction,
+                renderEmptyLane: (name: string) => {
+                  const lane = emptyLanes.find(
+                    (candidate) => candidate.name === name,
+                  );
+                  if (!lane) return null;
+                  return (
+                    <EphemeralLaneBand
+                      lane={lane}
+                      taken={pickerLaneNames.filter((other) => other !== name)}
+                      onRename={renameEphemeralLane}
+                      onMerge={handleMergeEphemeralLane}
+                      onRemove={removeEphemeralLane}
+                    />
+                  );
+                },
               }
             : {})}
         />
         {callout}
         {lanePicker}
+        <Dialog
+          open={dependencyContextId !== null && !readOnly}
+          onOpenChange={(open) => {
+            if (!open) setDependencyContextId(null);
+          }}
+        >
+          <DialogContent
+            mobileSheet
+            onOpenAutoFocus={captureOpener}
+            onCloseAutoFocus={restoreOpener}
+          >
+            <DialogTitle>Dependencies</DialogTitle>
+            <DialogDescription>
+              Choose which contexts must finish before{" "}
+              {
+                draftDefinition.executionContexts.find(
+                  (context) => context.id === dependencyContextId,
+                )?.title
+              }
+              .
+            </DialogDescription>
+            <div className="flex flex-col gap-sm">
+              {draftDefinition.executionContexts
+                .filter((context) => context.id !== dependencyContextId)
+                .map((context) => {
+                  const edge = draftDefinition.edges.find(
+                    (candidate) =>
+                      candidate.sourceContextId === context.id &&
+                      candidate.targetContextId === dependencyContextId,
+                  );
+                  return (
+                    <Button
+                      key={context.id}
+                      touch
+                      aria-label={`${edge ? "Remove" : "Add"} dependency from ${context.title}`}
+                      onClick={() => {
+                        setRefusedEdits([]);
+                        if (edge) {
+                          handleEdgesDelete([edge]);
+                          return;
+                        }
+                        if (dependencyContextId)
+                          handleConnect({
+                            source: context.id,
+                            target: dependencyContextId,
+                            sourceHandle: null,
+                            targetHandle: null,
+                          });
+                      }}
+                    >
+                      {edge ? "Remove" : "Add"}: {context.title}
+                    </Button>
+                  );
+                })}
+            </div>
+            {refusedEdits.length > 0 && (
+              <div role="alert" className="font-mono text-[0.75rem] text-red">
+                {refusedEdits.map((error) => error.message).join(" ")}
+              </div>
+            )}
+            <DialogClose asChild>
+              <Button touch>Done</Button>
+            </DialogClose>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }

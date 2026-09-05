@@ -25,6 +25,22 @@ type Story = StoryObj<typeof meta>;
 
 export const Default = {} satisfies Story;
 
+export const Mobile = {
+  args: { isMobile: true },
+  parameters: { layout: "fullscreen" },
+  decorators: [
+    (Story) => (
+      <div
+        className="app h-dvh"
+        data-page="workflow-builder"
+        data-mobile-panel="graph"
+      >
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Story;
+
 /**
  * B3: a draft the validator refuses. The strip under the toolbar lists every
  * error and each row opens the screen that can clear it; Save stays refused

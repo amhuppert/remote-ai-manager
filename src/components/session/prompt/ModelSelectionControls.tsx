@@ -417,7 +417,7 @@ export function DesktopModelSelectionControls({
           <PopoverContent
             side="top"
             align="end"
-            layoutClassName="w-[360px]"
+            layoutClassName="w-[360px] max-w-[calc(100vw-16px)]"
             aria-label="Model options"
           >
             <div className="mb-sm flex flex-col gap-2xs font-mono">
@@ -500,7 +500,7 @@ export function ModelOptionsEditor({
   };
 
   return (
-    <div className="flex min-w-[300px] flex-col gap-md font-mono">
+    <div className="flex min-w-0 w-full flex-col gap-md font-mono">
       {parameters.length === 0 ? (
         <p className="text-[0.72rem] text-text-tertiary">
           This model has no configurable options.
@@ -514,7 +514,7 @@ export function ModelOptionsEditor({
             return (
               <div
                 key={parameter.id}
-                className="flex min-h-[44px] items-center justify-between gap-md rounded-md border border-solid border-border-subtle bg-bg-surface p-sm data-[invalid=true]:border-red-dim"
+                className="flex min-h-[44px] flex-wrap items-center justify-between gap-md rounded-md border border-solid border-border-subtle bg-bg-surface p-sm data-[invalid=true]:border-red-dim"
                 data-invalid={invalid}
                 data-emphasis={emphasis}
               >

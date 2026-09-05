@@ -27,6 +27,7 @@ export default function CCCheckbox({
       : false;
   return (
     <Checkbox
+      touch
       checked={checkedState}
       aria-label={ariaLabel ?? "Select"}
       onCheckedChange={(next) => onChange(next === true)}

@@ -202,9 +202,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen
         .getByRole("heading", { name: /Agent backends/i })
         .closest("section")?.parentElement?.className,
-    ).toContain(
-      "max-768:pb-[calc(var(--spacing-3xl)+var(--touch-target-min))]",
-    );
+    ).toContain("max-768:pb-[calc(120px+env(safe-area-inset-bottom,0px))]");
   });
 
   it("saves independent backend edits while preserving untouched raw settings", async () => {

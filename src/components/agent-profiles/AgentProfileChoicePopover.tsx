@@ -69,7 +69,10 @@ export default function AgentProfileChoicePopover({
       <WithTooltip label={triggerLabel}>
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       </WithTooltip>
-      <PopoverContent align="end" layoutClassName="w-[320px]">
+      <PopoverContent
+        align="end"
+        layoutClassName="w-[320px] max-w-[calc(100vw-16px)]"
+      >
         <div className="flex flex-col gap-sm">
           <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
             {title}

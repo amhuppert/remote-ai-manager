@@ -154,12 +154,13 @@ export default function AgentsLibraryPage({
         <h1 className="m-0 font-mono text-[1rem] font-semibold text-text-primary">
           Agents
         </h1>
-        <div className="flex gap-sm">
-          <Button size="sm" onClick={() => startCreate("global")}>
+        <div className="flex flex-wrap gap-sm">
+          <Button size="sm" touch onClick={() => startCreate("global")}>
             New global profile
           </Button>
           <Button
             size="sm"
+            touch
             variant="primary"
             onClick={() => startCreate("project")}
           >
@@ -256,7 +257,7 @@ export default function AgentsLibraryPage({
             <h2 className="m-0 font-mono text-[0.86rem] font-semibold text-text-primary">
               {target.ref === null ? "New profile" : draft.name || "Profile"}
             </h2>
-            <Button size="sm" variant="ghost" onClick={closeEditor}>
+            <Button size="sm" touch variant="ghost" onClick={closeEditor}>
               Close
             </Button>
           </div>

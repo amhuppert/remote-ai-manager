@@ -1,19 +1,20 @@
 "use client";
 
 import MobileActionMenu from "@/components/MobileActionMenu";
+import type { MobilePanel } from "@/stores/session-detail/types";
 
-export type MobilePanelTab =
-  | "chat"
-  | "diff"
-  | "docs"
-  | "notepad"
-  | "specs"
-  | "info";
+export type MobilePanelTab = MobilePanel;
 
 const TABS: { id: MobilePanelTab; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "diff", label: "Diff" },
   { id: "docs", label: "Docs" },
+];
+
+const MORE_PANELS: { id: MobilePanel; label: string }[] = [
+  { id: "alignment", label: "Alignment" },
+  { id: "memory", label: "Memory" },
+  { id: "artifact", label: "Compactions" },
   { id: "notepad", label: "Notepad" },
   { id: "specs", label: "Specs" },
   { id: "info", label: "Info" },
@@ -28,6 +29,7 @@ export interface MobileBottomBarProps {
   onDelete: () => void;
   devServerCounts: { running: number; total: number };
   onDevServers: () => void;
+  onRebase?: () => void;
 }
 
 export default function MobileBottomBar({
@@ -39,6 +41,7 @@ export default function MobileBottomBar({
   onDelete,
   devServerCounts,
   onDevServers,
+  onRebase,
 }: MobileBottomBarProps): React.JSX.Element {
   return (
     // RETAINED HOOK (foundation-deferred): `.mobile-bottom-bar` and its
@@ -55,12 +58,22 @@ export default function MobileBottomBar({
             key={tab.id}
             className={`cc-tab${mobilePanel === tab.id ? " active" : ""}`}
             onClick={() => onSwitchPanel(tab.id)}
+            aria-pressed={mobilePanel === tab.id}
           >
             {tab.label}
           </button>
         ))}
       </div>
       <MobileActionMenu
+        triggerLabel={
+          MORE_PANELS.find((panel) => panel.id === mobilePanel)?.label ?? "More"
+        }
+        panelActions={MORE_PANELS.map((panel) => ({
+          label: panel.label,
+          active: mobilePanel === panel.id,
+          onSelect: () => onSwitchPanel(panel.id),
+        }))}
+        onRebase={onRebase}
         tddEnabled={tddEnabled}
         onTddToggle={onTddToggle}
         tddDisabled={tddDisabled}

@@ -46,7 +46,7 @@ const PANE_CLASS =
   "flex-1 flex flex-col min-h-0 min-w-0 h-full bg-bg-surface overflow-hidden";
 
 const PANE_HEADER_CLASS =
-  "flex items-center gap-sm h-[36px] px-md border-x-0 border-t-0 border-b border-solid border-border-dim " +
+  "flex items-center gap-sm h-[36px] max-768:h-auto max-768:min-h-[44px] max-768:flex-wrap max-768:py-xs px-md border-x-0 border-t-0 border-b border-solid border-border-dim " +
   "font-mono text-[0.72rem] text-text-secondary shrink-0";
 
 const WORKTREE_BTN_CLASS =
@@ -63,7 +63,7 @@ const STOP_BTN_CLASS =
   "border border-solid border-[var(--cc-red-soft-a45)] bg-[var(--cc-red-soft-a08)] px-[10px] " +
   "font-mono text-[0.66rem] font-bold tracking-[0.08em] text-red uppercase " +
   "transition-all duration-150 ease-[ease] hover:border-red hover:bg-[var(--cc-red-soft-a14)] " +
-  "hover:shadow-[0_0_12px_var(--cc-red-soft-a25)] max-768:px-[8px]";
+  "hover:shadow-[0_0_12px_var(--cc-red-soft-a25)] max-768:px-[8px] max-768:min-h-[44px] shrink-0";
 
 function ExternalGlyph(): React.JSX.Element {
   return (

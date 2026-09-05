@@ -8,6 +8,22 @@ import type {
 import { cn } from "@/lib/ui/cn";
 import CCCheckbox from "./CCCheckbox";
 import SessionRow, { ROW_BASE } from "./SessionRow";
+import { Button } from "@/components/ui/Button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/DropdownMenu";
+
+const SORT_COLUMNS: { id: SortableColumn; label: string }[] = [
+  { id: "sessionName", label: "Session" },
+  { id: "branchName", label: "Branch" },
+  { id: "targetBranch", label: "Target" },
+  { id: "status", label: "Status" },
+  { id: "promptCount", label: "Prompts" },
+  { id: "lastActivityAt", label: "Last activity" },
+];
 
 type SortableColumn =
   | "sessionName"
@@ -163,6 +179,40 @@ export default function SessionRows({
 
   return (
     <div className="mx-xl flex flex-col border-x-0 border-t border-b-0 border-solid border-border-subtle max-768:mx-md">
+      <div className="hidden flex-wrap items-center gap-sm py-sm max-768:flex">
+        <Button
+          touch
+          aria-pressed={allVisibleSelected}
+          onClick={() => onToggleAll(!allVisibleSelected)}
+        >
+          {allVisibleSelected ? "Deselect all" : "Select all"}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button touch aria-label="Sort sessions">
+              Sort:{" "}
+              {SORT_COLUMNS.find((column) => column.id === sort.id)?.label}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {SORT_COLUMNS.map((column) => (
+              <DropdownMenuItem
+                key={column.id}
+                touch
+                onSelect={() => onSortChange({ id: column.id, desc: false })}
+              >
+                {column.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuItem
+              touch
+              onSelect={() => onSortChange({ ...sort, desc: !sort.desc })}
+            >
+              {sort.desc ? "Sort ascending" : "Sort descending"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <div className={cn(ROW_BASE, "bg-bg-base max-768:hidden")} role="row">
         <span className="invisible absolute top-0 bottom-0 left-0 w-[3px]" />
         <span className="ml-[16px]">

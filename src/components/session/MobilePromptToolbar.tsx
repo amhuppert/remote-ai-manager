@@ -193,7 +193,7 @@ export default function MobilePromptToolbar({
         >
           <span
             className={cn(
-              "font-semibold",
+              "min-w-0 truncate font-semibold",
               invalidModelSelection && "text-[var(--red)]",
             )}
           >
@@ -202,12 +202,15 @@ export default function MobilePromptToolbar({
           {primaryValue ? (
             <>
               <span className="px-2xs text-text-tertiary">·</span>
-              <span className="mobile-prompt-model-chip__effort text-text-secondary">
+              <span className="mobile-prompt-model-chip__effort shrink-0 text-text-secondary">
                 {primaryValue.label}
               </span>
             </>
           ) : null}
-          <span className="ml-xs text-[0.7rem] text-text-tertiary" aria-hidden>
+          <span
+            className="ml-xs shrink-0 text-[0.7rem] text-text-tertiary"
+            aria-hidden
+          >
             {"\u25BE"}
           </span>
         </button>

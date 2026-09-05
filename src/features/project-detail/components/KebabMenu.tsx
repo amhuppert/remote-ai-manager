@@ -63,7 +63,12 @@ export default function KebabMenu({
           it === "divider" ? (
             <DropdownMenuSeparator key={"d" + i} />
           ) : (
-            <DropdownMenuItem key={i} danger={it.danger} onSelect={it.onClick}>
+            <DropdownMenuItem
+              touch
+              key={i}
+              danger={it.danger}
+              onSelect={it.onClick}
+            >
               {it.icon}
               <span>{it.label}</span>
               {it.shortcut && (

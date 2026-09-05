@@ -14,7 +14,7 @@ export interface EditorBaseProps<T> {
 }
 
 // Label-grid row: label in a fixed left column, control on the right, hint
-// under the control column.
+// under the control column. Mobile stacks all three in one column.
 export function FieldRow({
   label,
   hint,
@@ -25,7 +25,7 @@ export function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[110px_1fr] items-center gap-x-[10px] gap-y-xs">
+    <div className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-x-[10px] gap-y-xs max-768:grid-cols-[minmax(0,1fr)]">
       <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
         {label}
       </div>
@@ -33,7 +33,7 @@ export function FieldRow({
         {children}
       </div>
       {hint ? (
-        <div className="col-start-2 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+        <div className="col-start-2 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary max-768:col-start-1">
           {hint}
         </div>
       ) : null}

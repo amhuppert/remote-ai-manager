@@ -147,7 +147,7 @@
   /* Session detail page main area: full bleed with room for bottom bar */
   .app[data-page="detail"] .main {
     padding: 0;
-    padding-bottom: 48px;
+    padding-bottom: calc(52px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Mobile panel switching via data attribute */
@@ -163,7 +163,10 @@
     display: none;
   }
 
-  .app[data-mobile-panel="specs"] .prompt-panel {
+  .app[data-mobile-panel="specs"] .prompt-panel,
+  .app[data-mobile-panel="alignment"] .prompt-panel,
+  .app[data-mobile-panel="artifact"] .prompt-panel,
+  .app[data-mobile-panel="memory"] .prompt-panel {
     display: none;
   }
 

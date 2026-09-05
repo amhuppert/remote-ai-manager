@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import NotepadPanel from "@/features/session/conversation/NotepadPanel";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import { cn } from "@/lib/ui/cn";
 import { Button } from "@/components/ui/Button";
 import {
@@ -37,7 +39,11 @@ import {
 
 export interface MobileNotepadPanelProps {
   projectName: string;
+  sessionName: string;
+  conversationId: string;
 }
+
+const log = createClientLogger("mobile-notepad-panel");
 
 const WRITE_MODE_LABEL: Record<NotepadWriteMode, string> = {
   "read-only": "read only",
@@ -51,20 +57,43 @@ const SECTION_HEADER_CLASS =
 /**
  * The mobile Notepad surface (design prototype page 07): a full-screen panel
  * behind the bottom-bar Notepad entry — browse, open, read, and the agent
- * write-mode control. Read-first this slice: no content editing on mobile.
+ * write-mode control. The management view exposes editing and organization.
  * Hidden above the mobile breakpoint — desktop notepads live in the right pane.
  */
 export default function MobileNotepadPanel({
   projectName,
+  sessionName,
+  conversationId,
 }: MobileNotepadPanelProps): React.JSX.Element {
   const openNotepadId = useOpenNotepadId();
+  const [managing, setManaging] = useState(false);
 
   return (
     <div
       data-testid="mobile-notepad-panel"
       className="hidden min-h-0 min-w-0 flex-1 flex-col bg-bg-surface max-768:flex"
     >
-      {openNotepadId !== null ? (
+      <div className="flex shrink-0 justify-end border-b border-solid border-border-subtle px-sm py-xs">
+        <Button
+          touch
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            log.debug("management.toggled", { open: !managing });
+            setManaging(!managing);
+          }}
+        >
+          {managing ? "Back to reading" : "Manage notepads"}
+        </Button>
+      </div>
+      {managing ? (
+        <NotepadPanel
+          projectName={projectName}
+          sessionName={sessionName}
+          conversationId={conversationId}
+          active
+        />
+      ) : openNotepadId !== null ? (
         <MobileNotepadReadView key={openNotepadId} notepadId={openNotepadId} />
       ) : (
         <MobileNotepadBrowseView projectName={projectName} />

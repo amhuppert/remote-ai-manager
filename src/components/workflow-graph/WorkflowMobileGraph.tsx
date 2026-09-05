@@ -43,6 +43,7 @@ interface WorkflowMobileGraphProps {
    * §2.2). They are draft UI, so they carry no membership line.
    */
   emptyLaneNames?: readonly string[];
+  renderEmptyLane?: (laneName: string) => React.ReactNode;
   /** An extra control rendered on each member card — the touch re-placement entry. */
   renderMemberActions?: (contextId: string) => React.ReactNode;
   /** Long-press on a card — the touch re-placement entry (M1). */
@@ -68,6 +69,7 @@ export default function WorkflowMobileGraph({
   selectedContextId,
   onSelectContext,
   emptyLaneNames = [],
+  renderEmptyLane,
   renderMemberActions,
   onLongPressContext,
   joinConflict = null,
@@ -100,7 +102,7 @@ export default function WorkflowMobileGraph({
     >
       <div
         ref={scrollRef}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-md"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-md pb-[72px]"
       >
         <div
           className="flex flex-col gap-md"
@@ -130,21 +132,25 @@ export default function WorkflowMobileGraph({
               {...(onLongPressContext ? { onLongPressContext } : {})}
             />
           ))}
-          {emptyLaneNames.map((laneName) => (
-            <div
-              key={`empty:${laneName}`}
-              data-testid="mobile-lane-band"
-              data-lane={laneName}
-              className="flex items-center gap-sm rounded-lg border border-dashed border-border-default px-[11px] py-[9px]"
-            >
-              <span className="font-mono text-[0.78rem] font-semibold text-text-primary">
-                {laneName}
-              </span>
-              <span className="font-mono text-[0.7rem] text-text-tertiary">
-                empty · drop a context here
-              </span>
-            </div>
-          ))}
+          {emptyLaneNames.map((laneName) =>
+            renderEmptyLane ? (
+              <div key={`empty:${laneName}`}>{renderEmptyLane(laneName)}</div>
+            ) : (
+              <div
+                key={`empty:${laneName}`}
+                data-testid="mobile-lane-band"
+                data-lane={laneName}
+                className="flex items-center gap-sm rounded-lg border border-dashed border-border-default px-[11px] py-[9px]"
+              >
+                <span className="font-mono text-[0.78rem] font-semibold text-text-primary">
+                  {laneName}
+                </span>
+                <span className="font-mono text-[0.7rem] text-text-tertiary">
+                  empty · drop a context here
+                </span>
+              </div>
+            ),
+          )}
         </div>
       </div>
 

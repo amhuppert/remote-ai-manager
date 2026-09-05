@@ -77,6 +77,7 @@ export const createSessionUiSlice: SessionDetailSliceCreator<SessionUiSlice> = (
   requestMessageNav: (conversationId, messageIndex) =>
     set((state) => {
       state.messageNavRequest = { conversationId, messageIndex };
+      state.mobilePanel = "chat";
     }),
 
   clearMessageNavRequest: () =>

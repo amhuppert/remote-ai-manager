@@ -14,34 +14,13 @@ const meta = {
     devServerCounts: { running: 1, total: 2 },
     onDevServers: fn(),
   },
+  parameters: {
+    layout: "fullscreen",
+    viewport: { defaultViewport: "mobile1" },
+  },
   decorators: [
     (Story) => (
-      <div style={{ maxWidth: 390, margin: "0 auto" }}>
-        <style>{`
-          /* The trigger only renders below 768px (max-768:flex); force its mobile
-             appearance here so the story previews it on the desktop canvas. */
-          button[aria-label="Session actions"] {
-            display: flex !important;
-            align-items: center;
-            justify-content: center;
-            width: 36px;
-            height: 36px;
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-sm);
-            background: transparent;
-            color: var(--text-secondary);
-            font-size: 1.1rem;
-            cursor: pointer;
-            padding: 0;
-            line-height: 1;
-            letter-spacing: 2px;
-          }
-          button[aria-label="Session actions"]:hover {
-            background: var(--bg-hover);
-            color: var(--text-primary);
-            border-color: var(--border-default);
-          }
-        `}</style>
+      <div className="app p-md">
         <Story />
       </div>
     ),

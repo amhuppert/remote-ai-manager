@@ -801,9 +801,9 @@ describe("ConversationWorkspace", () => {
   it.each([
     ["viewDiff", "diff", "diff"],
     ["viewDocuments", "docs", "docs"],
-    ["viewAlignment", "diff", "alignment"],
+    ["viewAlignment", "alignment", "alignment"],
     ["viewSpecs", "specs", "specs"],
-    ["viewArtifact", "diff", "artifact"],
+    ["viewArtifact", "artifact", "artifact"],
   ] as const)(
     "%s shows its intended right-panel view",
     (hotkeyId, expectedMobilePanel, expectedRightPaneTab) => {

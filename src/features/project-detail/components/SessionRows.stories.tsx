@@ -83,7 +83,7 @@ const meta = {
   },
   decorators: [
     (Story) => (
-      <div style={{ padding: 24 }}>
+      <div className="p-xl max-768:p-0">
         <Story />
       </div>
     ),
@@ -209,10 +209,9 @@ export const NoBranchAction = {
 } satisfies Story;
 
 /**
- * Mobile viewport (≤768px). Rows collapse to a two-line card layout: status rail
- * + mode dot + name on top, branch chip + relative time below, kebab on the right.
- * Checkbox, target, prompts, status pill text, and TDD toggle move out of the row
- * (selection/sort behavior hidden — actions live in the kebab).
+ * Mobile viewport (≤768px). Selection and sorting lead the list. Session names
+ * and branches wrap; status, target, activity, TDD and the conversation shortcut
+ * are available in Session details.
  */
 export const Mobile = {
   args: {},
@@ -223,7 +222,7 @@ export const Mobile = {
   },
   decorators: [
     (Story: ComponentType): JSX.Element => (
-      <div style={{ width: 375 }}>
+      <div style={{ width: "100%", maxWidth: 375 }}>
         <Story />
       </div>
     ),

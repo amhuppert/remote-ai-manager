@@ -26,7 +26,7 @@ import { LANE_BAND_HEADER_WIDTH } from "@/lib/workflow-graph/lane-band-geometry"
 
 export interface EphemeralLaneBandProps {
   readonly lane: EphemeralLane;
-  readonly box: LaneBandBox;
+  readonly box?: LaneBandBox;
   /** Every other lane name on the canvas — an existing one means "use it". */
   readonly taken: readonly string[];
   readonly onRename: (id: string, name: string) => void;
@@ -90,18 +90,23 @@ export default function EphemeralLaneBand({
       data-lane-name={lane.name}
       {...(dropState ? { "data-drop-state": dropState } : {})}
       className={cn(
-        "pointer-events-auto absolute flex items-start gap-md rounded-[10px] border border-dashed px-[14px] py-[12px] font-mono",
+        "pointer-events-auto items-start gap-md rounded-[10px] border border-dashed px-[14px] py-[12px] font-mono",
+        box ? "absolute flex" : "grid grid-cols-[minmax(0,1fr)_44px]",
         dropState === "accepted" &&
           "border-cyan bg-[var(--cc-cyan-a05)] shadow-[inset_0_0_0_1px_var(--cc-cyan-a25)]",
         dropState === "refused" &&
           "border-[var(--cc-red-a25)] bg-[var(--cc-red-a10)]",
         !dropState && "border-border-strong",
       )}
-      style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+      style={
+        box
+          ? { left: box.x, top: box.y, width: box.width, height: box.height }
+          : undefined
+      }
     >
       <div
         className="flex shrink-0 flex-col gap-xs"
-        style={{ width: LANE_BAND_HEADER_WIDTH }}
+        style={box ? { width: LANE_BAND_HEADER_WIDTH } : undefined}
       >
         <label className="flex flex-col gap-xs text-[0.7rem] font-medium text-text-tertiary">
           lane name
@@ -119,12 +124,17 @@ export default function EphemeralLaneBand({
               // this field means.
               event.stopPropagation();
             }}
-            className="w-full rounded-sm border border-solid border-border-default bg-bg-surface px-[9px] py-[5px] font-mono text-[0.72rem] font-normal text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]"
+            className="w-full rounded-sm border border-solid border-border-default bg-bg-surface px-[9px] py-[5px] font-mono text-[0.72rem] font-normal text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] max-768:min-h-[44px]"
           />
         </label>
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-xs pt-[18px]">
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 flex-col gap-xs",
+          box ? "pt-[18px]" : "col-span-2 row-start-2",
+        )}
+      >
         <span
           data-testid="ephemeral-lane-membership"
           className="text-[0.7rem] leading-[1.6] font-normal text-text-tertiary"
@@ -158,7 +168,7 @@ export default function EphemeralLaneBand({
         type="button"
         onClick={() => onRemove(lane.id)}
         aria-label={`Remove lane ${lane.name}`}
-        className="inline-flex size-[20px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-text-tertiary transition-colors duration-150 hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]"
+        className="col-start-2 row-start-1 inline-flex size-[20px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-text-tertiary transition-colors duration-150 hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px] max-768:size-[44px]"
       >
         <CloseIcon size={12} />
       </button>

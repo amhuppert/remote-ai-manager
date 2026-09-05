@@ -10,7 +10,7 @@ type ConversationStatus = SessionActiveConversation["status"];
 // mutually-exclusive `data-[active=true]` vs `data-[active=false]:hover` gating
 // (docs/tailwind-conventions.md §1.2), so no reliance on variant emission order.
 const tabClass =
-  "group flex items-center gap-xs h-[28px] max-w-[220px] px-sm border border-solid border-border-dim rounded-md bg-transparent text-text-secondary font-mono text-[0.72rem] font-medium cursor-pointer shrink-0 transition-colors duration-150 ease-[ease] " +
+  "group flex items-center gap-xs h-[28px] max-768:h-[44px] max-w-[220px] px-sm border border-solid border-border-dim rounded-md bg-transparent text-text-secondary font-mono text-[0.72rem] font-medium cursor-pointer shrink-0 transition-colors duration-150 ease-[ease] " +
   "data-[active=true]:bg-cyan data-[active=true]:border-cyan data-[active=true]:text-text-inverse " +
   "data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:border-border-strong data-[active=false]:hover:text-text-primary";
 
@@ -44,7 +44,7 @@ const dotGlowClass: Record<ConversationStatus, string> = {
 const titleClass = "overflow-hidden text-ellipsis whitespace-nowrap";
 
 const hotkeyClass =
-  "shrink-0 text-text-tertiary text-[0.7rem] group-data-[active=true]:text-text-inverse group-data-[active=true]:opacity-70";
+  "max-768:hidden shrink-0 text-text-tertiary text-[0.7rem] group-data-[active=true]:text-text-inverse group-data-[active=true]:opacity-70";
 
 // `--border-accent`/`--bg-secondary` are undefined tokens; the legacy shorthands
 // invalidate at computed-value time (no border, transparent background). The
@@ -53,7 +53,7 @@ const renameInputClass =
   "min-w-0 flex-1 px-[4px] py-[1px] rounded-sm text-text-primary font-mono text-[0.72rem] font-medium outline-none [border:1px_solid_var(--border-accent)] [background:var(--bg-secondary)]";
 
 const closeClass =
-  "inline-flex items-center justify-center w-[16px] h-[16px] p-0 border-0 rounded-sm bg-transparent text-inherit cursor-pointer shrink-0 invisible transition-[background] duration-150 ease-[ease] " +
+  "inline-flex items-center justify-center w-[16px] h-[16px] max-768:size-[44px] max-768:visible p-0 border-0 rounded-sm bg-transparent text-inherit cursor-pointer shrink-0 invisible transition-[background] duration-150 ease-[ease] " +
   "group-hover:visible group-data-[active=true]:visible " +
   "group-data-[active=false]:hover:bg-bg-elevated group-data-[active=false]:hover:text-text-primary " +
   "group-data-[active=true]:hover:bg-cyan-dim group-data-[active=true]:hover:text-text-inverse";

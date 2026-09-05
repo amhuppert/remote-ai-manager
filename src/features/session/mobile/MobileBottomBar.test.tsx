@@ -27,9 +27,25 @@ afterEach(() => {
 });
 
 describe("MobileBottomBar", () => {
-  it("renders all six panel tabs", () => {
+  it("opens secondary conversation panels from session actions", () => {
+    const onSwitchPanel = vi.fn();
+    render(<MobileBottomBar {...makeProps({ onSwitchPanel })} />);
+    for (const [label, panel] of [
+      ["Alignment", "alignment"],
+      ["Memory", "memory"],
+      ["Compactions", "artifact"],
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      expect(onSwitchPanel).toHaveBeenLastCalledWith(panel);
+      expect(
+        screen.queryByRole("button", { name: "Close menu" }),
+      ).not.toBeInTheDocument();
+    }
+  });
+  it("keeps primary panels visible and secondary panels in More", () => {
     render(<MobileBottomBar {...makeProps()} />);
-    for (const label of ["Chat", "Diff", "Docs", "Notepad", "Specs", "Info"]) {
+    for (const label of ["Chat", "Diff", "Docs"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
@@ -52,11 +68,13 @@ describe("MobileBottomBar", () => {
       "docs" satisfies MobilePanelTab,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
     fireEvent.click(screen.getByRole("button", { name: "Specs" }));
     expect(onSwitchPanel).toHaveBeenLastCalledWith(
       "specs" satisfies MobilePanelTab,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
     fireEvent.click(screen.getByRole("button", { name: "Info" }));
     expect(onSwitchPanel).toHaveBeenLastCalledWith(
       "info" satisfies MobilePanelTab,

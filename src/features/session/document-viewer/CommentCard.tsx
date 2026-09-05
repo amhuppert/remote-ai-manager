@@ -101,7 +101,7 @@ export default function CommentCard({
   return (
     <div
       onKeyDown={handleKeyDown}
-      className="flex w-[320px] flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-elevated p-[12px] shadow-menu"
+      className="flex w-[320px] max-w-[calc(100vw-16px)] max-h-[calc(100dvh-16px)] overflow-y-auto flex-col gap-sm rounded-md border border-solid border-border-default bg-bg-elevated p-[12px] shadow-menu"
     >
       <div className="flex items-center gap-[6px]">
         <span
@@ -122,7 +122,7 @@ export default function CommentCard({
         </span>
       </div>
 
-      <blockquote className="m-0 max-h-[88px] overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l-2 border-solid border-l-cyan bg-bg-raised px-[10px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-secondary">
+      <blockquote className="m-0 [overflow-wrap:anywhere] max-h-[88px] overflow-y-auto overscroll-contain border-x-0 border-y-0 border-l-2 border-solid border-l-cyan bg-bg-raised px-[10px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-secondary">
         {comment.anchor.quote}
       </blockquote>
 
@@ -139,15 +139,16 @@ export default function CommentCard({
           className="w-full resize-none rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[6px] font-body text-[0.8rem] leading-[1.5] text-text-primary placeholder:text-text-tertiary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-1px]"
         />
       ) : (
-        <p className="m-0 font-body text-[0.8rem] leading-[1.5] whitespace-pre-wrap text-text-primary">
+        <p className="m-0 [overflow-wrap:anywhere] font-body text-[0.8rem] leading-[1.5] whitespace-pre-wrap text-text-primary">
           {comment.note}
         </p>
       )}
 
-      <div className="flex items-center justify-end gap-sm">
+      <div className="flex flex-wrap items-center justify-end gap-sm">
         {editing ? (
           <>
             <Button
+              touch
               variant="ghost"
               size="sm"
               type="button"
@@ -156,6 +157,7 @@ export default function CommentCard({
               Cancel
             </Button>
             <Button
+              touch
               variant="primary"
               size="sm"
               type="button"
@@ -167,10 +169,17 @@ export default function CommentCard({
           </>
         ) : (
           <>
-            <Button variant="ghost" size="sm" type="button" onClick={onRemove}>
+            <Button
+              touch
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={onRemove}
+            >
               Remove
             </Button>
             <Button
+              touch
               variant="default"
               size="sm"
               type="button"
@@ -180,6 +189,7 @@ export default function CommentCard({
             </Button>
             {comment.status === "pending" ? (
               <Button
+                touch
                 variant="primary"
                 size="sm"
                 type="button"

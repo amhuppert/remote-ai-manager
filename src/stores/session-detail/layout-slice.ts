@@ -1,10 +1,13 @@
 import type { LayoutMode } from "@/lib/sessions/schemas";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import {
   type LayoutSlice,
   type SessionDetailSliceCreator,
   initialState,
   validLayouts,
 } from "./types";
+
+const log = createClientLogger("session-detail.navigation");
 
 export const createLayoutSlice: SessionDetailSliceCreator<LayoutSlice> = (
   set,
@@ -39,11 +42,14 @@ export const createLayoutSlice: SessionDetailSliceCreator<LayoutSlice> = (
   switchMobilePanel: (panel) =>
     set((state) => {
       state.mobilePanel = panel;
+      if (panel !== "chat" && panel !== "info") state.rightPaneTab = panel;
+      log.debug("mobile_panel.selected", { panel });
     }),
 
   switchRightPaneTab: (tab) =>
     set((state) => {
       state.rightPaneTab = tab;
+      state.mobilePanel = tab;
     }),
 
   // Route the right pane to the artifact tab. Mirrors openDocument's reveal
@@ -53,6 +59,7 @@ export const createLayoutSlice: SessionDetailSliceCreator<LayoutSlice> = (
   openContextArtifactPanel: () =>
     set((state) => {
       state.rightPaneTab = "artifact";
+      state.mobilePanel = "artifact";
       if (state.layout === "panes" || state.layout === "conversation") {
         state.layout = "split";
       }

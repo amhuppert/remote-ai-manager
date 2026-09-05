@@ -10,11 +10,12 @@ import CommentCard, { type CommentCardSave } from "./CommentCard";
 const meta = {
   title: "Session/DocumentViewer/CommentCard",
   component: CommentCard,
+  parameters: { layout: "fullscreen" },
   decorators: [
     (Story) => (
       <div
         style={{
-          padding: 24,
+          padding: 8,
           background: "var(--bg-surface)",
           display: "inline-block",
         }}

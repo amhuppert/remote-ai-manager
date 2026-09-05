@@ -30,6 +30,7 @@ export const createNotepadPanelSlice: SessionDetailSliceCreator<
     set((state) => {
       state.openNotepadId = notepadId;
       state.rightPaneTab = "notepad";
+      state.mobilePanel = "notepad";
       if (state.layout === "panes" || state.layout === "conversation") {
         state.layout = "split";
       }

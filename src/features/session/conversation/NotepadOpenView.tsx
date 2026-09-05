@@ -65,7 +65,7 @@ export interface NotepadOpenViewProps {
 
 /** Breadcrumb chrome: one clickable ancestor, one inert separator. */
 const CRUMB_LINK_CLASS =
-  "inline-flex h-[24px] max-w-[40%] shrink-0 cursor-pointer items-center gap-[4px] truncate rounded-sm border border-solid border-transparent bg-transparent px-[4px] font-mono text-[0.72rem] text-text-secondary transition-colors duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]";
+  "inline-flex h-[24px] max-768:min-h-[44px] max-w-[40%] shrink-0 cursor-pointer items-center gap-[4px] truncate rounded-sm border border-solid border-transparent bg-transparent px-[4px] font-mono text-[0.72rem] text-text-secondary transition-colors duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]";
 
 const CRUMB_SEPARATOR_CLASS =
   "shrink-0 font-mono text-[0.72rem] text-text-tertiary";
@@ -722,7 +722,7 @@ export default function NotepadOpenView({
         <EmptyStateDesc>
           It may have been deleted. Go back to browse the rest.
         </EmptyStateDesc>
-        <Button variant="default" size="sm" onClick={closeNotepad}>
+        <Button touch variant="default" size="sm" onClick={closeNotepad}>
           Back to notepads
         </Button>
       </EmptyState>
@@ -792,7 +792,7 @@ export default function NotepadOpenView({
         )}
         <div
           className={cn(
-            "ml-auto flex shrink-0 items-center gap-[6px]",
+            "ml-auto flex shrink-0 items-center gap-[6px] max-768:shrink max-768:flex-wrap",
             historyOpen && "hidden",
           )}
         >
@@ -870,6 +870,7 @@ export default function NotepadOpenView({
             />
           ) : null}
           <Button
+            touch
             variant="ghost"
             size="sm"
             onClick={() => {
@@ -882,6 +883,7 @@ export default function NotepadOpenView({
           </Button>
           <WithTooltip label="Copy as Markdown">
             <Button
+              touch
               variant="ghost"
               size="sm"
               aria-label="Copy as Markdown"
@@ -904,8 +906,9 @@ export default function NotepadOpenView({
                 {authorKindLabel(liveBanner.authorKind)} wrote rev{" "}
                 {liveBanner.revision} · just now
               </span>
-              <div className="ml-auto flex shrink-0 items-center gap-[6px]">
+              <div className="ml-auto flex shrink-0 items-center gap-[6px] max-768:shrink max-768:flex-wrap">
                 <Button
+                  touch
                   variant="ghost"
                   size="sm"
                   onClick={() => openHistoryAtDiff(liveBanner.revision)}
@@ -913,6 +916,7 @@ export default function NotepadOpenView({
                   View diff
                 </Button>
                 <Button
+                  touch
                   variant="ghost"
                   size="sm"
                   onClick={() => setLiveBanner(null)}
@@ -933,8 +937,9 @@ export default function NotepadOpenView({
                   {liveBanner.revision} is already in history.
                 </span>
               </span>
-              <div className="ml-auto flex shrink-0 items-center gap-[6px]">
+              <div className="ml-auto flex shrink-0 items-center gap-[6px] max-768:shrink max-768:flex-wrap">
                 <Button
+                  touch
                   variant="ghost"
                   size="sm"
                   onClick={() => openHistoryAtDiff(liveBanner.revision)}
@@ -942,6 +947,7 @@ export default function NotepadOpenView({
                   Review rev {liveBanner.revision}
                 </Button>
                 <Button
+                  touch
                   variant="ghost"
                   size="sm"
                   onClick={() => setLiveBanner(null)}
@@ -959,6 +965,7 @@ export default function NotepadOpenView({
                 in history — nothing lost.
               </span>
               <Button
+                touch
                 variant="ghost"
                 size="sm"
                 onClick={() => setLiveBanner(null)}

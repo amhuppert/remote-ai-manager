@@ -71,7 +71,8 @@ const meta = {
         style={{
           display: "flex",
           flexDirection: "column",
-          width: "440px",
+          width: "100%",
+          maxWidth: "440px",
           height: "640px",
           background: "var(--bg-base)",
         }}

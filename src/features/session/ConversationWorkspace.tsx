@@ -309,15 +309,6 @@ export default function ConversationWorkspace({
         return;
       }
 
-      if (view === "docs") {
-        store.switchMobilePanel("docs");
-      } else if (view === "specs") {
-        store.switchMobilePanel("specs");
-      } else if (view === "notepad") {
-        store.switchMobilePanel("notepad");
-      } else {
-        store.switchMobilePanel("diff");
-      }
       store.switchRightPaneTab(view);
       handleLayoutChange("diff");
     },
