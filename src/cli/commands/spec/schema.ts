@@ -45,8 +45,6 @@ import {
   authoringStages,
   resolveAuthoringDials,
 } from "@/lib/specs/transitions";
-import type { DeliveryPlanDocument } from "@/lib/specs/delivery-plan";
-import { deliveryPlanEditRequestSchema } from "@/lib/specs/delivery-plan-views";
 import {
   NATIVE_SDD_GUIDANCE,
   nativeSddGuidanceSchema,
@@ -276,7 +274,7 @@ const KIND_NOTES: Record<SpecElementKind, readonly string[]> = {
     "tracedRequirementElementIds holds requirement elementIds, not R<n> handles.",
   ],
   task: [
-    "A task element states intended work on the spec's Plan revision. It is not a delivery plan: the graph that runs is authored directly with `cctl spec schema plan-edit` and `cctl spec plan edit <slug> --file <plan.json>`, and no task element compiles into it.",
+    "A task element states intended work on the spec's Plan revision. It is not a delivery plan: the graph that runs is authored directly with `cctl workflow replace <definitionId> --file <plan.json>`, and no task element compiles into it.",
     "All four id arrays hold elementIds, not handles.",
     "dependsOnTaskElementIds, laneGroup, executionLane and touchedPaths record the author's intended ordering, grouping, lane and surfaces. Nothing derives execution from them — the delivery-plan author reads them while placing contexts, tasks, edges and ownedPaths in the authored launch, where those decisions are actually made.",
   ],
@@ -389,30 +387,6 @@ const REMOVAL_BATCH_EXAMPLE = {
     { elementId: "task-publish-input-schemas", baseElementVersion: 2 },
     { elementId: "crit-schema-per-kind", baseElementVersion: 4 },
   ],
-};
-
-/**
- * A one-context plan: the smallest document that is legal under the whole
- * disposition and ownership law, so an author can copy it and grow it rather
- * than assemble the shape from the JSON Schema.
- */
-const PLAN_EDIT_EXAMPLE: DeliveryPlanDocument = {
-  schemaVersion: 3,
-  binding: {
-    dispositions: [
-      {
-        criterionElementId: "crit-schema-per-kind",
-        disposition: "in_scope",
-        deliveredByExecutionId: null,
-      },
-    ],
-    claims: [
-      {
-        contextId: "context-implement",
-        criterionElementIds: ["crit-schema-per-kind"],
-      },
-    ],
-  },
 };
 
 const DISCOVERED_TASK_EXAMPLE: Omit<TaskElementPayload, "kind"> = {
@@ -699,30 +673,8 @@ function otherDocuments(): SchemaDocument[] {
         "Capture amends the spec from inside a running execution; to continue authoring an approved spec outside one, use `cctl spec amend <slug>` and `cctl spec draft`.",
       ],
     },
-    planEditDocument(),
     guidanceDocument(),
   ];
-}
-
-function planEditDocument(): SchemaDocument {
-  const schema = jsonSchemaOf(deliveryPlanEditRequestSchema);
-  return {
-    id: "plan-edit",
-    title: "delivery plan edit document",
-    usedBy: ["cctl spec plan edit <slug> --file <plan.json>"],
-    jsonSchema: schema,
-    enums: collectEnums(schema, ""),
-    example: {
-      expectedDraftRevision: 1,
-      binding: PLAN_EDIT_EXAMPLE.binding,
-    },
-    notes: [
-      "`expectedDraftRevision` is the plan's compare-and-swap token, the way `baseElementVersion` is an element's: read it from `cctl spec plan get <slug> --json` and send back the revision you edited.",
-      "Every criterion of the pinned revision carries exactly one disposition. Each selected criterion needs at least one claim naming a stable authored graph source; dynamic contexts and execution outcomes stay graph-owned.",
-      "Graph configuration is edited on the linked managed definition with `cctl workflow get/edit <definitionId>` or Workflow Builder; plan edit accepts only the spec-owned binding.",
-      "Proposal freezes the current binding together with the managed definition's exact id, revision, and hash.",
-    ],
-  };
 }
 
 function guidanceDocument(): SchemaDocument {
@@ -963,7 +915,7 @@ export function runSpecSchema(
   if (selected === undefined) {
     const migration =
       requested === "scope"
-        ? "; execution-scope documents are retired — inspect the authored graph with `cctl spec schema plan-edit`"
+        ? "; execution-scope documents are retired — inspect the authored graph with `cctl workflow get <definitionId> --full`"
         : "";
     return usageFailure(
       `spec schema: unknown schema document ${JSON.stringify(requested)}${migration}; known documents: ${documents

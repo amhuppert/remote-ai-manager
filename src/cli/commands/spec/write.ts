@@ -1,3 +1,4 @@
+import { planReviewAdvisoryLine } from "../plan-review-advisory";
 import { z } from "zod";
 
 import { createLogger } from "@/lib/logging";
@@ -22,7 +23,6 @@ import {
 import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
 import { postLaunchPathActs } from "@/lib/specs/delivery-plan";
 import {
-  deliveryPlanEditRequestSchema,
   deliveryPlanMutationViewSchema,
   deliveryPlanPreviewViewSchema,
   specStartExecutionReceiptSchema,
@@ -3644,7 +3644,7 @@ export async function runSpecCapture(
       // The other path is named rather than re-offered: the run it
       // address is retired, so re-listing them as live options would send the
       // operator at an execution that no longer exists.
-      instruction: `This took the second post-launch path — ${paths[1]}. The other path — ${paths[0]} — addressed execution ${replacement.abandonedWorkflowExecutionId}, which is now retired, so it is no longer available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, edit it with \`cctl spec plan edit ${slug.value} --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
+      instruction: `This took the second post-launch path — ${paths[1]}. The other path — ${paths[0]} — addressed execution ${replacement.abandonedWorkflowExecutionId}, which is now retired, so it is no longer available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, author coverage with \`cctl workflow replace <definitionId> --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
     },
     "captured",
     captured,
@@ -3884,6 +3884,7 @@ function planReceiptDetail(
 ): string[] {
   return [
     ...deliveryPlanLedgerLines(view.ledger),
+    planReviewAdvisoryLine(view.reviewStatus).trimEnd(),
     ...(view.attempt.candidateHash === null
       ? []
       : [
@@ -3980,75 +3981,6 @@ export async function runSpecPlanOpen(
     slug.value,
     `opened delta-seeded attempt ${view.attempt.id} against ${view.attempt.pinnedRevisionId}`,
     view,
-  );
-}
-
-export async function runSpecPlanEdit(
-  rest: string[],
-  flags: GlobalFlags,
-  values: Record<string, string>,
-  env: CliEnv,
-  host: CliHost,
-): Promise<CliResult> {
-  const json = flags.json;
-  const denied = checkFlags(values, "spec plan edit", json);
-  if (denied) return denied;
-  const extra = noExtraPositionals(rest, 1, "plan edit", json);
-  if (extra) return extra;
-  const slug = validateSlug(rest[0], "plan edit", json);
-  if (!slug.ok) return slug.result;
-  const filePath = values["file"];
-  if (filePath === undefined) {
-    return usageFailure(
-      "spec plan edit requires --file <plan.json> — read the current document with `cctl spec plan get <slug> --json`, edit it, and send it back with the draftRevision you read",
-      json,
-    );
-  }
-  const raw = await host.readTextFile(filePath);
-  if (raw === null) {
-    return usageFailure(
-      `spec plan edit: cannot read plan file ${JSON.stringify(filePath)}`,
-      json,
-    );
-  }
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(raw);
-  } catch {
-    return usageFailure(
-      `spec plan edit: plan file ${JSON.stringify(filePath)} is not valid JSON`,
-      json,
-    );
-  }
-  const parsed = deliveryPlanEditRequestSchema.safeParse(decoded);
-  if (!parsed.success) {
-    return invalidFileResult(
-      "plan edit",
-      filePath,
-      "plan edit",
-      json,
-      parsed.error,
-    );
-  }
-  const resolved = await resolveProjectConversationContext(flags, env, host);
-  if (!resolved.ok) return resolved.result;
-
-  const response = await postPlanAction(
-    host,
-    resolved.context,
-    env,
-    slug.value,
-    "plan-edit",
-    parsed.data,
-    "plan edit",
-    json,
-  );
-  if (!response.ok) return response.result;
-  return planMutationResult(
-    json,
-    slug.value,
-    `wrote the plan document at draft revision ${parsed.data.expectedDraftRevision}`,
-    response.value,
   );
 }
 

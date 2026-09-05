@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/seeded-documents";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import {
@@ -117,6 +118,7 @@ export interface ManagedWorkflowDefinitionService {
     workflowDefinitionId: string;
     expectedRevision: number;
     stage: DeliveryPlanLaunchStage;
+    seededDocuments?: readonly SeededWorkflowDocument[];
   }): Promise<ManagedWorkflowDefinitionRecord>;
   getExact(input: {
     projectPath: string;
@@ -133,6 +135,7 @@ function finalizedDraft(input: {
   candidateId: string;
   launch: WorkflowDefinitionDraft;
   stage: DeliveryPlanLaunchStage;
+  seededDocuments?: readonly SeededWorkflowDocument[];
 }): WorkflowDefinitionDraft {
   return finalizeDeliveryPlanLaunch({
     specId: input.spec.id,
@@ -142,6 +145,7 @@ function finalizedDraft(input: {
     candidateId: input.candidateId,
     launch: input.launch,
     stage: input.stage,
+    seededDocuments: input.seededDocuments,
   });
 }
 
@@ -380,6 +384,7 @@ export function createManagedWorkflowDefinitionService(deps: {
         candidateId: existing.id,
         launch: existing,
         stage: input.stage,
+        seededDocuments: input.seededDocuments,
       });
       const restaged = await deps.storage.update(
         scope,
@@ -395,6 +400,7 @@ export function createManagedWorkflowDefinitionService(deps: {
         attemptId: input.attemptId,
         workflowDefinitionId: restaged.id,
         stage: input.stage,
+        seededDocumentCount: restaged.definition.seededDocuments?.length ?? 0,
         revision: restaged.revision,
         definitionHash: workflowDefinitionHash(restaged),
       });

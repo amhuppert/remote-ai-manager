@@ -54,7 +54,7 @@ export default function WorkflowBuilderInspectorRail({
     });
   }
   const [commentContextId, setCommentContextId] = useState(
-    management.binding.claims[0]?.contextId ?? "",
+    management.claims[0]?.contextId ?? "",
   );
   const [commentBody, setCommentBody] = useState("");
   const setHighlightedContextIds = _useGraphWorkflowBuilderStore(
@@ -220,7 +220,7 @@ export default function WorkflowBuilderInspectorRail({
                 ))}
               </ul>
             )}
-            {onComment && management.binding.claims.length > 0 && (
+            {onComment && management.claims.length > 0 && (
               <form
                 className="mt-sm flex flex-col gap-xs"
                 onSubmit={(event) => {
@@ -246,7 +246,7 @@ export default function WorkflowBuilderInspectorRail({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {management.binding.claims.map(({ contextId }) => (
+                    {management.claims.map(({ contextId }) => (
                       <SelectItem key={contextId} value={contextId}>
                         {contextId}
                       </SelectItem>

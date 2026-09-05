@@ -1,3 +1,4 @@
+import { isWorkflowDocumentPath } from "@/lib/workflow-graph/seeded-documents";
 import { commitContainsPath, getHeadCommit } from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -37,6 +38,7 @@ export async function lintCommittedSourceLocators(
 ): Promise<PlanLintWarning[]> {
   const concreteSources = definition.charter.sourcesOfTruth.flatMap(
     (source, index) =>
+      isWorkflowDocumentPath(source.locator) ||
       containsPlaceholderOpener(source.locator) ||
       !isLexicallyResolvableSourceLocator(source.locator)
         ? []

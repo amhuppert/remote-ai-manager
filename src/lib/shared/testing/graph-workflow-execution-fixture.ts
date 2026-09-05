@@ -357,6 +357,14 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
     name: "Maximal launch plan",
     description: "The authored document this run was launched from",
     definition: {
+      seededDocuments: [
+        {
+          relativePath: ".cc/graph-workflow-docs/reference.md",
+          contents: "Frozen reference bytes",
+          description: "Launch reference",
+          readWhen: "Before implementing the contract",
+        },
+      ],
       schemaVersion: 2,
       approvalRequired: true,
       origin: {
@@ -683,7 +691,11 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           // proves the union is additive (same tier blobs, no schema-version
           // bump) rather than a records-only cutover.
           acceptanceCriteria: [
-            { id: "tests-pass", statement: "All tests pass" },
+            {
+              id: "tests-pass",
+              statement: "All tests pass",
+              covers: ["spec-criterion-one"],
+            },
             { id: "build-green", statement: "The build is green" },
           ],
           // The owning grade, because it is the only one that carries a payload:

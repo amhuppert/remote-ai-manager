@@ -1,3 +1,5 @@
+import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
+import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { createHash, randomUUID } from "node:crypto";
 
 import { readConfig } from "@/lib/config/loader";
@@ -371,6 +373,7 @@ export async function createProductionSpecRouteServices(
 
   const managedDefinitions = createProductionManagedWorkflowDefinitionService();
   const deliveryPlan = createDeliveryPlanService({
+    planReviews: createPlanReviewService(createGraphPlanReviewsRepo(db)),
     plans: deliveryPlanRepo,
     managedDefinitions,
     reviewRepo,

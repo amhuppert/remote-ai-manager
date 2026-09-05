@@ -54,6 +54,28 @@ describe("SpecDeliveryBridge", () => {
     );
   });
 
+  it("shows the advisory review verdict and a way to read the findings", async () => {
+    const review = reviewView();
+    review.reviewStatus = {
+      state: "changes_requested",
+      reviewerConversationId: "reviewer",
+      reviewedAt: "2026-09-05T12:00:00.000Z",
+    };
+    api.json("GET", "/api/specs/command-center/native-sdd/plan/review", review);
+    renderWithQuery(
+      <SpecDeliveryBridge
+        detail={specControlsDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+    expect(
+      await screen.findByText(/Plan review: changes requested/),
+    ).toBeVisible();
+    expect(
+      screen.getByText("cctl workflow review --file <plan.json>"),
+    ).toBeVisible();
+  });
+
   it("links an existing attempt to the exact managed definition without plan controls", async () => {
     api.json(
       "GET",

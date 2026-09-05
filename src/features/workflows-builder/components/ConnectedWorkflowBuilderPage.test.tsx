@@ -175,7 +175,7 @@ function managedDetail(
     executionHref: null,
     bindingRevision: 2,
     deltaBasisExecutionId: null,
-    binding: { dispositions: [], claims: [] },
+    binding: { dispositions: [] },
     dispositionCounts: {},
     unresolvedItems: [],
     criterionRows: [],
@@ -227,7 +227,7 @@ function proposedDeliveryPlanResponse(): Record<string, unknown> {
     prelaunch: null,
     document: {
       schemaVersion: 3,
-      binding: { dispositions: [], claims: [] },
+      binding: { dispositions: [] },
     },
     workflowDefinition: {
       id: record.id,

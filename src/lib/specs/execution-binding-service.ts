@@ -123,7 +123,7 @@ export function createSpecExecutionBindingGraphContract(
     deriveContextAcceptanceCriteria() {
       return { ok: true, acceptanceCriteriaByContextId: {} };
     },
-    async loadPromptProjection(execution) {
+    async loadPromptProjection(execution, contextId) {
       const linked = resolveExecutionBinding(ports.prompts, execution);
       if (linked === null) return null;
       if (deps === undefined) {
@@ -139,7 +139,14 @@ export function createSpecExecutionBindingGraphContract(
           `Pinned revision ${linked.binding.pinnedRevisionId} for workflow execution ${execution.id} was not found`,
         );
       }
-      return buildSpecOwnershipProjection(linked.binding, snapshot);
+      return buildSpecOwnershipProjection(
+        linked.binding,
+        snapshot,
+        contextId,
+        execution.launchDocument?.definition.executionContexts.map(
+          (context) => context.id,
+        ),
+      );
     },
   };
 }

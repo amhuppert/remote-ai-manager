@@ -2022,7 +2022,19 @@ describe("graph workflow manager", () => {
       const manager = createGraphWorkflowManager({
         executionRepository: repository,
         async loadDefinition() {
-          return createWorkflowDefinitionRecord({ id: "project-def" });
+          return createWorkflowDefinitionRecord({
+            id: "project-def",
+            definition: createWorkflowDefinition({
+              seededDocuments: [
+                {
+                  relativePath: SEEDED_PATH,
+                  contents: "# spec",
+                  description: "the spec",
+                  readWhen: "before implementing",
+                },
+              ],
+            }),
+          });
         },
         now() {
           return "2026-06-21T00:00:00.000Z";
@@ -2043,14 +2055,6 @@ describe("graph workflow manager", () => {
           projectPath: PROJECT_PATH,
           sessionName: SESSION_NAME,
           definitionId: "project-def",
-          seededDocuments: [
-            {
-              relativePath: SEEDED_PATH,
-              contents: "# spec",
-              description: "the spec",
-              readWhen: "before implementing",
-            },
-          ],
         }),
       ).rejects.toThrow(/disk is full/);
       failWrites.value = false;

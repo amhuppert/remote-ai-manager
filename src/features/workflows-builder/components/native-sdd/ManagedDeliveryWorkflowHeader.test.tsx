@@ -29,7 +29,7 @@ function management(
         : null,
     bindingRevision: 4,
     deltaBasisExecutionId: "execution-0",
-    binding: { dispositions: [], claims: [] },
+    binding: { dispositions: [] },
     dispositionCounts: {},
     unresolvedItems: [],
     criterionRows: [],

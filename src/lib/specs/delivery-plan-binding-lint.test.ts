@@ -7,6 +7,7 @@ import type { DeliveryPlanBinding } from "./delivery-plan";
 import {
   deliveryPlanBindingAccountabilityGroups,
   lintDeliveryPlanBinding,
+  deriveDeliveryPlanClaims,
 } from "./delivery-plan-binding-lint";
 import type { SpecRevisionSnapshot } from "./schemas";
 
@@ -74,48 +75,50 @@ function binding(): DeliveryPlanBinding {
         deliveredByExecutionId: null,
       },
     ],
-    claims: [
-      {
-        contextId: "context-implement",
-        criterionElementIds: ["criterion-selected"],
-      },
-    ],
   };
 }
 
 function admitted(
-  input: {
-    stableIds?: string[];
-    covered?: boolean;
-    mustRunIds?: string[];
-  } = {},
+  input: { covers?: string[]; stableIds?: string[]; covered?: boolean } = {},
 ): Extract<AuthoredWorkflowLaunchAdmissionResult, { ok: true }> {
+  const launch = createMaximalAuthoredWorkflowLaunchFixture();
+  launch.definition.executionContexts = launch.definition.executionContexts.map(
+    (context, index) =>
+      index === 0
+        ? {
+            ...context,
+            id: "context-implement",
+            acceptanceCriteria: [
+              {
+                id: "observable-outcome",
+                statement: "The observable outcome holds.",
+                covers: input.covers ?? ["criterion-selected"],
+              },
+            ],
+          }
+        : context,
+  );
   return {
     ok: true,
-    launch: createMaximalAuthoredWorkflowLaunchFixture(),
+    launch,
     warnings: [],
     stableAccountabilityContextIds: input.stableIds ?? ["context-implement"],
     accountabilityGroupAnalysis: [
       {
         bindingKey: "criterion-selected",
         claimantContextIds: ["context-implement"],
-        stableExistingClaimantContextIds:
-          input.stableIds?.includes("context-implement") === false
-            ? []
-            : ["context-implement"],
+        stableExistingClaimantContextIds: input.stableIds ?? [
+          "context-implement",
+        ],
         mustRunClaimantContextIds:
-          input.mustRunIds ??
-          (input.covered === false ? [] : ["context-implement"]),
+          input.covered === false ? [] : ["context-implement"],
         covered: input.covered ?? true,
       },
     ],
   };
 }
 
-function codes(
-  candidateBinding: DeliveryPlanBinding,
-  admission = admitted(),
-): string[] {
+function codes(candidateBinding = binding(), admission = admitted()): string[] {
   return lintDeliveryPlanBinding({
     pinnedRevision: pinnedRevision(),
     binding: candidateBinding,
@@ -124,9 +127,14 @@ function codes(
 }
 
 describe("delivery-plan binding lint", () => {
-  it("accepts one disposition per criterion and one stable must-run claimant per selected criterion", () => {
-    expect(codes(binding())).toEqual([]);
-    expect(deliveryPlanBindingAccountabilityGroups(binding())).toEqual([
+  it("accepts selected coverage authored on context criteria without authored claims", () => {
+    expect(codes()).toEqual([]);
+    expect(
+      deliveryPlanBindingAccountabilityGroups(
+        binding(),
+        admitted().launch.definition,
+      ),
+    ).toEqual([
       {
         bindingKey: "criterion-selected",
         claimantContextIds: ["context-implement"],
@@ -135,119 +143,101 @@ describe("delivery-plan binding lint", () => {
   });
 
   it.each([
-    [
-      "missing disposition",
-      () => ({
-        ...binding(),
-        dispositions: binding().dispositions.slice(0, 1),
-      }),
+    ["coverage/selected-criterion-uncovered", { covers: [] }],
+    ["coverage/unknown-id", { covers: ["missing"] }],
+    ["coverage/unselected", { covers: ["criterion-deferred"] }],
+    ["coverage/unstable-context", { stableIds: [] }],
+    ["coverage/not-must-run", { covered: false }],
+  ])("locates %s and clears it with corrected coverage", (code, input) => {
+    const admission = admitted(input);
+    const issues = lintDeliveryPlanBinding({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission,
+    });
+    expect(issues).toContainEqual(expect.objectContaining({ code }));
+    expect(issues.every((issue) => issue.path[0] === "definition")).toBe(true);
+    expect(codes(binding(), admitted())).not.toContain(code);
+  });
+
+  it("deduplicates repeated coverage and permits multiple contexts to cover one criterion", () => {
+    const admission = admitted({
+      covers: ["criterion-selected", "criterion-selected"],
+    });
+    const context = admission.launch.definition.executionContexts[0];
+    if (!context) throw new Error("fixture requires an authored context");
+    admission.launch.definition.executionContexts.push({
+      ...context,
+      id: "context-verify",
+    });
+    expect(
+      deriveDeliveryPlanClaims(binding(), admission.launch.definition),
+    ).toEqual([
+      {
+        contextId: "context-implement",
+        criterionElementIds: ["criterion-selected"],
+      },
+      {
+        contextId: "context-verify",
+        criterionElementIds: ["criterion-selected"],
+      },
+    ]);
+  });
+
+  it("derives only selected coverage in graph-declared stable contexts", () => {
+    const admission = admitted({
+      covers: ["criterion-selected", "criterion-deferred", "missing"],
+    });
+    expect(
+      deriveDeliveryPlanClaims(binding(), admission.launch.definition, []),
+    ).toEqual([]);
+    expect(
+      deriveDeliveryPlanClaims(binding(), admission.launch.definition),
+    ).toEqual([
+      {
+        contextId: "context-implement",
+        criterionElementIds: ["criterion-selected"],
+      },
+    ]);
+  });
+
+  it("preserves the disposition integrity findings", () => {
+    const selected = binding().dispositions[0];
+    if (!selected) throw new Error("fixture requires a selected disposition");
+    expect(codes({ dispositions: [] })).toContain(
       "binding/disposition-missing",
-    ],
-    [
-      "duplicate disposition",
-      () => ({
-        ...binding(),
-        dispositions: [...binding().dispositions, binding().dispositions[0]!],
-      }),
-      "binding/disposition-duplicate",
-    ],
-    [
-      "unknown disposition criterion",
-      () => ({
-        ...binding(),
+    );
+    expect(
+      codes({ dispositions: [...binding().dispositions, selected] }),
+    ).toContain("binding/disposition-duplicate");
+    expect(
+      codes({
         dispositions: [
           ...binding().dispositions,
-          {
-            criterionElementId: "criterion-unknown",
-            disposition: "deferred" as const,
-            deliveredByExecutionId: null,
-          },
+          { ...selected, criterionElementId: "missing" },
         ],
       }),
-      "binding/disposition-criterion-unknown",
-    ],
-    [
-      "selected criterion without a claim",
-      () => ({ ...binding(), claims: [] }),
-      "binding/selected-criterion-unclaimed",
-    ],
-    [
-      "claim for an unknown criterion",
-      () => ({
-        ...binding(),
-        claims: [
-          {
-            contextId: "context-implement",
-            criterionElementIds: ["criterion-unknown"],
-          },
-        ],
+    ).toContain("binding/disposition-criterion-unknown");
+    expect(
+      codes({
+        dispositions: [{ ...selected, disposition: "pending_reaffirmation" }],
       }),
-      "binding/claim-criterion-unknown",
-    ],
-    [
-      "claim for an unselected criterion",
-      () => ({
-        ...binding(),
-        claims: [
-          {
-            contextId: "context-implement",
-            criterionElementIds: ["criterion-deferred"],
-          },
-        ],
-      }),
-      "binding/claim-criterion-unselected",
-    ],
-    [
-      "duplicate claim record",
-      () => ({
-        ...binding(),
-        claims: [...binding().claims, binding().claims[0]!],
-      }),
-      "binding/claim-context-duplicate",
-    ],
-    [
-      "duplicate criterion in one claim",
-      () => ({
-        ...binding(),
-        claims: [
-          {
-            contextId: "context-implement",
-            criterionElementIds: ["criterion-selected", "criterion-selected"],
-          },
-        ],
-      }),
-      "binding/claim-criterion-duplicate",
-    ],
-  ])("refuses %s", (_label, arrange, expectedCode) => {
-    expect(codes(arrange())).toContain(expectedCode);
+    ).toContain("binding/pending-reaffirmation");
+    expect(
+      codes({ dispositions: [{ ...selected, disposition: "reaffirmed" }] }),
+    ).toContain("binding/reaffirmed-without-delivery");
   });
 
-  it("refuses a claimant absent from graph-declared stable authored sources", () => {
-    expect(codes(binding(), admitted({ stableIds: [] }))).toContain(
-      "binding/claim-context-unstable",
-    );
-  });
-
-  it("refuses a selected criterion without a graph-owned conservative must-run claimant", () => {
-    expect(codes(binding(), admitted({ covered: false }))).toContain(
-      "binding/selected-criterion-not-must-run",
-    );
-  });
-
-  it("imposes no validator, placement, commit, script, evidence-kind, loop, or generated-lineage modality", () => {
-    const admission = admitted();
-    admission.launch.definition.executionContexts =
-      admission.launch.definition.executionContexts.map((context) =>
-        context.id === "context-implement"
-          ? {
-              ...context,
-              placement: { lane: "review", mode: "readOnly" as const },
-              contextValidator: { enabled: false, assignments: [] },
-              scriptValidator: { commands: [] },
-            }
-          : context,
-      );
-
-    expect(codes(binding(), admission)).toEqual([]);
+  it("names covering records and the always-run closeout remedy", () => {
+    const issues = lintDeliveryPlanBinding({
+      pinnedRevision: pinnedRevision(),
+      binding: binding(),
+      admission: admitted({ covered: false }),
+    });
+    const message = issues.find(
+      (issue) => issue.code === "coverage/not-must-run",
+    )?.message;
+    expect(message).toContain("context-implement/observable-outcome");
+    expect(message).toContain("always-run closeout");
   });
 });

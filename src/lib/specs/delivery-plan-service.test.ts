@@ -1,3 +1,9 @@
+import { collectStableAccountabilityContextIds } from "@/lib/workflow-graph/authored-accountability";
+import { locateAuthoredAccountabilityCoverage } from "@/lib/workflow-graph/authored-accountability-coverage";
+import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
+import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/schemas";
+import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
+import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -49,6 +55,9 @@ import { validateCharterSourceAuthoredShapes } from "@/lib/workflow-graph/valida
 import {
   NATIVE_SDD_CLAIMS_SOURCE_ID,
   NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
+  deliveryPlanCandidateRecordSchema,
+  deliveryPlanCandidateManifestV3Schema,
+  deliveryPlanCandidateClaims,
 } from "./delivery-plan";
 import { renderSeededDeliveryPlanMission } from "./delivery-plan-charter-seed";
 import {
@@ -58,7 +67,12 @@ import {
 import { mergeServerOwnedRegions } from "@/lib/workflow-graph/locked-regions";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import type { DeliveryPlanBinding } from "./delivery-plan";
-import { workflowDefinitionHash } from "./delivery-plan-hash";
+import {
+  workflowDefinitionHash,
+  deliveryPlanBindingHash,
+  deliveryPlanCandidateHash,
+} from "./delivery-plan-hash";
+import { stableStringify } from "@/lib/state-store/serialization";
 import {
   createDeliveryPlanService,
   type DeliveryPlanService,
@@ -180,7 +194,6 @@ function deferredBinding(): DeliveryPlanBinding {
       disposition: "deferred" as const,
       deliveredByExecutionId: null,
     })),
-    claims: [],
   };
 }
 
@@ -206,6 +219,7 @@ function createWorld(
     plans: repos.plans,
     managedDefinitions,
     reviewRepo: repos.review,
+    planReviews: createPlanReviewService(createGraphPlanReviewsRepo(db)),
     events: repos.events,
     runInTransaction: (operation) => db.transaction(operation).immediate(),
     currentApprovedRevision: async () => pinnedRevision(),
@@ -339,7 +353,7 @@ function countAbandonTransitions(db: Db, attemptId: string): number {
   }).length;
 }
 
-describe("delivery-plan service v3 lifecycle", () => {
+describe("delivery-plan service v4 lifecycle", () => {
   let db: Db;
 
   beforeEach(() => {
@@ -350,6 +364,352 @@ describe("delivery-plan service v3 lifecycle", () => {
 
   afterEach(() => db.close());
 
+  it.each(["draft", "proposed", "approved", "parked"] as const)(
+    "requires an unlaunched v3 %s to reopen into v4 while preserving candidate history",
+    async (status) => {
+      const world = createWorld(db);
+      const opened = await openClean(world);
+      const legacyBinding = { ...opened.document.binding, claims: [] };
+      let snapshotId: string | null = null;
+      let historicalBytes: string | null = null;
+      if (status !== "draft") {
+        const proposed = await world.service.propose({
+          spec: SPEC,
+          actor: AGENT,
+        });
+        if (!proposed.ok)
+          throw new Error(proposed.refusal.unmetConditions.join(" "));
+        snapshotId = proposed.value.attempt.proposedSnapshotId;
+        if (!snapshotId)
+          throw new Error("fixture requires a candidate snapshot");
+        const snapshot = world.repos.plans.findSnapshotById(snapshotId);
+        const record = deliveryPlanCandidateRecordSchema.parse(
+          JSON.parse(snapshot?.content_json ?? "null"),
+        );
+        const legacy = deliveryPlanCandidateManifestV3Schema.parse({
+          protocol: "native-sdd-delivery-candidate/v3",
+          schemaVersion: 3,
+          specId: record.specId,
+          attemptId: record.attemptId,
+          candidateId: record.candidateId,
+          pinnedRevisionId: record.pinnedRevisionId,
+          draftRevision: record.draftRevision,
+          workflowDefinition: record.workflowDefinition,
+          binding: {
+            ...legacyBinding,
+            claims: deliveryPlanCandidateClaims(record),
+          },
+          bindingHash: deliveryPlanBindingHash(legacyBinding),
+        });
+        historicalBytes = stableStringify(legacy);
+        const candidateHash = deliveryPlanCandidateHash(legacy);
+        db.prepare(
+          "UPDATE spec_delivery_plan_snapshots SET content_json = ?, candidate_hash = ? WHERE id = ?",
+        ).run(historicalBytes, candidateHash, snapshotId);
+        if (status === "approved" || status === "parked") {
+          world.repos.plans.recordTransition({
+            attemptId: opened.attempt.id,
+            occurredAt: NOW,
+            actor: HUMAN,
+            transition: {
+              kind: "approve",
+              candidateId: legacy.candidateId,
+              candidateHash,
+            },
+          });
+        }
+        if (status === "parked") {
+          world.repos.plans.recordTransition({
+            attemptId: opened.attempt.id,
+            occurredAt: NOW,
+            actor: HUMAN,
+            transition: {
+              kind: "park",
+              candidateId: legacy.candidateId,
+              candidateHash,
+              reason: "Review before launch",
+            },
+          });
+        }
+      }
+      db.prepare(
+        "UPDATE spec_delivery_plan_attempts SET content_json = ? WHERE id = ?",
+      ).run(
+        stableStringify({ schemaVersion: 3, binding: legacyBinding }),
+        opened.attempt.id,
+      );
+
+      const launch = await world.service.resolveLaunch({ spec: SPEC });
+      expect(launch.kind).toBe("refused");
+      if (launch.kind === "refused")
+        expect(launch.refusal.instruction).toContain(
+          `spec plan reopen ${SPEC.slug}`,
+        );
+      const reopened = await world.service.reopen({
+        spec: SPEC,
+        actor: AGENT,
+        reason: "Author criterion coverage",
+      });
+      expect(reopened.ok).toBe(true);
+      if (!reopened.ok) return;
+      expect(reopened.value.document).toEqual({
+        schemaVersion: 4,
+        binding: { dispositions: legacyBinding.dispositions },
+      });
+      expect(reopened.value.attempt.status).toBe("draft");
+      expect(reopened.value.approval).toBeNull();
+      expect(reopened.value.prelaunch).toBeNull();
+      if (snapshotId !== null)
+        expect(
+          world.repos.plans.findSnapshotById(snapshotId)?.content_json,
+        ).toBe(historicalBytes);
+    },
+  );
+
+  it.each(["approved", "changes_requested"] as const)(
+    "shows an advisory %s review on proposal and sign-off",
+    async (verdict) => {
+      const world = createWorld(db);
+      const opened = await openClean(world);
+      const definition = await world.managedDefinitions.get({
+        projectPath: PROJECT_PATH,
+        workflowDefinitionId: opened.workflowDefinition.id,
+      });
+      if (!definition) throw new Error("Missing definition");
+      createGraphPlanReviewsRepo(db).record({
+        id: "review-plan",
+        definitionHash: canonicalPlanDefinitionHash(definition.definition),
+        reviewerConversationId: "reviewer",
+        verdict,
+        reviewedAt: NOW,
+        findings: verdict === "changes_requested" ? "Review findings" : null,
+      });
+      const proposed = await world.service.propose({
+        spec: SPEC,
+        actor: AGENT,
+      });
+      if (!proposed.ok)
+        throw new Error(proposed.refusal.unmetConditions.join(" "));
+      expect(proposed.value).toHaveProperty("reviewStatus.state", verdict);
+      const { candidateId, candidateHash } = proposed.value.attempt;
+      if (!candidateId || !candidateHash) throw new Error("Missing candidate");
+      const signed = await world.service.signOff({
+        spec: SPEC,
+        actor: HUMAN,
+        approver: "Alex",
+        candidateId,
+        candidateHash,
+      });
+      expect(signed).toMatchObject({
+        ok: true,
+        value: { reviewStatus: { state: verdict } },
+      });
+    },
+  );
+
+  it("keeps proposal advisory when the review lookup throws", async () => {
+    const world = createWorld(db, {
+      planReviews: {
+        findLatestTerminalReview() {
+          throw new Error("Review store unavailable");
+        },
+      },
+    });
+    await openClean(world);
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    expect(proposed).toMatchObject({
+      ok: true,
+      value: { reviewStatus: { state: "unreviewed" } },
+    });
+  });
+
+  it.each([
+    ["coverage/selected-criterion-uncovered", "context-spawner", []],
+    ["coverage/not-must-run", "context-alternate", ["criterion-one"]],
+    ["coverage/unknown-id", "context-spawner", ["missing-criterion"]],
+    ["coverage/unselected", "context-spawner", ["criterion-two"]],
+    ["coverage/unstable-context", "context-loop-worker", ["criterion-one"]],
+  ] as const)(
+    "clears %s through graph replacement with validate/status/propose parity",
+    async (code, contextId, covers) => {
+      const world = createWorld(db, {
+        admitLaunch: async ({ launch, accountabilityGroups }) => ({
+          ok: true,
+          launch,
+          warnings: [],
+          stableAccountabilityContextIds: collectStableAccountabilityContextIds(
+            launch.definition,
+          ),
+          accountabilityGroupAnalysis: locateAuthoredAccountabilityCoverage({
+            source: { kind: "authored", definition: launch.definition },
+            groups: accountabilityGroups,
+          }),
+        }),
+      });
+      const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+      if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+      const binding = {
+        dispositions: opened.value.document.binding.dispositions.map((entry) =>
+          entry.criterionElementId === "criterion-two"
+            ? { ...entry, disposition: "deferred" as const }
+            : entry,
+        ),
+      };
+      const dispositioned = await world.service.edit({
+        spec: SPEC,
+        actor: HUMAN,
+        expectedDraftRevision: opened.value.attempt.draftRevision,
+        binding,
+      });
+      if (!dispositioned.ok)
+        throw new Error(dispositioned.refusal.unmetConditions.join(" "));
+      const launch = createMaximalAuthoredWorkflowLaunchFixture();
+      launch.definition.executionContexts =
+        launch.definition.executionContexts.map((context) => ({
+          ...context,
+          acceptanceCriteria: [
+            {
+              id: "observable",
+              statement: "The selected outcome is observable",
+              covers: context.id === contextId ? [...covers] : [],
+            },
+          ],
+        }));
+      const definition = await world.managedDefinitions.replaceLaunch({
+        workflowDefinitionId: opened.value.workflowDefinition.id,
+        launch,
+      });
+      const before = await world.service.read({ spec: SPEC });
+      if (!before.ok) throw new Error(before.refusal.unmetConditions.join(" "));
+      expect(before.value.health.findings).toContainEqual(
+        expect.objectContaining({ ruleId: code }),
+      );
+      const preflight = await world.service.preflight({
+        spec: SPEC,
+        attemptId: opened.value.attempt.id,
+        workflowDefinitionId: definition.id,
+        launch: definition,
+      });
+      if (!preflight.ok) throw new Error(preflight.refusal.message);
+      expect(preflight.findings).toEqual(before.value.health.findings);
+      const refused = await world.service.propose({ spec: SPEC, actor: AGENT });
+      if (refused.ok) throw new Error("Invalid coverage unexpectedly proposed");
+      expect(refused.refusal.findings).toEqual(before.value.health.findings);
+      launch.definition.executionContexts =
+        launch.definition.executionContexts.map((context) => ({
+          ...context,
+          acceptanceCriteria: [
+            {
+              id: "observable",
+              statement: "The selected outcome is observable",
+              covers: context.id === "context-spawner" ? ["criterion-one"] : [],
+            },
+          ],
+        }));
+      await world.managedDefinitions.replaceLaunch({
+        workflowDefinitionId: definition.id,
+        launch,
+      });
+      const after = await world.service.read({ spec: SPEC });
+      if (!after.ok) throw new Error(after.refusal.unmetConditions.join(" "));
+      expect(after.value.health.findings).not.toContainEqual(
+        expect.objectContaining({ ruleId: code }),
+      );
+      expect(after.value.health.blocking).toBe(0);
+      const proposed = await world.service.propose({
+        spec: SPEC,
+        actor: AGENT,
+      });
+      expect(proposed.ok, JSON.stringify(proposed)).toBe(true);
+    },
+  );
+
+  it("freezes coverage-derived claims in a v4 candidate after graph replacement", async () => {
+    const world = createWorld(db, {
+      admitLaunch: async ({ launch, accountabilityGroups }) => ({
+        ok: true,
+        launch,
+        warnings: [],
+        stableAccountabilityContextIds: launch.definition.executionContexts.map(
+          (context) => context.id,
+        ),
+        accountabilityGroupAnalysis: accountabilityGroups.map((group) => ({
+          ...group,
+          claimantContextIds: [...group.claimantContextIds],
+          stableExistingClaimantContextIds: [...group.claimantContextIds],
+          mustRunClaimantContextIds: [...group.claimantContextIds],
+          covered: group.claimantContextIds.length > 0,
+        })),
+      }),
+    });
+    const opened = await world.service.open({ spec: SPEC, actor: AGENT });
+    if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
+    const definition = createWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context, index) => ({
+        ...context,
+        acceptanceCriteria: [
+          {
+            id: "observable-outcome",
+            statement: "The observable outcome holds.",
+            covers: index === 0 ? ["criterion-one", "criterion-two"] : [],
+          },
+        ],
+      }),
+    );
+    definition.seededDocuments = [
+      {
+        relativePath: ".cc/graph-workflow-docs/research.md",
+        contents: "Authored research",
+        description: "Research",
+        readWhen: "Before planning",
+      },
+    ];
+    await world.managedDefinitions.replaceLaunch({
+      workflowDefinitionId: opened.value.workflowDefinition.id,
+      launch: makeLaunchDocument(definition),
+    });
+    const proposed = await world.service.propose({ spec: SPEC, actor: AGENT });
+    expect(proposed.ok).toBe(true);
+    if (!proposed.ok) return;
+    const snapshot = world.repos.plans.findSnapshotsByAttemptId(
+      proposed.value.attempt.id,
+    )[0];
+    expect(snapshot).toBeDefined();
+    const manifest: unknown = JSON.parse(snapshot?.content_json ?? "null");
+    expect(manifest).toMatchObject({
+      schemaVersion: 4,
+      protocol: "native-sdd-delivery-candidate/v4",
+      claims: [
+        {
+          contextId: "context-plan",
+          criterionElementIds: ["criterion-one", "criterion-two"],
+        },
+      ],
+    });
+    expect(manifest).not.toHaveProperty("binding.claims");
+    const frozen = await world.managedDefinitions.get({
+      projectPath: PROJECT_PATH,
+      workflowDefinitionId: proposed.value.workflowDefinition.id,
+    });
+    const documents = frozen?.definition.seededDocuments;
+    expect(
+      documents?.find((document) =>
+        document.relativePath.endsWith("/context-plan.md"),
+      )?.contents,
+    ).toContain("criterion-one");
+    expect(
+      documents?.find((document) =>
+        document.relativePath.endsWith("/claims.md"),
+      )?.contents,
+    ).toContain("## Context context-plan");
+    expect(
+      documents?.find((document) =>
+        document.relativePath.endsWith("/research.md"),
+      )?.contents,
+    ).toBe("Authored research");
+  });
+
   it("opens a binding-only plan backed by a real managed definition", async () => {
     const world = createWorld(db);
 
@@ -357,10 +717,11 @@ describe("delivery-plan service v3 lifecycle", () => {
     if (!opened.ok) throw new Error(opened.refusal.unmetConditions.join(" "));
 
     expect(opened.value.document).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       binding: opened.value.document.binding,
     });
     expect(opened.value.document).not.toHaveProperty("launch");
+    expect(opened.value.document.binding).not.toHaveProperty("claims");
     expect(opened.value.workflowDefinition).toMatchObject({
       id: opened.value.attempt.id,
       revision: 1,
@@ -420,31 +781,32 @@ describe("delivery-plan service v3 lifecycle", () => {
       (disposition) => disposition.disposition === "in_scope",
     );
 
-    const edited = await world.service.edit({
-      spec: SPEC,
-      expectedDraftRevision: opened.value.attempt.draftRevision,
-      binding: {
-        dispositions: opened.value.document.binding.dispositions,
-        claims: [
+    const definition = createWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context, index) => ({
+        ...context,
+        acceptanceCriteria: [
           {
-            contextId: "context-the-graph-does-not-declare",
-            criterionElementIds: selected.map(
-              (disposition) => disposition.criterionElementId,
-            ),
+            id: "covered-outcome",
+            statement: "The outcome holds.",
+            covers:
+              index === 0
+                ? selected.map((entry) => entry.criterionElementId)
+                : [],
           },
         ],
-      },
-      actor: AGENT,
+      }),
+    );
+    await world.managedDefinitions.replaceLaunch({
+      workflowDefinitionId: opened.value.workflowDefinition.id,
+      launch: makeLaunchDocument(definition),
     });
-    if (!edited.ok) throw new Error(edited.refusal.unmetConditions.join(" "));
-
-    // The claim record exists and names every selected criterion, but its
-    // context is not a graph-declared stable authored accountability source, so
-    // the ledger reports the same deficit the gate refuses on.
+    const read = await world.service.read({ spec: SPEC });
+    if (!read.ok) throw new Error(read.refusal.unmetConditions.join(" "));
     expect(
-      edited.value.health.findings.map((finding) => finding.ruleId),
-    ).toContain("binding/claim-context-unstable");
-    expect(edited.value.ledger).toMatchObject({
+      read.value.health.findings.map((finding) => finding.ruleId),
+    ).toContain("coverage/unstable-context");
+    expect(read.value.ledger).toMatchObject({
       selected: selected.length,
       claimed: 0,
       unclaimed: selected.length,
@@ -884,7 +1246,7 @@ describe("delivery-plan service v3 lifecycle", () => {
       proposed.value.attempt.proposedSnapshotId!,
     );
     expect(JSON.parse(snapshot?.content_json ?? "null")).toMatchObject({
-      protocol: "native-sdd-delivery-candidate/v3",
+      protocol: "native-sdd-delivery-candidate/v4",
       candidateId: edited.workflowDefinition.id,
       workflowDefinition: {
         id: edited.workflowDefinition.id,
@@ -1051,7 +1413,6 @@ describe("delivery-plan service v3 lifecycle", () => {
         disposition: "pending_reaffirmation" as const,
         deliveredByExecutionId: EARLIER_EXECUTION_ID,
       })),
-      claims: [],
     };
     const edited = await world.service.edit({
       spec: SPEC,
@@ -1603,14 +1964,13 @@ describe("delivery-plan planning telemetry", () => {
     );
     expect(proposeEvaluations).toHaveLength(1);
     // `blocking` counts findings and `codes` names rules, so a seeded draft
-    // that owes six acts under three rules reports both numbers.
+    // that owes four acts under two rules reports both numbers.
     expect(proposeEvaluations[0]).toEqual({
       slug: "delivery-plan",
       surface: "propose",
-      blocking: 6,
+      blocking: 4,
       codes: [
-        "binding/selected-criterion-unclaimed",
-        "binding/selected-criterion-not-must-run",
+        "coverage/selected-criterion-uncovered",
         "launch/charter-unauthored",
       ],
     });

@@ -1,3 +1,10 @@
+import type { PlanReviewLookup } from "@/lib/workflows/plan-review/service";
+import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/schemas";
+import type { PlanReviewAdvisory } from "@/lib/workflows/plan-review/status-schemas";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
+import { buildPinnedSpecDocument, buildContextSpecDocument } from "./export";
+import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
+import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
 import { createLogger } from "@/lib/logging";
 import { stableStringify } from "@/lib/state-store/serialization";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -20,6 +27,9 @@ import {
   canonicalDeliveryPlanEnvelopeBytes,
   deliveryPlanAttemptBlocksReplacement,
   deliveryPlanCandidateRecordSchema,
+  deliveryPlanCandidateClaims,
+  deliveryPlanBindingSchema,
+  type DeliveryPlanClaim,
   deliveryPlanDocumentSchema,
   exclusionDispositionFromDeliveryPlan,
   executionDispositionFromDeliveryPlan,
@@ -38,7 +48,10 @@ import {
   admitExecutionStartForAttemptInTransaction,
   type DeliveryPlanExecutionStartAdmission,
 } from "./delivery-plan-approval";
-import { deliveryPlanBindingAccountabilityGroups } from "./delivery-plan-binding-lint";
+import {
+  deliveryPlanBindingAccountabilityGroups,
+  deriveDeliveryPlanClaims,
+} from "./delivery-plan-binding-lint";
 import {
   deliveryPlanBindingHash,
   deliveryPlanCandidateHash,
@@ -115,6 +128,7 @@ const logger = createLogger("specs.delivery-plan");
 
 export interface DeliveryPlanServiceDeps {
   plans: SpecDeliveryPlanRepo;
+  planReviews: PlanReviewLookup;
   reviewRepo: Pick<SpecReviewRepo, "saveApproval" | "insertGateAdmission">;
   events: SpecEventsPublisher;
   managedDefinitions: ManagedWorkflowDefinitionService;
@@ -237,6 +251,7 @@ export interface DeliveryPlanLaunchCandidate {
     definitionHash: string;
   };
   binding: DeliveryPlanBinding;
+  claims: DeliveryPlanClaim[];
   scope: ExecutionScope;
   dispositions: readonly {
     criterionElementId: string;
@@ -312,6 +327,25 @@ export interface DeliveryPlanService {
     reason: string;
     actor: ActorProvenance;
   }): Promise<PlanResult<{ attemptId: string }>>;
+}
+
+function coverageUpgradeRefusal(
+  attempt: SpecDeliveryPlanAttemptRow,
+  slug: string,
+): Refusal | null {
+  if (attempt.status === "launched" || attempt.status === "abandoned")
+    return null;
+  const document = deliveryPlanDocumentSchema.parse(
+    JSON.parse(attempt.content_json),
+  );
+  if (document.schemaVersion === 4) return null;
+  return {
+    code: "plan_status_conflict",
+    unmetConditions: [
+      "This v3 attempt must be reopened into v4 so its claims derive from criterion coverage; any signed candidate needs fresh sign-off.",
+    ],
+    instruction: `Run \`cctl spec plan reopen ${slug} --reason <why>\`, author covers through workflow replace, then propose and sign off the v4 candidate.`,
+  };
 }
 
 export function createDeliveryPlanService(
@@ -473,6 +507,23 @@ export function createDeliveryPlanService(
     document: DeliveryPlanDocument,
     submittedLaunch?: WorkflowDefinitionMutation,
   ): Promise<DeliveryPlanDraftHealth> {
+    const upgrade = coverageUpgradeRefusal(attempt, spec.slug);
+    if (upgrade !== null) {
+      const message = `${upgrade.unmetConditions.join(" ")} ${upgrade.instruction}`;
+      return {
+        findings: [
+          {
+            ruleId: "plan/coverage-upgrade-required",
+            severity: "blocks_propose",
+            elementHandle: attempt.id,
+            message,
+          },
+        ],
+        unresolved: [],
+        refusalConditions: [message],
+        claims: unprovenDeliveryPlanClaims(document.binding),
+      };
+    }
     if (attempt.status !== "draft") {
       return {
         findings: [],
@@ -528,6 +579,7 @@ export function createDeliveryPlanService(
         launch,
         accountabilityGroups: deliveryPlanBindingAccountabilityGroups(
           document.binding,
+          launch.definition,
         ),
       }),
     });
@@ -586,11 +638,38 @@ export function createDeliveryPlanService(
     return reasoned({
       code: "lint_blocked",
       unmetConditions,
-      // The conditions come from two documents now, so the instruction names
-      // both surfaces: an agent told only about the binding cannot clear a
-      // charter finding at all.
-      instruction: `Correct each condition above — the binding in \`cctl spec plan edit ${spec.slug} --file <plan.json>\`, the charter through the \`cctl workflow replace\` its condition names — then propose again.`,
+      instruction:
+        "Correct coverage and charter findings with cctl workflow replace; settle human dispositions in Spec Studio, then propose again.",
     });
+  }
+
+  function planReview(
+    definition: ManagedWorkflowDefinitionRecord | null,
+    expectedHash: string,
+  ): PlanReviewAdvisory {
+    if (
+      definition === null ||
+      workflowDefinitionHash(definition) !== expectedHash
+    )
+      return { state: "unreviewed" };
+    try {
+      const review = deps.planReviews.findLatestTerminalReview(
+        canonicalPlanDefinitionHash(definition.definition),
+      );
+      return review === null
+        ? { state: "unreviewed" }
+        : {
+            state: review.verdict,
+            reviewerConversationId: review.reviewerConversationId,
+            reviewedAt: review.reviewedAt,
+          };
+    } catch (error) {
+      logger.warn("specs.delivery-plan.review_lookup_failed", {
+        workflowDefinitionId: definition.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { state: "unreviewed" };
+    }
   }
 
   async function project(
@@ -603,7 +682,7 @@ export function createDeliveryPlanService(
       frozenCandidate === null
         ? deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json))
         : deliveryPlanDocumentSchema.parse({
-            schemaVersion: 3,
+            schemaVersion: frozenCandidate.schemaVersion,
             binding: frozenCandidate.binding,
           });
     const approval = parseApproval(attempt);
@@ -662,10 +741,25 @@ export function createDeliveryPlanService(
                 !sameCandidate(current, prelaunch.candidate),
             },
       document,
+      claims:
+        frozenCandidate !== null
+          ? deliveryPlanCandidateClaims(frozenCandidate)
+          : document.schemaVersion === 3
+            ? document.binding.claims
+            : currentDefinition === null
+              ? []
+              : deriveDeliveryPlanClaims(
+                  document.binding,
+                  currentDefinition.definition,
+                ),
       workflowDefinition: {
         ...workflowDefinition,
         builderHref: `/projects/${encodeURIComponent(deps.projectName?.(spec.projectPath) ?? spec.projectPath.split("/").filter(Boolean).at(-1) ?? spec.projectPath)}/workflows?definition=${encodeURIComponent(workflowDefinition.id)}`,
       },
+      reviewStatus: planReview(
+        currentDefinition,
+        workflowDefinition.definitionHash,
+      ),
       health: healthView(health),
       ledger: deliveryPlanLedgerSummary({
         binding: document.binding,
@@ -872,7 +966,7 @@ export function createDeliveryPlanService(
               launch: admittedDocument.value.launch,
             });
             const planDocument = deliveryPlanDocumentSchema.parse({
-              schemaVersion: 3,
+              schemaVersion: 4,
               binding: admittedDocument.value.binding,
             });
             let opened: SpecDeliveryPlanAttemptRow;
@@ -950,8 +1044,10 @@ export function createDeliveryPlanService(
     async edit(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
+      const upgrade = coverageUpgradeRefusal(attempt, input.spec.slug);
+      if (upgrade !== null) return { ok: false, refusal: upgrade };
       const document = deliveryPlanDocumentSchema.parse({
-        schemaVersion: 3,
+        schemaVersion: 4,
         binding: input.binding,
       });
       // Read before the write: the receipt reports the blocking count the edit
@@ -986,6 +1082,8 @@ export function createDeliveryPlanService(
     async propose(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
+      const upgrade = coverageUpgradeRefusal(attempt, input.spec.slug);
+      if (upgrade !== null) return { ok: false, refusal: upgrade };
       const unsettled = await authoringBlocker(
         input.spec,
         attempt.pinned_revision_id,
@@ -1032,6 +1130,46 @@ export function createDeliveryPlanService(
             // The freeze is the lock. The draft definition keeps its charter
             // authorable; proposing writes the candidate-stage revision a
             // sign-off binds, so the manifest names the frozen bytes.
+            const pinnedRevision = await pinned(attempt, input.spec);
+            if (!pinnedRevision.ok) return pinnedRevision;
+            const claims = deriveDeliveryPlanClaims(
+              document.binding,
+              definition.definition,
+            );
+            const selected = new Set(
+              document.binding.dispositions
+                .filter((entry) => entry.disposition === "in_scope")
+                .map((entry) => entry.criterionElementId),
+            );
+            const seededDocuments = [
+              buildPinnedSpecDocument(input.spec, pinnedRevision.value),
+              ...definition.definition.executionContexts.map((context) =>
+                buildContextSpecDocument(
+                  input.spec,
+                  pinnedRevision.value,
+                  context.id,
+                  criterionRecordsOf(context.acceptanceCriteria).flatMap(
+                    (record) =>
+                      (record.covers ?? []).filter((id) => selected.has(id)),
+                  ),
+                ),
+              ),
+              buildSpecExecutionClaimsDocument(
+                buildSpecOwnershipProjection(
+                  {
+                    candidateId: definition.id,
+                    pinnedRevisionId: attempt.pinned_revision_id,
+                    dispositions: document.binding.dispositions,
+                    claims,
+                  },
+                  pinnedRevision.value,
+                  undefined,
+                  definition.definition.executionContexts.map(
+                    (context) => context.id,
+                  ),
+                ),
+              ),
+            ];
             const frozen = await deps.managedDefinitions.restage({
               spec: input.spec,
               pinnedRevisionId: attempt.pinned_revision_id,
@@ -1039,10 +1177,11 @@ export function createDeliveryPlanService(
               workflowDefinitionId: definition.id,
               expectedRevision: definition.revision,
               stage: "candidate",
+              seededDocuments,
             });
             const candidateRecord: DeliveryPlanCandidateRecord = {
-              protocol: "native-sdd-delivery-candidate/v3",
-              schemaVersion: 3,
+              protocol: "native-sdd-delivery-candidate/v4",
+              schemaVersion: 4,
               specId: input.spec.id,
               attemptId: attempt.id,
               candidateId: frozen.id,
@@ -1053,7 +1192,8 @@ export function createDeliveryPlanService(
                 revision: frozen.revision,
                 definitionHash: workflowDefinitionHash(frozen),
               },
-              binding: document.binding,
+              binding: deliveryPlanBindingSchema.parse(document.binding),
+              claims,
               bindingHash: deliveryPlanBindingHash(document.binding),
             };
             const candidateHash = deliveryPlanCandidateHash(candidateRecord);
@@ -1077,6 +1217,8 @@ export function createDeliveryPlanService(
               candidateId: candidateRecord.candidateId,
               candidateHash,
               workflowDefinitionRevision: frozen.revision,
+              seededDocumentCount:
+                frozen.definition.seededDocuments?.length ?? 0,
             });
             logAttemptTransition({
               slug: input.spec.slug,
@@ -1376,6 +1518,8 @@ export function createDeliveryPlanService(
     async signOff(input) {
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null) return noAttempt(input.spec.slug);
+      const upgrade = coverageUpgradeRefusal(attempt, input.spec.slug);
+      if (upgrade !== null) return { ok: false, refusal: upgrade };
       if (attempt.workflow_definition_id === null) {
         return {
           ok: false,
@@ -1523,6 +1667,8 @@ export function createDeliveryPlanService(
       const attempt = liveAttempt(input.spec.id);
       if (attempt === null)
         return { kind: "refused", refusal: noAttemptRefusal(input.spec.slug) };
+      const upgrade = coverageUpgradeRefusal(attempt, input.spec.slug);
+      if (upgrade !== null) return { kind: "refused", refusal: upgrade };
       if (attempt.workflow_definition_id === null) {
         return {
           kind: "refused",
@@ -1610,6 +1756,7 @@ export function createDeliveryPlanService(
               candidateBytes: stored.candidateBytes,
               workflowDefinition: stored.record.workflowDefinition,
               binding,
+              claims: deliveryPlanCandidateClaims(stored.record),
               scope: executionScopeFromDeliveryPlanBinding(binding),
               dispositions: binding.dispositions.map((disposition) => ({
                 ...disposition,
@@ -1953,6 +2100,13 @@ function nextAct(
   attempt: SpecDeliveryPlanAttemptRow,
   spec: Spec,
 ): DeliveryPlanNextAct {
+  const upgrade = coverageUpgradeRefusal(attempt, spec.slug);
+  if (upgrade !== null)
+    return {
+      actor: "agent",
+      command: `cctl spec plan reopen ${spec.slug} --reason <why>`,
+      reason: upgrade.unmetConditions.join(" "),
+    };
   return deliveryPlanNextAct({
     status: attempt.status,
     specSlug: spec.slug,
@@ -2123,7 +2277,6 @@ function initialDocumentForOpen(
               },
             ],
       ),
-      claims: [],
     },
   };
 }
@@ -2174,7 +2327,7 @@ async function seededDocumentForOpen(
         unmetConditions: [
           error instanceof Error ? error.message : String(error),
         ],
-        instruction: `Open an unseeded attempt with \`cctl spec plan open ${spec.slug}\` and state the dispositions in \`cctl spec plan edit ${spec.slug} --file <plan.json>\`.`,
+        instruction: `Open an unseeded attempt with \`cctl spec plan open ${spec.slug}\` and settle the dispositions in Spec Studio.`,
       },
     };
   }
@@ -2225,7 +2378,7 @@ function noSeedCandidate(slug: string): PlanResult<never> {
       unmetConditions: [
         "No finalized direct candidate is available to seed from.",
       ],
-      instruction: `Open an authored draft with \`cctl spec plan open ${slug}\`, then provide the complete launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
+      instruction: `Open an authored draft with \`cctl spec plan open ${slug}\`, then provide the complete launch with \`cctl workflow replace <definitionId> --file <plan.json>\`.`,
     },
   };
 }
@@ -2375,7 +2528,7 @@ function admissionRefusal(
   return {
     code: "validation",
     unmetConditions: [...conditions],
-    instruction: `Correct the graph launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
+    instruction: `Correct the graph launch for ${slug} with \`cctl workflow replace <definitionId> --file <plan.json>\`.`,
   };
 }
 function seededOpenAdmissionRefusal(
@@ -2387,7 +2540,7 @@ function seededOpenAdmissionRefusal(
     refusal: {
       code: "validation",
       unmetConditions: [...conditions],
-      instruction: `Open an unseeded attempt with \`cctl spec plan open ${slug}\`, then correct the graph launch in \`cctl spec plan edit ${slug} --file <plan.json>\`.`,
+      instruction: `Open an unseeded attempt with \`cctl spec plan open ${slug}\`, then correct the graph launch in \`cctl workflow replace <definitionId> --file <plan.json>\`.`,
     },
   };
 }

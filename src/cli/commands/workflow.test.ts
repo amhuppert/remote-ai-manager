@@ -57,6 +57,44 @@ function makeHost(
   };
 }
 
+describe("local seeded-document limits", () => {
+  it.each(["validate", "create", "replace", "run"])(
+    "refuses an oversized document before %s sends any request",
+    async (verb) => {
+      const host = makeHost(() => jsonResponse({}), {
+        ".cc/temp/plan.json": JSON.stringify({
+          definition: {
+            seededDocuments: [
+              {
+                relativePath: ".cc/graph-workflow-docs/input.md",
+                contents: "é".repeat(131073),
+                description: "Input",
+                readWhen: "Read first",
+              },
+            ],
+          },
+        }),
+      });
+      const result = await runCli(
+        [
+          "workflow",
+          verb,
+          ...(verb === "replace" ? ["wf-1"] : []),
+          "--file",
+          ".cc/temp/plan.json",
+          "--json",
+        ],
+        baseEnv,
+        host,
+      );
+      expect(host.requests).toHaveLength(0);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toContain("262144");
+      expect(result.stdout).toContain("seededDocuments");
+    },
+  );
+});
+
 describe("cctl workflow list", () => {
   it("lists project definitions and hits the project workflows route", async () => {
     const host = makeHost(() =>
@@ -2260,7 +2298,7 @@ describe("cctl workflow validate", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
       [
-        "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+        "coverage: 2 of 3 selected criteria covered, 1 uncovered",
         "dispositions: in_scope 3, deferred 1",
         "charter: authored, 4 invariants, 6 sources",
       ].join("\n"),

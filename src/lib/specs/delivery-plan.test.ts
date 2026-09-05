@@ -4,6 +4,7 @@ import {
   canonicalDeliveryPlanEnvelopeBytes,
   DELIVERY_PLAN_ENVELOPE_MAX_BYTES,
   deliveryPlanCandidateManifestV3Schema,
+  deliveryPlanCandidateRecordSchema,
   deliveryPlanDocumentSchema,
 } from "./delivery-plan";
 
@@ -22,6 +23,47 @@ const binding = {
     },
   ],
 };
+
+describe("version-4 delivery plan contracts", () => {
+  it("stores dispositions in the draft and freezes derived claims only in the candidate", () => {
+    const document = {
+      schemaVersion: 4,
+      binding: { dispositions: binding.dispositions },
+    };
+    const parsed = deliveryPlanDocumentSchema.safeParse(document);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toEqual(document);
+    const candidate = {
+      protocol: "native-sdd-delivery-candidate/v4",
+      schemaVersion: 4,
+      specId: "spec-one",
+      attemptId: "attempt-one",
+      candidateId: "workflow-one",
+      pinnedRevisionId: "revision-one",
+      draftRevision: 1,
+      workflowDefinition: {
+        id: "workflow-one",
+        revision: 2,
+        definitionHash: `sha256:${"a".repeat(64)}`,
+      },
+      binding: document.binding,
+      claims: binding.claims,
+      bindingHash: `sha256:${"b".repeat(64)}`,
+    };
+    const manifest = deliveryPlanCandidateRecordSchema.safeParse(candidate);
+    expect(manifest.success).toBe(true);
+    expect(manifest.data).toEqual(candidate);
+  });
+
+  it("refuses authored claims on a v4 binding with the covers remedy", () => {
+    const parsed = deliveryPlanDocumentSchema.safeParse({
+      schemaVersion: 4,
+      binding,
+    });
+    expect(parsed.success).toBe(false);
+    expect(JSON.stringify(parsed.error?.issues)).toContain("covers");
+  });
+});
 
 describe("version-3 delivery plan contracts", () => {
   it("round-trips deterministic binding-only draft bytes", () => {

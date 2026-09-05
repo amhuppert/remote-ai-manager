@@ -1,5 +1,7 @@
 "use client";
 
+import { planReviewFindingsCommand } from "@/lib/workflows/plan-review/status-schemas";
+
 import Link from "next/link";
 
 import { Button } from "@/components/ui/Button";
@@ -156,6 +158,21 @@ export default function SpecDeliveryBridge({
             revision {review.workflowDefinition.revision} · {totalScope} scoped
             · {review.health.blocking} blocking
           </p>
+          <p className="mt-xs mb-0 text-sm text-text-secondary">
+            Plan review:{" "}
+            {review.reviewStatus.state === "unreviewed"
+              ? "none recorded for this revision"
+              : review.reviewStatus.state.replaceAll("_", " ")}{" "}
+            (advisory)
+          </p>
+          {review.reviewStatus.state !== "unreviewed" && (
+            <p className="mt-xs mb-0 text-sm text-text-tertiary">
+              {review.reviewStatus.reviewerConversationId} ·{" "}
+              {review.reviewStatus.reviewedAt}
+              <br />
+              <code>{planReviewFindingsCommand()}</code>
+            </p>
+          )}
         </div>
         <Link
           href={review.workflowDefinition.builderHref}

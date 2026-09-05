@@ -215,6 +215,8 @@ describe("native SDD ownership prompt projection", () => {
     const implementerPrompt = await composeGraphRolePrompt({
       execution,
       executionContract: contract,
+      role: "implementer",
+      contextId: context.id,
       prompt: buildIterationPrompt({
         context,
         tasks,
@@ -248,6 +250,9 @@ describe("native SDD ownership prompt projection", () => {
     );
     expect(validatorPrompt).toContain("# Context Validation");
     expect(ownership).toContain("# Spec ownership (authoritative)");
+    const claimsPointer =
+      "Read your claims first: [context-implement](.cc/graph-workflow-docs/spec-bindings/candidate-ownership/claims.md#context-context-implement).";
+    expect(ownership).toContain(claimsPointer);
     expect(ownership).toContain("criterion-implementer-a");
     expect(ownership).toContain(
       "Implement capability A in the production path.",
@@ -269,11 +274,15 @@ describe("native SDD ownership prompt projection", () => {
     const documentProjection = buildSpecOwnershipProjection(
       reader.requireByWorkflowExecutionId(execution.id).binding,
       pinnedRevision(),
+      undefined,
+      execution.launchDocument?.definition.executionContexts.map(
+        (entry) => entry.id,
+      ),
     );
     expect(projection).toEqual(documentProjection);
     expect(
       buildSpecExecutionClaimsDocument(documentProjection).contents.trimEnd(),
-    ).toBe(ownership);
+    ).toBe(ownership.replace(`${claimsPointer}\n\n`, ""));
   });
 
   it("leaves an ordinary unbound implementer execution free of a spec section", async () => {

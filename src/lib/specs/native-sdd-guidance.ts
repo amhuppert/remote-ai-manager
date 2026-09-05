@@ -56,6 +56,7 @@ const GATE_RULE_SEVERITY: Record<
   (typeof DELIVERY_PLAN_GATE_RULE_IDS)[number],
   z.infer<typeof lintRuleDefinitionSchema>["severity"]
 > = {
+  "plan/coverage-upgrade-required": "blocks_propose",
   [LAUNCH_NOT_ADMISSIBLE_RULE_ID]: "blocks_propose",
   [LAUNCH_ADVISORY_RULE_ID]: "advisory",
   [LAUNCH_CHARTER_UNAUTHORED_RULE_ID]: "blocks_propose",

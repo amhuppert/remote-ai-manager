@@ -3,6 +3,7 @@ import {
   canonicalDeliveryPlanCandidateBytes,
   canonicalDeliveryPlanEnvelopeBytes,
   deliveryPlanDocumentSchema,
+  deliveryPlanV4DocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
   finalizedDeliveryPlanCandidateIdentitySchema,
   finalizedDeliveryPlanPrelaunchSchema,
@@ -694,11 +695,14 @@ export function createSpecDeliveryPlanRepo(
 
   const reopenTx = db.transaction((input: ReopenDeliveryPlanInput) => {
     const attempt = requireAttempt(input.attemptId);
-    if (attempt.status === "draft") {
+    const document = deliveryPlanDocumentSchema.parse(
+      JSON.parse(attempt.content_json),
+    );
+    if (attempt.status === "draft" && document.schemaVersion === 4) {
       throw new DeliveryPlanStatusConflictError(
         attempt.id,
         attempt.status,
-        "There is nothing to reopen. Edit it with `cctl spec plan edit --file <plan.json>`.",
+        "There is nothing to reopen. Author the graph with `cctl workflow replace <id> --file <plan.json>`.",
       );
     }
     if (
@@ -730,6 +734,13 @@ export function createSpecDeliveryPlanRepo(
     const next: SpecDeliveryPlanAttemptRow = {
       ...attempt,
       status: "draft",
+      content_json: canonicalDeliveryPlanEnvelopeBytes(
+        deliveryPlanV4DocumentSchema.parse({
+          schemaVersion: 4,
+          binding: { dispositions: document.binding.dispositions },
+        }),
+      ),
+      ...(document.schemaVersion === 3 ? { prelaunch_json: null } : {}),
       draft_revision: attempt.draft_revision + 1,
       proposed_snapshot_id: null,
       approval_json: null,

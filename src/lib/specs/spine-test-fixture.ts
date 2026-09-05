@@ -1,3 +1,5 @@
+import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
+import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
 import type Database from "better-sqlite3";
 import { fromPromise } from "xstate";
@@ -818,6 +820,7 @@ export function createSpecSpineWorld(
   // and a plan surface that throws would hide a break in that walk.
   const managedDefinitions = createManagedDefinitionTestService();
   const deliveryPlan = createDeliveryPlanService({
+    planReviews: createPlanReviewService(createGraphPlanReviewsRepo(db)),
     plans,
     managedDefinitions,
     reviewRepo: review,

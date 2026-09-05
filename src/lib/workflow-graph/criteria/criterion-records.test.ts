@@ -20,6 +20,18 @@ function makeRecord(overrides: Partial<CriterionRecord> = {}): CriterionRecord {
 }
 
 describe("criterionRecordSchema", () => {
+  it("preserves opaque coverage ids through parsing and prompt rendering", () => {
+    const record = {
+      ...makeRecord(),
+      covers: ["spec-criterion-one", "external:criterion/two"],
+    };
+    const parsed = criterionRecordSchema.parse(record);
+    expect(parsed).toEqual(record);
+    expect(acceptanceCriteriaRecordListText([parsed])).toBe(
+      "1. [round-trip-proven] The stored value reloads byte-identical through the repository. (covers: spec-criterion-one, external:criterion/two)",
+    );
+  });
+
   it("accepts a kebab-case id with a non-empty statement", () => {
     const parsed = criterionRecordSchema.safeParse(makeRecord());
     expect(parsed.success).toBe(true);

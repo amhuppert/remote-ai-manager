@@ -106,6 +106,14 @@ afterEach(async () => {
 function buildMaximalDefinition(): WorkflowSemanticDefinition {
   return {
     schemaVersion: 2,
+    seededDocuments: [
+      {
+        relativePath: ".cc/graph-workflow-docs/research/durable.md",
+        contents: "Pinned research bytes — UTF-8",
+        description: "Durable reference",
+        readWhen: "Before validating delivery",
+      },
+    ],
     approvalRequired: true,
     origin: {
       sourceUri: "workflow-source:maximal/revision/2",
@@ -276,7 +284,11 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         // persists each verbatim, no schema-version bump) rather than a
         // records-only cutover.
         acceptanceCriteria: [
-          { id: "tests-pass", statement: "All tests pass" },
+          {
+            id: "tests-pass",
+            statement: "All tests pass",
+            covers: ["spec-criterion-contract"],
+          },
           { id: "build-green", statement: "The build is green" },
         ],
         placement: { lane: "ctx-1", mode: "full" },
@@ -637,7 +649,11 @@ describe("workflow-graph storage durability contract", () => {
         (context) => context.id === id,
       );
     expect(contextById("ctx-1")?.acceptanceCriteria).toEqual([
-      { id: "tests-pass", statement: "All tests pass" },
+      {
+        id: "tests-pass",
+        statement: "All tests pass",
+        covers: ["spec-criterion-contract"],
+      },
       { id: "build-green", statement: "The build is green" },
     ]);
     expect(contextById("ctx-2")?.acceptanceCriteria).toBe(

@@ -97,7 +97,7 @@ describe("cctl spec help nodes", () => {
 
   it("routes retired evergreen plan acts to delivery-plan attempts", async () => {
     const draft = await helpText(["spec", "draft"]);
-    expect(draft).toContain("cctl spec plan edit");
+    expect(draft).toContain("cctl workflow replace");
 
     const advance = await helpText(["spec", "advance"]);
     expect(advance).toContain("--from <requirements>");
@@ -113,7 +113,7 @@ describe("cctl spec help nodes", () => {
     const remove = await helpText(["spec", "remove"]);
     expect(remove).toContain("Delivery graph tasks are authored only");
     expect(remove).not.toMatch(/legacy-only/i);
-    expect(remove).toContain("cctl spec plan edit");
+    expect(remove).toContain("cctl workflow replace");
 
     const preview = await helpText(["spec", "plan", "preview"]);
     expect(preview).toContain("--stage draft|proposed");
@@ -543,7 +543,7 @@ describe("cctl spec help nodes", () => {
   it("names both prelaunch plan verbs on the capture node", async () => {
     const text = await helpText(["spec", "capture"]);
 
-    expect(text).toContain("cctl spec plan edit");
+    expect(text).toContain("cctl workflow replace");
     expect(text).toContain("cctl spec plan reopen");
   });
 
@@ -634,8 +634,7 @@ describe("cctl spec help nodes", () => {
 
     expect(open).not.toMatch(/author it with `cctl workflow edit/u);
     expect(open).toMatch(/targeted change/u);
-    // The binding write survives this change; only its deletion is a follow-up.
-    expect(open).toContain("spec plan edit");
+    expect(open).not.toContain("spec plan edit");
   });
 
   it("teaches the bounded show disclosure ladder without using JSON as a depth control", async () => {

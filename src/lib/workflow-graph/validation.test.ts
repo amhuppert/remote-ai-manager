@@ -639,7 +639,7 @@ describe("validateAuthoredDefinition (composite accept-time validator)", () => {
     expect(error?.message).toContain("accessPolicy");
   });
 
-  it("exempts the server-seeded native-SDD sources from the accessPolicy refusal", () => {
+  it("refuses accessPolicy on native-SDD sources as on every authored source", () => {
     // Delivery-plan finalization injects the pinned-spec and claims sources —
     // still stamped with the legacy accessPolicy — into every spec-candidate
     // launch before admission. They are server-seeded, not authored (the spec
@@ -682,7 +682,7 @@ describe("validateAuthoredDefinition (composite accept-time validator)", () => {
       result.errors.filter(
         (entry) => entry.code === "retired-source-access-policy",
       ),
-    ).toEqual([]);
+    ).toHaveLength(2);
   });
 
   it("refuses a charter source authored with legacy prose appliesTo (legacy-source-applies-to)", () => {

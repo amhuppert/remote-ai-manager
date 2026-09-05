@@ -81,6 +81,46 @@ const snapshot: SpecRevisionSnapshot = {
 };
 
 describe("spec execution claims document", () => {
+  it("gives an authored context with no selected coverage an explicit section", () => {
+    const projection = buildSpecOwnershipProjection(
+      binding,
+      snapshot,
+      "context-wiring",
+      ["context-wiring"],
+    );
+    expect(projection.body).toContain("claims.md#context-context-wiring");
+    expect(projection.body).toContain(
+      "## Context context-wiring\n\nNo selected spec criteria are claimed by this context.",
+    );
+  });
+  it("indexes every claimant context and keeps shared criteria in each context section", () => {
+    const document = buildSpecExecutionClaimsDocument(
+      buildSpecOwnershipProjection(binding, snapshot),
+    );
+    expect(document.contents).toContain("## Context index");
+    for (const contextId of ["context-integrate", "context-spawner"]) {
+      expect(document.contents).toContain(
+        `[${contextId}](#context-${contextId})`,
+      );
+      expect(document.contents).toContain(
+        `## Context ${contextId}\n\n- \`criterion-selected\``,
+      );
+    }
+    expect(
+      document.contents.indexOf("## Context context-integrate"),
+    ).toBeLessThan(document.contents.indexOf("## Context context-spawner"));
+  });
+  it("points the reader to its section in the immutable shared document", () => {
+    const projection = buildSpecOwnershipProjection(
+      binding,
+      snapshot,
+      "context-spawner",
+    );
+    expect(projection.body).toContain("claims.md#context-context-spawner");
+    expect(
+      projection.body.indexOf("claims.md#context-context-spawner"),
+    ).toBeLessThan(projection.body.indexOf("| Criterion id"));
+  });
   it("renders one deterministic candidate-specific document from the frozen binding", () => {
     const projection = buildSpecOwnershipProjection(binding, snapshot);
     const document = buildSpecExecutionClaimsDocument(projection);
@@ -90,7 +130,6 @@ describe("spec execution claims document", () => {
       contents: `# Spec ownership (authoritative)
 
 - Candidate: \`candidate-claims-document\`
-- Candidate hash: \`sha256:${"a".repeat(64)}\`
 - Pinned revision: \`revision-claims-document\`
 
 This immutable binding is the authority for criterion ownership. A claimant is accountable for delivery; it need not perform every implementation step itself.
@@ -99,6 +138,23 @@ This immutable binding is the authority for criterion ownership. A claimant is a
 | --- | --- | --- | --- | --- | --- |
 | \`criterion-selected\` | Brief for criterion-selected. | \`in_scope\` | — | \`context-spawner\`, \`context-integrate\` | Pinned validation guidance only (not an evidence checklist): \`test_run\` |
 | \`criterion-external\` | Brief for criterion-external. | \`delivered_elsewhere\` | \`execution-earlier\` | — | Pinned validation guidance only (not an evidence checklist): \`test_run\` |
+
+## Context index
+
+- [context-integrate](#context-context-integrate)
+- [context-spawner](#context-context-spawner)
+
+<a id="context-context-integrate"></a>
+
+## Context context-integrate
+
+- \`criterion-selected\`
+
+<a id="context-context-spawner"></a>
+
+## Context context-spawner
+
+- \`criterion-selected\`
 `,
       description:
         "The immutable native SDD criterion dispositions and authored-context claims for candidate candidate-claims-document.",

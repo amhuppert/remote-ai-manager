@@ -26,6 +26,7 @@ export const criterionRecordSchema = z.object({
       "criterion id must be kebab-case: lowercase letters and digits separated by single hyphens",
   }),
   statement: z.string().min(1),
+  covers: z.array(z.string().min(1)).optional(),
 });
 export type CriterionRecord = z.infer<typeof criterionRecordSchema>;
 
@@ -91,7 +92,12 @@ export function acceptanceCriteriaText(
 ): string {
   if (typeof criteria === "string") return criteria;
   return criteria
-    .map((record, index) => `${index + 1}. [${record.id}] ${record.statement}`)
+    .map((record, index) => {
+      const coverage = record.covers?.length
+        ? ` (covers: ${record.covers.join(", ")})`
+        : "";
+      return `${index + 1}. [${record.id}] ${record.statement}${coverage}`;
+    })
     .join("\n");
 }
 

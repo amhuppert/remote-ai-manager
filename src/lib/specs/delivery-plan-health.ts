@@ -1,3 +1,4 @@
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
 import type { ManagedDefinitionPreflightSummary } from "@/lib/workflows/managed-definition-preflight-contract";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
@@ -5,6 +6,7 @@ import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type { DeliveryPlanBinding } from "./delivery-plan";
 import {
   lintDeliveryPlanBinding,
+  deriveDeliveryPlanClaims,
   type DeliveryPlanBindingLintIssue,
   type DeliveryPlanBindingLintIssueCode,
 } from "./delivery-plan-binding-lint";
@@ -99,6 +101,7 @@ export const LAUNCH_ADVISORY_RULE_ID = "launch/advisory";
  * DeliveryPlanGateRuleId} is what a finding's `ruleId` has to be.
  */
 export const DELIVERY_PLAN_GATE_RULE_IDS = [
+  "plan/coverage-upgrade-required",
   LAUNCH_NOT_ADMISSIBLE_RULE_ID,
   LAUNCH_ADVISORY_RULE_ID,
   LAUNCH_CHARTER_UNAUTHORED_RULE_ID,
@@ -123,7 +126,7 @@ export interface DeliveryPlanGateFinding extends LintFinding {
 const ISSUE_RATIONALE: Partial<
   Record<DeliveryPlanBindingLintIssueCode, string>
 > = {
-  "binding/selected-criterion-not-must-run": CRITERION_MUST_RUN_RATIONALE,
+  "coverage/not-must-run": CRITERION_MUST_RUN_RATIONALE,
 };
 
 /**
@@ -134,10 +137,10 @@ const ISSUE_RATIONALE: Partial<
 const UNRESOLVED_RESOLUTION: Partial<
   Record<DeliveryPlanBindingLintIssueCode, string>
 > = {
-  "binding/selected-criterion-unclaimed":
-    "Claim it from a stable authored accountability context, or defer, waive, or attribute it in the binding.",
-  "binding/selected-criterion-not-must-run":
-    "Claim it from a context the graph runs on every path, or make its claimant unavoidable.",
+  "coverage/selected-criterion-uncovered":
+    "Add covers on a criterion in a stable authored context with workflow replace, or change its disposition in Spec Studio.",
+  "coverage/not-must-run":
+    "Add covers on an always-run closeout criterion that verifies whichever route ran, using workflow replace.",
   "binding/pending-reaffirmation":
     "Reaffirm it in Spec Studio, or select it for re-delivery in this plan.",
   "binding/reaffirmed-without-delivery":
@@ -251,13 +254,16 @@ export function unprovenDeliveryPlanClaims(
  */
 function claimsLedger(
   binding: DeliveryPlanBinding,
+  definition: WorkflowSemanticDefinition | null,
   stableContextIds: ReadonlySet<string> | null,
 ): DeliveryPlanClaimsLedger {
   const selected = selectedDeliveryPlanCriterionIds(binding);
   const claimed = new Set(
-    stableContextIds === null
+    stableContextIds === null || definition === null
       ? []
-      : binding.claims.flatMap((claim) =>
+      : deriveDeliveryPlanClaims(binding, definition, [
+          ...stableContextIds,
+        ]).flatMap((claim) =>
           stableContextIds.has(claim.contextId)
             ? claim.criterionElementIds.filter((criterionElementId) =>
                 selected.has(criterionElementId),
@@ -304,7 +310,7 @@ export function projectDeliveryPlanDraftHealth(
         ),
         ...charterConditions,
       ],
-      claims: claimsLedger(input.binding, null),
+      claims: claimsLedger(input.binding, null, null),
     };
   }
 
@@ -348,6 +354,7 @@ export function projectDeliveryPlanDraftHealth(
     ],
     claims: claimsLedger(
       input.binding,
+      input.admission.launch.definition,
       new Set(input.admission.stableAccountabilityContextIds),
     ),
   };

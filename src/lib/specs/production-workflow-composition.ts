@@ -105,6 +105,12 @@ export function createProductionSpecWorkflowComposition(): SpecWorkflowCompositi
     policyNotifier: notifier,
   });
   const deliveryGate = createDeliveryGate({
+    findWorkflowExecution(executionId) {
+      return (
+        workflowExecutions.findByExecutionId(executionId) ??
+        archivedWorkflowExecutions.findByExecutionId(executionId)
+      );
+    },
     bindingPort: bindingPorts.delivery,
     outcomePort: deliveryOutcomes,
     deliveryRepo,

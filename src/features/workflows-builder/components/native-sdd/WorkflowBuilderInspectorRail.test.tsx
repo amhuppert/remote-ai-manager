@@ -37,16 +37,6 @@ const management: NativeSddWorkflowManagementDetail = {
         deliveredByExecutionId: null,
       },
     ],
-    claims: [
-      {
-        contextId: "context-plan",
-        criterionElementIds: ["criterion-1"],
-      },
-      {
-        contextId: "context-implement",
-        criterionElementIds: ["criterion-1", "criterion-2"],
-      },
-    ],
   },
   dispositionCounts: { pending_reaffirmation: 1, in_scope: 1 },
   unresolvedItems: [

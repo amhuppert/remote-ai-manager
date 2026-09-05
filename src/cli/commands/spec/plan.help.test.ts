@@ -39,7 +39,6 @@ describe("cctl spec plan help", () => {
     for (const path of [
       ["spec", "plan"],
       ["spec", "plan", "open"],
-      ["spec", "plan", "edit"],
       ["spec", "plan", "propose"],
       ["spec", "plan", "reopen"],
       ["spec", "plan", "sign-off"],
@@ -104,12 +103,10 @@ describe("cctl spec plan help", () => {
     expect(text).toContain("deferred");
   });
 
-  it("states the compare-and-swap contract on the verb that enforces it", async () => {
-    const text = await helpText(["spec", "plan", "edit"]);
-
-    expect(text).toContain("expectedDraftRevision");
-    expect(text).toContain("cctl spec plan get");
-    expect(text).toContain("cctl spec schema plan-edit");
+  it("omits plan edit from the planning help surface", async () => {
+    const text = await helpText(["spec", "plan"]);
+    expect(text).not.toContain("spec plan edit");
+    expect(text).toContain("workflow replace");
   });
 
   it("says a re-propose after a reopen needs a new approval", async () => {

@@ -16,6 +16,34 @@ const INPUT = {
 } as const;
 
 describe("delivery-plan candidate finalization", () => {
+  it("gives every context its own spec source above the full audit anchor without access policies", () => {
+    const launch = createMaximalAuthoredWorkflowLaunchFixture();
+    const finalized = finalizeDeliveryPlanLaunch({
+      ...INPUT,
+      candidateId: "candidate-finalization",
+      launch,
+    });
+    const sources = finalized.definition.charter.sourcesOfTruth;
+    const global = sources.find(
+      (source) => source.id === "native-sdd-pinned-spec",
+    );
+    for (const context of launch.definition.executionContexts) {
+      const excerpt = sources.find(
+        (source) =>
+          source.locator ===
+          `.cc/graph-workflow-docs/spec/direct-plan/${context.id}.md`,
+      );
+      expect(excerpt).toMatchObject({
+        appliesTo: { contextIds: [context.id] },
+      });
+      expect(excerpt?.rank).toBeLessThan(global?.rank ?? 0);
+      expect(excerpt).not.toHaveProperty("accessPolicy");
+    }
+    expect(global).not.toHaveProperty("accessPolicy");
+    expect(
+      sources.find((source) => source.id === "native-sdd-claims"),
+    ).not.toHaveProperty("accessPolicy");
+  });
   it("allocates the candidate before injecting every server-owned field and admitting the full launch", async () => {
     const events: string[] = [];
     const launch = createMaximalAuthoredWorkflowLaunchFixture();
@@ -101,20 +129,29 @@ describe("delivery-plan candidate finalization", () => {
       launch,
     });
 
-    expect(finalized.definition.charter.sourcesOfTruth).toEqual([
+    const contextCount = launch.definition.executionContexts.length;
+    expect(
+      finalized.definition.charter.sourcesOfTruth.slice(contextCount),
+    ).toEqual([
       expect.objectContaining({
         id: "native-sdd-pinned-spec",
-        rank: 1,
+        rank: contextCount + 1,
         locator: ".cc/graph-workflow-docs/spec/direct-plan.md",
       }),
       expect.objectContaining({
         id: "native-sdd-claims",
-        rank: 2,
+        rank: contextCount + 2,
         locator:
           ".cc/graph-workflow-docs/spec-bindings/candidate-finalization/claims.md",
       }),
-      expect.objectContaining({ id: "authored-primary", rank: 3 }),
-      expect.objectContaining({ id: "authored-secondary", rank: 6 }),
+      expect.objectContaining({
+        id: "authored-primary",
+        rank: contextCount + 3,
+      }),
+      expect.objectContaining({
+        id: "authored-secondary",
+        rank: contextCount + 6,
+      }),
     ]);
   });
 
@@ -198,6 +235,9 @@ describe("delivery-plan candidate finalization", () => {
 
     for (const definition of [reopened.definition, refrozen.definition]) {
       expect(definition.charter.sourcesOfTruth.map((s) => s.id)).toEqual([
+        ...definition.executionContexts.map(
+          (context) => `native-sdd-context-${context.id}`,
+        ),
         "native-sdd-pinned-spec",
         "native-sdd-claims",
         ...authoredIds,

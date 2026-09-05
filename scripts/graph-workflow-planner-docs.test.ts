@@ -178,6 +178,16 @@ const DOCUMENTED_FIELDS: ReadonlyArray<{
   keys: readonly string[];
 }> = [
   {
+    term: "covers",
+    owner: "criterionRecordSchema",
+    keys: shapeKeys(criterionRecordSchema),
+  },
+  {
+    term: "seededDocuments",
+    owner: "workflowSemanticDefinitionSchema",
+    keys: shapeKeys(workflowSemanticDefinitionSchema),
+  },
+  {
     term: "when",
     owner: "graphWorkflowContextEdgeSchema",
     keys: shapeKeys(graphWorkflowContextEdgeSchema),
@@ -566,8 +576,8 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
       // refuses.
       expect(
         shapeKeys(criterionRecordSchema),
-        "criterionRecordSchema no longer declares exactly { id, statement }",
-      ).toEqual(["id", "statement"]);
+        "criterionRecordSchema no longer declares { id, statement, covers? }",
+      ).toEqual(["id", "statement", "covers"]);
       expectDocuments(skill, '"acceptanceCriteria": [', why);
       expectDocuments(skill, '"statement":', why);
 
@@ -1233,7 +1243,7 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
     // One line on the must-run constraint, pointing at the refusal that
     // carries the rationale. The code is read back out of the shipped lint so
     // a rename fails here rather than leaving a planner a dead code to grep.
-    const mustRun = "binding/selected-criterion-not-must-run";
+    const mustRun = "coverage/not-must-run";
     expect(
       DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES,
       "the must-run lint code was renamed",
@@ -1244,7 +1254,7 @@ describe("graph-workflow planner docs (D4 R16.3)", () => {
   it("documents the shipped coverage mechanism without a future authoring dialect", () => {
     const guidance = nativeSpecDeliveryGuidance();
 
-    expect(guidance).not.toContain("`covers`");
+    expect(guidance).toContain("covers:");
     expect(guidance).not.toContain("follow-up ticket");
   });
 

@@ -1,3 +1,4 @@
+import { seededWorkflowDocumentsSchema } from "./seeded-documents";
 import { z } from "zod";
 import {
   conflictDecisionInputSchema,
@@ -2438,21 +2439,10 @@ export type GraphWorkflowResultDelivery = z.infer<
   typeof graphWorkflowResultDeliverySchema
 >;
 
-/**
- * A document the launching tier hands the engine to seed into a run: content
- * the tier already rendered, at a worktree-relative path under the shared
- * document directory. Deliberately opaque — the engine never learns what the
- * bytes mean, so no launching tier's vocabulary reaches this layer.
- */
-export const seededWorkflowDocumentSchema = z.object({
-  relativePath: z.string().trim().min(1),
-  contents: z.string(),
-  description: z.string(),
-  readWhen: z.string(),
-});
-export type SeededWorkflowDocument = z.infer<
-  typeof seededWorkflowDocumentSchema
->;
+export {
+  seededWorkflowDocumentSchema,
+  type SeededWorkflowDocument,
+} from "./seeded-documents";
 
 /**
  * The reserved-but-not-yet-materialized artifacts of one execution, recorded in
@@ -2476,7 +2466,7 @@ export const graphWorkflowPendingArtifactsSchema = z.object({
   executionId: z.string().trim().min(1),
   projectPath: z.string().trim().min(1),
   sessionName: z.string().trim().min(1),
-  documents: z.array(seededWorkflowDocumentSchema),
+  documents: seededWorkflowDocumentsSchema,
   recordedAt: z.string(),
 });
 export type GraphWorkflowPendingArtifacts = z.infer<

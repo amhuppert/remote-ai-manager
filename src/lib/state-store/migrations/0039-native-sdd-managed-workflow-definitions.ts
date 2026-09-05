@@ -8,7 +8,9 @@ import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
 import {
   canonicalDeliveryPlanCandidateBytes,
   canonicalDeliveryPlanEnvelopeBytes,
-  deliveryPlanBindingSchema,
+  deliveryPlanBindingV3Schema,
+  deliveryPlanCandidateRecordSchema,
+  deliveryPlanDocumentSchema,
   deliveryPlanCandidateManifestV3Schema,
   deliveryPlanV3DocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
@@ -51,7 +53,7 @@ const legacyDeliveryPlanDocumentV2Schema = z
   .object({
     schemaVersion: z.literal(2),
     launch: workflowDefinitionMutationSchema,
-    binding: deliveryPlanBindingSchema,
+    binding: deliveryPlanBindingV3Schema,
   })
   .strict();
 
@@ -374,7 +376,7 @@ async function verifyManagedState(context: MigrationContext): Promise<void> {
   if (configDir === null) return;
 
   for (const attempt of attempts) {
-    deliveryPlanV3DocumentSchema.parse(JSON.parse(attempt.content_json));
+    deliveryPlanDocumentSchema.parse(JSON.parse(attempt.content_json));
     if (attempt.workflow_definition_id === null) {
       throw new Error(
         `Delivery plan attempt ${attempt.id} has no managed workflow definition`,
@@ -388,7 +390,7 @@ async function verifyManagedState(context: MigrationContext): Promise<void> {
   }
 
   for (const snapshot of snapshots) {
-    const manifest = deliveryPlanCandidateManifestV3Schema.parse(
+    const manifest = deliveryPlanCandidateRecordSchema.parse(
       JSON.parse(snapshot.content_json),
     );
     const definition = await readVerifiedDefinition({

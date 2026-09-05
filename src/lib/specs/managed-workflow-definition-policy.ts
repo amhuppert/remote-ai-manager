@@ -8,10 +8,12 @@ import type {
 } from "@/lib/workflows/managed-definition-contract";
 import type { ManagedWorkflowDefinitionRecord } from "./managed-workflow-definition-service";
 import {
-  deliveryPlanCandidateManifestV3Schema,
-  deliveryPlanV3DocumentSchema,
+  deliveryPlanCandidateRecordSchema,
+  deliveryPlanCandidateClaims,
+  deliveryPlanDocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
 } from "./delivery-plan";
+import { deriveDeliveryPlanClaims } from "./delivery-plan-binding-lint";
 import { criterionElementPayloadSchema } from "./schemas";
 
 type Db = InstanceType<typeof Database>;
@@ -277,13 +279,13 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
         row,
         deps.resolveProjectName(projectPath),
       );
-      const document = deliveryPlanV3DocumentSchema.parse(
+      const document = deliveryPlanDocumentSchema.parse(
         JSON.parse(row.content_json),
       );
       const currentCandidate =
         row.snapshot_content_json === null
           ? null
-          : deliveryPlanCandidateManifestV3Schema.parse(
+          : deliveryPlanCandidateRecordSchema.parse(
               JSON.parse(row.snapshot_content_json),
             );
       const approval =
@@ -298,7 +300,7 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
         row.workflow_definition_id,
       ) as ApprovedBaselineRow | undefined;
       const baselineManifest = baselineRow
-        ? deliveryPlanCandidateManifestV3Schema.parse(
+        ? deliveryPlanCandidateRecordSchema.parse(
             JSON.parse(baselineRow.content_json),
           )
         : null;
@@ -320,8 +322,19 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
         currentDefinition !== null &&
         baselineDefinition !== null &&
         stableStringify(current) !== stableStringify(baseline);
+      const claims =
+        currentCandidate !== null
+          ? deliveryPlanCandidateClaims(currentCandidate)
+          : document.schemaVersion === 3
+            ? document.binding.claims
+            : currentDefinition === null
+              ? []
+              : deriveDeliveryPlanClaims(
+                  document.binding,
+                  currentDefinition.definition,
+                );
       const contextIdsByCriterion = new Map<string, string[]>();
-      for (const claim of document.binding.claims) {
+      for (const claim of claims) {
         for (const criterionElementId of claim.criterionElementIds) {
           const contexts = contextIdsByCriterion.get(criterionElementId) ?? [];
           contexts.push(claim.contextId);
@@ -352,9 +365,7 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
             contextIdsByCriterion.get(disposition.criterionElementId) ?? [],
         };
       });
-      const claimContextIds = new Set(
-        document.binding.claims.map(({ contextId }) => contextId),
-      );
+      const claimContextIds = new Set(claims.map(({ contextId }) => contextId));
       const comments = (findComments.all(row.attempt_id) as CommentRow[]).map(
         (comment) => ({
           id: comment.id,
@@ -376,13 +387,13 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
         ...compact,
         bindingRevision: row.draft_revision,
         deltaBasisExecutionId: row.delta_basis_execution_id,
-        binding: document.binding,
+        binding: { dispositions: document.binding.dispositions },
         dispositionCounts: dispositionCounts(document.binding),
         unresolvedItems: criterionRows.filter(
           ({ disposition }) => disposition === "pending_reaffirmation",
         ),
         criterionRows,
-        claims: document.binding.claims,
+        claims,
         comments,
         nextAct:
           state === "draft"
@@ -434,8 +445,8 @@ export function createNativeSddManagedWorkflowDefinitionPolicy(deps: {
               stableStringify(document.binding.dispositions),
           claims:
             baselineManifest !== null &&
-            stableStringify(baselineManifest.binding.claims) !==
-              stableStringify(document.binding.claims),
+            stableStringify(deliveryPlanCandidateClaims(baselineManifest)) !==
+              stableStringify(claims),
         },
         capabilities: {
           canPropose: state === "draft",

@@ -15,6 +15,8 @@ import {
   canonicalDeliveryPlanCandidateBytes,
   canonicalDeliveryPlanEnvelopeBytes,
   deliveryPlanCandidateRecordSchema,
+  deliveryPlanCandidateManifestV4Schema,
+  type DeliveryPlanDocument,
 } from "@/lib/specs/delivery-plan";
 import {
   deliveryPlanBindingHash,
@@ -25,6 +27,7 @@ import {
   SPEC_ID,
   createDeliveryPlanTestRepos,
   maximalPlanDocument,
+  maximalCoveragePlanDocument,
   seedDeliveryPlanParents,
 } from "./spec-delivery-plan-test-fixture";
 import {
@@ -34,6 +37,9 @@ import {
   type SpecDeliveryPlanRepo,
 } from "./spec-delivery-plan-repo";
 import { _createTestDb } from "./state-db";
+import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
+import { deriveDeliveryPlanClaims } from "@/lib/specs/delivery-plan-binding-lint";
 
 type Db = InstanceType<typeof Database>;
 
@@ -55,8 +61,7 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
-function openAttempt() {
-  const document = maximalPlanDocument();
+function openAttempt(document: DeliveryPlanDocument = maximalPlanDocument()) {
   return plans.open({
     attempt: {
       id: "attempt-v3-round-trip",
@@ -104,10 +109,71 @@ function candidate(
 }
 
 describe("version-3 delivery-plan repository contract", () => {
+  it("round-trips the complete v4 manifest with dispositions-only binding and frozen derived claims", async () => {
+    const document = maximalCoveragePlanDocument();
+    const opened = openAttempt(document);
+    const launch = createMaximalAuthoredWorkflowLaunchFixture();
+    const context = launch.definition.executionContexts.find(
+      (entry) => entry.id === "context-spawner",
+    );
+    if (!context) throw new Error("Missing stable fixture context");
+    context.acceptanceCriteria = [
+      {
+        id: "observable",
+        statement: "The selected outcome holds",
+        covers: ["criterion-selected"],
+      },
+    ];
+    const historical = candidate(opened.id, opened.draft_revision).record;
+    await assertRoundTripDurability({
+      label: "delivery-plan-v4-candidate",
+      schema: deliveryPlanCandidateManifestV4Schema,
+      buildMaximalFixture: () =>
+        deliveryPlanCandidateManifestV4Schema.parse({
+          ...historical,
+          protocol: "native-sdd-delivery-candidate/v4",
+          schemaVersion: 4,
+          binding: document.binding,
+          bindingHash: deliveryPlanBindingHash(document.binding),
+          claims: deriveDeliveryPlanClaims(document.binding, launch.definition),
+        }),
+      persist: (record) => {
+        const proposed = plans.propose({
+          attemptId: opened.id,
+          expectedDraftRevision: opened.draft_revision,
+          snapshotId: "snapshot-v4",
+          proposedAt: "2026-09-05T12:00:00.000Z",
+          actor: AGENT,
+          candidate: {
+            record,
+            candidateHash: deliveryPlanCandidateHash(record),
+          },
+        });
+        return deliveryPlanCandidateManifestV4Schema.parse(
+          JSON.parse(proposed.snapshot.content_json),
+        );
+      },
+      reload: () => {
+        const snapshot = plans.findSnapshotById("snapshot-v4");
+        return snapshot === null
+          ? null
+          : deliveryPlanCandidateManifestV4Schema.parse(
+              JSON.parse(snapshot.content_json),
+            );
+      },
+      fieldPolicies: {
+        claims: "derived-on-write",
+        bindingHash: "derived-on-write",
+      },
+    });
+    expect(
+      JSON.parse(plans.findAttemptById(opened.id)?.content_json ?? "null"),
+    ).not.toHaveProperty("binding.claims");
+  });
   it("rejects manifests that do not match the attempt definition and editable binding", () => {
     const opened = openAttempt();
     const valid = candidate(opened.id, opened.draft_revision);
-    const otherBinding = structuredClone(valid.record.binding);
+    const otherBinding = structuredClone(maximalPlanDocument().binding);
     otherBinding.dispositions[0]!.disposition = "deferred";
     const mismatches = [
       candidate(opened.id, opened.draft_revision, otherBinding),

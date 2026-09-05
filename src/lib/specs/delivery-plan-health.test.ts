@@ -95,10 +95,24 @@ function admitted(
   overrides: Partial<
     Extract<AuthoredWorkflowLaunchAdmissionResult, { ok: true }>
   > = {},
+  covers: string[] = ["criterion-one"],
 ): AuthoredWorkflowLaunchAdmissionResult {
+  const launch = createMaximalAuthoredWorkflowLaunchFixture();
+  launch.definition.executionContexts = launch.definition.executionContexts.map(
+    (context, index) =>
+      index === 0
+        ? {
+            ...context,
+            id: "context-build",
+            acceptanceCriteria: [
+              { id: "outcome", statement: "The outcome holds.", covers },
+            ],
+          }
+        : context,
+  );
   return {
     ok: true,
-    launch: createMaximalAuthoredWorkflowLaunchFixture(),
+    launch,
     warnings: [],
     stableAccountabilityContextIds: ["context-build"],
     accountabilityGroupAnalysis: [
@@ -129,9 +143,6 @@ function binding(
         disposition: "deferred",
         deliveredByExecutionId: null,
       },
-    ],
-    claims: [
-      { contextId: "context-build", criterionElementIds: ["criterion-one"] },
     ],
     ...overrides,
   };
@@ -212,21 +223,14 @@ describe("projectDeliveryPlanDraftHealth", () => {
   it("counts a selected criterion as claimed only from a stable authored source", () => {
     const health = project({
       pinnedRevision: pinnedRevision(),
-      binding: binding({
-        claims: [
-          {
-            contextId: "context-loop-clone",
-            criterionElementIds: ["criterion-one"],
-          },
-        ],
-      }),
-      admission: admitted(),
+      binding: binding(),
+      admission: admitted({ stableAccountabilityContextIds: [] }),
     });
 
     // The claimant is not among the graph-declared stable authored sources, so
     // the criterion is not claimed however many claim records name it.
     expect(health.findings.map((finding) => finding.ruleId)).toContain(
-      "binding/claim-context-unstable",
+      "coverage/unstable-context",
     );
     expect(health.claims).toEqual({ selected: 1, claimed: 0, unclaimed: 1 });
   });
@@ -259,23 +263,25 @@ describe("projectDeliveryPlanDraftHealth", () => {
   it("reports the unclaimed selected criterion propose refuses on", () => {
     const health = project({
       pinnedRevision: pinnedRevision(),
-      binding: binding({ claims: [] }),
-      admission: admitted({
-        accountabilityGroupAnalysis: [
-          {
-            bindingKey: "criterion-one",
-            claimantContextIds: [],
-            stableExistingClaimantContextIds: [],
-            mustRunClaimantContextIds: [],
-            covered: false,
-          },
-        ],
-      }),
+      binding: binding(),
+      admission: admitted(
+        {
+          accountabilityGroupAnalysis: [
+            {
+              bindingKey: "criterion-one",
+              claimantContextIds: [],
+              stableExistingClaimantContextIds: [],
+              mustRunClaimantContextIds: [],
+              covered: false,
+            },
+          ],
+        },
+        [],
+      ),
     });
 
     expect(health.findings.map((finding) => finding.ruleId)).toEqual([
-      "binding/selected-criterion-unclaimed",
-      "binding/selected-criterion-not-must-run",
+      "coverage/selected-criterion-uncovered",
     ]);
     expect(
       health.findings.every((finding) => finding.severity === "blocks_propose"),
@@ -287,7 +293,7 @@ describe("projectDeliveryPlanDraftHealth", () => {
         handle: "R1.1",
         disposition: "in_scope",
         resolution:
-          "Claim it from a stable authored accountability context, or defer, waive, or attribute it in the binding.",
+          "Add covers on a criterion in a stable authored context with workflow replace, or change its disposition in Spec Studio.",
       },
     ]);
   });
@@ -492,7 +498,7 @@ describe("projectDeliveryPlanDraftHealth", () => {
   it("states why a claimed criterion must be covered on every path", () => {
     const health = project({
       pinnedRevision: pinnedRevision(),
-      binding: binding({ claims: [] }),
+      binding: binding(),
       admission: admitted({
         accountabilityGroupAnalysis: [
           {
@@ -507,7 +513,7 @@ describe("projectDeliveryPlanDraftHealth", () => {
     });
 
     const notMustRun = health.findings.find(
-      (finding) => finding.ruleId === "binding/selected-criterion-not-must-run",
+      (finding) => finding.ruleId === "coverage/not-must-run",
     );
     expect(notMustRun?.rationale).toBe(
       "a claimed criterion must be covered on every path so a skipped branch can never waive it silently",
@@ -520,7 +526,7 @@ describe("projectDeliveryPlanDraftHealth", () => {
   it("keeps blocking binding findings ahead of advisories", () => {
     const health = project({
       pinnedRevision: pinnedRevision(),
-      binding: binding({ claims: [] }),
+      binding: binding(),
       admission: admitted({
         warnings: [{ path: "definition.edges", message: "An advisory." }],
         accountabilityGroupAnalysis: [
@@ -537,9 +543,8 @@ describe("projectDeliveryPlanDraftHealth", () => {
 
     expect(health.findings.map((finding) => finding.severity)).toEqual([
       "blocks_propose",
-      "blocks_propose",
       "advisory",
     ]);
-    expect(health.refusalConditions).toHaveLength(2);
+    expect(health.refusalConditions).toHaveLength(1);
   });
 });

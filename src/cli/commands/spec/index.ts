@@ -36,7 +36,6 @@ import {
   runSpecDraft,
   runSpecImport,
   runSpecPlanAbandon,
-  runSpecPlanEdit,
   runSpecPlanOpen,
   runSpecPlanPropose,
   runSpecPlanReopen,
@@ -137,8 +136,6 @@ export async function runSpec(
           handlers: {
             open: (planRest) =>
               runSpecPlanOpen(planRest, flags, values, env, host),
-            edit: (planRest) =>
-              runSpecPlanEdit(planRest, flags, values, env, host),
             propose: (planRest) =>
               runSpecPlanPropose(planRest, flags, values, env, host),
             reopen: (planRest) =>

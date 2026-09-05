@@ -209,7 +209,6 @@ describe("help registry contract", () => {
   it("keeps portable delivery help on the direct graph boundary", () => {
     const portableEntries = [
       "spec plan",
-      "spec plan edit",
       "spec plan preview",
       "spec start",
     ].map((command) => {

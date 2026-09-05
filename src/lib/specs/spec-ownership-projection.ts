@@ -1,3 +1,5 @@
+import { candidateClaimsDocumentPath } from "./delivery-plan-finalization";
+
 import type { GraphRolePromptProjection } from "@/lib/workflow-graph/prompt-composer";
 
 import {
@@ -5,6 +7,19 @@ import {
   type SpecExecutionBindingSnapshotV2,
 } from "./execution-binding";
 import type { SpecRevisionSnapshot, ValidationStrategy } from "./schemas";
+
+const ownershipBindingSchema = specExecutionBindingSnapshotV2Schema
+  .pick({
+    candidateId: true,
+    pinnedRevisionId: true,
+    dispositions: true,
+    claims: true,
+  })
+  .strip();
+type OwnershipBinding = Pick<
+  SpecExecutionBindingSnapshotV2,
+  "candidateId" | "pinnedRevisionId" | "dispositions" | "claims"
+>;
 
 const MAX_BRIEF_LENGTH = 240;
 const MAX_GUIDANCE_NOTE_LENGTH = 240;
@@ -34,14 +49,16 @@ function validationGuidance(strategy: ValidationStrategy): string {
 
 /**
  * Projects the immutable binding through its pinned revision. No graph runtime
- * state participates, so every lane and the seeded document render the same
- * candidate-specific bytes even after live graph edits.
+ * state participates, so the candidate's ownership map stays fixed even after
+ * live graph edits. A lane also receives a pointer to its own claims section.
  */
 export function buildSpecOwnershipProjection(
-  inputBinding: SpecExecutionBindingSnapshotV2,
+  inputBinding: OwnershipBinding,
   snapshot: SpecRevisionSnapshot,
+  contextId?: string,
+  authoredContextIds: readonly string[] = [],
 ): SpecOwnershipProjection {
-  const binding = specExecutionBindingSnapshotV2Schema.parse(inputBinding);
+  const binding = ownershipBindingSchema.parse(inputBinding);
   if (snapshot.revision.id !== binding.pinnedRevisionId) {
     throw new Error(
       `Spec ownership projection expected pinned revision ${binding.pinnedRevisionId}, received ${snapshot.revision.id}`,
@@ -86,19 +103,56 @@ export function buildSpecOwnershipProjection(
     return `| ${inlineCode(disposition.criterionElementId)} | ${boundedText(criterion.brief, MAX_BRIEF_LENGTH)} | ${inlineCode(disposition.disposition)} | ${disposition.deliveredByExecutionId === null ? "—" : inlineCode(disposition.deliveredByExecutionId)} | ${claimants.length === 0 ? "—" : claimants.map(inlineCode).join(", ")} | ${validationGuidance(criterion.validationStrategy)} |`;
   });
 
+  const claimsByContext = new Map(
+    binding.claims.map((claim) => [claim.contextId, claim.criterionElementIds]),
+  );
+  const contexts = [
+    ...new Set([...authoredContextIds, ...claimsByContext.keys()]),
+  ]
+    .sort()
+    .map((contextId) => ({
+      contextId,
+      criterionElementIds: claimsByContext.get(contextId) ?? [],
+    }));
+  const sectionAnchor = (id: string) => `context-${encodeURIComponent(id)}`;
+  const reader = contexts.find((claim) => claim.contextId === contextId);
   return {
     heading: "Spec ownership",
     candidateId: binding.candidateId,
     body: [
       `- Candidate: ${inlineCode(binding.candidateId)}`,
-      `- Candidate hash: ${inlineCode(binding.candidateHash)}`,
       `- Pinned revision: ${inlineCode(binding.pinnedRevisionId)}`,
       "",
+      ...(reader
+        ? [
+            `Read your claims first: [${reader.contextId}](${candidateClaimsDocumentPath(binding.candidateId)}#${sectionAnchor(reader.contextId)}).`,
+            "",
+          ]
+        : []),
       "This immutable binding is the authority for criterion ownership. A claimant is accountable for delivery; it need not perform every implementation step itself.",
       "",
       "| Criterion id | Brief guidance | Disposition | Delivered by execution | Claimant context ids | Validation guidance |",
       "| --- | --- | --- | --- | --- | --- |",
       ...rows,
+      "",
+      "## Context index",
+      "",
+      ...contexts.map(
+        (claim) => `- [${claim.contextId}](#${sectionAnchor(claim.contextId)})`,
+      ),
+      ...contexts.flatMap((claim) => [
+        "",
+        `<a id="${sectionAnchor(claim.contextId)}"></a>`,
+        "",
+        `## Context ${claim.contextId}`,
+        "",
+        ...(claim.criterionElementIds.length === 0
+          ? ["No selected spec criteria are claimed by this context."]
+          : []),
+        ...[...claim.criterionElementIds]
+          .sort()
+          .map((id) => `- ${inlineCode(id)}`),
+      ]),
     ].join("\n"),
   };
 }

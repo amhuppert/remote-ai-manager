@@ -34,9 +34,11 @@ export function reviewView(
     },
     approval: null,
     prelaunch: null,
+    claims: [],
+    reviewStatus: { state: "unreviewed" },
     document: {
-      schemaVersion: 3,
-      binding: { dispositions: [], claims: [] },
+      schemaVersion: 4,
+      binding: { dispositions: [] },
     },
     workflowDefinition: {
       id: "candidate-2",
@@ -98,12 +100,6 @@ export function previewView(): DeliveryPlanPreviewView {
     }),
     binding: {
       dispositions: [],
-      claims: [
-        {
-          contextId: "context-integrate",
-          criterionElementIds: ["criterion-1"],
-        },
-      ],
     },
   };
 }

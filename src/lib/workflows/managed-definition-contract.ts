@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deliveryPlanCandidateRecordSchema } from "@/lib/specs/delivery-plan";
 
 export const managedWorkflowDefinitionLifecycleSchema = z.enum([
   "draft",
@@ -72,31 +73,7 @@ const managedCommentSchema = z
   })
   .strict();
 
-const managedCandidateSchema = z
-  .object({
-    protocol: z.literal("native-sdd-delivery-candidate/v3"),
-    schemaVersion: z.literal(3),
-    specId: z.string().min(1),
-    attemptId: z.string().min(1),
-    candidateId: z.string().min(1),
-    pinnedRevisionId: z.string().min(1),
-    draftRevision: z.number().int().positive(),
-    workflowDefinition: z
-      .object({
-        id: z.string().min(1),
-        revision: z.number().int().positive(),
-        definitionHash: z.string().min(1),
-      })
-      .strict(),
-    binding: z
-      .object({
-        dispositions: z.array(managedBindingDispositionSchema),
-        claims: z.array(managedClaimSchema),
-      })
-      .strict(),
-    bindingHash: z.string().min(1),
-  })
-  .strict();
+const managedCandidateSchema = deliveryPlanCandidateRecordSchema;
 
 const managedApprovalSchema = z
   .object({
@@ -115,7 +92,6 @@ export const nativeSddWorkflowManagementDetailSchema =
     binding: z
       .object({
         dispositions: z.array(managedBindingDispositionSchema),
-        claims: z.array(managedClaimSchema),
       })
       .strict(),
     dispositionCounts: z.record(z.string(), z.number().int().nonnegative()),

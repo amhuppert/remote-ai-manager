@@ -144,7 +144,7 @@ function managedProjection(
     executionHref: null,
     deltaBasisExecutionId: null,
     bindingRevision: 1,
-    binding: { dispositions: [], claims: [] },
+    binding: { dispositions: [] },
     dispositionCounts: {},
     unresolvedItems: [],
     criterionRows: [],

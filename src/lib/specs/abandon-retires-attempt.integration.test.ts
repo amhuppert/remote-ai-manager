@@ -78,7 +78,6 @@ describe("spec abandon --execution retires the launched attempt", () => {
           deliveredByExecutionId: null,
         }),
       ),
-      claims: [],
     };
   }
 

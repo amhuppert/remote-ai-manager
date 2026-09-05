@@ -1,3 +1,5 @@
+import { planReviewAdvisoryLine } from "./plan-review-advisory";
+import { seededWorkflowDocumentsSchema } from "@/lib/workflow-graph/seeded-documents";
 import { z } from "zod";
 import {
   graphWorkflowExecutionActReceiptSchema,
@@ -17,7 +19,6 @@ import {
   planReviewRecordResponseSchema,
   planReviewStatusResponseSchema,
   REVIEW_CHANGES_REQUESTED_UNACKNOWLEDGED_CODE,
-  type PlanReviewAdvisory,
 } from "@/lib/workflows/plan-review/status-schemas";
 import { dispatchGroup } from "../dispatch";
 import {
@@ -349,13 +350,6 @@ const mutationResponseSchema = z.object({
    */
   proposeGate: proposeGateSchema.optional(),
 });
-
-/** One advisory line beside a save. Never an error, never an exit code. */
-function planReviewAdvisoryLine(advisory: PlanReviewAdvisory): string {
-  return advisory.state === "unreviewed"
-    ? "plan review: none recorded for this revision (advisory)\n"
-    : `plan review: ${advisory.state} by ${advisory.reviewerConversationId} at ${advisory.reviewedAt}\n`;
-}
 
 /**
  * The ONE refusal review machinery can produce: this exact revision carries a
@@ -761,6 +755,35 @@ export async function runWorkflow(
   });
 }
 
+function seededPlanPayloadFailure(
+  plan: Record<string, unknown>,
+  json: boolean,
+): CliResult | null {
+  const definition = plan["definition"];
+  if (
+    typeof definition !== "object" ||
+    definition === null ||
+    !("seededDocuments" in definition)
+  )
+    return null;
+  const parsed = seededWorkflowDocumentsSchema
+    .optional()
+    .safeParse(definition.seededDocuments);
+  if (parsed.success) return null;
+  const issues = parsed.error.issues.map((issue) => ({
+    path: ["definition", "seededDocuments", ...issue.path].join("."),
+    message: issue.message,
+  }));
+  return failure({
+    exitCode: EXIT_USAGE,
+    message:
+      "Invalid seeded documents; correct the document paths or reduce their contents.",
+    issues,
+    detail: issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"),
+    json,
+  });
+}
+
 async function runWorkflowValidate(
   rest: string[],
   flags: GlobalFlags,
@@ -804,6 +827,8 @@ async function runWorkflowValidate(
 
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
+  const seededFailure = seededPlanPayloadFailure(plan.value, json);
+  if (seededFailure !== null) return seededFailure;
 
   // Session-scoped: the validate endpoint lives under the graph-workflow
   // resource so it is reachable from a lane/session identity.
@@ -915,6 +940,8 @@ async function runWorkflowCreate(
 
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
+  const seededFailure = seededPlanPayloadFailure(plan.value, json);
+  if (seededFailure !== null) return seededFailure;
 
   const resolved = await resolveProjectContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -999,6 +1026,8 @@ async function runWorkflowReplace(
 
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
+  const seededFailure = seededPlanPayloadFailure(plan.value, json);
+  if (seededFailure !== null) return seededFailure;
 
   const resolved = await resolveProjectContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -1106,6 +1135,8 @@ async function runWorkflowReview(
 
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
+  const seededFailure = seededPlanPayloadFailure(plan.value, json);
+  if (seededFailure !== null) return seededFailure;
 
   const resolved = await resolveProjectContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -2375,6 +2406,8 @@ async function runWorkflowRun(
 
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
+  const seededFailure = seededPlanPayloadFailure(plan.value, json);
+  if (seededFailure !== null) return seededFailure;
 
   let inputs: Record<string, unknown> | undefined;
   const inputsPath = values["inputs"];

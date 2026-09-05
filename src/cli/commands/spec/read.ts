@@ -2858,8 +2858,8 @@ function planGetText(view: DeliveryPlanView): string {
       ],
     ),
     ...boundedSection(
-      "binding claims",
-      document.binding.claims,
+      "coverage claims",
+      view.claims,
       wholeDocument,
       (claim) => [
         `  ${claim.contextId}: ${claim.criterionElementIds.join(", ") || "no criterion"}`,
@@ -2889,7 +2889,7 @@ export async function runSpecPlanGet(
     slug: read.value.slug,
     attemptId: view.attempt.id,
     workflowDefinitionId: view.attempt.workflowDefinitionId,
-    bindingClaimCount: view.document.binding.claims.length,
+    bindingClaimCount: view.claims.length,
   });
   return {
     exitCode: EXIT_OK,

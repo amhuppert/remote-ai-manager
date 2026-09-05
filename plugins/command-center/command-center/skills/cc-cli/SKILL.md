@@ -586,7 +586,6 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec attention cite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
   - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
   - `cctl spec plan open <slug>`
-  - `cctl spec plan edit <slug> --file <plan.json>`
   - `cctl spec plan propose <slug>`
   - `cctl spec plan reopen <slug> --reason <why>`
   - `cctl spec plan get <slug>`
@@ -672,7 +671,6 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
 - `cctl spec plan` — author the delivery plan attempt that becomes the executed graph
   - `cctl spec plan open <slug>`
-  - `cctl spec plan edit <slug> --file <plan.json>`
   - `cctl spec plan propose <slug>`
   - `cctl spec plan reopen <slug> --reason <why>`
   - `cctl spec plan sign-off <slug> [--candidate <id> --candidate-hash <hash>]`
@@ -704,8 +702,6 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec attention uncite <slug> <An> --element <handle> --revision <draft-id> --if-citation-version <n>`
 - `cctl spec plan open` — open a delivery plan attempt against the approved revision
   - `cctl spec plan open <slug>`
-- `cctl spec plan edit` — write the whole plan document at the draft revision you read
-  - `cctl spec plan edit <slug> --file <plan.json>`
 - `cctl spec plan propose` — finalize and freeze an immutable candidate envelope
   - `cctl spec plan propose <slug>`
 - `cctl spec plan sign-off` — approve the stored candidate and admit the execution_start gate

@@ -21,7 +21,7 @@ export function deliveryPlanLedgerLines(
           .map(({ kind, count }) => `${kind} ${count}`)
           .join(", ");
   return [
-    `claims: ${summary.claimed} of ${summary.selected} selected criteria claimed by a stable authored context, ${summary.unclaimed} unclaimed`,
+    `coverage: ${summary.claimed} of ${summary.selected} selected criteria covered, ${summary.unclaimed} uncovered`,
     `dispositions: ${dispositions}`,
     summary.charter.state === "authored"
       ? `charter: authored, ${summary.charter.invariantCount} invariants, ${summary.charter.sourceCount} sources`

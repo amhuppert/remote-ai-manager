@@ -138,17 +138,6 @@ export function validateCharterSourceScopes(
   return errors;
 }
 
-// Source ids delivery-plan finalization injects into every spec-candidate
-// launch (src/lib/specs/delivery-plan-finalization.ts), still stamped with the
-// legacy accessPolicy field. Server-seeded, not authored — the spec-side
-// document schema refuses these reserved ids in any user-submitted plan — so
-// the authored gate exempts them. Delete this exemption when the finalizer
-// stops writing the field.
-const SERVER_SEEDED_SOURCE_IDS = new Set([
-  "native-sdd-pinned-spec",
-  "native-sdd-claims",
-]);
-
 /**
  * The authored-shape gate for charter sources: stored definitions tolerate the
  * pre-structured shapes (the parse surfaces are deliberately tolerant so
@@ -165,10 +154,7 @@ export function validateCharterSourceAuthoredShapes(
   const errors: WorkflowGraphValidationError[] = [];
 
   charter.sourcesOfTruth.forEach((source, sourceIndex) => {
-    if (
-      source.accessPolicy !== undefined &&
-      !SERVER_SEEDED_SOURCE_IDS.has(source.id)
-    ) {
+    if (source.accessPolicy !== undefined) {
       errors.push({
         code: "retired-source-access-policy",
         message: `Charter source "${source.id}" carries the retired accessPolicy field; external material is materialized into the worktree at plan time instead of permission-gated per agent`,

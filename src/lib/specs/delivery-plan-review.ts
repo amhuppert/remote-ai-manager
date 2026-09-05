@@ -68,7 +68,7 @@ export function deliveryPlanReviewView(input: {
     ]),
   );
   const owners = new Map<string, string[]>();
-  for (const claim of input.plan.document.binding.claims) {
+  for (const claim of input.plan.claims) {
     for (const criterionElementId of claim.criterionElementIds) {
       owners.set(criterionElementId, [
         ...(owners.get(criterionElementId) ?? []),
@@ -76,9 +76,7 @@ export function deliveryPlanReviewView(input: {
       ]);
     }
   }
-  const sourceIds = new Set(
-    input.plan.document.binding.claims.map((claim) => claim.contextId),
-  );
+  const sourceIds = new Set(input.plan.claims.map((claim) => claim.contextId));
   return {
     ...input.plan,
     criteria: input.pinned.elements.flatMap(({ element, version }) =>

@@ -62,6 +62,7 @@ export interface GraphExecutionContract {
   ): GraphExecutionContractDerivation;
   loadPromptProjection?(
     execution: GraphWorkflowExecution,
+    contextId?: string,
   ): Promise<GraphRolePromptProjection | null>;
 }
 
@@ -109,9 +110,12 @@ export function createRegisteredGraphExecutionContract(): GraphExecutionContract
         }
       );
     },
-    async loadPromptProjection(execution) {
+    async loadPromptProjection(execution, contextId) {
       return (
-        (await state().contract?.loadPromptProjection?.(execution)) ?? null
+        (await state().contract?.loadPromptProjection?.(
+          execution,
+          contextId,
+        )) ?? null
       );
     },
   };

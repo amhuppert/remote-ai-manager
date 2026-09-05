@@ -14,7 +14,6 @@ import type {
   GraphWorkflowStatus,
   SeededWorkflowDocument,
 } from "@/lib/workflow-graph/spec-bridge";
-import { buildPinnedSpecDocument } from "./export";
 import {
   INITIAL_ABANDON_CLEANUP_PHASE,
   abandonFinalizationAllowed,
@@ -50,8 +49,6 @@ import {
 } from "./execution-start-attachment";
 import { specExecutionBindingSnapshotV2Schema } from "./execution-binding";
 import { resolveSpecExecutionByWorkflowId } from "./execution-id-resolution";
-import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
-import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
 import type { SpecMeasureEventPayload } from "./measures";
 import { resolveDial } from "./policy";
 import type { SpecApprovalRequestsClosedNotice } from "./attention-records";
@@ -1927,7 +1924,7 @@ export function prelaunchRedirectRefusal(
 ): LifecycleResult<never> {
   const act =
     attempt.status === "draft"
-      ? `cctl spec plan edit ${slug} --file <plan.json>`
+      ? `cctl workflow replace <definitionId> --file <plan.json>`
       : `cctl spec plan reopen ${slug} --reason <why>`;
   return lifecycleRefused(
     "gate_blocked",
@@ -2510,7 +2507,7 @@ async function startFromDeliveryPlan(
     candidateHash: launch.candidate.candidateHash,
     pinnedRevisionId: launch.pinnedRevisionId,
     dispositions: launch.binding.dispositions,
-    claims: launch.binding.claims,
+    claims: launch.claims,
   });
   const attachment = prepareSpecExecutionStartAttachment(
     {
@@ -2563,12 +2560,7 @@ async function startFromDeliveryPlan(
       ...(input.parameters === undefined
         ? {}
         : { parameters: input.parameters }),
-      seededDocuments: [
-        buildPinnedSpecDocument(spec, pinned),
-        buildSpecExecutionClaimsDocument(
-          buildSpecOwnershipProjection(binding, pinned),
-        ),
-      ],
+      seededDocuments: [],
     },
   };
 }

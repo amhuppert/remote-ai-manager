@@ -51,6 +51,7 @@ import { stableStringify } from "@/lib/state-store/serialization";
 
 import type { LinkedWorkflowObservation } from "./abandon-coordinator";
 import { pinnedSpecDocumentPath } from "./delivery-plan";
+import { contextSpecDocumentPath } from "./delivery-plan-finalization";
 import {
   describeReferenceIssue,
   validateAffectedReferences,
@@ -1570,6 +1571,49 @@ export function buildPinnedSpecDocument(
     description: `The pinned spec ${spec.slug} at revision ${pinned.revision.number} — the contract this run implements.`,
     readWhen:
       "Read before judging whether work satisfies the spec; it is the pinned contract, not live spec state.",
+  };
+}
+
+export function buildContextSpecDocument(
+  spec: Spec,
+  pinned: SpecRevisionSnapshot,
+  contextId: string,
+  coveredCriterionIds: readonly string[],
+): SeededWorkflowDocument {
+  const covered = new Set(coveredCriterionIds);
+  const selected = new Set<string>();
+  const requirements = new Set<string>();
+  for (const { element, version } of pinned.elements) {
+    if (version.payload.kind !== "criterion" || !covered.has(element.id))
+      continue;
+    selected.add(element.id);
+    if (element.parentElementId !== null)
+      requirements.add(element.parentElementId);
+  }
+  for (const { element, version } of pinned.elements) {
+    if (
+      requirements.has(element.id) ||
+      (version.payload.kind === "decision" &&
+        version.payload.tracedRequirementElementIds.some((id) =>
+          requirements.has(id),
+        ))
+    )
+      selected.add(element.id);
+  }
+  const excerpt = {
+    ...pinned,
+    elements: pinned.elements.filter(({ element }) => selected.has(element.id)),
+  };
+  return {
+    relativePath: contextSpecDocumentPath(spec.slug, contextId),
+    contents:
+      renderRevisionMarkdown(spec, excerpt) +
+      (selected.size === 0
+        ? "\nNo spec criteria are covered by this context; consult the full pinned spec when needed.\n"
+        : ""),
+    description: `The pinned spec excerpt for context ${contextId} at revision ${pinned.revision.number}.`,
+    readWhen:
+      "Read before implementing or validating this context; consult the full pinned spec when the excerpt is insufficient.",
   };
 }
 

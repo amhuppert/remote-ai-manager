@@ -41,6 +41,23 @@ function deps(
 }
 
 describe("lintCommittedSourceLocators", () => {
+  it("treats workflow document paths as materialized sources without probing git", async () => {
+    const dependency = deps({ commitContainsPath: async () => false });
+    const warnings = await lintCommittedSourceLocators(
+      definition([
+        { id: "source-input", locator: ".cc/graph-workflow-docs/input.md" },
+        {
+          id: "context-spec",
+          locator: ".cc/graph-workflow-docs/spec/demo/implement.md",
+        },
+      ]),
+      session,
+      dependency,
+    );
+    expect(warnings).toEqual([]);
+    expect(dependency.getHeadCommit).not.toHaveBeenCalled();
+  });
+
   it("pins one HEAD snapshot and reports missing sources in definition order with its server-derived substrate", async () => {
     const getHeadCommit = vi.fn(async () => headSha);
     const commitContainsPath = vi.fn(

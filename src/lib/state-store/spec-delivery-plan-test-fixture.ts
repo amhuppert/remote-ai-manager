@@ -1,8 +1,9 @@
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/seeded-documents";
 import type Database from "better-sqlite3";
 import {
-  deliveryPlanDocumentSchema,
-  type DeliveryPlanBinding,
-  type DeliveryPlanDocument,
+  deliveryPlanV3DocumentSchema,
+  deliveryPlanV4DocumentSchema,
+  type DeliveryPlanV3Document,
 } from "@/lib/specs/delivery-plan";
 import {
   createSpecEventsPublisher,
@@ -71,6 +72,7 @@ export function createManagedDefinitionTestService(): TestManagedDefinitionServi
     definitionId: string;
     launch: WorkflowDefinitionDraft;
     stage: DeliveryPlanLaunchStage;
+    seededDocuments?: readonly SeededWorkflowDocument[];
     revision?: number;
   }) => {
     const finalized = finalizeDeliveryPlanLaunch({
@@ -81,6 +83,7 @@ export function createManagedDefinitionTestService(): TestManagedDefinitionServi
       candidateId: input.definitionId,
       launch: input.launch,
       stage: input.stage,
+      seededDocuments: input.seededDocuments,
     });
     const record: WorkflowDefinitionRecord = {
       ...finalized,
@@ -142,6 +145,7 @@ export function createManagedDefinitionTestService(): TestManagedDefinitionServi
         definitionId: existing.id,
         launch: existing,
         stage: input.stage,
+        seededDocuments: input.seededDocuments,
         revision: existing.revision + 1,
       });
     },
@@ -241,7 +245,7 @@ export function seedDeliveryPlanParents(db: Db): void {
 export interface LegacyDeliveryPlanTestDocument {
   schemaVersion: 2;
   launch: WorkflowDefinitionDraft;
-  binding: DeliveryPlanBinding;
+  binding: DeliveryPlanV3Document["binding"];
 }
 
 export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
@@ -563,11 +567,18 @@ export function maximalLegacyPlanDocument(): LegacyDeliveryPlanTestDocument {
   };
 }
 
-export function maximalPlanDocument(): DeliveryPlanDocument {
+export function maximalPlanDocument(): DeliveryPlanV3Document {
   const legacy = maximalLegacyPlanDocument();
-  return deliveryPlanDocumentSchema.parse({
+  return deliveryPlanV3DocumentSchema.parse({
     schemaVersion: 3,
     binding: legacy.binding,
+  });
+}
+
+export function maximalCoveragePlanDocument() {
+  return deliveryPlanV4DocumentSchema.parse({
+    schemaVersion: 4,
+    binding: { dispositions: maximalPlanDocument().binding.dispositions },
   });
 }
 

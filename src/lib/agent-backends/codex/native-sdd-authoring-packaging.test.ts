@@ -361,9 +361,8 @@ describe("native-sdd-authoring managed skill", () => {
     expect(capture).toContain("cctl spec plan open");
 
     const planOpen = await helpText(["spec", "plan", "open"]);
-    expect(planOpen).toContain("spec plan edit");
-    const planEdit = await helpText(["spec", "plan", "edit"]);
-    expect(planEdit).toContain("spec plan propose");
+    expect(planOpen).toContain("cctl workflow validate");
+    expect(planOpen).toContain("cctl workflow replace");
     const planPropose = await helpText(["spec", "plan", "propose"]);
     expect(planPropose).toContain("spec plan sign-off");
     const planSignOff = await helpText(["spec", "plan", "sign-off"]);

@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
+import {
+  authoredDeliveryPlanSources,
+  isServerOwnedDeliveryPlanDocument,
+} from "@/lib/specs/delivery-plan-finalization";
 
 import {
   validateWorkflowPlan,
@@ -96,7 +100,24 @@ export type PlanDefinitionHashResult =
 export function canonicalPlanDefinitionHash(
   definition: WorkflowSemanticDefinition,
 ): string {
-  return workingDefinitionHash(definition);
+  const authored = { ...definition };
+  if (definition.origin?.sourceUri.startsWith("spec-plan://")) {
+    delete authored.origin;
+    delete authored.lockedRegions;
+    delete authored.approvalRequired;
+    authored.charter = {
+      ...definition.charter,
+      sourcesOfTruth: authoredDeliveryPlanSources(
+        definition.charter.sourcesOfTruth,
+      ),
+    };
+    if (definition.seededDocuments !== undefined)
+      authored.seededDocuments = definition.seededDocuments.filter(
+        (document) => !isServerOwnedDeliveryPlanDocument(document.relativePath),
+      );
+  }
+  if (authored.seededDocuments?.length === 0) delete authored.seededDocuments;
+  return workingDefinitionHash(authored);
 }
 
 /**

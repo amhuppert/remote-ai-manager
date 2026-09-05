@@ -398,7 +398,7 @@ describe("transition predicates", () => {
           ],
           rationale: PLAN_IN_EVERGREEN_RATIONALE,
           instruction:
-            "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl spec plan edit <slug> --file <plan.json>`.",
+            "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl workflow replace <definitionId> --file <plan.json>`.",
         },
       });
       expect(

@@ -3,9 +3,92 @@ import { describe, expect, it } from "vitest";
 import {
   graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowResolvedContextSchema,
+  workflowSemanticDefinitionSchema,
 } from "./definition-schemas";
 import type { CriterionRecord } from "./criteria/criterion-records";
-import { createResolvedWorkflowDefinition } from "./test-fixtures";
+import {
+  createResolvedWorkflowDefinition,
+  createWorkflowDefinition,
+} from "./test-fixtures";
+
+const SEEDED_DOCUMENT = {
+  relativePath: ".cc/graph-workflow-docs/input.md",
+  contents: "Conversation-provided source material.",
+  description: "Authored input",
+  readWhen: "Read before implementation.",
+};
+
+describe("definition seeded documents", () => {
+  it("preserves seeded source material in an ordinary definition", () => {
+    const definition = {
+      ...createWorkflowDefinition(),
+      seededDocuments: [SEEDED_DOCUMENT],
+    };
+    expect(workflowSemanticDefinitionSchema.parse(definition)).toMatchObject({
+      seededDocuments: [SEEDED_DOCUMENT],
+    });
+  });
+
+  it.each([
+    "/tmp/input.md",
+    "docs/input.md",
+    ".cc/graph-workflow-docs/../input.md",
+    ".cc/graph-workflow-docs/",
+    ".cc/graph-workflow-docs/sub/../../input.md",
+    ".cc/graph-workflow-docs/sub\\input.md",
+  ])(
+    "refuses a destination outside the document namespace: %s",
+    (relativePath) => {
+      expect(
+        workflowSemanticDefinitionSchema.safeParse({
+          ...createWorkflowDefinition(),
+          seededDocuments: [{ ...SEEDED_DOCUMENT, relativePath }],
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("measures the per-document cap in UTF-8 bytes", () => {
+    const document = { ...SEEDED_DOCUMENT, contents: "é".repeat(131072) };
+    const definition = {
+      ...createWorkflowDefinition(),
+      seededDocuments: [document],
+    };
+    expect(workflowSemanticDefinitionSchema.safeParse(definition).success).toBe(
+      true,
+    );
+    document.contents += "x";
+    expect(workflowSemanticDefinitionSchema.safeParse(definition).success).toBe(
+      false,
+    );
+  });
+
+  it("caps the combined document contents at one MiB and refuses duplicate destinations", () => {
+    const seededDocuments = Array.from({ length: 4 }, (_, index) => ({
+      ...SEEDED_DOCUMENT,
+      relativePath: `.cc/graph-workflow-docs/${index}.md`,
+      contents: "x".repeat(262144),
+    }));
+    expect(
+      workflowSemanticDefinitionSchema.safeParse({
+        ...createWorkflowDefinition(),
+        seededDocuments,
+      }).success,
+    ).toBe(true);
+    expect(
+      workflowSemanticDefinitionSchema.safeParse({
+        ...createWorkflowDefinition(),
+        seededDocuments: [...seededDocuments, SEEDED_DOCUMENT],
+      }).success,
+    ).toBe(false);
+    expect(
+      workflowSemanticDefinitionSchema.safeParse({
+        ...createWorkflowDefinition(),
+        seededDocuments: [SEEDED_DOCUMENT, SEEDED_DOCUMENT],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 const RECORDS: CriterionRecord[] = [
   { id: "schema-accepts-records", statement: "Records parse on the context." },

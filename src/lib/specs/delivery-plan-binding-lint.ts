@@ -1,7 +1,10 @@
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
 import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/spec-bridge";
 
-import type { DeliveryPlanBinding } from "./delivery-plan";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
+import { collectStableAccountabilityContextIds } from "@/lib/workflow-graph/authored-accountability";
+import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import type { DeliveryPlanBinding, DeliveryPlanClaim } from "./delivery-plan";
 import type { SpecRevisionSnapshot } from "./schemas";
 
 /**
@@ -13,13 +16,11 @@ export const DELIVERY_PLAN_BINDING_LINT_ISSUE_CODES = [
   "binding/disposition-missing",
   "binding/disposition-duplicate",
   "binding/disposition-criterion-unknown",
-  "binding/selected-criterion-unclaimed",
-  "binding/selected-criterion-not-must-run",
-  "binding/claim-context-duplicate",
-  "binding/claim-context-unstable",
-  "binding/claim-criterion-duplicate",
-  "binding/claim-criterion-unknown",
-  "binding/claim-criterion-unselected",
+  "coverage/selected-criterion-uncovered",
+  "coverage/not-must-run",
+  "coverage/unstable-context",
+  "coverage/unknown-id",
+  "coverage/unselected",
   "binding/pending-reaffirmation",
   "binding/reaffirmed-without-delivery",
 ] as const;
@@ -50,14 +51,16 @@ export interface DeliveryPlanBindingLintInput {
 
 export function deliveryPlanBindingAccountabilityGroups(
   binding: DeliveryPlanBinding,
+  definition: WorkflowSemanticDefinition,
 ): AuthoredAccountabilityCoverageGroup[] {
+  const claims = deriveDeliveryPlanClaims(binding, definition);
   return binding.dispositions.flatMap((disposition) =>
     disposition.disposition !== "in_scope"
       ? []
       : [
           {
             bindingKey: disposition.criterionElementId,
-            claimantContextIds: binding.claims.flatMap((claim) =>
+            claimantContextIds: claims.flatMap((claim) =>
               claim.criterionElementIds.includes(disposition.criterionElementId)
                 ? [claim.contextId]
                 : [],
@@ -142,82 +145,109 @@ export function lintDeliveryPlanBinding(
   const stableSourceIds = new Set(
     input.admission.stableAccountabilityContextIds,
   );
-  const claimedContextIds = new Set<string>();
-  const claimedSelectedCriterionIds = new Set<string>();
-  input.binding.claims.forEach((claim, claimIndex) => {
-    if (claimedContextIds.has(claim.contextId)) {
-      issues.push({
-        code: "binding/claim-context-duplicate",
-        path: ["claims", claimIndex, "contextId"],
-        criterionElementId: null,
-        message: `Context ${JSON.stringify(claim.contextId)} has more than one claim record.`,
-      });
-    }
-    claimedContextIds.add(claim.contextId);
-    if (!stableSourceIds.has(claim.contextId)) {
-      issues.push({
-        code: "binding/claim-context-unstable",
-        path: ["claims", claimIndex, "contextId"],
-        criterionElementId: null,
-        message: `Context ${JSON.stringify(claim.contextId)} is not a graph-declared stable authored accountability source.`,
-      });
-    }
-
-    const claimCriterionIds = new Set<string>();
-    claim.criterionElementIds.forEach((criterionId, criterionIndex) => {
-      if (claimCriterionIds.has(criterionId)) {
-        issues.push({
-          code: "binding/claim-criterion-duplicate",
-          path: ["claims", claimIndex, "criterionElementIds", criterionIndex],
-          criterionElementId: criterionId,
-          message: `Claim record for ${JSON.stringify(claim.contextId)} repeats criterion ${JSON.stringify(criterionId)}.`,
-        });
-      }
-      claimCriterionIds.add(criterionId);
-
-      if (!criterionIds.has(criterionId)) {
-        issues.push({
-          code: "binding/claim-criterion-unknown",
-          path: ["claims", claimIndex, "criterionElementIds", criterionIndex],
-          criterionElementId: criterionId,
-          message: `Claim names criterion ${JSON.stringify(criterionId)}, which is absent from the pinned revision.`,
-        });
-        return;
-      }
-      if (!selectedCriterionIds.has(criterionId)) {
-        issues.push({
-          code: "binding/claim-criterion-unselected",
-          path: ["claims", claimIndex, "criterionElementIds", criterionIndex],
-          criterionElementId: criterionId,
-          message: `Claim names criterion ${JSON.stringify(criterionId)}, which is not selected for this attempt.`,
-        });
-        return;
-      }
-      claimedSelectedCriterionIds.add(criterionId);
-    });
-  });
+  const coveredSelectedIds = new Set<string>();
+  const recordsByCriterion = new Map<string, string[]>();
+  input.admission.launch.definition.executionContexts.forEach(
+    (context, contextIndex) => {
+      criterionRecordsOf(context.acceptanceCriteria).forEach(
+        (record, recordIndex) => {
+          (record.covers ?? []).forEach((criterionId, coverageIndex) => {
+            const path = [
+              "definition",
+              "executionContexts",
+              contextIndex,
+              "acceptanceCriteria",
+              recordIndex,
+              "covers",
+              coverageIndex,
+            ];
+            const locatedRecord = `${context.id}/${record.id}`;
+            const common = { path, criterionElementId: criterionId };
+            const stable = stableSourceIds.has(context.id);
+            if (!stable) {
+              issues.push({
+                ...common,
+                code: "coverage/unstable-context",
+                message: `Covering record ${locatedRecord} is not in a stable authored accountability context; move its covers entry to the stable authored ancestor.`,
+              });
+            }
+            if (!criterionIds.has(criterionId)) {
+              issues.push({
+                ...common,
+                code: "coverage/unknown-id",
+                message: `Record ${locatedRecord} covers ${JSON.stringify(criterionId)}, which is absent from the pinned revision; correct or remove this covers entry.`,
+              });
+              return;
+            }
+            if (!selectedCriterionIds.has(criterionId)) {
+              issues.push({
+                ...common,
+                code: "coverage/unselected",
+                message: `Record ${locatedRecord} covers ${JSON.stringify(criterionId)}, which is not selected; remove its covers entry or change the disposition in Spec Studio.`,
+              });
+              return;
+            }
+            recordsByCriterion.set(criterionId, [
+              ...(recordsByCriterion.get(criterionId) ?? []),
+              locatedRecord,
+            ]);
+            if (stable) coveredSelectedIds.add(criterionId);
+          });
+        },
+      );
+    },
+  );
 
   for (const criterionId of selectedCriterionIds) {
-    if (!claimedSelectedCriterionIds.has(criterionId)) {
+    if (!coveredSelectedIds.has(criterionId)) {
       issues.push({
-        code: "binding/selected-criterion-unclaimed",
-        path: ["claims"],
+        code: "coverage/selected-criterion-uncovered",
+        path: ["definition", "executionContexts"],
         criterionElementId: criterionId,
-        message: `Selected criterion ${JSON.stringify(criterionId)} has no claimant.`,
+        message: `Selected criterion ${JSON.stringify(criterionId)} has no covering record in a stable authored context; add it to that record's covers and store the plan with workflow replace.`,
       });
+      continue;
     }
     const covered = input.admission.accountabilityGroupAnalysis.some(
       (analysis) => analysis.bindingKey === criterionId && analysis.covered,
     );
     if (!covered) {
       issues.push({
-        code: "binding/selected-criterion-not-must-run",
-        path: ["claims"],
+        code: "coverage/not-must-run",
+        path: ["definition", "executionContexts"],
         criterionElementId: criterionId,
-        message: `Selected criterion ${JSON.stringify(criterionId)} has no claimant in the graph-owned conservative must-run set.`,
+        message: `Selected criterion ${JSON.stringify(criterionId)} is covered by ${(recordsByCriterion.get(criterionId) ?? []).join(", ")}, but those contexts can all be skipped. Also cover it from an always-run closeout context that verifies whichever route ran, or change its disposition in Spec Studio.`,
       });
     }
   }
 
   return issues;
+}
+
+export function deriveDeliveryPlanClaims(
+  binding: DeliveryPlanBinding,
+  definition: WorkflowSemanticDefinition,
+  stableContextIds: readonly string[] = collectStableAccountabilityContextIds(
+    definition,
+  ),
+): DeliveryPlanClaim[] {
+  const selected = new Set(
+    binding.dispositions.flatMap((entry) =>
+      entry.disposition === "in_scope" ? [entry.criterionElementId] : [],
+    ),
+  );
+  const stable = new Set(stableContextIds);
+  return definition.executionContexts.flatMap((context) => {
+    if (!stable.has(context.id)) return [];
+    const criterionElementIds = [
+      ...new Set(
+        criterionRecordsOf(context.acceptanceCriteria)
+          .flatMap((record) => record.covers ?? [])
+          .filter((id) => selected.has(id)),
+      ),
+    ];
+    return criterionElementIds.length === 0
+      ? []
+      : [{ contextId: context.id, criterionElementIds }];
+  });
 }

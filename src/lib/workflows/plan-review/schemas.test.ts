@@ -5,8 +5,14 @@ import {
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
+import { finalizeDeliveryPlanLaunch } from "@/lib/specs/delivery-plan-finalization";
+import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
 
-import { graphPlanReviewSchema, planDefinitionHash } from "./schemas";
+import {
+  graphPlanReviewSchema,
+  planDefinitionHash,
+  canonicalPlanDefinitionHash,
+} from "./schemas";
 
 /** A well-formed create/replace body: `{ name, description?, definition, layout }`. */
 function makePlan(definition = createWorkflowDefinition()) {
@@ -58,6 +64,70 @@ function review(overrides: Record<string, unknown> = {}) {
 }
 
 describe("planDefinitionHash", () => {
+  it("matches the authored plan through managed finalization, document injection and reopening", () => {
+    const authored = workflowDefinitionMutationSchema.parse(makePlan());
+    authored.definition.seededDocuments = [
+      {
+        relativePath: ".cc/graph-workflow-docs/research.md",
+        contents: "Research",
+        description: "Reference",
+        readWhen: "Before work",
+      },
+    ];
+    const finalized = finalizeDeliveryPlanLaunch({
+      specId: "spec",
+      specSlug: "spec",
+      pinnedRevisionId: "revision",
+      attemptId: "attempt",
+      candidateId: "candidate",
+      launch: authored,
+      seededDocuments: [
+        {
+          relativePath: ".cc/graph-workflow-docs/spec/spec.md",
+          contents: "Pinned contract",
+          description: "Contract",
+          readWhen: "Before work",
+        },
+      ],
+    });
+    const expected = canonicalPlanDefinitionHash(authored.definition);
+    expect(canonicalPlanDefinitionHash(finalized.definition)).toBe(expected);
+    const reopened = finalizeDeliveryPlanLaunch({
+      specId: "spec",
+      specSlug: "spec",
+      pinnedRevisionId: "revision",
+      attemptId: "attempt",
+      candidateId: "reopened",
+      launch: finalized,
+      stage: "draft",
+    });
+    expect(canonicalPlanDefinitionHash(reopened.definition)).toBe(expected);
+    const changed = structuredClone(finalized.definition);
+    const document = changed.seededDocuments?.find((entry) =>
+      entry.relativePath.endsWith("research.md"),
+    );
+    if (!document) throw new Error("Missing authored document");
+    document.contents = "Changed research";
+    expect(canonicalPlanDefinitionHash(changed)).not.toBe(expected);
+  });
+
+  it("preserves every ordinary definition field in its review identity", () => {
+    const ordinary =
+      workflowDefinitionMutationSchema.parse(makePlan()).definition;
+    ordinary.origin = { sourceUri: "ordinary://source" };
+    ordinary.approvalRequired = false;
+    ordinary.lockedRegions = [
+      {
+        paths: ["/charter"],
+        sourceUri: "ordinary://source",
+        reason: "Governance",
+        instruction: "Consult owner",
+      },
+    ];
+    expect(canonicalPlanDefinitionHash(ordinary)).toBe(
+      workingDefinitionHash(ordinary),
+    );
+  });
   it("yields the identical hash for the same plan content with reordered keys", () => {
     const plan = makePlan();
     const reordered = JSON.parse(

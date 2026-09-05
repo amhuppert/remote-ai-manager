@@ -1,7 +1,9 @@
+import { planReviewAdvisorySchema } from "@/lib/workflows/plan-review/status-schemas";
 import { z } from "zod";
 
 import {
   deliveryPlanBindingSchema,
+  deliveryPlanClaimSchema,
   deliveryPlanCriterionDispositionSchema,
   deliveryPlanDocumentSchema,
   finalizedDeliveryPlanApprovalSchema,
@@ -119,6 +121,8 @@ export const deliveryPlanViewSchema = z
     approval: finalizedDeliveryPlanApprovalSchema.nullable(),
     prelaunch: deliveryPlanPrelaunchViewSchema.nullable(),
     document: deliveryPlanDocumentSchema,
+    claims: z.array(deliveryPlanClaimSchema),
+    reviewStatus: planReviewAdvisorySchema,
     workflowDefinition: z
       .object({
         id: z.string().min(1),

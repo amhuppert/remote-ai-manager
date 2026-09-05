@@ -28,7 +28,13 @@ import type {
 } from "@/lib/specs/schemas";
 import { createAuthoredContextOutcomeService } from "@/lib/workflow-graph/authored-context-outcome";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowExecution,
+  createWorkflowLayout,
+  createWorkflowDefinition,
+} from "@/lib/workflow-graph/test-fixtures";
+import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
+import { graphWorkflowValidationSpecialistSchema } from "@/lib/workflow-graph/schemas";
 import { createDeliveryGate, type DeliveryGateDeps } from "./delivery-gate-v2";
 
 type Db = InstanceType<typeof Database>;
@@ -397,6 +403,7 @@ function createIntegratedGate(execution: GraphWorkflowExecution) {
   });
   let verdictSequence = 0;
   const deps: DeliveryGateDeps = {
+    findWorkflowExecution: () => execution,
     bindingPort: createSpecExecutionBindingPorts(
       createSpecExecutionBindingRepo(db),
     ).delivery,
@@ -541,6 +548,126 @@ afterEach(() => {
 });
 
 describe("delivery gate v2 integrated execution identity", () => {
+  it("attributes a failure only to the cited frozen coverage and credits the whole union only after context GO", async () => {
+    db.prepare(
+      "DELETE FROM spec_execution_bindings WHERE spec_execution_id = ?",
+    ).run(CURRENT_SPEC_EXECUTION_ID);
+    const binding = currentBinding(true);
+    binding.claims = [
+      {
+        contextId: STABLE_SPAWNER_ID,
+        criterionElementIds: [CRITERION_ID, SECONDARY_CRITERION_ID],
+      },
+    ];
+    createSpecExecutionBindingRepo(db).insert({
+      specExecutionId: CURRENT_SPEC_EXECUTION_ID,
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      binding,
+      createdAt: NOW,
+    });
+    const execution = graphExecution("completed", false);
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === STABLE_SPAWNER_ID,
+    );
+    const state = execution.contextStates[STABLE_SPAWNER_ID];
+    if (!context || !state) throw new Error("Missing fixture context");
+    context.scriptValidator = { commands: ["test"] };
+    context.acceptanceCriteria = [
+      { id: "observable-a", statement: "A holds", covers: [CRITERION_ID] },
+      {
+        id: "observable-b",
+        statement: "B holds",
+        covers: [SECONDARY_CRITERION_ID],
+      },
+    ];
+    const launchDefinition = createWorkflowDefinition();
+    const frozenContext = launchDefinition.executionContexts.find(
+      (entry) => entry.id === STABLE_SPAWNER_ID,
+    );
+    if (!frozenContext) throw new Error("Missing frozen fixture context");
+    frozenContext.acceptanceCriteria = structuredClone(
+      context.acceptanceCriteria,
+    );
+    execution.launchDocument = workflowDefinitionMutationSchema.parse({
+      name: "Coverage delivery",
+      definition: launchDefinition,
+      layout: createWorkflowLayout(),
+    });
+    context.acceptanceCriteria = [
+      {
+        id: "observable-a",
+        statement: "Live edit",
+        covers: [SECONDARY_CRITERION_ID],
+      },
+    ];
+    state.validationRound = {
+      seq: 1,
+      candidate: {
+        headSha: "head",
+        candidateTreeHash: "tree",
+        taskStateHash: "tasks",
+        identityScope: "wholeTree",
+      },
+      roster: [],
+      specialists: {
+        acceptance: graphWorkflowValidationSpecialistSchema.parse({
+          state: "verdict_fail",
+          issues: [
+            {
+              taskId: "task-plan-1",
+              criterionId: "observable-a",
+              title: "COVERED_FAILURE",
+              description: "A is missing",
+            },
+          ],
+        }),
+      },
+      phase: "concluded",
+      outcome: "failed",
+      startedAt: NOW,
+    };
+    const { gate, deliveryRepo } = createIntegratedGate(execution);
+    const input = {
+      workflowExecutionId: CURRENT_WORKFLOW_EXECUTION_ID,
+      preparedSha: "prepared-current",
+      expectedTargetSha: "target-current",
+      projectPath: PROJECT_PATH,
+    };
+    const refused = await gate.evaluate(input);
+    expect(refused.status).toBe("refused");
+    expect(refused).toMatchObject({
+      unmet: expect.arrayContaining([
+        {
+          criterionId: CRITERION_ID,
+          criterionHandle: expect.any(String),
+          outcome: "failed",
+          reason: expect.stringContaining("COVERED_FAILURE"),
+        },
+      ]),
+    });
+    if (refused.status !== "refused") throw new Error("Expected refusal");
+    expect(
+      refused.unmet.find(
+        (criterion) => criterion.criterionId === SECONDARY_CRITERION_ID,
+      )?.reason,
+    ).not.toContain("COVERED_FAILURE");
+    expect(
+      deliveryRepo.findDeliveryVerdictsBySpecExecutionId(
+        CURRENT_SPEC_EXECUTION_ID,
+      ),
+    ).toEqual([]);
+    state.validationRound.outcome = "passed";
+    state.validationRound.specialists = {};
+    await expect(gate.evaluate(input)).resolves.toMatchObject({
+      status: "pass",
+    });
+    expect(
+      deliveryRepo
+        .findDeliveryVerdictsBySpecExecutionId(CURRENT_SPEC_EXECUTION_ID)
+        .map((verdict) => verdict.criterion_element_id)
+        .sort(),
+    ).toEqual([CRITERION_ID, SECONDARY_CRITERION_ID].sort());
+  });
   it("does not let a prior execution verdict satisfy the current attempt", async () => {
     const { deliveryRepo, gate } = createIntegratedGate(
       graphExecution("pending", false),

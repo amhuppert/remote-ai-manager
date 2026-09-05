@@ -1,4 +1,5 @@
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
+import type { SeededWorkflowDocument } from "@/lib/workflow-graph/seeded-documents";
 import {
   workflowDefinitionMutationSchema,
   type WorkflowDefinitionMutation,
@@ -26,6 +27,7 @@ export interface DeliveryPlanLaunchFinalizationInput {
   readonly candidateId: string;
   readonly launch: WorkflowDefinitionMutation;
   readonly stage?: DeliveryPlanLaunchStage;
+  readonly seededDocuments?: readonly SeededWorkflowDocument[];
 }
 
 export type FinalizeAndAdmitDeliveryPlanLaunchInput = Omit<
@@ -49,6 +51,21 @@ const SERVER_OWNED_SOURCE_LOCATOR_PREFIXES = [
   ".cc/graph-workflow-docs/spec-bindings/",
 ] as const;
 
+export function isServerOwnedDeliveryPlanDocument(
+  relativePath: string,
+): boolean {
+  return SERVER_OWNED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
+    relativePath.startsWith(prefix),
+  );
+}
+
+export function contextSpecDocumentPath(
+  specSlug: string,
+  contextId: string,
+): string {
+  return `.cc/graph-workflow-docs/spec/${specSlug}/${encodeURIComponent(contextId)}.md`;
+}
+
 export function candidateClaimsDocumentPath(candidateId: string): string {
   return `.cc/graph-workflow-docs/spec-bindings/${candidateId}/claims.md`;
 }
@@ -68,18 +85,16 @@ export function isServerOwnedDeliveryPlanSource(source: {
 }): boolean {
   return (
     SERVER_OWNED_SOURCE_IDS.has(source.id) ||
-    SERVER_OWNED_SOURCE_LOCATOR_PREFIXES.some((prefix) =>
-      source.locator.startsWith(prefix),
-    )
+    isServerOwnedDeliveryPlanDocument(source.locator)
   );
 }
 
 /**
  * The sources an author owns, with the rank gaps the server-owned entries leave
  * closed so authored relative order survives. Finalization re-injects the
- * server-owned pair around the result, which is what keeps a launch that
+ * server-owned entries around the result, which is what keeps a launch that
  * already carries them — a reopened candidate, a re-proposed draft — from
- * accumulating a duplicate pair per hop.
+ * accumulating duplicate entries per hop.
  */
 export function authoredDeliveryPlanSources<
   T extends {
@@ -103,7 +118,7 @@ export function authoredDeliveryPlanSources<
 
 /**
  * The submitted sources with each server-owned entry kept once, first
- * occurrence winning. A managed draft may carry the injected pair (a plan
+ * occurrence winning. A managed draft may carry the injected entries (a plan
  * round-tripped from `get --full` does) or omit it; what it may not do is
  * store two copies, which a planner's merge of a bare plan with a stored
  * definition can produce. Authored entries pass through untouched.
@@ -125,9 +140,24 @@ export function finalizeDeliveryPlanLaunch(
 ): WorkflowDefinitionMutation {
   const stage = input.stage ?? "candidate";
   const sourceUri = deliveryPlanCandidateSourceUri(input);
+  const contextSources = input.launch.definition.executionContexts.map(
+    (context, index) => ({
+      rank: index + 1,
+      id: `native-sdd-context-${context.id}`,
+      label: `Pinned spec excerpt for ${context.id}`,
+      type: "spec" as const,
+      locator: contextSpecDocumentPath(input.specSlug, context.id),
+      description:
+        "The pinned requirements, criteria and decisions covered by this context.",
+      appliesTo: { contextIds: [context.id] },
+    }),
+  );
   const authoredSources = authoredDeliveryPlanSources(
     input.launch.definition.charter.sourcesOfTruth,
-  ).map((source) => ({ ...source, rank: source.rank + 2 }));
+  ).map((source) => ({
+    ...source,
+    rank: source.rank + contextSources.length + 2,
+  }));
   const charterLock = {
     paths: ["/charter"],
     sourceUri,
@@ -148,28 +178,47 @@ export function finalizeDeliveryPlanLaunch(
     ...input.launch,
     definition: {
       ...input.launch.definition,
+      ...(input.launch.definition.seededDocuments !== undefined ||
+      input.seededDocuments !== undefined
+        ? {
+            seededDocuments: [
+              ...(input.launch.definition.seededDocuments ?? []).filter(
+                (document) =>
+                  !isServerOwnedDeliveryPlanDocument(document.relativePath),
+              ),
+              ...(input.seededDocuments ??
+                (stage === "candidate"
+                  ? (input.launch.definition.seededDocuments ?? []).filter(
+                      (document) =>
+                        isServerOwnedDeliveryPlanDocument(
+                          document.relativePath,
+                        ),
+                    )
+                  : [])),
+            ],
+          }
+        : {}),
       charter: {
         ...input.launch.definition.charter,
         sourcesOfTruth: [
+          ...contextSources,
           {
-            rank: 1,
+            rank: contextSources.length + 1,
             id: NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
             label: "Pinned native SDD specification",
             type: "spec",
             locator: pinnedSpecDocumentPath(input.specSlug),
             description:
-              "The immutable specification revision this delivery candidate implements.",
-            accessPolicy: "worktree-relative",
+              "The full immutable specification revision; read when the excerpt is insufficient.",
           },
           {
-            rank: 2,
+            rank: contextSources.length + 2,
             id: NATIVE_SDD_CLAIMS_SOURCE_ID,
             label: "Native SDD candidate claims",
             type: "document",
             locator: candidateClaimsDocumentPath(input.candidateId),
             description:
               "The candidate-specific criterion dispositions and authored-context claims.",
-            accessPolicy: "worktree-relative",
           },
           ...authoredSources,
         ],

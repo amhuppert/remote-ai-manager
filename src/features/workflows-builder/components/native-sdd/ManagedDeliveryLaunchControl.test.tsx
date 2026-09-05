@@ -32,7 +32,7 @@ const management: NativeSddWorkflowManagementDetail = {
   executionHref: null,
   bindingRevision: 4,
   deltaBasisExecutionId: null,
-  binding: { dispositions: [], claims: [] },
+  binding: { dispositions: [] },
   dispositionCounts: {},
   unresolvedItems: [],
   criterionRows: [],

@@ -1,4 +1,6 @@
 import { createLogger } from "@/lib/logging";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -70,6 +72,7 @@ export interface DeliveryGateIntervention {
 }
 
 export interface DeliveryGateDeps {
+  findWorkflowExecution?(executionId: string): GraphWorkflowExecution | null;
   bindingPort: SpecExecutionBindingPort;
   outcomePort: GraphDeliveryOutcomePort;
   deliveryRepo: Pick<
@@ -119,6 +122,34 @@ interface EvaluatedCriterion {
 interface LocatedClaimantOutcome {
   contextId: string;
   outcome: AuthoredContextOutcome;
+  failureDetails?: readonly string[];
+}
+
+function coveredFailureDetails(
+  execution: GraphWorkflowExecution | null,
+  contextId: string,
+  criterionId: string,
+): string[] {
+  const context = execution?.launchDocument?.definition.executionContexts.find(
+    (entry) => entry.id === contextId,
+  );
+  const round = execution?.contextStates[contextId]?.validationRound;
+  if (!context || round?.phase !== "concluded" || round.outcome !== "failed")
+    return [];
+  const recordIds = new Set(
+    criterionRecordsOf(context.acceptanceCriteria)
+      .filter((record) => record.covers?.includes(criterionId))
+      .map((record) => record.id),
+  );
+  return Object.values(round.specialists)
+    .filter((specialist) => specialist.state === "verdict_fail")
+    .flatMap((specialist) =>
+      specialist.issues.flatMap((issue) =>
+        issue.criterionId !== undefined && recordIds.has(issue.criterionId)
+          ? [`${issue.criterionId}: ${issue.title} — ${issue.description}`]
+          : [],
+      ),
+    );
 }
 
 export function createDeliveryGate(
@@ -245,6 +276,16 @@ async function evaluateLinkedExecution(
   }
 
   const claimsByCriterion = claimantIdsByCriterion(linked.binding);
+  let failureExecution: GraphWorkflowExecution | null = null;
+  try {
+    failureExecution =
+      deps.findWorkflowExecution?.(input.workflowExecutionId) ?? null;
+  } catch (error) {
+    logger.warn("specs.delivery-gate-v2.failure_details_unavailable", {
+      workflowExecutionId: input.workflowExecutionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   logger.info("specs.delivery-gate-v2.evaluation-started", {
     specExecutionId: execution.id,
     workflowExecutionId: input.workflowExecutionId,
@@ -267,6 +308,11 @@ async function evaluateLinkedExecution(
     const claimantOutcomes = await Promise.all(
       claimantIds.map(async (contextId) => ({
         contextId,
+        failureDetails: coveredFailureDetails(
+          failureExecution,
+          contextId,
+          criterionId,
+        ),
         outcome: await deps.outcomePort.getAuthoredContextOutcome(
           input.workflowExecutionId,
           contextId,
@@ -527,7 +573,10 @@ function unmetClaimantOutcome(
       outcomes.length === 0
         ? "The frozen binding has no authored claimant for this selected criterion."
         : `No authored claimant is satisfied in the current execution (pending=${counts.pending}, skipped=${counts.skipped}, failed=${counts.failed}). Claimants: ${claimantOutcomes
-            .map(describeClaimantOutcome)
+            .map(
+              (claimant) =>
+                `${describeClaimantOutcome(claimant)}${claimant.outcome.status === "failed" && claimant.failureDetails?.length ? `; ${claimant.failureDetails.join("; ")}` : ""}`,
+            )
             .join("; ")}.`,
   };
 }

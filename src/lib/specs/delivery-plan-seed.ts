@@ -1,3 +1,4 @@
+import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
 
 import type { DeliveryPlanBinding } from "./delivery-plan";
@@ -5,9 +6,8 @@ import { authoredDeliveryPlanSources } from "./delivery-plan-finalization";
 import type { CriterionDeliveryClass } from "./delivery-delta";
 
 /**
- * The only thing a new attempt can seed from: a finalized version-2 candidate.
- * There is no translation from an older dialect — a spec with nothing to copy
- * opens an unseeded draft and authors its launch.
+ * A finalized candidate supplies the authored launch and dispositions for a
+ * subsequent attempt. A spec with nothing to copy opens an unseeded draft.
  */
 export interface DeliveryPlanSeedSource {
   readonly candidateId: string;
@@ -127,20 +127,30 @@ export function seedDeliveryPlanFromLast(input: {
       .filter((disposition) => disposition.disposition === "in_scope")
       .map((disposition) => disposition.criterionElementId),
   );
-  const claims = input.source.binding.claims.flatMap((claim) => {
-    const criterionElementIds = claim.criterionElementIds.filter((id) =>
-      selectedCriteria.has(id),
-    );
-    return criterionElementIds.length === 0
-      ? []
-      : [{ contextId: claim.contextId, criterionElementIds }];
-  });
 
   return {
     launch: {
       ...launch,
       definition: {
         ...definition,
+        executionContexts: definition.executionContexts.map((context) => ({
+          ...context,
+          acceptanceCriteria:
+            typeof context.acceptanceCriteria === "string"
+              ? context.acceptanceCriteria
+              : criterionRecordsOf(context.acceptanceCriteria).map(
+                  (record) => ({
+                    ...record,
+                    ...(record.covers === undefined
+                      ? {}
+                      : {
+                          covers: record.covers.filter((id) =>
+                            selectedCriteria.has(id),
+                          ),
+                        }),
+                  }),
+                ),
+        })),
         charter: {
           ...definition.charter,
           sourcesOfTruth,
@@ -149,7 +159,6 @@ export function seedDeliveryPlanFromLast(input: {
     },
     binding: {
       dispositions: input.dispositions,
-      claims,
     },
   };
 }

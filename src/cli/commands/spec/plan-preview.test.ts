@@ -26,7 +26,7 @@ const PREVIEW = {
   approvable: false,
   approvability: "A draft attempt is never approvable.",
   launch: LAUNCH,
-  binding: { dispositions: [], claims: [] },
+  binding: { dispositions: [] },
 };
 
 function makeHost(): CliHost & { requests: Array<{ url: string }> } {

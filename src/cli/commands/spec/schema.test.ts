@@ -18,7 +18,6 @@ import {
   touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
-import { deliveryPlanEditRequestSchema } from "@/lib/specs/delivery-plan-views";
 import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost } from "../../shared";
@@ -128,7 +127,6 @@ describe("cctl spec schema", () => {
       "create-element",
       "import-bundle",
       "discovered-task",
-      "plan-edit",
       "guidance",
       "read-envelopes",
     ]);
@@ -824,32 +822,15 @@ describe("cctl spec schema", () => {
     ).toBe(true);
   });
 
-  it("ships a binding-only document for plan edits", async () => {
+  it("omits the removed plan-edit schema document", async () => {
     const documents = await readDocuments();
-    const example = deliveryPlanEditRequestSchema.parse(
-      documents.find(({ id }) => id === "plan-edit")?.example,
+    expect(documents.map((document) => document.id)).not.toContain("plan-edit");
+    const result = await runCli(
+      ["spec", "schema", "plan-edit"],
+      env,
+      offlineHost(),
     );
-    expect(example.binding).toMatchObject({
-      dispositions: [
-        { criterionElementId: "crit-schema-per-kind", disposition: "in_scope" },
-      ],
-      claims: [
-        {
-          contextId: "context-implement",
-          criterionElementIds: ["crit-schema-per-kind"],
-        },
-      ],
-    });
-  });
-
-  it("rejects graph content from the plan-edit document", () => {
-    expect(
-      deliveryPlanEditRequestSchema.safeParse({
-        expectedDraftRevision: 1,
-        binding: { dispositions: [], claims: [] },
-        launch: { name: "not accepted" },
-      }).success,
-    ).toBe(false);
+    expect(result.exitCode).toBe(2);
   });
 
   it("states the earliest authoring stage that admits each element kind", async () => {
@@ -864,11 +845,11 @@ describe("cctl spec schema", () => {
     // A task element is spec content, and the note has to say so: an author
     // who reads it as the delivery plan writes ordering and lanes here and
     // then wonders why nothing runs. Nothing compiles a task element, so the
-    // note must point at `plan-edit` as the surface that does.
+    // note points at graph authoring as the surface that does.
     const taskNotes = documents
       .find((document) => document.id === "task")
       ?.notes.join(" ");
-    expect(taskNotes).toMatch(/spec schema plan-edit/i);
+    expect(taskNotes).toMatch(/workflow replace/i);
     expect(taskNotes).toMatch(/no task element compiles into it/i);
     expect(taskNotes).not.toMatch(/legacy compiler|legacy-only/i);
     // A section's stage depends on its role, so the per-role answer is what a
@@ -965,7 +946,7 @@ describe("cctl spec schema", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('unknown schema document "scope"');
-    expect(result.stderr).toContain("cctl spec schema plan-edit");
+    expect(result.stderr).toContain("cctl workflow get <definitionId> --full");
     expect(result.stderr).not.toContain("spec start <slug> --file");
   });
 });

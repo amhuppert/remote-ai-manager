@@ -65,32 +65,54 @@ export const deliveryPlanClaimSchema = z
   .strict();
 export type DeliveryPlanClaim = z.infer<typeof deliveryPlanClaimSchema>;
 
-export const deliveryPlanBindingSchema = z
+export const deliveryPlanBindingV3Schema = z
   .object({
     dispositions: z.array(deliveryPlanBindingDispositionSchema),
     claims: z.array(deliveryPlanClaimSchema),
   })
   .strict();
+export const deliveryPlanBindingSchema = z.strictObject(
+  { dispositions: z.array(deliveryPlanBindingDispositionSchema) },
+  {
+    error:
+      "Bindings contain dispositions only; author claims using acceptanceCriteria[].covers.",
+  },
+);
 export type DeliveryPlanBinding = z.infer<typeof deliveryPlanBindingSchema>;
+
+function checkDocumentSize(document: unknown, context: z.RefinementCtx): void {
+  const byteLength = new TextEncoder().encode(
+    stableStringify(document),
+  ).byteLength;
+  if (byteLength > DELIVERY_PLAN_ENVELOPE_MAX_BYTES) {
+    context.addIssue({
+      code: "custom",
+      path: [],
+      message: `Delivery plan binding is ${byteLength} bytes; the whole-document limit is ${DELIVERY_PLAN_ENVELOPE_MAX_BYTES} bytes.`,
+    });
+  }
+}
+
+function checkCandidateIdentity(
+  manifest: { candidateId: string; workflowDefinition: { id: string } },
+  context: z.RefinementCtx,
+): void {
+  if (manifest.candidateId !== manifest.workflowDefinition.id) {
+    context.addIssue({
+      code: "custom",
+      path: ["candidateId"],
+      message: "candidateId must equal workflowDefinition.id",
+    });
+  }
+}
 
 export const deliveryPlanV3DocumentSchema = z
   .object({
     schemaVersion: z.literal(3),
-    binding: deliveryPlanBindingSchema,
+    binding: deliveryPlanBindingV3Schema,
   })
   .strict()
-  .superRefine((document, context) => {
-    const byteLength = new TextEncoder().encode(
-      stableStringify(document),
-    ).byteLength;
-    if (byteLength > DELIVERY_PLAN_ENVELOPE_MAX_BYTES) {
-      context.addIssue({
-        code: "custom",
-        path: [],
-        message: `Delivery plan binding is ${byteLength} bytes; the whole-document limit is ${DELIVERY_PLAN_ENVELOPE_MAX_BYTES} bytes.`,
-      });
-    }
-  });
+  .superRefine(checkDocumentSize);
 export type DeliveryPlanV3Document = z.infer<
   typeof deliveryPlanV3DocumentSchema
 >;
@@ -113,19 +135,11 @@ export const deliveryPlanCandidateManifestV3Schema = z
         definitionHash: sha256HashSchema,
       })
       .strict(),
-    binding: deliveryPlanBindingSchema,
+    binding: deliveryPlanBindingV3Schema,
     bindingHash: sha256HashSchema,
   })
   .strict()
-  .superRefine((manifest, context) => {
-    if (manifest.candidateId !== manifest.workflowDefinition.id) {
-      context.addIssue({
-        code: "custom",
-        path: ["candidateId"],
-        message: "candidateId must equal workflowDefinition.id",
-      });
-    }
-  });
+  .superRefine(checkCandidateIdentity);
 export type DeliveryPlanCandidateManifestV3 = z.infer<
   typeof deliveryPlanCandidateManifestV3Schema
 >;
@@ -143,15 +157,50 @@ export function deliveryPlanEnvelopeByteLength(
     .byteLength;
 }
 
-export const deliveryPlanDocumentSchema = deliveryPlanV3DocumentSchema;
-export type DeliveryPlanDocument = DeliveryPlanV3Document;
+export const deliveryPlanV4DocumentSchema = z
+  .object({ schemaVersion: z.literal(4), binding: deliveryPlanBindingSchema })
+  .strict()
+  .superRefine(checkDocumentSize);
+export type DeliveryPlanV4Document = z.infer<
+  typeof deliveryPlanV4DocumentSchema
+>;
+export const deliveryPlanDocumentSchema = z.discriminatedUnion(
+  "schemaVersion",
+  [deliveryPlanV3DocumentSchema, deliveryPlanV4DocumentSchema],
+);
+export type DeliveryPlanDocument = z.infer<typeof deliveryPlanDocumentSchema>;
 
-export const deliveryPlanCandidateRecordSchema =
-  deliveryPlanCandidateManifestV3Schema;
-export type DeliveryPlanCandidateRecord = DeliveryPlanCandidateManifestV3;
+export const deliveryPlanCandidateManifestV4Schema = z
+  .object({
+    ...deliveryPlanCandidateManifestV3Schema.shape,
+    protocol: z.literal("native-sdd-delivery-candidate/v4"),
+    schemaVersion: z.literal(4),
+    binding: deliveryPlanBindingSchema,
+    claims: z.array(deliveryPlanClaimSchema),
+  })
+  .strict()
+  .superRefine(checkCandidateIdentity);
+export const deliveryPlanCandidateRecordSchema = z.discriminatedUnion(
+  "schemaVersion",
+  [
+    deliveryPlanCandidateManifestV3Schema,
+    deliveryPlanCandidateManifestV4Schema,
+  ],
+);
+export type DeliveryPlanCandidateRecord = z.infer<
+  typeof deliveryPlanCandidateRecordSchema
+>;
+
+export function deliveryPlanCandidateClaims(
+  candidate: DeliveryPlanCandidateRecord,
+): DeliveryPlanClaim[] {
+  return candidate.schemaVersion === 4
+    ? candidate.claims
+    : candidate.binding.claims;
+}
 
 export function canonicalDeliveryPlanCandidateBytes(
-  candidate: DeliveryPlanCandidateManifestV3,
+  candidate: DeliveryPlanCandidateRecord,
 ): string {
   return stableStringify(candidate);
 }

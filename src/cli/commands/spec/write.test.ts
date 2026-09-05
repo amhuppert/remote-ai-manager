@@ -588,7 +588,7 @@ function makeHost(
               "Delivery plan attempt attempt-1 is draft and has launched no execution, so there is no run to capture against.",
             ],
             instruction:
-              "Nothing was captured. Add the discovered work to the plan itself with `cctl spec plan edit native-sdd --file <plan.json>`.",
+              "Nothing was captured. Add the discovered work to the plan itself with `cctl workflow replace definition-1 --file <plan.json>`.",
           },
           409,
         );
@@ -3322,7 +3322,7 @@ describe("cctl spec write verbs", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("has launched no execution");
     expect(result.stderr).toContain(
-      "cctl spec plan edit native-sdd --file <plan.json>",
+      "cctl workflow replace definition-1 --file <plan.json>",
     );
   });
 });
@@ -3686,7 +3686,7 @@ describe("cctl spec plan abandon", () => {
 });
 
 describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
-  const PLAN_FILE = "/tmp/plan-edit.json";
+  const PLAN_FILE = "/tmp/plan.json";
 
   function planView(
     status: "draft" | "proposed",
@@ -3710,7 +3710,9 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
       },
       approval: null,
       prelaunch: null,
-      document: { schemaVersion: 3, binding: { dispositions: [], claims: [] } },
+      claims: [],
+      reviewStatus: { state: "unreviewed" },
+      document: { schemaVersion: 4, binding: { dispositions: [] } },
       workflowDefinition: {
         id: "wf-1",
         revision: 2,
@@ -3791,29 +3793,20 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
     });
   });
 
-  it("names the token the following edit needs on the plan edit receipt", async () => {
+  it("refuses the removed plan edit command without sending a request", async () => {
     const host = planHost(planView("draft", 4), {
       [PLAN_FILE]: JSON.stringify({
         expectedDraftRevision: 3,
-        binding: { dispositions: [], claims: [] },
+        binding: { dispositions: [] },
       }),
     });
-    const text = await runCli(
+    const result = await runCli(
       ["spec", "plan", "edit", "native-sdd", "--file", PLAN_FILE],
       baseEnv,
       host,
     );
-    const structured = await runCli(
-      ["spec", "plan", "edit", "native-sdd", "--file", PLAN_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("next write: expectedDraftRevision 4");
-    expect(JSON.parse(structured.stdout)).toMatchObject({
-      expectedDraftRevision: 4,
-    });
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
   });
 
   it("names the token on the plan reopen receipt, in text and JSON", async () => {
@@ -3848,10 +3841,22 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
       [
-        "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+        "coverage: 2 of 3 selected criteria covered, 1 uncovered",
         "dispositions: in_scope 3, deferred 1",
         "charter: authored, 4 invariants, 6 sources",
       ].join("\n"),
+    );
+  });
+
+  it("prints the advisory review with the proposed candidate", async () => {
+    const result = await runCli(
+      ["spec", "plan", "propose", "native-sdd"],
+      baseEnv,
+      planHost(planView("proposed", 5)),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "plan review: none recorded for this revision (advisory)",
     );
   });
 
@@ -3866,7 +3871,7 @@ describe("plan write receipts name expectedDraftRevision (#80 I-7)", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+      "coverage: 2 of 3 selected criteria covered, 1 uncovered",
     );
     expect(result.stdout).toContain(
       "charter: authored, 4 invariants, 6 sources",

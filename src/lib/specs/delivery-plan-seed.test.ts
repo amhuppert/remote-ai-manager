@@ -9,9 +9,20 @@ import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtur
 import { seedDeliveryPlanFromLast } from "./delivery-plan-seed";
 
 describe("seedDeliveryPlanFromLast", () => {
-  it("copies the approved direct authored launch wholesale while stripping server fields and retaining only still-selected claims", () => {
+  it("copies the approved direct authored launch wholesale while stripping server fields and retaining only still-selected coverage", () => {
     const prior = maximalPlanDocument();
     const approvedLaunch = structuredClone(maximalWorkflowLaunch());
+    approvedLaunch.definition.executionContexts =
+      approvedLaunch.definition.executionContexts.map((context) => ({
+        ...context,
+        acceptanceCriteria: [
+          {
+            id: "observable",
+            statement: "Delivery is observable.",
+            covers: ["criterion-selected", "criterion-removed"],
+          },
+        ],
+      }));
     approvedLaunch.name = "Approved launch with guarded topology and loops";
     approvedLaunch.definition.origin = {
       sourceUri: "spec-plan://spec-1/attempts/attempt-1/candidates/candidate-1",
@@ -70,13 +81,6 @@ describe("seedDeliveryPlanFromLast", () => {
       launch: approvedLaunch,
       binding: {
         dispositions: prior.binding.dispositions,
-        claims: [
-          ...prior.binding.claims,
-          {
-            contextId: "fixture-followup",
-            criterionElementIds: ["criterion-removed"],
-          },
-        ],
       },
       runtimeWorkingLaunch: liveEditedWorkingLaunch,
     };
@@ -150,12 +154,15 @@ describe("seedDeliveryPlanFromLast", () => {
         deliveredByExecutionId: "execution-delivery-plan-earlier",
       },
     ]);
-    expect(seeded.binding.claims).toEqual([
-      {
-        contextId: "fixture-context",
-        criterionElementIds: ["criterion-selected"],
-      },
-    ]);
+    expect(seeded.binding).not.toHaveProperty("claims");
+    for (const context of seeded.launch.definition.executionContexts)
+      expect(context.acceptanceCriteria).toEqual([
+        {
+          id: "observable",
+          statement: "Delivery is observable.",
+          covers: ["criterion-selected"],
+        },
+      ]);
   });
 
   it("keeps authored edge ids through a reseed so a later remove-edge by id succeeds", () => {

@@ -173,6 +173,12 @@ path a project conversation can reach, derive the scope ref instead.
 | `specs.delivery-plan` | `spec.plan.propose.accepted` | **info**: coverage at freeze on a successful `spec plan propose`. `slug`, `covered` (selected criteria a stable authored source claims), `selected`, `contexts` (the frozen definition's execution contexts). Emitted by `src/lib/specs/delivery-plan-service.ts` |
 | `specs.delivery-plan` / `specs.execution-start-attachment` | `spec.plan.attempt.transition` | **info**: one per recorded delivery-plan attempt act — open, propose, approve, park, reopen, launch, abandon (including the abandon that retires a launched attempt). `slug`, `from` (`none` for a freshly opened attempt), `to`, `actor` (the actor's KIND only). Emitted by `src/lib/specs/delivery-plan-service.ts` and, for the launch a real spec execution start records, by `src/lib/specs/execution-start-attachment.ts` |
 
+| `workflow-graph` | `graph-workflow.start.documents_validated` | **debug**: the combined definition and launch seeded documents passed path and UTF-8 size checks before reservation. Fields: `projectPath`, `sessionName`, `count`, `bytes`; document contents are never logged |
+
+| `specs.delivery-plan.review_lookup_failed` | warn | Advisory review unavailable; proposal and sign-off remain available | `workflowDefinitionId`, `error` |
+
+| `specs.delivery-gate-v2.failure_details_unavailable` | warn | Frozen coverage failure details could not be loaded; outcome certification remains authoritative | `workflowExecutionId`, `error` |
+
 ### Config
 
 - `CC_LOG_LEVEL` — `debug` / `info` (default) / `warn` / `error`

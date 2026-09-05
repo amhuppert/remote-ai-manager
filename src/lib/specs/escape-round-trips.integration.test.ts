@@ -31,12 +31,6 @@ function planBinding(authored: AuthoredSpineSpec): DeliveryPlanBinding {
         deliveredByExecutionId: null,
       },
     ],
-    claims: [
-      {
-        contextId: "context-implement",
-        criterionElementIds: [authored.criterionOneId, authored.criterionTwoId],
-      },
-    ],
   };
 }
 
@@ -52,7 +46,7 @@ describe("managed workflow delivery-plan lifecycle", () => {
     _resetPublicationForTesting();
   });
 
-  it("opens a managed definition and edits only its version-3 binding through production routes", async () => {
+  it("opens a managed definition and edits only its version-4 dispositions through production routes", async () => {
     const authored = await authorSpineDraft(world, SLUG, "gate");
     await proposeSpineRevision(world, SLUG, authored);
     await approveAndSignOffSpine(world, SLUG, authored);

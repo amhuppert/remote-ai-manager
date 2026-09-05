@@ -1489,6 +1489,8 @@ function makeHost(
 
 describe("cctl spec read verbs against seeded read routes", () => {
   const cleanPlan: DeliveryPlanView = {
+    claims: [],
+    reviewStatus: { state: "unreviewed" },
     attempt: {
       id: "attempt-1",
       specSlug: "native-sdd",
@@ -1558,7 +1560,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
       [
-        "claims: 2 of 3 selected criteria claimed by a stable authored context, 1 unclaimed",
+        "coverage: 2 of 3 selected criteria covered, 1 uncovered",
         "dispositions: in_scope 3, deferred 1",
         "charter: authored, 4 invariants, 6 sources",
       ].join("\n"),

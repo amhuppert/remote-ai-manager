@@ -19,15 +19,27 @@ pins the current approved revision.
 
 ## How spec criteria reach contexts
 
-The link is authored, not derived. The plan's `binding` gives every pinned
-criterion a disposition, and its claims name the stable authored contexts
-accountable for the selected ones; a criterion reaches a context because a claim
-says so. Nothing infers accountability from topology, lineage, or runtime
-expansion. Claims in the `binding` are the accountability mechanism.
+Author the link as `covers: ["<criterion-element-id>"]` on each context criterion
+record. The `binding` gives every pinned spec criterion one disposition; proposal
+derives the union of selected covered ids for each stable authored context and
+freezes those claims in the candidate manifest. A record may cover none, one or
+several spec criteria, and several contexts may cover the same criterion.
 
-Shape the graph knowing a claim has to be reachable: the
-`binding/selected-criterion-not-must-run` finding names a claimed criterion the
-run can skip, and it carries both its reason and the act that clears it.
+The `coverage/not-must-run` finding names a selected criterion whose claimants
+the run can skip. Cover it from an always-run context and apply the corrected
+plan with `cctl workflow replace`. Unknown, unselected and dynamic-context
+coverage findings name the record to correct; the graph owns which contexts are
+stable and must run.
+
+A whole-context GO certifies that context's frozen covered union. A cited
+failure identifies the affected record's covered criteria and grants no delivery
+credit within the failed context. Another satisfied claimant may still prove the
+same spec criterion.
+
+The server seeds a pinned spec excerpt for each context and one shared claims
+document with a context index. Read your context's section first; the complete
+map remains available for cross-context ownership checks. The full pinned spec
+is the fallback when the excerpt is insufficient.
 
 ## Restate; never paste
 

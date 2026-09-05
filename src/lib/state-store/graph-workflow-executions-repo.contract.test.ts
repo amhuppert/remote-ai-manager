@@ -289,7 +289,11 @@ describe("graph-workflow-executions-repo durability contract", () => {
         (context) => context.id === "ctx-1",
       );
       expect(scheduled?.acceptanceCriteria).toEqual([
-        { id: "tests-pass", statement: "All tests pass" },
+        {
+          id: "tests-pass",
+          statement: "All tests pass",
+          covers: ["spec-criterion-one"],
+        },
         { id: "build-green", statement: "The build is green" },
       ]);
 

@@ -1,3 +1,4 @@
+import { seededWorkflowDocumentsSchema } from "./seeded-documents";
 import { z } from "zod";
 import {
   memoryContributionPolicySchema,
@@ -527,6 +528,7 @@ export const prerequisiteSchema = z.discriminatedUnion("kind", [
 export type WorkflowPrerequisite = z.infer<typeof prerequisiteSchema>;
 
 export const workflowSemanticDefinitionSchema = z.object({
+  seededDocuments: seededWorkflowDocumentsSchema.optional(),
   schemaVersion: z.number().int().positive().default(1),
   approvalRequired: z.boolean().optional(),
   origin: workflowOriginSchema.optional(),

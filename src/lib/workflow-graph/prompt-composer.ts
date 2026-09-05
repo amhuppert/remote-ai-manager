@@ -101,7 +101,8 @@ export async function composeGraphRolePrompt(
   const contract =
     input.executionContract ?? createRegisteredGraphExecutionContract();
   const projection =
-    (await contract.loadPromptProjection?.(input.execution)) ?? null;
+    (await contract.loadPromptProjection?.(input.execution, input.contextId)) ??
+    null;
   const projected =
     projection === null ? null : renderGraphRolePromptProjection(projection);
 

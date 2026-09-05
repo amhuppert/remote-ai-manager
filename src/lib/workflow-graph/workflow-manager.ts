@@ -1,3 +1,4 @@
+import { seededWorkflowDocumentsSchema } from "./seeded-documents";
 import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
 import path from "node:path";
@@ -1823,6 +1824,20 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       );
     }
     const boundInputs = validation.boundInputs;
+    const seededDocuments = seededWorkflowDocumentsSchema.parse([
+      ...(definition.seededDocuments ?? []),
+      ...(input.seededDocuments ?? []),
+    ]);
+    logger.debug("graph-workflow.start.documents_validated", {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      count: seededDocuments.length,
+      bytes: seededDocuments.reduce(
+        (total, document) =>
+          total + new TextEncoder().encode(document.contents).byteLength,
+        0,
+      ),
+    });
 
     const pendingExecution = await reserveWithSessionFinalizingFence(
       input,
@@ -1835,7 +1850,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         startedAt: getNow(deps),
         inputs: boundInputs,
         ownerConversationId: input.ownerConversationId ?? null,
-        seededDocuments: input.seededDocuments ?? [],
+        seededDocuments,
         // Only an admitted dirty launch carries the pin, and it carries it for
         // the execution's whole lifetime: the live-edit frontier re-asserts the
         // property against every later structural mutation (R8.3).

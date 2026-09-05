@@ -11,6 +11,7 @@ This core file covers the ordinary planning path end to end: decompose the objec
 
 | Reference | Read when |
 |---|---|
+| [references/seeded-documents.md](references/seeded-documents.md) | supplying reference contents through `definition.seededDocuments` for launch-time materialization |
 | [references/dynamic-control-flow.md](references/dynamic-control-flow.md) | the plan needs conditional branches, a repeat-until loop, or a runtime fan-out whose branch count is unknowable at planning time |
 | [references/placement-and-parallelism.md](references/placement-and-parallelism.md) | deciding lane sharing, `ownedPaths` for a tricky surface, what the write envelope lets agents do, parallel-vs-sequential calls, or answering a `placement-*` refusal |
 | [references/validation-and-staffing.md](references/validation-and-staffing.md) | selecting script-gate commands, tuning agent command access or lane-merge validation, staffing non-default implementers or validator cohorts, or aligning validators with criteria in detail |
