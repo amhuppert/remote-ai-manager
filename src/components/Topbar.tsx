@@ -15,6 +15,7 @@ import {
   BreadcrumbSessionSwitcher,
   GlobalProjectSwitcher,
 } from "@/components/topbar/NavSwitchers";
+import MemoryEntryLink from "@/components/memory/MemoryEntryLink";
 import QuickTicketButton from "@/components/topbar/QuickTicketButton";
 import {
   ValidationBudgetIndicator,
@@ -47,7 +48,7 @@ type OpenSwitcher = "project" | "session" | null;
 interface TopbarProps {
   breadcrumbs: BreadcrumbSegment[];
   /** Controls which right-side content to show */
-  page: "projects" | "sessions" | "detail" | "tickets" | "specs";
+  page: "projects" | "sessions" | "detail" | "tickets" | "specs" | "memory";
   /** Session detail controls — only rendered when page === "detail" */
   sessionControls?: React.ReactNode;
   /** Global status indicators — rendered when page !== "detail" */
@@ -316,6 +317,11 @@ export default function Topbar({
             />
           )}
           <QuickTicketButton pathname={pathname} />
+          <MemoryEntryLink
+            projectName={activeProjectName}
+            placement="topbar"
+            active={pathname === "/memory"}
+          />
           <Link
             href={specsHref}
             className={cn(
@@ -466,6 +472,12 @@ export default function Topbar({
               {/* This menu only opens below 768px — its trigger is hidden
                   above it — so every row takes the touch minimum. */}
               <QuickTicketButton pathname={pathname} presentation="menu-item" />
+              <DropdownMenuItem asChild touch>
+                <MemoryEntryLink
+                  projectName={activeProjectName}
+                  placement="menu"
+                />
+              </DropdownMenuItem>
               <ValidationBudgetMenuItem
                 onSelect={() => setBudgetSheetOpen(true)}
               />

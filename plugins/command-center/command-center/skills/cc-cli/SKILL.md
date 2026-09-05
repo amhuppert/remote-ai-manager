@@ -524,7 +524,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl memory promote` — carry a session note up to project scope before the session ends
   - `cctl memory promote <slug> [--slug <new-slug>] [--hook "<line>"] [--body "<markdown>"] [--status-note "<line>"] [--index-mode <mode>] [--if-revision <n>]`
 - `cctl memory review` — list the notes that have gone stale or await promotion
-  - `cctl memory review [--promotable] [--limit <n>]`
+  - `cctl memory review [--promotable] [--project-candidates] [--limit <n>]`
 - `cctl memory observe-rederivation` — record that a round re-derived what a note already held
   - `cctl memory observe-rederivation <slug> [--artifact <handle>] [--scope <scope>]`
 - `cctl memory archive` — retire a note without destroying it

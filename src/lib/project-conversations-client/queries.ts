@@ -55,11 +55,14 @@ async function fetchProjectConversations(
  */
 export function useProjectConversationsQuery(
   projectName: string,
+  options?: { enabled?: boolean; includeClosed?: boolean },
 ): UseQueryResult<PublicConversationState[]> {
   return useQuery({
+    enabled: options?.enabled,
     queryKey: projectConversationKeys.list(projectName),
     queryFn: () => fetchProjectConversations(projectName),
-    select: (all) => all.filter(isOpenProjectConversation),
+    select: (all) =>
+      options?.includeClosed ? all : all.filter(isOpenProjectConversation),
   });
 }
 

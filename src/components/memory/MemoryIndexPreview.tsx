@@ -1,6 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/Select";
+import { useSessionsQuery } from "@/lib/sessions/queries";
+import { createClientLogger } from "@/lib/logging/client-logger";
 
 import {
   EmptyState,
@@ -27,8 +36,13 @@ import { cn } from "@/lib/ui/cn";
 export interface MemoryIndexPreviewProps {
   scopeRef: MemoryScopeRef;
   /** The conversation this panel is open in — the preview's default subject. */
-  conversationId: string;
+  conversationId: string | null;
   active: boolean;
+  layout?: "compact" | "page";
+  onSubjectChange?(
+    conversationId: string | null,
+    sessionName: string | null,
+  ): void;
 }
 
 /** Which conversation list the picker is drawing from. */
@@ -60,25 +74,57 @@ type PreviewScope = "session" | "project";
  * resume handle to carry the conversation across — be given the full index
  * where this showed a delta.
  */
-export default function MemoryIndexPreview({
+const logger = createClientLogger("memory-index-preview");
+
+export default function MemoryIndexPreview(
+  props: MemoryIndexPreviewProps,
+): React.JSX.Element {
+  if (props.scopeRef.projectName === null)
+    return (
+      <EmptyState layoutClassName="flex-1">
+        <EmptyStateTitle>
+          Choose a project to preview a conversation
+        </EmptyStateTitle>
+      </EmptyState>
+    );
+  return <ProjectMemoryIndexPreview {...props} />;
+}
+
+function ProjectMemoryIndexPreview({
   scopeRef,
   conversationId,
   active,
+  layout = "compact",
+  onSubjectChange,
 }: MemoryIndexPreviewProps): React.JSX.Element {
   const [scope, setScope] = useState<PreviewScope>(
     scopeRef.sessionName === null ? "project" : "session",
   );
   const [selected, setSelected] = useState(conversationId);
+  const [selectedSession, setSelectedSession] = useState(scopeRef.sessionName);
+  const sessions = useSessionsQuery(scopeRef.projectName ?? "", {
+    enabled: active && layout === "page",
+  });
+  function selectSubject(id: string | null): void {
+    setSelected(id);
+    onSubjectChange?.(id, scope === "session" ? selectedSession : null);
+    logger.info("memory.preview.subject_selected", {
+      conversationId: id,
+      projectName: scopeRef.projectName,
+    });
+  }
   const [render, setRender] = useState<MemoryIndexRender>("next-turn");
 
   // The session list shares the conversation sidebar's query key, so picking a
   // lane costs no fetch of its own in the running app.
   const sessionConversations = useConversationsQuery(
-    scopeRef.projectName,
-    scopeRef.sessionName ?? "",
+    scopeRef.projectName ?? "",
+    selectedSession ?? "",
+    { enabled: active && selectedSession !== null },
   );
   const projectConversations = useProjectConversationsQuery(
-    scopeRef.projectName,
+    scopeRef.projectName ?? "",
+    { enabled: active, includeClosed: layout === "page" },
   );
   const conversations =
     (scope === "session"
@@ -100,8 +146,36 @@ export default function MemoryIndexPreview({
 
   return (
     <>
-      <div className="flex shrink-0 flex-col gap-[6px] border-0 border-b border-solid border-border-subtle px-[12px] py-[8px]">
-        {scopeRef.sessionName === null ? null : (
+      <div className="flex shrink-0 flex-col gap-sm border-0 border-b border-solid border-border-subtle px-md py-sm">
+        {layout === "page" ? (
+          <Select
+            value={
+              scope === "project" ? "project" : `session:${selectedSession}`
+            }
+            onValueChange={(value) => {
+              const session = value === "project" ? null : value.slice(8);
+              setSelectedSession(session);
+              setScope(session === null ? "project" : "session");
+              setSelected(null);
+              onSubjectChange?.(null, session);
+            }}
+          >
+            <SelectTrigger aria-label="Conversation scope">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="project">Project conversations</SelectItem>
+              {(sessions.data ?? []).map((session) => (
+                <SelectItem
+                  key={session.sessionName}
+                  value={`session:${session.sessionName}`}
+                >
+                  {session.sessionName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : scopeRef.sessionName === null ? null : (
           <SegmentedControl
             value={scope}
             onValueChange={(value) => {
@@ -115,23 +189,46 @@ export default function MemoryIndexPreview({
             <SegmentedControlItem value="project">project</SegmentedControlItem>
           </SegmentedControl>
         )}
+        {(
+          scope === "session"
+            ? sessionConversations.isError
+            : projectConversations.isError
+        ) ? (
+          <p role="alert" className="font-mono text-[0.72rem] text-red-text">
+            Could not load conversations
+          </p>
+        ) : null}
         {conversations.length === 0 ? (
           <span className="font-mono text-[0.7rem] text-text-tertiary">
             No conversations to preview in this scope.
           </span>
+        ) : layout === "page" ? (
+          <Select value={selected ?? ""} onValueChange={selectSubject}>
+            <SelectTrigger aria-label="Conversation to preview">
+              <SelectValue placeholder="Choose a conversation" />
+            </SelectTrigger>
+            <SelectContent>
+              {conversations.map((conversation) => (
+                <SelectItem key={conversation.id} value={conversation.id}>
+                  {conversationLabel(conversation)} ·{" "}
+                  {scope === "session" ? selectedSession : scopeRef.projectName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
-          <div className="flex flex-wrap gap-[4px]">
+          <div className="flex flex-wrap gap-xs">
             {conversations.map((conversation) => (
               <ConversationChoice
                 key={conversation.id}
                 conversation={conversation}
                 selected={conversation.id === selected}
-                onSelect={() => setSelected(conversation.id)}
+                onSelect={() => selectSubject(conversation.id)}
               />
             ))}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-[6px]">
+        <div className="flex flex-wrap items-center gap-sm">
           <SegmentedControl
             value={render}
             onValueChange={(value) => {
@@ -145,7 +242,7 @@ export default function MemoryIndexPreview({
             <SegmentedControlItem value="full">full index</SegmentedControlItem>
           </SegmentedControl>
           {selectedConversation === null ? null : (
-            <span className="font-mono text-[0.68rem] text-text-tertiary">
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
               previewing {conversationLabel(selectedConversation)}
             </span>
           )}
@@ -155,14 +252,20 @@ export default function MemoryIndexPreview({
         {render === "next-turn" ? (
           <p
             data-testid="memory-index-preview-boundary"
-            className="m-0 font-mono text-[0.68rem] leading-[1.5] text-text-tertiary"
+            className="m-0 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary"
           >
             {NEXT_TURN_BOUNDARY}
           </p>
         ) : null}
       </div>
 
-      <PreviewBody failed={preview.isError} block={preview.data} />
+      {selected === null ? (
+        <EmptyState layoutClassName="min-h-0 flex-1">
+          <EmptyStateTitle>Choose a conversation to preview</EmptyStateTitle>
+        </EmptyState>
+      ) : (
+        <PreviewBody failed={preview.isError} block={preview.data} />
+      )}
     </>
   );
 }
@@ -221,10 +324,10 @@ function ConversationChoice({
       aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "max-w-full cursor-pointer truncate rounded-sm border border-solid px-[8px] py-[3px] font-mono text-[0.7rem] transition-colors duration-150 ease-[ease] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[2px]",
+        "max-768:min-h-[44px] max-w-full cursor-pointer truncate rounded-sm border border-solid px-sm py-[3px] font-mono text-[0.7rem] transition-colors duration-150 ease-[ease] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[2px]",
         selected
           ? "border-cyan-dim bg-cyan-glow text-cyan"
-          : "border-border-default bg-bg-base text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+          : "border-border-default bg-bg-base text-text-secondary hover:bg-bg-raised hover:text-text-primary",
       )}
     >
       {conversationLabel(conversation)}
@@ -270,10 +373,10 @@ function PreviewBody({ failed, block }: PreviewBodyProps): React.JSX.Element {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-[12px] py-[8px]">
+    <div className="min-h-0 flex-1 overflow-y-auto px-md py-sm">
       <div
         data-testid="memory-index-preview-budget"
-        className="mb-[6px] flex flex-wrap gap-x-md gap-y-[2px] font-mono text-[0.68rem] text-text-tertiary"
+        className="mb-sm flex flex-wrap gap-x-md gap-y-2xs font-mono text-[0.7rem] text-text-tertiary"
       >
         <span data-testid="memory-index-preview-render">
           {renderLabel(block)}
@@ -287,7 +390,7 @@ function PreviewBody({ failed, block }: PreviewBodyProps): React.JSX.Element {
       </div>
       <pre
         data-testid="memory-index-preview-block"
-        className="m-0 overflow-x-auto rounded-md border border-solid border-border-subtle bg-bg-base px-[8px] py-[6px] font-mono text-[0.7rem] leading-[1.55] whitespace-pre-wrap text-text-secondary"
+        className="m-0 overflow-x-auto rounded-md border border-solid border-border-subtle bg-bg-base px-sm py-sm font-mono text-[0.7rem] leading-[1.55] whitespace-pre-wrap text-text-secondary"
       >
         {block.text}
       </pre>

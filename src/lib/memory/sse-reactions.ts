@@ -8,6 +8,8 @@
  * into a cache from the wire.
  */
 
+import { jobStatusEventSchema } from "@/lib/jobs/schemas";
+import { conversationDeletedEventSchema } from "@/lib/conversations/schemas";
 import type { QueryClient } from "@tanstack/react-query";
 import { addSseListener, type SseEventTarget } from "@/lib/api/sse";
 import {
@@ -89,6 +91,23 @@ export function registerMemorySseReactions(
   deps: MemorySseReactionDeps,
 ): void {
   const { queryClient } = deps;
+  const refreshProjectQueue = (projectName: string): void => {
+    void queryClient.invalidateQueries({
+      queryKey: memoryKeys.reviews(),
+      predicate: (query) =>
+        isMemoryProjectScopedKey(query.queryKey, projectName),
+    });
+  };
+  addSseListener(es, "job-status", jobStatusEventSchema, (event) => {
+    if (event.jobType === "merge" && event.status === "completed")
+      refreshProjectQueue(event.projectName);
+  });
+  addSseListener(
+    es,
+    "conversation-deleted",
+    conversationDeletedEventSchema,
+    (event) => refreshProjectQueue(event.projectName),
+  );
 
   addSseListener(es, "memory-changed", memoryChangedEventSchema, (event) => {
     invalidateScopedCaches(queryClient, event);

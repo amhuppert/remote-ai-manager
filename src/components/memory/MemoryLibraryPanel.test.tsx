@@ -791,6 +791,11 @@ describe("MemoryLibraryPanel — promotion candidates", () => {
     // construction, so the count can never promise rows the queue lacks.
     const row = await screen.findByTestId("memory-row-mem-session");
     expect(within(row).getByText("promotion candidate")).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("link", { name: "Open memory screen" })
+        .getAttribute("href"),
+    ).toContain("queue=candidates");
   });
 
   it("opens that queue past narrowing that would hide every candidate", async () => {
@@ -866,7 +871,7 @@ describe("MemoryLibraryPanel — index preview", () => {
     // first thing a human sees is what the lane in front of them was told.
     const block = await screen.findByTestId("memory-index-preview-block");
     expect(block.textContent).toBe("<memory-index>\nadvisory\n</memory-index>");
-    expect(screen.queryByTestId("memory-row-mem-shared-db")).toBeNull();
+    expect(screen.queryByTestId("memory-row-mem-shared-db")).not.toBeVisible();
   });
 });
 
@@ -1022,5 +1027,73 @@ describe("native-memory disclosure", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("native-memory-disclosure")).toBeNull();
     });
+  });
+});
+
+describe("MemoryLibraryPanel — page context", () => {
+  it("browses global notes without a project or session request", async () => {
+    api.reply("GET", /^\/api\/memory\/notes\?lifecycle=active$/, {
+      json: { notes: [note({ scope: "global", projectPath: null })] },
+    });
+    api.reply("GET", "/api/memory/review", { json: { entries: [] } });
+    renderWithQuery(
+      <MemoryLibraryPanel
+        projectName={null}
+        sessionName={null}
+        conversationId={null}
+        active
+        layout="page"
+      />,
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: `Open memory note ${note().hook}`,
+      }),
+    ).toBeTruthy();
+    expect(api.requestsTo("GET", /\/sessions\//)).toHaveLength(0);
+  });
+});
+
+describe("MemoryLibraryPanel — page navigation", () => {
+  it("keeps the list and search while editing and asks before discarding edits", async () => {
+    stubList();
+    stubReviewQueue();
+    api.reply("GET", /^\/api\/memory\/notes\/mem-shared-db\?/, {
+      json: { note: note(), links: [], lineage: NO_LINEAGE },
+    });
+    api.reply("GET", /^\/api\/memory\/notes\/mem-shared-db\/revisions\?/, {
+      json: { revisions: [] },
+    });
+    const user = userEvent.setup();
+    renderWithQuery(
+      <MemoryLibraryPanel
+        projectName="cc"
+        sessionName="s1"
+        conversationId="conv-1"
+        active
+        layout="page"
+      />,
+    );
+    await user.type(screen.getByRole("searchbox"), "one DB");
+    await user.click(
+      await screen.findByRole("button", {
+        name: `Open memory note ${note().hook}`,
+      }),
+    );
+    await screen.findByLabelText("Hook");
+    expect(screen.getByRole("button", { name: "← Library" })).toHaveFocus();
+    expect(screen.getByRole("searchbox")).toHaveValue("one DB");
+    await user.type(screen.getByLabelText("Hook"), " draft");
+    await user.click(screen.getByRole("radio", { name: "index" }));
+    expect(
+      await screen.findByRole("alertdialog", { name: "Discard memory edits" }),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText("Hook")).toHaveValue(`${note().hook} draft`);
+    await user.click(screen.getByRole("button", { name: "← Library" }));
+    await user.click(screen.getByRole("button", { name: "Discard edits" }));
+    expect(
+      screen.getByRole("button", { name: `Open memory note ${note().hook}` }),
+    ).toHaveFocus();
   });
 });

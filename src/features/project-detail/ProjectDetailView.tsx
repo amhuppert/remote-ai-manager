@@ -26,6 +26,7 @@ import {
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import CreateSessionModal from "@/components/session/CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import MemoryEntryLink from "@/components/memory/MemoryEntryLink";
 import Topbar from "@/components/Topbar";
 import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -387,7 +388,11 @@ export default function ProjectDetailView({
                     {archivedCount} archived
                   </span>
                 </div>
-                <div className="flex shrink-0 items-center gap-sm max-768:self-stretch">
+                <div className="flex shrink-0 flex-wrap items-center gap-sm max-768:self-stretch">
+                  <MemoryEntryLink
+                    projectName={projectName}
+                    placement="cockpit"
+                  />
                   <Link
                     href={`/tickets?project=${encodeURIComponent(projectName)}`}
                     className={CC_IBTN_LINK_CLASS}

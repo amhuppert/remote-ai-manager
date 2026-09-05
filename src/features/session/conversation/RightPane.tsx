@@ -15,7 +15,7 @@ import DocsPanel from "@/features/session/conversation/DocsPanel";
 import AlignmentPanel from "@/features/session/conversation/AlignmentPanel";
 import ContextArtifactPanel from "@/features/session/conversation/ContextArtifactPanel";
 import NotepadPanel from "@/features/session/conversation/NotepadPanel";
-import MemoryLibraryPanel from "@/features/session/conversation/MemoryLibraryPanel";
+import MemoryLibraryPanel from "@/components/memory/MemoryLibraryPanel";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import {

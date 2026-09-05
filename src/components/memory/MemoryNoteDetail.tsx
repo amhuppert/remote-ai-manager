@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { MultilineInput } from "@/components/MultilineInput";
@@ -42,6 +42,7 @@ export interface MemoryNoteDetailProps {
   /** Internal id: the handle the panel addresses by, so a rename holds. */
   memoryId: string;
   onClose(): void;
+  onDirtyChange?(dirty: boolean): void;
   /** Follow a promotion or supersession to the record that replaced this one. */
   onOpenNote(memoryId: string): void;
 }
@@ -56,6 +57,7 @@ export default function MemoryNoteDetail({
   scopeRef,
   memoryId,
   onClose,
+  onDirtyChange,
   onOpenNote,
 }: MemoryNoteDetailProps): React.JSX.Element {
   const detail = useMemoryNoteQuery(scopeRef, memoryId);
@@ -72,7 +74,7 @@ export default function MemoryNoteDetail({
     return (
       <EmptyState layoutClassName="min-h-0 flex-1">
         <EmptyStateTitle>Could not load this note</EmptyStateTitle>
-        <Button variant="ghost" size="sm" onClick={onClose}>
+        <Button touch variant="ghost" size="sm" onClick={onClose}>
           Back
         </Button>
       </EmptyState>
@@ -87,6 +89,7 @@ export default function MemoryNoteDetail({
       lineage={detail.data.lineage}
       revisions={revisions.data ?? []}
       onClose={onClose}
+      onDirtyChange={onDirtyChange}
       onOpenNote={onOpenNote}
     />
   );
@@ -99,6 +102,7 @@ interface LoadedNoteDetailProps {
   lineage: MemoryNoteDetailLineage;
   revisions: readonly MemoryNoteRevision[];
   onClose(): void;
+  onDirtyChange?(dirty: boolean): void;
   onOpenNote(memoryId: string): void;
 }
 
@@ -109,11 +113,16 @@ function LoadedNoteDetail({
   lineage,
   revisions,
   onClose,
+  onDirtyChange,
   onOpenNote,
 }: LoadedNoteDetailProps): React.JSX.Element {
   const [pendingAct, setPendingAct] = useState<
     "none" | "supersede" | "promote" | "delete"
   >("none");
+  const detailElement = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    detailElement.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [note.id]);
   const [successorHook, setSuccessorHook] = useState("");
   const [promotedSlug, setPromotedSlug] = useState("");
 
@@ -199,11 +208,18 @@ function LoadedNoteDetail({
   ]);
 
   const changed = editOf(draft, editor.base);
+  const dirty = changed !== null;
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-[12px] py-[8px]">
-        <Button variant="ghost" size="sm" onClick={onClose}>
+    <div
+      ref={detailElement}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+    >
+      <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-md py-sm">
+        <Button touch variant="ghost" size="sm" onClick={onClose}>
           ← Library
         </Button>
         <StatusChip tone="neutral">{note.scope}</StatusChip>
@@ -215,7 +231,7 @@ function LoadedNoteDetail({
             {note.lifecycle}
           </StatusChip>
         )}
-        <span className="font-mono text-[0.68rem] text-text-tertiary">
+        <span className="font-mono text-[0.7rem] text-text-tertiary">
           {note.slug} · rev {note.revision} ·{" "}
           {describeMemoryAge(note.updatedAt, now)}
         </span>
@@ -224,7 +240,7 @@ function LoadedNoteDetail({
       {conflict !== null ? (
         <div
           role="alert"
-          className="shrink-0 border-0 border-b border-solid border-border-subtle bg-amber-glow px-[12px] py-[8px] font-mono text-[0.72rem] text-amber"
+          className="shrink-0 border-0 border-b border-solid border-border-subtle bg-amber-glow px-md py-sm font-mono text-[0.72rem] text-amber"
         >
           Another writer advanced {conflict.slug} to revision{" "}
           {conflict.currentRevision}; your edit was refused and nothing was
@@ -233,28 +249,28 @@ function LoadedNoteDetail({
       ) : refusal !== null ? (
         <div
           role="alert"
-          className="shrink-0 border-0 border-b border-solid border-border-subtle bg-red-glow px-[12px] py-[8px] font-mono text-[0.72rem] text-red-text"
+          className="shrink-0 border-0 border-b border-solid border-border-subtle bg-red-glow px-md py-sm font-mono text-[0.72rem] text-red-text"
         >
           {refusal}
         </div>
       ) : null}
 
       {lineage.supersededBy === null ? null : (
-        <div className="shrink-0 border-0 border-b border-solid border-border-subtle px-[12px] py-[8px] font-mono text-[0.72rem] text-text-tertiary">
+        <div className="shrink-0 border-0 border-b border-solid border-border-subtle px-md py-sm font-mono text-[0.72rem] text-text-tertiary">
           Replaced by{" "}
           <span className="text-text-secondary">{lineage.supersededBy}</span> —
           read that note instead.
         </div>
       )}
       {lineage.supersedes === null ? null : (
-        <div className="shrink-0 border-0 border-b border-solid border-border-subtle px-[12px] py-[8px] font-mono text-[0.72rem] text-text-tertiary">
+        <div className="shrink-0 border-0 border-b border-solid border-border-subtle px-md py-sm font-mono text-[0.72rem] text-text-tertiary">
           Supersedes{" "}
           <span className="text-text-secondary">{lineage.supersedes}</span>
         </div>
       )}
 
-      <div className="flex flex-col gap-sm px-[12px] py-[10px]">
-        <label className="flex flex-col gap-[4px] font-mono text-[0.68rem] tracking-[0.05em] text-text-tertiary uppercase">
+      <div className="flex flex-col gap-sm px-md py-md">
+        <label className="flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
           Hook
           <input
             aria-label="Hook"
@@ -265,7 +281,7 @@ function LoadedNoteDetail({
             className={FIELD_CLASS}
           />
         </label>
-        <label className="flex flex-col gap-[4px] font-mono text-[0.68rem] tracking-[0.05em] text-text-tertiary uppercase">
+        <label className="flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
           Body
           <MultilineInput
             aria-label="Body"
@@ -277,7 +293,7 @@ function LoadedNoteDetail({
             className={FIELD_CLASS}
           />
         </label>
-        <label className="flex flex-col gap-[4px] font-mono text-[0.68rem] tracking-[0.05em] text-text-tertiary uppercase">
+        <label className="flex flex-col gap-xs font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
           Status note
           <input
             aria-label="Status note"
@@ -309,6 +325,7 @@ function LoadedNoteDetail({
 
         <div className="flex flex-wrap items-center gap-sm">
           <Button
+            touch
             variant="default"
             size="sm"
             disabled={changed === null || update.isPending}
@@ -320,6 +337,7 @@ function LoadedNoteDetail({
             {update.isPending ? "Saving…" : "Save note"}
           </Button>
           <Button
+            touch
             variant="ghost"
             size="sm"
             disabled={changed === null}
@@ -330,10 +348,11 @@ function LoadedNoteDetail({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-sm border-0 border-t border-solid border-border-subtle px-[12px] py-[8px]">
+      <div className="flex flex-wrap items-center gap-sm border-0 border-t border-solid border-border-subtle px-md py-sm">
         {note.lifecycle === "proposed" ? (
           <>
             <Button
+              touch
               variant="default"
               size="sm"
               loading={decide.isPending}
@@ -342,6 +361,7 @@ function LoadedNoteDetail({
               Approve
             </Button>
             <Button
+              touch
               variant="ghost"
               size="sm"
               loading={decide.isPending}
@@ -357,6 +377,7 @@ function LoadedNoteDetail({
           </>
         ) : null}
         <Button
+          touch
           variant="ghost"
           size="sm"
           loading={markReviewed.isPending}
@@ -371,6 +392,7 @@ function LoadedNoteDetail({
         </Button>
         {note.statusNote !== null ? (
           <Button
+            touch
             variant="ghost"
             size="sm"
             loading={markReviewed.isPending}
@@ -386,6 +408,7 @@ function LoadedNoteDetail({
         ) : null}
         {note.scope === "session" ? (
           <Button
+            touch
             variant="ghost"
             size="sm"
             onClick={() =>
@@ -396,6 +419,7 @@ function LoadedNoteDetail({
           </Button>
         ) : null}
         <Button
+          touch
           variant="ghost"
           size="sm"
           onClick={() =>
@@ -406,6 +430,7 @@ function LoadedNoteDetail({
         </Button>
         {note.lifecycle === "archived" ? null : (
           <Button
+            touch
             variant="ghost"
             size="sm"
             loading={archive.isPending}
@@ -415,6 +440,7 @@ function LoadedNoteDetail({
           </Button>
         )}
         <Button
+          touch
           variant="danger"
           size="sm"
           // The confirmation closes as soon as it is confirmed (Radix routes
@@ -443,6 +469,7 @@ function LoadedNoteDetail({
           />
           <div className="flex items-center gap-sm">
             <Button
+              touch
               variant="default"
               size="sm"
               loading={promote.isPending}
@@ -466,6 +493,7 @@ function LoadedNoteDetail({
               Promote to project
             </Button>
             <Button
+              touch
               variant="ghost"
               size="sm"
               onClick={() => setPendingAct("none")}
@@ -491,6 +519,7 @@ function LoadedNoteDetail({
           />
           <div className="flex items-center gap-sm">
             <Button
+              touch
               variant="default"
               size="sm"
               disabled={successorHook.trim() === ""}
@@ -518,6 +547,7 @@ function LoadedNoteDetail({
               Create successor
             </Button>
             <Button
+              touch
               variant="ghost"
               size="sm"
               onClick={() => setPendingAct("none")}
@@ -531,11 +561,11 @@ function LoadedNoteDetail({
       <MemoryArtifactChips projectName={scopeRef.projectName} links={links} />
 
       {revisions.length > 0 ? (
-        <div className="border-0 border-t border-solid border-border-subtle px-[12px] py-[8px]">
-          <span className="font-mono text-[0.68rem] tracking-[0.05em] text-text-tertiary uppercase">
+        <div className="border-0 border-t border-solid border-border-subtle px-md py-sm">
+          <span className="font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
             History
           </span>
-          <ul className="m-0 flex list-none flex-col gap-[4px] p-0 pt-[6px]">
+          <ul className="m-0 flex list-none flex-col gap-xs p-0 pt-sm">
             {revisions.map((entry) => (
               <li
                 key={entry.revision}
@@ -546,6 +576,7 @@ function LoadedNoteDetail({
                   {describeMemoryAge(entry.createdAt, now)}
                 </span>
                 <Button
+                  touch
                   variant="ghost"
                   size="sm"
                   loading={restore.isPending}
@@ -584,10 +615,10 @@ function LoadedNoteDetail({
 }
 
 const FIELD_CLASS =
-  "w-full rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[5px] font-mono text-[0.78rem] normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:border-cyan-dim focus:[outline:none]";
+  "w-full rounded-sm border border-solid border-border-default bg-bg-base px-sm py-xs max-768:min-h-[44px] font-mono text-[0.78rem] normal-case tracking-normal text-text-primary placeholder:text-text-tertiary focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)] focus:outline-none";
 
 const FORM_CLASS =
-  "flex flex-col gap-sm border-0 border-t border-solid border-border-subtle bg-bg-base px-[12px] py-[10px]";
+  "flex flex-col gap-sm border-0 border-t border-solid border-border-subtle bg-bg-base px-md py-md";
 
 interface NoteDraft {
   hook: string;

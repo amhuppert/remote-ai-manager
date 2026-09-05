@@ -11,7 +11,7 @@ import { ticketQueries } from "@/lib/tickets/queries";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
 
 export interface MemoryArtifactChipsProps {
-  projectName: string;
+  projectName: string | null;
   links: readonly MemoryLink[];
 }
 
@@ -34,17 +34,18 @@ export default function MemoryArtifactChips({
   const wantsSpecs = links.some((link) => link.artifact.kind === "spec");
 
   const tickets = useQuery({
-    ...ticketQueries.list({ projectName }),
-    enabled: wantsTickets,
+    ...ticketQueries.list({ projectName: projectName ?? "" }),
+    enabled: wantsTickets && projectName !== null,
   });
   const specs = useQuery({
-    ...specReferenceQueries.inventory(projectName),
-    enabled: wantsSpecs,
+    ...specReferenceQueries.inventory(projectName ?? ""),
+    enabled: wantsSpecs && projectName !== null,
   });
 
   if (links.length === 0) return null;
 
   const hrefOf = (artifact: MemoryArtifactRef): string | null => {
+    if (projectName === null) return null;
     switch (artifact.kind) {
       case "ticket": {
         const ticket = tickets.data?.find(
@@ -71,8 +72,8 @@ export default function MemoryArtifactChips({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-[4px] border-0 border-t border-solid border-border-subtle px-[12px] py-[8px]">
-      <span className="font-mono text-[0.68rem] tracking-[0.05em] text-text-tertiary uppercase">
+    <div className="flex flex-wrap items-center gap-xs border-0 border-t border-solid border-border-subtle px-md py-sm">
+      <span className="font-mono text-[0.7rem] tracking-[0.05em] text-text-tertiary uppercase">
         Links
       </span>
       {links.map((link) => {

@@ -1586,6 +1586,8 @@ async function runReview(
   const context = resolved.context;
 
   const query = new URLSearchParams();
+  if (values["project-candidates"] !== undefined)
+    query.set("projectCandidates", "true");
   if (values["promotable"] !== undefined) {
     query.set("promotionCandidates", "true");
   }

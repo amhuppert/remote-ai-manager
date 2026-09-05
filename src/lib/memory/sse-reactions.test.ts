@@ -202,3 +202,24 @@ describe("ticket changes are not a memory input", () => {
     expect(isStale(memoryKeys.list(REF, LIST_FILTERS))).toBe(false);
   });
 });
+
+it("refreshes project promotion queues when a merge completes without a memory write", () => {
+  const key = memoryKeys.review(
+    { projectName: "cc", sessionName: null },
+    { promotionCandidates: false, projectCandidates: true, session: null },
+  );
+  const other = memoryKeys.review(OTHER_REF, REVIEW_FILTERS);
+  seed(key, []);
+  seed(other, []);
+  es.emit("job-status", {
+    type: "job-status",
+    jobType: "merge",
+    status: "completed",
+    projectName: "cc",
+    sessionName: "s1",
+    jobId: "job-1",
+    branchName: "csm/s1",
+  });
+  expect(isStale(key)).toBe(true);
+  expect(isStale(other)).toBe(false);
+});

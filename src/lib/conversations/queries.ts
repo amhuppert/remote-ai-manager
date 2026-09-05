@@ -11,8 +11,10 @@ import {
 export function useConversationsQuery(
   projectName: string,
   sessionName: string,
+  options?: { enabled?: boolean },
 ) {
   return useQuery({
+    enabled: options?.enabled,
     queryKey: conversationKeys.list(projectName, sessionName),
     queryFn: () =>
       apiFetch(

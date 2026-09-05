@@ -15,8 +15,13 @@ export function isSessionNotFoundError(error: unknown): boolean {
  * `"csm"`). Long-lived config, so a generous staleTime keeps client branch
  * previews stable without refetch churn.
  */
-export function useSessionQuery(projectName: string, sessionName: string) {
+export function useSessionQuery(
+  projectName: string,
+  sessionName: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
+    enabled: options?.enabled,
     queryKey: sessionKeys.detail(projectName, sessionName),
     queryFn: () =>
       apiFetch(

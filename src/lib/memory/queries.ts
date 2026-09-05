@@ -95,7 +95,9 @@ export const memoryIndexResponseSchema = z.object({
 
 /** The `project`/`session` pair every scoped read and write sends. */
 export function memoryScopeParams(ref: MemoryScopeRef): URLSearchParams {
-  const params = new URLSearchParams({ project: ref.projectName });
+  const params = new URLSearchParams();
+  if (ref.projectName !== null) params.set("project", ref.projectName);
+  if (ref.incarnation !== undefined) params.set("incarnation", ref.incarnation);
   if (ref.sessionName !== null) params.set("session", ref.sessionName);
   return params;
 }
@@ -123,6 +125,7 @@ export function memoryReviewUrl(
 ): string {
   const params = memoryScopeParams(ref);
   if (filters.promotionCandidates) params.set("promotionCandidates", "true");
+  if (filters.projectCandidates) params.set("projectCandidates", "true");
   if (filters.session !== null) {
     // `finished` is deliberately absent: it is a cache-key input, not a filter
     // the server accepts (see MemoryIncarnationRef).
@@ -259,7 +262,7 @@ export function useMemoryNotesQuery(
 ) {
   return useQuery({
     ...memoryQueries.list(ref, filters),
-    enabled: ref.projectName.length > 0 && (options?.enabled ?? true),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -294,7 +297,7 @@ export function useMemoryReviewQueueQuery(
 ) {
   return useQuery({
     ...memoryQueries.review(ref, filters),
-    enabled: ref.projectName.length > 0 && (options?.enabled ?? true),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -328,7 +331,12 @@ export function useSessionPromotionCandidatesQuery(
   sessionName: string,
   options?: { enabled?: boolean },
 ) {
-  const session = useSessionQuery(projectName, sessionName);
+  const session = useSessionQuery(projectName, sessionName, {
+    enabled:
+      projectName.length > 0 &&
+      sessionName.length > 0 &&
+      (options?.enabled ?? true),
+  });
   const incarnation: MemoryIncarnationRef | null =
     session.data === undefined
       ? null

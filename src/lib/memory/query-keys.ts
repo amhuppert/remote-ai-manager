@@ -24,7 +24,8 @@ export type MemoryIndexRender = "next-turn" | "full";
 
 /** The caller's own scope — the `project`/`session` parameters every read sends. */
 export interface MemoryScopeRef {
-  projectName: string;
+  projectName: string | null;
+  incarnation?: string;
   /** Null for a project-only view; a name binds the session incarnation. */
   sessionName: string | null;
 }
@@ -37,6 +38,7 @@ export interface MemoryListFilters {
 
 export interface MemoryReviewFilters {
   promotionCandidates: boolean;
+  projectCandidates?: boolean;
   /** The incarnation a session-filtered queue names, or null for the whole scope. */
   session: MemoryIncarnationRef | null;
 }
@@ -62,7 +64,9 @@ export interface MemoryIncarnationRef {
   finished: boolean;
 }
 
-function scopeSegments(ref: MemoryScopeRef): readonly [string, string | null] {
+function scopeSegments(
+  ref: MemoryScopeRef,
+): readonly [string | null, string | null] {
   return [ref.projectName, ref.sessionName] as const;
 }
 
@@ -74,7 +78,12 @@ export const memoryKeys = {
   details: () => [...memoryKeys.all, "detail"] as const,
   /** One note with its links — keyed by internal id so a rename invalidates in place. */
   detail: (ref: MemoryScopeRef, memoryId: string) =>
-    [...memoryKeys.details(), ...scopeSegments(ref), memoryId] as const,
+    [
+      ...memoryKeys.details(),
+      ...scopeSegments(ref),
+      memoryId,
+      ref.incarnation ?? null,
+    ] as const,
   /** Bounded revision history, nested under the detail key so both go stale together. */
   revisions: (ref: MemoryScopeRef, memoryId: string) =>
     [...memoryKeys.detail(ref, memoryId), "revisions"] as const,

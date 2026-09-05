@@ -51,6 +51,8 @@ export interface MemoryFreshnessAssessment {
 }
 
 export interface MemoryReviewQueueFilter {
+  /** Explicit curation queue across completed incarnations of one project. */
+  readonly projectCandidates?: string;
   /** Restrict to one actor's visible scope union; omitted scans every owner. */
   readonly visibility?: MemoryVisibility;
   /** Restrict to one session incarnation's notes (the session-filtered queue). */
@@ -267,12 +269,18 @@ export function createMemoryFreshnessEngine(
     filter: MemoryReviewQueueFilter = {},
   ): Promise<MemoryReviewQueueEntry[]> {
     const scanned =
-      filter.visibility === undefined
-        ? await deps.repo.listAllScopes({ includeArchived: false })
-        : await deps.repo.list({
-            visibility: filter.visibility,
-            includeArchived: false,
-          });
+      filter.projectCandidates !== undefined
+        ? (await deps.repo.listAllScopes({ includeArchived: false })).filter(
+            (note) =>
+              note.scope === "session" &&
+              note.projectPath === filter.projectCandidates,
+          )
+        : filter.visibility === undefined
+          ? await deps.repo.listAllScopes({ includeArchived: false })
+          : await deps.repo.list({
+              visibility: filter.visibility,
+              includeArchived: false,
+            });
     const session = filter.session;
     const notes =
       session === undefined
@@ -293,7 +301,12 @@ export function createMemoryFreshnessEngine(
       // decision. The prefiltered queue narrows to the second; the ordinary
       // queue holds both, because a candidate left unpromoted is work owed
       // just as a stale claim is.
-      if (filter.promotionCandidates === true && !promotionCandidate) continue;
+      if (
+        (filter.promotionCandidates === true ||
+          filter.projectCandidates !== undefined) &&
+        !promotionCandidate
+      )
+        continue;
       if (assessment.staleness.length === 0 && !promotionCandidate) continue;
       entries.push({
         note,
@@ -312,6 +325,7 @@ export function createMemoryFreshnessEngine(
     );
 
     logger.info("memory.freshness.review_queue_built", {
+      projectCandidates: filter.projectCandidates ?? null,
       scanned: notes.length,
       queued: entries.length,
       // `due` stays the stale count it has always been; a promotion candidate

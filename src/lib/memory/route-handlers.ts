@@ -411,10 +411,11 @@ const actorScopeQuerySchema = z
   .object({
     project: z.string().min(1).optional(),
     session: z.string().min(1).optional(),
+    incarnation: z.iso.datetime().optional(),
   })
   .strict();
 
-const ACTOR_SCOPE_PARAMS = ["project", "session"] as const;
+const ACTOR_SCOPE_PARAMS = ["project", "session", "incarnation"] as const;
 
 const listQuerySchema = actorScopeQuerySchema.extend({
   scope: memoryScopeSchema.optional(),
@@ -446,6 +447,7 @@ const revisionsQuerySchema = actorScopeQuerySchema.extend({
 });
 
 const reviewQuerySchema = actorScopeQuerySchema.extend({
+  projectCandidates: booleanParamSchema.default(false),
   /** Narrow to promotion candidates — the session-completion follow-up (R10). */
   promotionCandidates: booleanParamSchema.default(false),
   /** A session incarnation named from outside: both halves or neither. */
@@ -719,7 +721,11 @@ export function createMemoryRouteHandlers(
    */
   async function resolveActor(
     request: Request,
-    scope: { project?: string | undefined; session?: string | undefined },
+    scope: {
+      project?: string | undefined;
+      session?: string | undefined;
+      incarnation?: string | undefined;
+    },
   ): Promise<RouteResolution<MemoryActor>> {
     const validation = await deps.auth.validateOptionalToken(request);
     if (validation.kind === "invalid") {
@@ -799,7 +805,22 @@ export function createMemoryRouteHandlers(
   async function userVisibility(scope: {
     project?: string | undefined;
     session?: string | undefined;
+    incarnation?: string | undefined;
   }): Promise<RouteResolution<MemoryVisibility>> {
+    if (
+      scope.incarnation !== undefined &&
+      (scope.project === undefined || scope.session === undefined)
+    ) {
+      return {
+        ok: false,
+        response: memoryValidationFailedResponse([
+          {
+            path: "incarnation",
+            message: "an incarnation requires a project and session",
+          },
+        ]),
+      };
+    }
     if (scope.project === undefined) {
       if (scope.session !== undefined) {
         return {
@@ -828,10 +849,9 @@ export function createMemoryRouteHandlers(
         value: { projectPath: resolved.value, session: null },
       };
     }
-    const createdAt = await deps.findSessionCreatedAt(
-      resolved.value,
-      scope.session,
-    );
+    const createdAt =
+      scope.incarnation ??
+      (await deps.findSessionCreatedAt(resolved.value, scope.session));
     if (createdAt === null) {
       return {
         ok: false,
@@ -1034,6 +1054,7 @@ export function createMemoryRouteHandlers(
           ? { scope: query.value.scope }
           : {}),
         includeArchived: query.value.archived,
+        includeProposed: actor.value.kind === "user",
       };
       const found = await deps
         .getService()
@@ -1528,6 +1549,7 @@ export function createMemoryRouteHandlers(
         [
           ...ACTOR_SCOPE_PARAMS,
           "promotionCandidates",
+          "projectCandidates",
           "sessionName",
           "sessionCreatedAt",
         ],
@@ -1560,6 +1582,9 @@ export function createMemoryRouteHandlers(
 
       const entries = await deps.getFreshness().buildReviewQueue({
         visibility: actor.value.visibility,
+        ...(query.value.projectCandidates && projectPath !== null
+          ? { projectCandidates: projectPath }
+          : {}),
         ...(query.value.promotionCandidates
           ? { promotionCandidates: true }
           : {}),

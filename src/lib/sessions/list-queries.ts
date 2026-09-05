@@ -22,8 +22,12 @@ export function useBranchPrefixQuery(projectName: string) {
   });
 }
 
-export function useSessionsQuery(projectName: string) {
+export function useSessionsQuery(
+  projectName: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
+    enabled: options?.enabled,
     queryKey: sessionKeys.list(projectName),
     queryFn: async () => {
       const data = await apiFetch(

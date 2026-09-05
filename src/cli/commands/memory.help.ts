@@ -586,8 +586,16 @@ export const memoryHelpEntries: CommandHelpEntry[] = [
     summary: "list the notes that have gone stale or await promotion",
     description:
       "The pre-computed maintenance queue: notes past their review lease, notes past their status line's lease, expired notes, and the durable session notes of a completed session that are offered for promotion. Each row says why it is queued and names the command that clears it.",
-    usage: ["cctl memory review [--promotable] [--limit <n>]"],
+    usage: [
+      "cctl memory review [--promotable] [--project-candidates] [--limit <n>]",
+    ],
     flags: [
+      {
+        name: "project-candidates",
+        kind: "boolean",
+        description:
+          "durable promotion candidates from every completed session in the caller’s project; ordinary delivery visibility is unchanged",
+      },
       {
         name: "promotable",
         kind: "boolean",

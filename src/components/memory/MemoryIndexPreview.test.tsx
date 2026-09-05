@@ -510,3 +510,17 @@ describe("MemoryIndexPreview — freshness", () => {
       .toBe(2);
   });
 });
+
+it("requires an explicit subject outside a conversation", async () => {
+  renderWithQuery(
+    <MemoryIndexPreview
+      scopeRef={{ projectName: PROJECT_NAME, sessionName: null }}
+      conversationId={null}
+      active
+    />,
+  );
+  expect(
+    await screen.findByText("Choose a conversation to preview"),
+  ).toBeTruthy();
+  expect(api.requestsTo("GET", /\/api\/memory\/index/)).toHaveLength(0);
+});

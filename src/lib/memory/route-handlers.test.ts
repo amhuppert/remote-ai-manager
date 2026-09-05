@@ -265,6 +265,110 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 }
 
 describe("memory routes — scope authority", () => {
+  it("lets a human open a proposed global note for approval without admitting it to ordinary agent reads", async () => {
+    const created = await body(
+      await handlers.createPOST(
+        agentRequest("http://cc/api/memory/notes", {
+          method: "POST",
+          body: JSON.stringify({
+            scope: "global",
+            kind: "lesson",
+            hook: "a proposal must open before it can be approved",
+          }),
+        }),
+      ),
+    );
+    const note = created["note"] as { id: string };
+    const context = { params: Promise.resolve({ handle: note.id }) };
+    const human = await handlers.detailGET(
+      new Request(`http://cc/api/memory/notes/${note.id}?archived=true`),
+      context,
+    );
+    expect(human.status).toBe(200);
+    expect(await body(human)).toMatchObject({
+      note: { lifecycle: "proposed" },
+    });
+    const agent = await handlers.detailGET(
+      agentRequest(`http://cc/api/memory/notes/${note.id}`),
+      context,
+    );
+    expect(agent.status).toBe(404);
+  });
+
+  it("exposes completed-session candidates for a project and curates their exact incarnation", async () => {
+    const created = await body(
+      await handlers.createPOST(
+        agentRequest("http://cc/api/memory/notes", {
+          method: "POST",
+          body: JSON.stringify({
+            scope: "session",
+            kind: "lesson",
+            hook: "keep this completed-session lesson",
+          }),
+        }),
+      ),
+    );
+    const note = created["note"] as { id: string; revision: number };
+    const queue = await body(
+      await handlers.reviewGET(
+        new Request(
+          `http://cc/api/memory/review?project=${PROJECT_NAME}&projectCandidates=true`,
+        ),
+      ),
+    );
+    expect(queue["entries"]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          note: expect.objectContaining({ id: note.id }),
+          promotionCandidate: true,
+        }),
+      ]),
+    );
+    const scope = `project=${PROJECT_NAME}&session=${SESSION_NAME}&incarnation=${encodeURIComponent(SESSION_CREATED_AT)}`;
+    const detail = await handlers.detailGET(
+      new Request(`http://cc/api/memory/notes/${note.id}?${scope}`),
+      { params: Promise.resolve({ handle: note.id }) },
+    );
+    expect(detail.status).toBe(200);
+    const promoted = await handlers.promotePOST(
+      new Request(`http://cc/api/memory/notes/${note.id}/promote?${scope}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ baseRevision: note.revision }),
+      }),
+      { params: Promise.resolve({ handle: note.id }) },
+    );
+    expect(promoted.status).toBe(200);
+    expect(await body(promoted)).toMatchObject({
+      promoted: { scope: "project" },
+      superseded: { lifecycle: "archived" },
+    });
+  });
+
+  it("keeps project candidate reads within the caller's own project and ordinary delivery scope", async () => {
+    await handlers.createPOST(
+      agentRequest("http://cc/api/memory/notes", {
+        method: "POST",
+        body: JSON.stringify({
+          scope: "session",
+          kind: "lesson",
+          hook: "private session lesson",
+        }),
+      }),
+    );
+    const other = await handlers.reviewGET(
+      agentRequest("http://cc/api/memory/review?projectCandidates=true", {
+        conversationId: PROJECT_CONVERSATION,
+      }),
+    );
+    expect(other.status).toBe(200);
+    expect(await body(other)).toMatchObject({ entries: [] });
+    const ordinary = await handlers.listGET(
+      new Request(`http://cc/api/memory/notes?project=${PROJECT_NAME}`),
+    );
+    expect(await body(ordinary)).toMatchObject({ notes: [] });
+  });
+
   it("binds an agent's session-scoped create to its own incarnation", async () => {
     const response = await handlers.createPOST(
       agentRequest("http://cc/api/memory/notes", {
