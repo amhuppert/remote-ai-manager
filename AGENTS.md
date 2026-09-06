@@ -4,6 +4,10 @@ Command Center is a Next.js control plane for running Claude and Codex agent ses
 
 Address the user as Alex. Be direct about uncertainty or technical disagreement, and ask before making a consequential choice that the request does not settle.
 
+## Operating model
+
+Command Center is a local tool for one operator: one machine, one user, one SQLite database, and a person watching the logs who can retry. Design for that reality, not for a distributed database or a multi-tenant service. The complexity here is real — many sessions, workflows, and backends coordinated at once — so the code must work end to end and stay maintainable; spend the complexity budget there. Fight for simplicity: choose the simplest design that fully solves the problem, and add a guard, fallback, retry, or abstraction only for a failure mode that can occur here and is worth handling. Let everything else fail fast with a clear error, and name the edge cases you chose to leave unhandled.
+
 ## Commands
 
 Run commands from the assigned session worktree root.
