@@ -25,6 +25,31 @@ const items: CommandAutocompleteListItem[] = [
 ];
 
 describe("CommandAutocompleteList", () => {
+  it("exposes unavailable reasons and refuses activation", () => {
+    const onSelect = vi.fn();
+    render(
+      <CommandAutocompleteList
+        items={[
+          {
+            id: "ticket",
+            name: "/ticket",
+            disabled: true,
+            description: "Task execution is unavailable",
+          },
+        ]}
+        selectedIndex={0}
+        onHover={() => {}}
+        onSelect={onSelect}
+        headerLabel="Commands"
+        emptyLabel="Empty"
+      />,
+    );
+    const option = screen.getByRole("option");
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    expect(option).toHaveTextContent("Task execution is unavailable");
+    fireEvent.click(option);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
   it("renders header label and item count", () => {
     render(
       <CommandAutocompleteList

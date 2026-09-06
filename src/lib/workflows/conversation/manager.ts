@@ -388,10 +388,47 @@ export function createProvidedMachine(adapter: ConversationPersistenceAdapter) {
         // Queue delivery is only for user-interactive conversations (req 10.2);
         // workflow roles own their own turn orchestration.
         if (context.role !== null) return;
-        void drainConversationQueue(self, context, getConversationQueueDeps());
+        drainAfterTurn(self, context);
       },
     },
   });
+}
+
+/** A cancelled invocation may still be stopping after its actor reaches idle. */
+function drainAfterTurn(
+  self: Parameters<typeof drainConversationQueue>[0],
+  context: Parameters<typeof drainConversationQueue>[1],
+): void {
+  const runtime = getConversationRuntime(
+    conversationRuntimeKey(
+      context.projectPath,
+      context.sessionName,
+      context.conversationId,
+    ),
+  );
+  const deps = getConversationQueueDeps();
+  const drain = () => {
+    if (
+      getConversationActor(
+        context.projectPath,
+        context.sessionName,
+        context.conversationId,
+      ) !== self
+    )
+      return;
+    return drainConversationQueue(self, context, deps);
+  };
+  if (runtime?.turnCompletion) {
+    void runtime.turnCompletion.then(drain).catch((error) =>
+      logger.error("queue.settlement_wait_failed", {
+        ...scopeRefFromStoreSessionName(context.sessionName),
+        conversationId: context.conversationId,
+        error: getErrorMessage(error),
+      }),
+    );
+    return;
+  }
+  void drain();
 }
 
 // ============================================================
@@ -605,6 +642,17 @@ function projectTurnResult(
   };
 }
 
+interface EnsureActorOptions {
+  executionTarget?: Pick<ExecutionTarget, "worktreePath">;
+  /**
+   * Explicit actor input override for callers that drive transient
+   * conversations not backed by a persisted CC conversation record
+   * (e.g. graph-workflow validator lanes). When provided, the state-store
+   * loader is bypassed and this data is used directly.
+   */
+  actorInput?: EnsureActorInputData;
+}
+
 /**
  * Ensure a conversation actor exists, creating one if needed.
  * Loads conversation state from the state file to build input.
@@ -622,16 +670,40 @@ export async function ensureConversationActor(
   projectPath: string,
   sessionName: string,
   conversationId: string,
-  options?: {
-    executionTarget?: Pick<ExecutionTarget, "worktreePath">;
-    /**
-     * Explicit actor input override for callers that drive transient
-     * conversations not backed by a persisted CC conversation record
-     * (e.g. graph-workflow validator lanes). When provided, the state-store
-     * loader is bypassed and this data is used directly.
-     */
-    actorInput?: EnsureActorInputData;
-  },
+  options?: EnsureActorOptions,
+): Promise<ConversationActorRef> {
+  const key = conversationRuntimeKey(projectPath, sessionName, conversationId);
+  const pending = pendingActorStarts.get(key);
+  if (pending) {
+    await pending;
+    return ensureConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      options,
+    );
+  }
+  const start = ensureConversationActorUnserialized(
+    projectPath,
+    sessionName,
+    conversationId,
+    options,
+  );
+  pendingActorStarts.set(key, start);
+  try {
+    return await start;
+  } finally {
+    pendingActorStarts.delete(key);
+  }
+}
+
+const pendingActorStarts = new Map<string, Promise<ConversationActorRef>>();
+
+async function ensureConversationActorUnserialized(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+  options?: EnsureActorOptions,
 ): Promise<ConversationActorRef> {
   const existing = getConversationActor(
     projectPath,
@@ -702,6 +774,14 @@ export async function ensureConversationActor(
       sessionName,
       conversationId,
     ));
+
+  if (data.persistence === "durable") {
+    await getConversationQueueDeps().recoverAbandonedDeliveries({
+      projectPath,
+      sessionName,
+      conversationId,
+    });
+  }
 
   const worktreePath = requestedWorktreePath ?? data.sessionWorktreePath;
 
@@ -918,11 +998,7 @@ export async function ensureConversationActorAndDrain(
     explicitDrain,
   });
   if (explicitDrain) {
-    void drainConversationQueue(
-      actor,
-      actor.getSnapshot().context,
-      getConversationQueueDeps(),
-    );
+    drainAfterTurn(actor, actor.getSnapshot().context);
   }
 }
 
@@ -1056,6 +1132,7 @@ export function stopConversationActor(
 
 /** Reset for testing — clears all actors and runtime state. */
 export function _resetForTesting(): void {
+  pendingActorStarts.clear();
   for (const actor of getActorRegistry().values()) {
     actor.stop();
   }

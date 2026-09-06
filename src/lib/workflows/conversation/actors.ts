@@ -5,6 +5,10 @@
  * implementation. Override via `.provide()` in tests.
  */
 
+import {
+  conversationRuntimeKey,
+  getConversationRuntime,
+} from "./runtime-state";
 import { fromPromise } from "xstate";
 import type {
   PrepareTurnInput,
@@ -33,9 +37,24 @@ export const prepareTurnActor = fromPromise<
 export const executePromptActor = fromPromise<
   PromptActorResult,
   ExecutePromptInput
->(async ({ input }) => {
-  const { executePromptForMachine } = await import("./actor-implementations");
-  return executePromptForMachine(input);
+>(async ({ input, signal }) => {
+  const runtime = getConversationRuntime(
+    conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    ),
+  );
+  const execution = (async () => {
+    const { executePromptForMachine } = await import("./actor-implementations");
+    return executePromptForMachine(input, signal);
+  })();
+  if (runtime)
+    runtime.turnCompletion = execution.then(
+      () => {},
+      () => {},
+    );
+  return execution;
 });
 
 /**
@@ -50,3 +69,12 @@ export const runTaskRunActor = fromPromise<PromptActorResult, RunTaskRunInput>(
     return runTaskRunTurnForMachine(input);
   },
 );
+
+export const finalizeQueuedDeliveryActor = fromPromise<
+  void,
+  import("./types").FinalizeQueuedDeliveryInput
+>(async ({ input }) => {
+  const { finalizeQueuedDeliveryForMachine } =
+    await import("./actor-implementations");
+  await finalizeQueuedDeliveryForMachine(input);
+});

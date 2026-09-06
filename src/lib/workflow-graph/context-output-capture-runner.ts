@@ -139,6 +139,8 @@ export function createGraphWorkflowOutputCaptureRunner(
       sessionName: input.sessionName,
       conversationId: input.conversationId,
       kind: "task_run",
+      executionClass: "governed-execution",
+      executionProfile: "standard",
       prompt,
       // The declared contract, verbatim: the gate validates against this exact
       // document, so anything less than the whole schema would validate a

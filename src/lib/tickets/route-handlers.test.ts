@@ -126,6 +126,13 @@ beforeEach(() => {
   const service = createTicketService({
     repo: createTicketsRepo(db, createWriteQueue()),
     attachmentPlanner: createCreateAttachmentPlanner({
+      async prepareEnrichment() {
+        return {
+          status: "ready",
+          backend: "codex",
+          modelSelection: { modelId: "gpt-5.4", parameters: {} },
+        };
+      },
       resolveAvailableProjectPath,
       conversationExists,
       async captureScreenshot(input) {

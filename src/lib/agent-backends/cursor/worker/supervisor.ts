@@ -347,6 +347,9 @@ class SupervisedWorker implements CursorWorkerSession {
       type: "attachAgent",
       mode: input.mode,
       ref: input.ref,
+      ...(input.recoverAbandonedRun !== undefined
+        ? { recoverAbandonedRun: input.recoverAbandonedRun }
+        : {}),
       modelSelection: input.modelSelection,
       disallowedTools: [...CURSOR_PHASE1_POLICY.disallowedTools],
       sandboxEnabled: false,
@@ -568,6 +571,12 @@ export function createCursorWorkerSupervisor(
       }),
     );
     delete env.CURSOR_API_KEY;
+    env.CC_LOG_FILE = path.join(
+      deps.getConfigDir(),
+      "logs",
+      "cursor-workers",
+      `${input.conversationId}.log`,
+    );
     return env;
   }
 

@@ -20,6 +20,7 @@ import { readRepoConfig } from "@/lib/projects/repo-config";
 
 import type { ConversationBackendFactory } from "../conversation";
 import type { BackendContinuityAdapter } from "../continuity";
+import { assertCursorRuntimePolicy } from "./runtime-policy";
 import {
   backendModelSelectionSchema,
   type BackendModelSelection,
@@ -169,6 +170,7 @@ export const cursorConversationBackendFactory: ConversationBackendFactory = {
   },
 
   async createRuntime(input) {
+    assertCursorRuntimePolicy(input);
     logger.info("cursor-factory.create_runtime", {
       conversationId: input.conversationId,
       modelId: input.modelSelection.modelId,
@@ -191,8 +193,8 @@ export const cursorConversationBackendFactory: ConversationBackendFactory = {
  * A continuity probe needs the cwd, agent store, and model the ref was minted
  * under; the neutral `ContinuityContext` carries only a project path and
  * session name. In Phase 1 no production caller needs that binding: an ordinary
- * conversation resumes through its own runtime's persisted ref, `fork` is
- * declared unsupported and answers without touching the transport, and the
+ * conversation resumes through its own runtime's persisted ref, synthetic forks
+ * read only the CC transcript, and the
  * workflow and collaboration surfaces that call `start`/`validate`/
  * `resumeOrRecover` are refused for Cursor by facet gating.
  *

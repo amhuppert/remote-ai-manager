@@ -63,6 +63,7 @@ function managedPolicyTier(settings: Record<string, unknown>) {
 
 function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
   return {
+    executionClass: "nongoverned-task" as const,
     workingDirectory: "/test/workspace",
     prompt: "Do the thing",
     timeoutMs: 30_000,

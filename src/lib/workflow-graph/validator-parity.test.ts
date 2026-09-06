@@ -111,6 +111,7 @@ async function runLegacyValidatorPath(
   stubExecuteAgentCall: (request: AgentCallRequest) => Promise<AgentCallResult>,
 ): Promise<ValidatorOutcome> {
   const request: AgentCallRequest = {
+    executionClass: "governed-execution" as const,
     kind: "task_run",
     backend: VALIDATOR_ENGINE,
     prompt: "validator prompt (parity fixture)",

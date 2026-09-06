@@ -67,6 +67,7 @@ export async function runStaleCodexResumeTurn(identity: {
 }): Promise<ConversationBackendTurnResult> {
   const runtime = new CodexConversationRuntime(
     {
+      executionClass: "ordinary-conversation" as const,
       ...identity,
       conversationTarget: sessionConversationTarget(
         identity.projectName,

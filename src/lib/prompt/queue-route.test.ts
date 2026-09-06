@@ -84,13 +84,6 @@ const inTurnCapability: QueueCapability = {
 
 type QueueRowStatus = PendingQueuedMessage["status"];
 
-/**
- * Backs the cancel/recovery fakes with a single shared in-memory row so the
- * recovery-before-cancel ordering is meaningful production logic rather than
- * mock-to-mock wiring: `cancel` only succeeds when the row is `pending`, and
- * `recoverAbandonedDeliveries` is what flips a stale `delivering` row back to
- * `pending`.
- */
 function createCancelStore(initialStatus: QueueRowStatus, rowId = "q-1") {
   const row = { id: rowId, status: initialStatus };
   return {
@@ -105,13 +98,6 @@ function createCancelStore(initialStatus: QueueRowStatus, rowId = "q-1") {
         return "cancelled";
       },
     ),
-    recoverAbandonedDeliveries: vi.fn(async (): Promise<number> => {
-      if (row.status === "delivering") {
-        row.status = "pending";
-        return 1;
-      }
-      return 0;
-    }),
   };
 }
 
@@ -137,9 +123,8 @@ function createTestDeps(
     clearConversationPendingPromptTextIfMatches: vi
       .fn()
       .mockResolvedValue(true),
-    hasLiveConversationActor: vi.fn().mockReturnValue(true),
+    resolveDelivery: async () => "not_found",
     ensureConversationActorAndDrain: vi.fn().mockResolvedValue(undefined),
-    recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
     cancel: store.cancel,
     ...overrides,
   };
@@ -547,12 +532,10 @@ describe("POST .../conversations/[conversationId]/queue", () => {
 });
 
 describe("DELETE .../conversations/[conversationId]/queue/[messageId]", () => {
-  it("cancels a pending entry when a live actor owns the conversation", async () => {
+  it("cancels a pending entry", async () => {
     const store = createCancelStore("pending");
     deps = createTestDeps({
-      hasLiveConversationActor: vi.fn().mockReturnValue(true),
       cancel: store.cancel,
-      recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
     });
     handlers = createQueueRouteHandlers(deps);
 
@@ -564,8 +547,6 @@ describe("DELETE .../conversations/[conversationId]/queue/[messageId]", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toEqual({ cancelled: true, id: "q-1" });
-    // Live actor owns the in-flight attempt, so the route must NOT run recovery.
-    expect(store.recoverAbandonedDeliveries).not.toHaveBeenCalled();
     expect(store.cancel).toHaveBeenCalledWith({
       projectPath: "/projects/my-project",
       sessionName: "test-session",
@@ -578,9 +559,7 @@ describe("DELETE .../conversations/[conversationId]/queue/[messageId]", () => {
   it("returns 409 NOT_CANCELLABLE for an already-delivered entry", async () => {
     const store = createCancelStore("delivered");
     deps = createTestDeps({
-      hasLiveConversationActor: vi.fn().mockReturnValue(true),
       cancel: store.cancel,
-      recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
     });
     handlers = createQueueRouteHandlers(deps);
 
@@ -595,38 +574,10 @@ describe("DELETE .../conversations/[conversationId]/queue/[messageId]", () => {
     expect(store.row.status).toBe("delivered");
   });
 
-  it("recovers a stale delivering row before cancelling when no live actor exists", async () => {
+  it("does not reclaim a delivering row from a cancellation request", async () => {
     const store = createCancelStore("delivering");
     deps = createTestDeps({
-      hasLiveConversationActor: vi.fn().mockReturnValue(false),
       cancel: store.cancel,
-      recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
-    });
-    handlers = createQueueRouteHandlers(deps);
-
-    const response = await handlers.DELETE(
-      makeDeleteRequest(),
-      makeDeleteParams(),
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body).toEqual({ cancelled: true, id: "q-1" });
-    // Recovery ran first (flipping delivering -> pending), making cancel succeed.
-    expect(store.recoverAbandonedDeliveries).toHaveBeenCalledWith({
-      projectPath: "/projects/my-project",
-      sessionName: "test-session",
-      conversationId: "conv-123",
-    });
-    expect(store.row.status).toBe("cancelled");
-  });
-
-  it("does NOT recover a delivering row when a live actor owns it (409)", async () => {
-    const store = createCancelStore("delivering");
-    deps = createTestDeps({
-      hasLiveConversationActor: vi.fn().mockReturnValue(true),
-      cancel: store.cancel,
-      recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
     });
     handlers = createQueueRouteHandlers(deps);
 
@@ -638,16 +589,13 @@ describe("DELETE .../conversations/[conversationId]/queue/[messageId]", () => {
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body.code).toBe("NOT_CANCELLABLE");
-    expect(store.recoverAbandonedDeliveries).not.toHaveBeenCalled();
     expect(store.row.status).toBe("delivering");
   });
 
   it("returns 404 when the queued message does not exist", async () => {
     const store = createCancelStore("pending", "other-id");
     deps = createTestDeps({
-      hasLiveConversationActor: vi.fn().mockReturnValue(true),
       cancel: store.cancel,
-      recoverAbandonedDeliveries: store.recoverAbandonedDeliveries,
     });
     handlers = createQueueRouteHandlers(deps);
 
@@ -714,7 +662,6 @@ describe("DELETE .../conversations/[conversationId]/queue/[messageId]", () => {
     const body = await response.json();
     expect(body.code).toBe("NON_INTERACTIVE_CONVERSATION");
     expect(deps.cancel).not.toHaveBeenCalled();
-    expect(deps.recoverAbandonedDeliveries).not.toHaveBeenCalled();
   });
 });
 

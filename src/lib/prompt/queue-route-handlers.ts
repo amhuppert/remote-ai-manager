@@ -28,16 +28,15 @@ import {
   toQueuedMessageView as defaultToQueuedMessageView,
   messageQueueService,
 } from "@/lib/conversations/message-queue-service";
-import {
-  hasLiveConversationActor as defaultHasLiveConversationActor,
-  ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
-} from "@/lib/workflows/conversation/manager";
+import { ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain } from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import {
   cancelQueuedMessage,
   enqueueQueuedMessage,
   parseQueueEnqueueBody,
+  parseQueueReviewBody,
+  reviewQueuedMessage,
   type QueueOperationDeps,
 } from "@/lib/prompt/queue-operations";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -71,11 +70,9 @@ const defaultDeps: QueueRouteDeps = {
   toQueuedMessageView: defaultToQueuedMessageView,
   clearConversationPendingPromptTextIfMatches:
     defaultClearConversationPendingPromptTextIfMatches,
-  hasLiveConversationActor: defaultHasLiveConversationActor,
   ensureConversationActorAndDrain: defaultEnsureConversationActorAndDrain,
-  recoverAbandonedDeliveries: (input) =>
-    messageQueueService.recoverAbandonedDeliveries(input),
   cancel: (input) => messageQueueService.cancel(input),
+  resolveDelivery: (input) => messageQueueService.resolveDelivery(input),
 };
 
 const logger = createLogger("message-queue");
@@ -168,7 +165,46 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     );
   }
 
-  return { POST, DELETE };
+  async function REVIEW(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const body = await parseQueueReviewBody(request);
+    if (!body.ok) return body.response;
+    const resolvedParams = await context.params;
+    const name = resolvedParams["name"] ?? "";
+    const sessionSlug = resolvedParams["session"] ?? "";
+    const sessionName = decodeURIComponent(sessionSlug);
+    const conversationId = resolvedParams["conversationId"] ?? "";
+    const messageId = resolvedParams["messageId"] ?? "";
+
+    const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath } = resolved.value;
+
+    const conversation = await deps.getConversation(
+      projectPath,
+      sessionName,
+      conversationId,
+    );
+    if (!conversation) {
+      return notFound("Conversation not found");
+    }
+
+    return reviewQueuedMessage(
+      deps,
+      {
+        projectPath,
+        scope: { scope: "session", sessionName },
+        conversationId,
+        conversation,
+      },
+      messageId,
+      body.value,
+    );
+  }
+
+  return { POST, DELETE, REVIEW };
 }
 
 // ---------------------------------------------------------------------------
@@ -181,4 +217,8 @@ export const enqueueConversationPrompt = withTracing(
 );
 export const cancelConversationQueuedMessage = withTracing(
   _defaultQueueHandlers.DELETE,
+);
+
+export const reviewConversationQueuedMessage = withTracing(
+  _defaultQueueHandlers.REVIEW,
 );

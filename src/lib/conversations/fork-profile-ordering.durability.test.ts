@@ -302,7 +302,7 @@ describe("a session-derived fork", () => {
     expect(forked!.forkedFrom?.forkMode).toBe("synthetic");
     expect(forked!.forkedFrom?.forkPending).toBe(false);
     expect(forked!.backendRef).toBeNull();
-    expect(forked!.pendingPromptText).toContain(
+    expect(forked!.forkedFrom?.syntheticSeed).toContain(
       "Here is what happened so far.",
     );
     expect(forked!.profileSnapshot).toEqual(sourceSnapshot);

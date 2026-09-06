@@ -10,8 +10,13 @@ import {
   useSendingFor,
 } from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import {
+  isActiveQueuedMessageStatus,
+  queuedMessageNeedsReview,
+} from "@/lib/conversations/message-queue-schemas";
 import type {
   PendingQueuedMessage,
+  PendingQueuedMessageStatus,
   QueuedMessageMetadata,
 } from "@/lib/conversations/message-queue-schemas";
 
@@ -26,7 +31,9 @@ import type {
 export interface QueuedDisplayMeta {
   id: string | null;
   tempId?: string;
-  status: "pending" | "delivering" | "accepted";
+  status:
+    | Exclude<PendingQueuedMessageStatus, "delivered" | "cancelled">
+    | "accepted";
   metadata: QueuedMessageMetadata | null;
 }
 
@@ -106,8 +113,9 @@ export function buildDisplayProjection({
   const durableRows: DisplayMessage[] = [];
   const durableIds = new Set<string>();
   for (const entry of pendingQueue) {
-    if (entry.status !== "pending" && entry.status !== "delivering") continue;
-    if (transcriptIds.has(entry.id)) continue;
+    if (!isActiveQueuedMessageStatus(entry.status)) continue;
+    if (transcriptIds.has(entry.id) && !queuedMessageNeedsReview(entry.status))
+      continue;
     durableIds.add(entry.id);
     durableRows.push({
       role: "user",
@@ -115,7 +123,7 @@ export function buildDisplayProjection({
       timestamp: entry.enqueuedAt,
       queued: {
         id: entry.id,
-        status: entry.status === "delivering" ? "delivering" : "pending",
+        status: entry.status,
         metadata: entry.metadata,
       },
     });
@@ -205,7 +213,7 @@ export function useDisplayMessages(
       if (message.id !== undefined) represented.add(message.id);
     }
     for (const entry of pendingQueue) {
-      if (entry.status === "pending" || entry.status === "delivering") {
+      if (isActiveQueuedMessageStatus(entry.status)) {
         represented.add(entry.id);
       }
     }

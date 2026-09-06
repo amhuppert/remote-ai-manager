@@ -276,6 +276,7 @@ export async function callPrimitive(
     backend === "claude"
       ? {
           kind: "conversation_turn",
+          executionClass: "governed-execution",
           backend: "claude",
           prompt: composedPrompt,
           laneRef,
@@ -286,6 +287,8 @@ export async function callPrimitive(
         }
       : {
           kind: "task_run",
+          executionClass: "governed-execution",
+          executionProfile: "standard",
           backend: "codex",
           prompt: composedPrompt,
           laneRef,

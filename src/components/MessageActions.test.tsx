@@ -514,10 +514,67 @@ describe("MessageActions fork action", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the fork refusal and prevents activation", () => {
+    const onFork = vi.fn();
+    renderActions({
+      onFork,
+      compactionTarget: undefined,
+      forkRefusal: {
+        backend: "cursor",
+        operation: "fork",
+        code: "backend-fork-unsupported",
+        message: "Cursor cannot fork this conversation with its history.",
+      },
+    });
+    expect(
+      screen.getByRole("button", {
+        name: "Fork conversation from this message",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Cursor cannot fork this conversation with its history.",
+      ),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Fork conversation from this message",
+      }),
+    );
+    expect(onFork).not.toHaveBeenCalled();
+  });
+
+  it("associates simultaneous fork controls with their own refusal", () => {
+    for (const backend of ["cursor", "claude"] as const) {
+      renderActions({
+        compactionTarget: undefined,
+        onFork: () => {},
+        forkRefusal: {
+          backend,
+          operation: "fork",
+          code: "backend-fork-unsupported",
+          message: `${backend} fork reason`,
+        },
+      });
+    }
+    const controls = screen.getAllByRole("button", {
+      name: "Fork conversation from this message",
+    });
+    expect(controls[0]).toHaveAccessibleDescription("cursor fork reason");
+    expect(controls[1]).toHaveAccessibleDescription("claude fork reason");
+  });
+
   it("offers a Standard-Agent-defaulted profile picker on an index-0 fork", async () => {
     const onFork = vi.fn();
     renderActions({
       messageIndex: 0,
+      role: "user",
+      forkRefusal: {
+        backend: "cursor",
+        operation: "fork",
+        code: "backend-fork-unsupported",
+        message: "Cursor cannot fork this conversation with its history.",
+      },
       compactionTarget: undefined,
       forkProjectName: "p1",
       onFork,

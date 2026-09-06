@@ -1,6 +1,6 @@
 import { DesktopModelSelectionControls } from "@/components/session/prompt/ModelSelectionControls";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
-import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
+import { workflowBackendRefusalIn } from "@/lib/workflow-graph/backend-admission";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -21,11 +21,7 @@ export function AgentConfigFields({
   fieldPathPrefix: string;
 }) {
   const backend = value.backend;
-  const { data: backends } = useBackendCatalogQuery();
-  const entry = backends.find((b) => b.id === backend);
-  if (!entry) {
-    throw new Error(`Unknown agent backend: ${backend}`);
-  }
+  const { data: backends, isFetched, isError } = useBackendCatalogQuery();
   const catalog = getConfiguredBackendModelCatalog(
     value.backend,
     value.modelSelection,
@@ -64,7 +60,7 @@ export function AgentConfigFields({
           // A workflow role is dispatched through the backend's task facet, so
           // a backend registering none cannot hold one (spec D13).
           getOptionDisabledReason={(id) =>
-            backendFacetRefusalIn(backends, id, "tasks")
+            workflowBackendRefusalIn(isFetched && !isError ? backends : [], id)
           }
           onChange={handleBackendChange}
         />

@@ -1,6 +1,10 @@
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
-import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
+import { backendExecutionRefusalIn } from "@/lib/agent-backends/execution-admission";
+import {
+  compactionExecutionRequirements,
+  compactionRepairRequirements,
+} from "@/lib/config/task-admission";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type {
   BackendModelCatalog,
@@ -91,11 +95,13 @@ export function CompactionSection({
     compaction?.messageModelSelection ??
     COMPACTION_DEFAULTS.messageModelSelection;
 
-  const { data: backends } = useBackendCatalogQuery();
-  const entry = backends.find((b) => b.id === backend);
-  if (!entry) {
-    throw new Error(`Unknown agent backend: ${backend}`);
-  }
+  const { data: backends, isFetched, isError } = useBackendCatalogQuery();
+  const availableBackends = isFetched && !isError ? backends : [];
+  const selectionRefusal = backendExecutionRefusalIn(
+    availableBackends,
+    backend,
+    compactionExecutionRequirements,
+  );
 
   const conversationCatalog = getConfiguredBackendModelCatalog(
     backend,
@@ -122,13 +128,29 @@ export function CompactionSection({
           isDefault={isDefault("compaction.backend")}
           isModified={isModified("compaction.backend")}
         >
+          {selectionRefusal && (
+            <p role="status" className="text-sm text-text-secondary">
+              {selectionRefusal.message}
+            </p>
+          )}
           <ConfigPillGroup
             value={backend}
             options={backends.map((b) => b.id)}
             // Compaction dispatches a task run, so a backend with no task facet
             // cannot be selected here (spec D13).
             getOptionDisabledReason={(id) =>
-              backendFacetRefusalIn(backends, id, "tasks")
+              (
+                backendExecutionRefusalIn(
+                  availableBackends,
+                  id,
+                  compactionExecutionRequirements,
+                ) ??
+                backendExecutionRefusalIn(
+                  availableBackends,
+                  id,
+                  compactionRepairRequirements,
+                )
+              )?.message ?? null
             }
             onChange={(value) => {
               const nextEntry = backends.find((b) => b.id === value);

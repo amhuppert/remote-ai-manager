@@ -1,4 +1,8 @@
 import type {
+  ConversationExecutionPolicy,
+  TaskExecutionPolicy,
+} from "../execution-admission";
+import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,
   BackendConversationCapabilities,
@@ -31,6 +35,17 @@ function codexModel(
     effortLevels: getCodexReasoningLevelsForModel(id) ?? [],
   };
 }
+
+export const codexConversationExecution: ConversationExecutionPolicy = {
+  classes: ["ordinary-conversation", "governed-execution"],
+  instructionDelivery: "user-message",
+};
+
+export const codexTaskExecution: TaskExecutionPolicy = {
+  classes: ["nongoverned-task", "governed-execution"],
+  instructionDelivery: "privileged",
+  profiles: ["standard", "isolated-one-shot"],
+};
 
 /**
  * Backend catalog metadata for Codex — the single source for model labels,
@@ -186,6 +201,7 @@ export function createCodexBackendDescriptor(
       },
     },
     conversation: {
+      execution: codexConversationExecution,
       factory: deps.conversationFactory,
       continuity: deps.continuity,
       capabilities: codexConversationCapabilities,
@@ -194,6 +210,7 @@ export function createCodexBackendDescriptor(
       transcript: codexConversationTranscriptProjection,
     },
     tasks: {
+      execution: codexTaskExecution,
       runner: deps.taskRunner,
       structuredOutput: "backend_native",
       transcript: codexTaskTranscriptProjection,

@@ -1,3 +1,7 @@
+import {
+  runAdmittedTask,
+  assertBackendExecution,
+} from "@/lib/agent-backends/task-execution";
 /**
  * One-shot agent turn with the `TaskRunResult` contract of
  * {@link executeWorkflowTaskRun}, but no conversation.
@@ -79,8 +83,7 @@ async function defaultRunTask(
   backend: AgentBackendId,
   request: AgentTaskRequest,
 ): Promise<AgentTaskResult> {
-  const { getTaskRunner } = await import("@/lib/agent-backends/registry");
-  return getTaskRunner(backend).run(request);
+  return runAdmittedTask(backend, request);
 }
 
 async function defaultResolveIdentity(input: {
@@ -188,7 +191,17 @@ export async function executeFreshTaskRun(
     timeoutMs,
   });
 
+  await assertBackendExecution(identity.backend, {
+    facet: "tasks",
+    operation: "fresh-task-run",
+    executionClass: "governed-execution",
+    executionProfile: "standard",
+    requiresPrivilegedInstructions: true,
+  });
   const result = await runTask(identity.backend, {
+    executionClass: "governed-execution",
+    executionProfile: "standard",
+    requiresPrivilegedInstructions: true,
     workingDirectory: input.worktreePath,
     prompt: input.prompt,
     ...(input.systemInstructions !== undefined

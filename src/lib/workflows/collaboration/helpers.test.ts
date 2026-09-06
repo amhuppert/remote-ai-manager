@@ -278,6 +278,7 @@ describe("callPrimitive session-context injection", () => {
     // Byte-identical pin: an empty snapshot must not add a key or change a byte.
     expect(request).toEqual({
       kind: "conversation_turn",
+      executionClass: "governed-execution",
       backend: "claude",
       prompt: WORK_PROMPT,
       laneRef: { workflowId: "wf-callprimitive", laneId: "agent_one" },

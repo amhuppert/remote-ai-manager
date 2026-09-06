@@ -504,3 +504,18 @@ describe("executeProjectPromptStream", () => {
     });
   });
 });
+describe("project command admission", () => {
+  it("refuses Cursor ticket creation before creating a conversation", async () => {
+    const h = harness();
+    await expect(
+      h.executeProjectPromptStream({
+        projectPath: "/repo",
+        promptText: "/ticket capture this",
+        backend: "cursor",
+        emit() {},
+      }),
+    ).rejects.toMatchObject({ code: "backend-facet-unsupported" });
+    expect(h.store.size).toBe(0);
+    expect(h.calls).toEqual([]);
+  });
+});

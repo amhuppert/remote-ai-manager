@@ -1,4 +1,8 @@
 import { z } from "zod";
+import type {
+  ExecutionIntent,
+  TaskExecutionProfile,
+} from "./execution-admission";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationToolingOverrides } from "./types";
 import type { AgentTranscriptEntry } from "./transcript";
@@ -13,7 +17,7 @@ import type { BackendModelSelection } from "./schemas";
  * fresh turn with provider-supported isolation controls applied and no
  * continuation reference returned to the caller.
  */
-export type AgentTaskExecutionProfile = "standard" | "isolated-one-shot";
+export type AgentTaskExecutionProfile = TaskExecutionProfile;
 
 /**
  * The CC session a task subprocess is permitted to act as.
@@ -68,7 +72,7 @@ export const fsWritePolicySchema = z.object({
 
 export type FsWritePolicy = z.infer<typeof fsWritePolicySchema>;
 
-export interface AgentTaskRequest {
+export interface AgentTaskRequest extends ExecutionIntent {
   workingDirectory: string;
   prompt: string;
   /** Persistent image files forwarded to backends that accept local images. */

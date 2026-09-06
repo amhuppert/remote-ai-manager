@@ -1266,6 +1266,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionName: invocation.sessionName,
       conversationId: invocation.conversationId,
       kind: "task_run",
+      executionClass: "governed-execution",
+      executionProfile: "standard",
       prompt: invocation.prompt,
       systemInstructions: invocation.systemInstructions,
       fsWritePolicy: invocation.fsWritePolicy,

@@ -8,6 +8,8 @@ import {
   useMemo,
   useState,
 } from "react";
+import { QueueDeliveryReview } from "./QueueDeliveryReview";
+import { useReviewQueuedMessageMutation } from "@/lib/conversations/mutations";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   backendLabel,
@@ -49,7 +51,10 @@ import type {
   BackendModelSelection,
 } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+import {
+  queuedMessageNeedsReview,
+  type PendingQueuedMessage,
+} from "@/lib/conversations/message-queue-schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
@@ -375,6 +380,19 @@ export default function PromptComposer({
   const [hasSerializedContent, setHasSerializedContent] = useState(
     promptText.trim() !== "" || pendingImages.length > 0,
   );
+  const queueEntries =
+    queueTurnState?.pendingQueue ?? activeConversation?.pendingQueue ?? [];
+  const reviewRequired = queueEntries.some((entry) =>
+    queuedMessageNeedsReview(entry.status),
+  );
+  const queueReview = useReviewQueuedMessageMutation(
+    conversationId
+      ? targetFromStoreSessionName(projectName, sessionName, conversationId)
+      : null,
+  );
+  const sendBlockedReason = reviewRequired
+    ? "Review queued deliveries before sending another prompt."
+    : modelSelectionBlockedReason;
   const { disabled: sendDisabled, title: sendTitle } = computeSendButtonState({
     promptText: hasSerializedContent ? "content" : promptText,
     pendingImageCount: pendingImages.length,
@@ -386,10 +404,10 @@ export default function PromptComposer({
     isReadOnly,
     isRecording,
     isProcessing,
-    modelSelectionBlockedReason,
+    modelSelectionBlockedReason: sendBlockedReason,
   });
   const handlePrimaryAction = useCallback(() => {
-    if (modelSelectionBlockedReason !== null) return;
+    if (sendBlockedReason !== null) return;
     if (isRecording || isProcessing) {
       stopAndSubmit();
       return;
@@ -398,7 +416,7 @@ export default function PromptComposer({
   }, [
     isProcessing,
     isRecording,
-    modelSelectionBlockedReason,
+    sendBlockedReason,
     onSendPrompt,
     stopAndSubmit,
   ]);
@@ -464,7 +482,7 @@ export default function PromptComposer({
       onFocus={handleComposerFocus}
       onBlur={onBlur}
     >
-      {composerCollapsed ? (
+      {composerCollapsed && !reviewRequired ? (
         <MobileComposerBar
           placeholder={collapsedPlaceholder}
           disabled={inputInert}
@@ -536,6 +554,19 @@ export default function PromptComposer({
               projectName={projectName}
             />
           ) : null}
+          <QueueDeliveryReview
+            entries={queueEntries}
+            disabled={
+              isReadOnly ||
+              (queueTurnState?.running ??
+                activeConversation?.status === "running")
+            }
+            pendingId={
+              queueReview.isPending ? queueReview.variables?.id : undefined
+            }
+            error={queueReview.error?.message}
+            onResolve={(id, action) => queueReview.mutate({ id, action })}
+          />
           {cancellableEntries.length > 0 ? (
             <div
               className="mb-sm flex flex-wrap gap-xs"

@@ -1,3 +1,4 @@
+import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
 import { z } from "zod";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
@@ -165,16 +166,20 @@ async function runGeneration(
   });
 
   try {
-    const runner = deps.getTaskRunner(config.backend);
-    const result = await runner.run({
-      workingDirectory: input.projectPath,
-      prompt: buildNamingPrompt("Conversation naming basis", input.content),
-      modelSelection,
-      outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
-      timeoutMs: config.timeoutMs ?? DEFAULT_NAMING_TIMEOUT_MS,
-      executionProfile: "isolated-one-shot",
-      autonomous: true,
-    });
+    const result = await runAdmittedTask(
+      config.backend,
+      {
+        executionClass: "nongoverned-task",
+        workingDirectory: input.projectPath,
+        prompt: buildNamingPrompt("Conversation naming basis", input.content),
+        modelSelection,
+        outputSchema: CONVERSATION_NAME_OUTPUT_SCHEMA,
+        timeoutMs: config.timeoutMs ?? DEFAULT_NAMING_TIMEOUT_MS,
+        executionProfile: "isolated-one-shot",
+        autonomous: true,
+      },
+      { getRunner: (backend) => deps.getTaskRunner(backend) },
+    );
 
     if (result.timedOut || result.error !== null || result.failure !== null) {
       failureKind = result.timedOut

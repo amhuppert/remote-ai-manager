@@ -26,6 +26,11 @@
  */
 
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
+import {
+  getConversationQueueDeps,
+  setConversationQueueDeps,
+  _resetConversationQueueDepsForTesting,
+} from "@/lib/conversations/message-queue-drain";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -157,6 +162,7 @@ function makeCreateInput(
   conversationId: string,
 ): ConversationBackendCreateInput {
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId,
     projectPath: PROJECT_PATH,
     projectName: PROJECT_NAME,
@@ -270,6 +276,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     safeAppendTranscriptEntry: async (_id, entry) => {
       transcript.push(entry);
     },
+    appendTranscriptEntryOnce: async () => {},
     safeAppendTranscriptEntryOnce: async (_id, entry) => {
       if (transcript.some((existing) => existing.id === entry.id)) return;
       transcript.push(entry);
@@ -336,6 +343,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     settleWorkflowResults: async () => 0,
     releaseWorkflowResults: async () => 0,
     markQueuedDelivered: async () => {},
+    markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},
     markQueuedFailed: async () => {},
   };
@@ -396,6 +404,7 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "run the testfake turn",
         modelSelection: TESTFAKE_MODEL_SELECTION,
@@ -444,6 +453,7 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
   it("task shape: the request carries the fake id through the facade to the fake runner", async () => {
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: TESTFAKE_BACKEND_ID,
         prompt: "run the testfake task",
@@ -626,12 +636,18 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
 
   describe("executeWorkflowTaskRun read path", () => {
     beforeEach(() => {
+      setConversationQueueDeps({
+        ...getConversationQueueDeps(),
+        claimNextTurnBatch: async () => null,
+        recoverAbandonedDeliveries: async () => 0,
+      });
       resetConversationActors();
       resetConversationRuntimeState();
       _resetExecuteWorkflowTaskRunForTesting();
     });
 
     afterEach(() => {
+      _resetConversationQueueDepsForTesting();
       _resetMachineFactoryForTesting();
       _resetEnsureConversationActorDepsForTesting();
       _resetActorDepsForTesting();
@@ -687,6 +703,7 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
       });
 
       const result = await executeWorkflowTaskRun({
+        executionClass: "nongoverned-task" as const,
         projectPath: PROJECT_PATH,
         sessionName: SESSION_NAME,
         conversationId: "conv-e4",
@@ -878,7 +895,7 @@ describe("E5: applyAtTurnStart derives its disposition from the fake runtime", (
 // ---------------------------------------------------------------------------
 
 describe("E6: conversation fork routes through the owning continuity adapter", () => {
-  it("surfaces the fake's normalized unsupported outcome instead of a backend-native path", async () => {
+  it("refuses the fake's unsupported fork declaration before adapter dispatch", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "cc-locality-e6-"));
     const sourceTranscriptPath = path.join(dir, "source.jsonl");
     await writeFile(
@@ -943,36 +960,21 @@ describe("E6: conversation fork routes through the owning continuity adapter", (
       },
     });
 
-    const result = await service.forkConversation({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      sourceConversationId: "conv-source",
-      messageIndex: 1,
-    });
-
-    expect(requestedAdapters).toEqual(["testfake"]);
-    // The adapter's normalized outcome is surfaced: no forkMode, no eagerly
-    // forked backend session (the silent Claude-native forkSession path
-    // would have produced forkMode "native" + a backendRef).
-    expect(result.forkMode).toBeNull();
-
-    const forkCall = fake.calls.find((c) => c.op === "continuity.fork");
-    expect(forkCall).toBeDefined();
-    expect((forkCall!.input as { ref: unknown }).ref).toEqual({
-      backend: TESTFAKE_BACKEND_ID,
-      ref: "src-ref-1",
-    });
-
-    const forked = session.conversations.find(
-      (c) => c.id === result.conversationId,
+    await expect(
+      service.forkConversation({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        sourceConversationId: "conv-source",
+        messageIndex: 1,
+      }),
+    ).rejects.toMatchObject({ code: "backend-fork-unsupported" });
+    expect(requestedAdapters).toEqual([]);
+    expect(fake.calls.filter((call) => call.op === "continuity.fork")).toEqual(
+      [],
     );
-    expect(forked).toBeDefined();
-    expect(forked!.backendRef).toBeNull();
-    expect(forked!.forkedFrom).toMatchObject({
-      sourceConversationId: "conv-source",
-      forkMode: null,
-      sourceBackend: TESTFAKE_BACKEND_ID,
-    });
+    expect(
+      session.conversations.map((conversation) => conversation.id),
+    ).toEqual(["conv-source"]);
   });
 });
 
@@ -1152,6 +1154,7 @@ describe("E3: lane modules", () => {
       laneRef,
       sessionKey: SESSION_NAME,
       agentCallRequest: {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn" as const,
         backend: TESTFAKE_BACKEND_ID,
         prompt: "exercise descriptor continuity",

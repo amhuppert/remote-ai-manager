@@ -56,6 +56,11 @@ describe("capabilityViewFromDescriptor", () => {
         getCatalog: async () => getStaticBackendModelCatalog("claude"),
       },
       tasks: {
+        execution: {
+          classes: ["nongoverned-task", "governed-execution"],
+          instructionDelivery: "privileged",
+          profiles: ["standard", "isolated-one-shot"],
+        },
         runner: {
           backend: "claude",
           run: () => Promise.reject(new Error("not driven")),

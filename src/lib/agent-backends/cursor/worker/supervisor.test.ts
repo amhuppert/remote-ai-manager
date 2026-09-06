@@ -324,6 +324,9 @@ describe("cursor worker spawn contract", () => {
 
     const env = harness.host.requests[0]?.env ?? {};
     expect(env.CC_CONVERSATION_ID).toBe(CONVERSATION_ID);
+    expect(env.CC_LOG_FILE).toBe(
+      `/home/alex/.command-center/logs/cursor-workers/${CONVERSATION_ID}.log`,
+    );
     expect(env.CC_PROJECT).toBe("command-center");
     expect(env.CC_SESSION).toBe("cursor-session");
     expect(env.CC_SERVER_URL).toBe("http://127.0.0.1:3000");
@@ -616,6 +619,7 @@ describe("cursor worker attach and turn framing", () => {
     session.attach({
       mode: "resume",
       ref: "agent-ref-1",
+      recoverAbandonedRun: true,
       modelSelection: MODEL_SELECTION,
       mcpServers: {
         fixture: { command: "node", args: ["mcp.mjs"], env: {} },
@@ -636,6 +640,8 @@ describe("cursor worker attach and turn framing", () => {
       );
     }
     expect(attaches[0]?.mode).toBe("create");
+    expect(attaches[0]?.recoverAbandonedRun).toBeUndefined();
+    expect(attaches[1]?.recoverAbandonedRun).toBe(true);
     expect(attaches[1]?.ref).toBe("agent-ref-1");
     expect(attaches[1]?.mcpServers.fixture?.command).toBe("node");
   });

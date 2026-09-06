@@ -40,6 +40,7 @@ function createInput(
   overrides: Partial<ConversationBackendCreateInput> = {},
 ): ConversationBackendCreateInput {
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId: CONVERSATION_ID,
     projectPath: "/repo",
     projectName: "repo",
@@ -247,6 +248,7 @@ describe("eager ref persistence", () => {
     ).toMatchObject({
       mode: "resume",
       ref: "agent-prior",
+      recoverAbandonedRun: true,
     });
   });
 });
@@ -596,6 +598,26 @@ describe("turn configuration", () => {
     ).toEqual(MODEL_SELECTION);
   });
 
+  it.each([null, { backend: "cursor" as const, ref: "persisted-agent" }])(
+    "refuses a filesystem policy during runtime construction for ref %j",
+    (persistedRef) => {
+      expect(() =>
+        createHarness({
+          create: {
+            persistedRef,
+            fsWritePolicy: { mode: "allowlist", allowWrite: [], denyWrite: [] },
+          },
+        }),
+      ).toThrow("cannot enforce an exact filesystem write policy");
+    },
+  );
+
+  it("refuses governed execution at direct runtime construction", () => {
+    expect(() =>
+      createHarness({ create: { executionClass: "governed-execution" } }),
+    ).toThrow("not eligible for governed-execution");
+  });
+
   it("refuses an unsupported model before starting a worker", async () => {
     const harness = createHarness({
       deps: {
@@ -728,6 +750,47 @@ describe("turn configuration", () => {
 // ============================================================
 
 describe("runtime lifecycle", () => {
+  it("keeps cancellation unsettled until the worker has stopped", async () => {
+    const started = deferredSignal();
+    const stopped = deferredSignal();
+    const harness = createHarness({
+      worker: {
+        onTurn: () => started.resolve(),
+        closeGate: () => stopped.promise,
+      },
+    });
+    let settled = false;
+    const turn = harness.send().then((result) => {
+      settled = true;
+      return result;
+    });
+    await started.promise;
+    harness.controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(settled).toBe(false);
+    stopped.resolve();
+    expect((await turn).aborted).toBe(true);
+    expect(elementAt(harness.transport.workers, 0).closeCount).toBe(1);
+  });
+
+  it("every concurrent close waits for the same worker teardown", async () => {
+    const stopped = deferredSignal();
+    const harness = createHarness({
+      worker: { closeGate: () => stopped.promise },
+    });
+    await harness.send();
+    const first = harness.runtime.close();
+    let secondSettled = false;
+    const second = harness.runtime.close().then(() => {
+      secondSettled = true;
+    });
+    await settleMicrotasks();
+    expect(secondSettled).toBe(false);
+    stopped.resolve();
+    await Promise.all([first, second]);
+    expect(elementAt(harness.transport.workers, 0).closeCount).toBe(1);
+  });
+
   it("awaits the worker's verified teardown on close", async () => {
     const harness = createHarness();
     await harness.send();
@@ -915,4 +978,37 @@ describe("inline MCP configuration", () => {
     expect(applied.disposition).toBe("rejected");
     expect(applied.errors).not.toEqual({});
   });
+});
+
+it("delivers synthetic fork history once before the first user prompt", async () => {
+  const harness = createHarness();
+  await harness.send({
+    syntheticForkSeed: "anchored history",
+    promptText: "edited prompt",
+  });
+  await harness.send({
+    promptText: "follow-up",
+  });
+  const worker = elementAt(harness.transport.workers, 0);
+  expect(worker.turns[0]?.input.promptText).toBe(
+    "anchored history\n\nedited prompt",
+  );
+  expect(worker.turns[1]?.input.promptText).toBe("follow-up");
+  await harness.runtime.close();
+});
+
+it("delivers an unaccepted synthetic seed to an eagerly created agent", async () => {
+  const harness = createHarness({
+    create: {
+      persistedRef: { backend: "cursor", ref: "agent-created-before-send" },
+    },
+  });
+  await harness.send({
+    syntheticForkSeed: "anchored history",
+    promptText: "retry first prompt",
+  });
+  expect(
+    elementAt(harness.transport.workers, 0).turns[0]?.input.promptText,
+  ).toBe("anchored history\n\nretry first prompt");
+  await harness.runtime.close();
 });

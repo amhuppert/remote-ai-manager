@@ -59,7 +59,7 @@ describe("queueCapabilityForBackend", () => {
       deliveryTiming: "next_turn",
     });
     expect(queueCapabilityForBackend("cursor")).toEqual({
-      acceptsWhileRunning: false,
+      acceptsWhileRunning: true,
       deliveryTiming: "next_turn",
     });
   });

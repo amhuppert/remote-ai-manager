@@ -144,6 +144,7 @@ describe("conversation manager", () => {
     _resetForTesting();
     resetRuntime();
     setMachineFactory(createTestMachine);
+    setConversationQueueDeps(makeQueueDeps());
     // Turn submission settles the conversation's agent profile before it sends.
     // These cases exercise the lifecycle, not the store, so the seam answers as
     // a legacy conversation would — no profile, no lock, no write.
@@ -790,6 +791,7 @@ describe("conversation manager", () => {
     it("classifies task_run as workflow (smart-merge validation-fix, etc.)", () => {
       expect(
         deriveActiveTurnSource({
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           promptText: "fix validation",
           backend: "claude",
@@ -825,6 +827,50 @@ describe("conversation manager", () => {
 
     afterEach(() => {
       _resetEnsureConversationActorDepsForTesting();
+    });
+
+    it("serializes lazy startup and recovers abandoned deliveries before making the actor live", async () => {
+      const order: string[] = [];
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const loadActorInput = vi.fn(async () => {
+        await gate;
+        return makeActorInputData();
+      });
+      setEnsureConversationActorDeps({ loadActorInput });
+      setConversationQueueDeps(
+        makeQueueDeps({
+          recoverAbandonedDeliveries: async () => {
+            expect(
+              getConversationActor(
+                DEFAULT_INPUT.projectPath,
+                DEFAULT_INPUT.sessionName,
+                DEFAULT_INPUT.conversationId,
+              ),
+            ).toBeUndefined();
+            order.push("recovered");
+            return 1;
+          },
+        }),
+      );
+      const first = ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      );
+      const second = ensureConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      );
+      release();
+      const [a, b] = await Promise.all([first, second]);
+      expect(order).toEqual(["recovered"]);
+      expect(a).toBe(b);
+      expect(loadActorInput).toHaveBeenCalledTimes(1);
+      expect(a.getSnapshot().status).toBe("active");
     });
 
     it("creates a fresh actor using executionTarget.worktreePath instead of session.worktreePath", async () => {
@@ -1086,6 +1132,35 @@ describe("conversation manager", () => {
   });
 
   describe("ensureConversationActorAndDrain", () => {
+    it("does not drain while the previous invocation is still stopping", async () => {
+      const actor = startConversationActor(DEFAULT_INPUT);
+      const runtime = getConversationRuntime(
+        conversationRuntimeKey(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+        ),
+      );
+      if (!runtime) throw new Error("missing runtime");
+      let release: () => void = () => {};
+      runtime.turnCompletion = new Promise((resolve) => {
+        release = resolve;
+      });
+      const claimNextTurnBatch = vi.fn(async () => null);
+      setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
+      await ensureConversationActorAndDrain(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+      );
+      expect(actor.getSnapshot().value).toBe("idle");
+      expect(claimNextTurnBatch).not.toHaveBeenCalled();
+      release();
+      await runtime.turnCompletion;
+      await Promise.resolve();
+      expect(claimNextTurnBatch).toHaveBeenCalledTimes(1);
+    });
+
     afterEach(() => {
       _resetConversationQueueDepsForTesting();
       _resetEnsureConversationActorDepsForTesting();

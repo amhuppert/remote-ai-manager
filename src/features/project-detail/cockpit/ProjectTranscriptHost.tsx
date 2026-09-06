@@ -105,6 +105,7 @@ export default function ProjectTranscriptHost({
         <MessageRow
           msg={row.msg}
           queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
+          queuedStatus={row.msg.queued?.status}
           provisional={row.msg.provisional}
           messageIndex={row.messageIndex}
           part={row.part}

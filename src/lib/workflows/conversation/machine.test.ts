@@ -630,6 +630,7 @@ describe("conversationMachine", () => {
       actor.start();
 
       actor.send({
+        executionClass: "nongoverned-task" as const,
         type: "SUBMIT_TASK_RUN",
         promptText: "run task",
         backend: "codex",
@@ -893,7 +894,11 @@ describe("conversationMachine", () => {
       );
       const { actor } = await driveToWaitingForInput({ runTaskRun });
 
-      actor.send({ type: "SUBMIT_TASK_RUN", promptText: "workflow task" });
+      actor.send({
+        executionClass: "nongoverned-task" as const,
+        type: "SUBMIT_TASK_RUN",
+        promptText: "workflow task",
+      });
 
       expect(actor.getSnapshot().context.pendingQuestion).toBeNull();
       await waitForState(actor, "idle");
@@ -1428,7 +1433,11 @@ describe("conversationMachine", () => {
       actor.start();
       enterDebug(actor);
 
-      actor.send({ type: "SUBMIT_TASK_RUN", promptText: "run task" });
+      actor.send({
+        executionClass: "nongoverned-task" as const,
+        type: "SUBMIT_TASK_RUN",
+        promptText: "run task",
+      });
       expect(actor.getSnapshot().value).toBe("debug");
       expect(actor.getSnapshot().context.activeTurn).toBeNull();
 
@@ -1828,6 +1837,7 @@ describe("conversationMachine", () => {
       actor.start();
 
       actor.send({
+        executionClass: "nongoverned-task" as const,
         type: "SUBMIT_TASK_RUN",
         promptText: "Run with the configured default",
         backend: "codex",

@@ -15,6 +15,11 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
+import {
+  BackendAdmissionError,
+  type ExecutionCatalogEntry,
+} from "@/lib/agent-backends/execution-admission";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -39,6 +44,7 @@ import {
 const defaultLogger = createLogger("workflows.primitives.agent-call.task");
 
 export interface DispatchTaskRunDeps {
+  executionEntry?: ExecutionCatalogEntry;
   runner: AgentTaskRunner;
   capabilityView: BackendCapabilityView;
   workingDirectory: string;
@@ -116,6 +122,8 @@ export async function dispatchTaskRun(
   });
 
   const taskRequest: AgentTaskRequest = {
+    executionClass: request.executionClass,
+    requiresPrivilegedInstructions: request.requiresPrivilegedInstructions,
     workingDirectory: deps.workingDirectory,
     prompt: request.prompt,
     ...(deps.imagePaths !== undefined ? { imagePaths: deps.imagePaths } : {}),
@@ -168,8 +176,31 @@ export async function dispatchTaskRun(
   const startedAt = performance.now();
   let runResult: AgentTaskResult;
   try {
-    runResult = await deps.runner.run(taskRequest);
+    runResult = await runAdmittedTask(backend, taskRequest, {
+      runner: deps.runner,
+      entry: deps.executionEntry,
+    });
   } catch (err) {
+    if (err instanceof BackendAdmissionError) {
+      return {
+        backend,
+        backendRef: deps.resumeRef ?? null,
+        capabilities: deps.capabilityView,
+        usage: {},
+        artifacts: [...(deps.artifacts ?? [])],
+        continuationDisposition: "retain",
+        outcome: {
+          kind: "failed",
+          error: {
+            backend,
+            failureKind: "capability_unavailable",
+            code: err.code,
+            message: err.message,
+            retryable: false,
+          },
+        },
+      };
+    }
     const decision = deps.classifyFailure?.(err);
     const classification = decision?.failure;
     const message = classification?.message ?? getErrorMessage(err);

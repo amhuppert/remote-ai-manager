@@ -142,10 +142,8 @@ describe("project message queue durability", () => {
       // No live actor owns this conversation: the enqueue-time drain is the
       // production no-op it is while nothing is running, and the next-turn drain
       // below is driven explicitly so the reload is observable between them.
-      hasLiveConversationActor: () => false,
       ensureConversationActorAndDrain: async () => {},
-      recoverAbandonedDeliveries: (input) =>
-        svc.recoverAbandonedDeliveries(input),
+      resolveDelivery: async () => "not_found",
       cancel: (input) => svc.cancel(input),
     });
   }

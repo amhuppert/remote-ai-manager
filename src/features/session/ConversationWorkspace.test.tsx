@@ -381,33 +381,6 @@ vi.mock("@/lib/workflows/mutations", () => ({
   useResolveApprovalMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-vi.mock("@/lib/conversations/mutations", () => ({
-  useCreateConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useArchiveConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useRenameConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useGenericArchiveConversationMutation: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
-  useGenericRenameConversationMutation: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
-  useGenerateConversationNameMutation: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
-  useMarkConversationReadMutation: () => ({ mutate: vi.fn() }),
-  useAnswerQuestionMutation: () => ({
-    mutateAsync: vi.fn(async () => ({ status: "ok" as const })),
-    isPending: false,
-  }),
-  useForkConversationMutation: () => ({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn(),
-    isPending: false,
-  }),
-}));
 vi.mock("@/lib/project-conversations-client/mutations", () => ({
   useMarkProjectConversationReadMutation: () => ({ mutate: vi.fn() }),
 }));

@@ -1,3 +1,4 @@
+import type { ConversationExecutionPolicy } from "../execution-admission";
 import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,
@@ -25,6 +26,11 @@ import { CURSOR_TURN_STALL_TIMEOUT_MS } from "./worker/bounds";
  * loudly — it would quietly let a surface act on a capability that does not
  * exist.
  */
+
+export const cursorConversationExecution: ConversationExecutionPolicy = {
+  classes: ["ordinary-conversation"],
+  instructionDelivery: "user-message",
+};
 
 /**
  * Backend catalog metadata for Cursor.
@@ -60,15 +66,15 @@ export const cursorBackendMetadata: AgentBackendMetadata = {
 };
 
 /**
- * The conservative Phase 1 conversation capabilities.
+ * Cursor conversation capabilities.
  *
- * - `queue`: the SDK accepts no mid-turn input, so a prompt submitted during a
- *   turn starts as the NEXT turn and is not accepted while running (D16).
+ * - `queue`: Command Center durably accepts follow-ups while running and
+ *   dispatches them on the next turn; interrupted deliveries require review.
  * - `continuationStrength: "precise_session"`: a Cursor agent id is a real,
  *   probeable handle the SDK issues at create — resume returns to that exact
  *   session rather than replaying a reconstructed thread.
- * - `fork: "unsupported"`: no native fork exists, and aliasing resume or ref
- *   copying as one would silently share a live session (D16).
+ * - `fork: "synthetic"`: bounded transcript text seeds an independent agent
+ *   and store; provider checkpoints and hidden state are not inherited.
  * - `structuredOutput: "post_validation"`: the shared contract is rendered into
  *   the prompt and validated afterwards; no native schema is forwarded.
  * - `contextWindowMetrics`, `nativeMidTurnAskUser`, `externalTurns`: the SDK
@@ -78,9 +84,9 @@ export const cursorBackendMetadata: AgentBackendMetadata = {
  *   there is no skills/plugins/agents cascade to apply.
  */
 export const cursorConversationCapabilities: BackendConversationCapabilities = {
-  queue: { acceptsWhileRunning: false, deliveryTiming: "next_turn" },
+  queue: { acceptsWhileRunning: true, deliveryTiming: "next_turn" },
   continuationStrength: "precise_session",
-  fork: "unsupported",
+  fork: "synthetic",
   structuredOutput: "post_validation",
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,
@@ -152,6 +158,7 @@ export function createCursorBackendDescriptor(
     metadata: cursorBackendMetadata,
     modelCatalog: deps.modelCatalog,
     conversation: {
+      execution: cursorConversationExecution,
       factory: deps.conversationFactory,
       continuity: deps.continuity,
       capabilities: cursorConversationCapabilities,

@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  backendExecutionSchema,
+  type BackendExecution,
+} from "./execution-admission";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import {
   capabilityApplyTimingSchema,
@@ -34,6 +38,8 @@ import {
 import { readGeneratedCursorModelCatalog } from "./cursor/generated-model-catalog-artifact";
 import {
   claudeBackendMetadata,
+  claudeConversationExecution,
+  claudeTaskExecution,
   claudeConversationCapabilities,
   claudeConversationFsWriteRestriction,
   claudeNativeMemory,
@@ -41,6 +47,8 @@ import {
 } from "./claude/descriptor";
 import {
   codexBackendMetadata,
+  codexConversationExecution,
+  codexTaskExecution,
   codexConversationCapabilities,
   codexConversationFsWriteRestriction,
   codexNativeMemory,
@@ -48,6 +56,7 @@ import {
 } from "./codex/descriptor";
 import {
   cursorBackendMetadata,
+  cursorConversationExecution,
   cursorConversationCapabilities,
   cursorConversationFsWriteRestriction,
   cursorNativeMemory,
@@ -109,6 +118,7 @@ export const backendCatalogEntrySchema = z.object({
   defaultModelId: z.string(),
   defaultTimeoutMs: z.number().nullable(),
   facets: backendCatalogFacetsSchema,
+  execution: backendExecutionSchema,
   /** Null for a backend without a conversation facet. */
   capabilities: backendCatalogCapabilitiesSchema.nullable(),
   /**
@@ -134,6 +144,7 @@ function buildCatalogEntry(
   capabilities: BackendConversationCapabilities | null,
   facets: BackendCatalogEntry["facets"],
   nativeMemory: BackendNativeMemory,
+  execution: BackendExecution,
 ): BackendCatalogEntry {
   return backendCatalogEntrySchema.parse({
     id,
@@ -151,6 +162,7 @@ function buildCatalogEntry(
     facets,
     capabilities,
     nativeMemory,
+    execution,
   });
 }
 
@@ -167,6 +179,20 @@ export function catalogEntryFromDescriptor(
       tasks: descriptor.tasks !== undefined,
     },
     descriptor.nativeMemory,
+    {
+      conversation: descriptor.conversation
+        ? {
+            ...descriptor.conversation.execution,
+            fsWriteRestriction: descriptor.conversation.fsWriteRestriction,
+          }
+        : null,
+      tasks: descriptor.tasks
+        ? {
+            ...descriptor.tasks.execution,
+            fsWriteRestriction: descriptor.tasks.fsWriteRestriction,
+          }
+        : null,
+    },
   );
 }
 
@@ -183,6 +209,16 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     claudeConversationCapabilities,
     { conversation: true, tasks: true },
     claudeNativeMemory,
+    {
+      conversation: {
+        ...claudeConversationExecution,
+        fsWriteRestriction: claudeConversationFsWriteRestriction,
+      },
+      tasks: {
+        ...claudeTaskExecution,
+        fsWriteRestriction: claudeTaskFsWriteRestriction,
+      },
+    },
   ),
   codex: buildCatalogEntry(
     "codex",
@@ -190,6 +226,16 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     codexConversationCapabilities,
     { conversation: true, tasks: true },
     codexNativeMemory,
+    {
+      conversation: {
+        ...codexConversationExecution,
+        fsWriteRestriction: codexConversationFsWriteRestriction,
+      },
+      tasks: {
+        ...codexTaskExecution,
+        fsWriteRestriction: codexTaskFsWriteRestriction,
+      },
+    },
   ),
   cursor: buildCatalogEntry(
     "cursor",
@@ -198,6 +244,13 @@ const CATALOG: Readonly<Record<AgentBackendId, BackendCatalogEntry>> = {
     // Conversation only: Cursor registers no task facet in Phase 1.
     { conversation: true, tasks: false },
     cursorNativeMemory,
+    {
+      conversation: {
+        ...cursorConversationExecution,
+        fsWriteRestriction: cursorConversationFsWriteRestriction,
+      },
+      tasks: null,
+    },
   ),
 };
 

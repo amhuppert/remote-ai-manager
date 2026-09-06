@@ -421,6 +421,7 @@ describe("conversation persistence facet", () => {
       "mutateConversation",
       "createReferenceDocument",
       "markQueuedDelivered",
+      "markQueuedUncertain",
       "markQueuedPending",
       "markQueuedFailed",
       "recordNotepadDeliveries",
@@ -454,6 +455,9 @@ describe("conversation persistence facet", () => {
         }),
         markQueuedDelivered: vi.fn(async () => {
           reached.push("markQueuedDelivered");
+        }),
+        markQueuedUncertain: vi.fn(async () => {
+          reached.push("markQueuedUncertain");
         }),
         markQueuedPending: vi.fn(async () => {
           reached.push("markQueuedPending");
@@ -550,6 +554,14 @@ describe("conversation persistence facet", () => {
         conversationId: "conv-1",
         ids: ["m1"],
         deliveryAttemptId: "a1",
+      });
+      await gated.markQueuedUncertain({
+        projectPath: "/p",
+        sessionName: "s",
+        conversationId: "c",
+        ids: ["m"],
+        deliveryAttemptId: "a",
+        error: "unknown",
       });
       await gated.markQueuedPending({
         projectPath: "/p",

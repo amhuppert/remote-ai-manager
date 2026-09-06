@@ -145,7 +145,7 @@ describe("appendPendingEntry", () => {
 });
 
 describe("listActiveEntries", () => {
-  it("returns only pending and delivering rows in array order", () => {
+  it("returns active and review-required rows in array order", () => {
     const queue: PendingQueuedMessage[] = [
       makeEntry({ id: "p1", status: "pending" }),
       makeEntry({ id: "d1", status: "delivering" }),
@@ -157,7 +157,7 @@ describe("listActiveEntries", () => {
 
     const active = listActiveEntries(queue);
 
-    expect(active.map((e) => e.id)).toEqual(["p1", "d1", "p2"]);
+    expect(active.map((e) => e.id)).toEqual(["p1", "d1", "f", "p2"]);
   });
 });
 
@@ -348,7 +348,6 @@ describe("claimNextTurnBatchTransform", () => {
   it("marks all pending rows delivering under one attempt id in array order", () => {
     const queue: PendingQueuedMessage[] = [
       makeEntry({ id: "p1", status: "pending" }),
-      makeEntry({ id: "d1", status: "delivering", deliveryAttemptId: "old" }),
       makeEntry({ id: "p2", status: "pending" }),
       makeEntry({ id: "done", status: "delivered" }),
     ];
@@ -365,8 +364,6 @@ describe("claimNextTurnBatchTransform", () => {
       true,
     );
     expect(claimed.every((e) => e.attemptCount === 1)).toBe(true);
-    // The already-delivering row keeps its own attempt id.
-    expect(next.find((e) => e.id === "d1")?.deliveryAttemptId).toBe("old");
     expect(next.find((e) => e.id === "done")?.status).toBe("delivered");
     // Input not mutated.
     expect(queue[0]?.status).toBe("pending");
@@ -583,9 +580,7 @@ describe("delivery result transforms", () => {
     );
 
     expect(affected.map((e) => e.id)).toEqual(["m1"]);
-    // The failed row is pruned from the queue; its terminal status rides on
-    // `affected` for the broadcast.
-    expect(next.find((e) => e.id === "m1")).toBeUndefined();
+    expect(next.find((e) => e.id === "m1")?.status).toBe("failed");
     const row = affected[0];
     expect(row?.status).toBe("failed");
     expect(row?.failedAt).toBe(NOW);
@@ -608,7 +603,7 @@ describe("delivery result transforms", () => {
 });
 
 describe("recoverAbandonedDeliveriesTransform", () => {
-  it("resets only delivering rows to pending and reports them", () => {
+  it("retains delivering rows as uncertain and reports them", () => {
     const queue: PendingQueuedMessage[] = [
       makeEntry({
         id: "d1",
@@ -626,9 +621,9 @@ describe("recoverAbandonedDeliveriesTransform", () => {
 
     expect(recovered.map((e) => e.id)).toEqual(["d1"]);
     const row = next.find((e) => e.id === "d1");
-    expect(row?.status).toBe("pending");
-    expect(row?.deliveryAttemptId).toBeNull();
-    expect(row?.deliveryStartedAt).toBeNull();
+    expect(row?.status).toBe("uncertain");
+    expect(row?.deliveryAttemptId).toBe("attempt-A");
+    expect(row?.deliveryStartedAt).toBe(NOW);
     // pending row untouched.
     expect(next.find((e) => e.id === "p1")?.status).toBe("pending");
     expect(queue[0]?.status).toBe("delivering");
@@ -957,7 +952,7 @@ describe("messageQueueService.listActive", () => {
     expect(active).toEqual([]);
   });
 
-  it("excludes delivered, cancelled, and failed rows but includes pending and delivering", async () => {
+  it("excludes delivered and cancelled rows but retains failed deliveries", async () => {
     const conversation = makeConversation();
     const statuses: PendingQueuedMessageStatus[] = [
       "pending",
@@ -979,7 +974,11 @@ describe("messageQueueService.listActive", () => {
       conversationId: "conv-1",
     });
 
-    expect(active.map((e) => e.status)).toEqual(["pending", "delivering"]);
+    expect(active.map((e) => e.status)).toEqual([
+      "pending",
+      "delivering",
+      "failed",
+    ]);
   });
 });
 
@@ -1208,7 +1207,7 @@ describe("messageQueueService delivery results", () => {
     expect(row?.error).toBe("transient");
   });
 
-  it("markFailed prunes the failed row and broadcasts the failed outcome", async () => {
+  it("markFailed retains the failed row and broadcasts the failed outcome", async () => {
     const store: FakeStore = {
       conversation: conversationWith([
         makeEntry({ id: "p1", status: "pending" }),
@@ -1226,9 +1225,9 @@ describe("messageQueueService delivery results", () => {
       error: "boom",
     });
 
-    // The failed row is pruned from the queue; its terminal outcome rides on
-    // the broadcast.
-    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    expect(store.conversation?.pendingQueue).toMatchObject([
+      { status: "failed" },
+    ]);
     const updates = broadcasts.filter(
       (e) => e.type === "message-queue-updated",
     );
@@ -1242,7 +1241,7 @@ describe("messageQueueService delivery results", () => {
 });
 
 describe("messageQueueService.recoverAbandonedDeliveries", () => {
-  it("resets delivering rows to pending, returns the count, and broadcasts updates", async () => {
+  it("retains delivering rows as uncertain, returns the count, and broadcasts updates", async () => {
     const store: FakeStore = {
       conversation: conversationWith([
         makeEntry({
@@ -1261,8 +1260,10 @@ describe("messageQueueService.recoverAbandonedDeliveries", () => {
 
     expect(recovered).toBe(1);
     const rows = store.conversation?.pendingQueue ?? [];
-    expect(rows.find((r) => r.id === "d1")?.status).toBe("pending");
-    expect(rows.find((r) => r.id === "d1")?.deliveryAttemptId).toBeNull();
+    expect(rows.find((r) => r.id === "d1")?.status).toBe("uncertain");
+    expect(rows.find((r) => r.id === "d1")?.deliveryAttemptId).toBe(
+      "attempt-A",
+    );
     expect(rows.find((r) => r.id === "p1")?.status).toBe("pending");
 
     const updates = broadcasts.filter(
@@ -1412,7 +1413,7 @@ describe("delivery attempt cap", () => {
     } = claimLiveDeliveryTransform(queue, "p1", "attempt-A", NOW);
 
     expect(claimed).toBeNull();
-    expect(next).toHaveLength(0);
+    expect(next).toMatchObject([{ status: "failed" }]);
     expect(refused?.id).toBe("p1");
     expect(refused?.status).toBe("failed");
     expect(refused?.failedAt).toBe(NOW);
@@ -1438,7 +1439,7 @@ describe("delivery attempt cap", () => {
     expect(claimed?.attemptCount).toBe(MAX_QUEUED_MESSAGE_DELIVERY_ATTEMPTS);
   });
 
-  it("claimNextTurnBatchTransform refuses at-cap rows and claims the remaining pending rows", () => {
+  it("claimNextTurnBatchTransform retains at-cap rows and blocks later pending rows", () => {
     const poison = makeEntry({
       id: "poison",
       status: "pending",
@@ -1460,9 +1461,8 @@ describe("delivery attempt cap", () => {
     expect(refused.map((row) => row.id)).toEqual(["poison"]);
     expect(refused[0]?.status).toBe("failed");
     expect(refused[0]?.error).toBe(QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON);
-    expect(claimed.map((row) => row.id)).toEqual(["ok"]);
-    // The refused row is pruned; only the claimed row remains.
-    expect(next.map((row) => row.id)).toEqual(["ok"]);
+    expect(claimed).toEqual([]);
+    expect(next.map((row) => row.id)).toEqual(["poison", "ok"]);
   });
 
   it("claimNextTurnBatchTransform with only a poison row refuses it and claims nothing", () => {
@@ -1480,10 +1480,10 @@ describe("delivery attempt cap", () => {
 
     expect(claimed).toHaveLength(0);
     expect(refused.map((row) => row.id)).toEqual(["poison"]);
-    expect(next).toHaveLength(0);
+    expect(next).toMatchObject([{ status: "failed" }]);
   });
 
-  it("a message that keeps failing delivery leaves the queue after the cap instead of looping", async () => {
+  it("a message that keeps failing delivery requires review after the cap instead of looping", async () => {
     const store: FakeStore = { conversation: makeConversation() };
     const { deps, broadcasts } = makeDeps(store);
     const service = createMessageQueueService(deps);
@@ -1510,9 +1510,9 @@ describe("delivery attempt cap", () => {
     const refusedBatch = await service.claimNextTurnBatch(KEY);
 
     expect(refusedBatch).toBeNull();
-    // The poison row left the queue — not silently: the terminal outcome rides
-    // on a failed broadcast carrying the refusal reason.
-    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    expect(store.conversation?.pendingQueue).toMatchObject([
+      { status: "failed" },
+    ]);
     const updates = broadcasts.filter(
       (e) => e.type === "message-queue-updated",
     );
@@ -1535,7 +1535,7 @@ describe("delivery attempt cap", () => {
     });
   });
 
-  it("claimLiveDelivery refuses a poison row: returns null, prunes it, and broadcasts the failed outcome", async () => {
+  it("claimLiveDelivery refuses a poison row: returns null, retains it, and broadcasts the failed outcome", async () => {
     const store: FakeStore = {
       conversation: conversationWith([
         makeEntry({
@@ -1551,7 +1551,9 @@ describe("delivery attempt cap", () => {
     const claimed = await service.claimLiveDelivery({ ...KEY, id: "p1" });
 
     expect(claimed).toBeNull();
-    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    expect(store.conversation?.pendingQueue).toMatchObject([
+      { status: "failed" },
+    ]);
     const updates = broadcasts.filter(
       (e) => e.type === "message-queue-updated",
     );
@@ -1562,4 +1564,28 @@ describe("delivery attempt cap", () => {
     expect(msg?.status).toBe("failed");
     expect(msg?.error).toBe(QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON);
   });
+});
+
+it("does not let a concurrent drain overtake an outstanding delivery", () => {
+  const queued = [
+    makeEntry({
+      id: "first",
+      status: "pending",
+      modelSelection: { modelId: "a", parameters: {} },
+    }),
+    makeEntry({
+      id: "second",
+      status: "pending",
+      modelSelection: { modelId: "b", parameters: {} },
+    }),
+  ];
+  const first = claimNextTurnBatchTransform(queued, "attempt-first", NOW);
+  const second = claimNextTurnBatchTransform(
+    first.queue,
+    "attempt-second",
+    NOW,
+  );
+  expect(first.claimed.map((row) => row.id)).toEqual(["first"]);
+  expect(second.claimed).toEqual([]);
+  expect(second.queue).toEqual(first.queue);
 });

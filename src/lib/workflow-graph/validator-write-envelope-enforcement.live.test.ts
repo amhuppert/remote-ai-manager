@@ -380,6 +380,7 @@ async function runAdversary(
         }
       : { modelId: "sonnet", parameters: { effort: "medium" } };
   return runnerFor(backend).run({
+    executionClass: "governed-execution" as const,
     workingDirectory: fixture.worktreePath,
     prompt: adversarialPrompt(fixture),
     modelSelection,

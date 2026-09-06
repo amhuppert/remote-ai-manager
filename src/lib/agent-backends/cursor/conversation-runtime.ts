@@ -19,6 +19,7 @@ import type { FsWritePolicy } from "../task";
 import { CURSOR_BACKEND_ID } from "./backend-id";
 import { appendCursorContentDelta } from "./content-deltas";
 import { mayForceExpire } from "./continuity";
+import { assertCursorRuntimePolicy } from "./runtime-policy";
 import {
   createCursorFailureClassifier,
   CursorLocalFailure,
@@ -184,6 +185,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
    * this settles. Never rejects.
    */
   private discarding: Promise<void> | null = null;
+  private closing: Promise<void> | null = null;
   /** Run-scoped event keys already projected, for the resume quarantine. */
   private readonly seenEventKeys = new Set<string>();
   private readonly seenEventOrder: string[] = [];
@@ -192,6 +194,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     input: ConversationBackendCreateInput,
     deps: CursorConversationRuntimeDeps,
   ) {
+    assertCursorRuntimePolicy(input);
     this.conversationId = input.conversationId;
     this.conversationTarget = input.conversationTarget;
     this.worktreePath = input.worktreePath;
@@ -284,6 +287,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     }
 
     this.isFirstTurn = false;
+    if (turn.outcome.kind === "aborted") this.discardSession("turn_cancelled");
+    await this.discarding;
     // Every event emitted for this turn has been handled before the caller
     // sees the result, so a transcript append cannot land after the turn row.
     await this.emitChain;
@@ -345,7 +350,12 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     return { state: turn, outcome };
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.closing ??= this.closeRuntime();
+    return this.closing;
+  }
+
+  private async closeRuntime(): Promise<void> {
     if (this._status === "dead") return;
     this._status = "dead";
     const session = this.session;
@@ -449,6 +459,15 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     started.session.attach({
       mode: this.backendRef === null ? "create" : "resume",
       ref: this.backendRef,
+      ...(this.backendRef !== null
+        ? {
+            recoverAbandonedRun: mayForceExpire(
+              this.deps.transport,
+              this.conversationId,
+              started.session.workerId,
+            ),
+          }
+        : {}),
       modelSelection,
       // Re-passed on resume, not just on create: the SDK does not persist the
       // MCP map with the agent, so a resumed agent whose attach omitted it
@@ -1034,6 +1053,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
           this.sessionInstructions.join("\n\n") +
           "\n```",
       );
+    }
+    if (input.syntheticForkSeed) {
+      parts.push(input.syntheticForkSeed);
     }
     parts.push(input.promptText);
     const prompt = parts.join("\n\n");

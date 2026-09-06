@@ -1,4 +1,5 @@
 "use client";
+import { useForkAvailability } from "@/lib/conversations/use-fork-availability";
 
 import { useCallback, useMemo } from "react";
 import MessageRow from "@/components/conversation/MessageRow";
@@ -37,6 +38,7 @@ export function useMessageRowRenderer({
 }: UseMessageRowRendererArgs): ConversationVirtuosoListProps["renderMessage"] {
   // Stable identity for the per-message Compact action (MessageRow is
   // memoized; a fresh object per render would defeat it).
+  const forkRefusal = useForkAvailability(activeConversation, selectedBackend);
   const conversationId = activeConversation?.id;
   const compactionTarget = useMemo<ContextArtifactTarget | undefined>(
     () =>
@@ -64,6 +66,7 @@ export function useMessageRowRenderer({
         <MessageRow
           msg={msg}
           queuedMetadata={msg.queued ? msg.queued.metadata : undefined}
+          queuedStatus={msg.queued?.status}
           provisional={msg.provisional}
           messageIndex={messageIndex}
           part={row.part}
@@ -73,6 +76,7 @@ export function useMessageRowRenderer({
           thinkingExpansionCommand={thinkingExpansionCommand}
           onFork={handleFork}
           forkProjectName={projectName}
+          forkRefusal={forkRefusal}
           compactionTarget={compactionTarget}
           conversationName={activeConversation?.name ?? undefined}
           lastMessageExtras={extras}
@@ -86,6 +90,7 @@ export function useMessageRowRenderer({
       isBusy,
       projectName,
       selectedBackend,
+      forkRefusal,
       thinkingExpansionCommand,
       worktreePath,
       sessionName,

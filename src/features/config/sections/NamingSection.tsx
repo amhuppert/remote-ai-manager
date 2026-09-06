@@ -1,6 +1,7 @@
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
-import { backendFacetRefusalIn } from "@/lib/agent-backends/facet-gating";
+import { backendExecutionRefusalIn } from "@/lib/agent-backends/execution-admission";
+import { namingExecutionRequirements } from "@/lib/config/task-admission";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { conversationNamingConfigSchema } from "@/lib/config/schemas";
@@ -43,11 +44,13 @@ export function NamingSection({
   const modelSelection: BackendModelSelection =
     naming?.modelSelection ?? NAMING_DEFAULTS.modelSelection;
 
-  const { data: backends } = useBackendCatalogQuery();
-  const entry = backends.find((b) => b.id === backend);
-  if (!entry) {
-    throw new Error(`Unknown agent backend: ${backend}`);
-  }
+  const { data: backends, isFetched, isError } = useBackendCatalogQuery();
+  const availableBackends = isFetched && !isError ? backends : [];
+  const selectionRefusal = backendExecutionRefusalIn(
+    availableBackends,
+    backend,
+    namingExecutionRequirements,
+  );
   const catalog = getConfiguredBackendModelCatalog(backend, modelSelection);
   const selectedModel = catalog.models.find(
     ({ id, aliases }) =>
@@ -95,13 +98,22 @@ export function NamingSection({
           isDefault={isDefault("conversationNaming.backend")}
           isModified={isModified("conversationNaming.backend")}
         >
+          {selectionRefusal && (
+            <p role="status" className="text-sm text-text-secondary">
+              {selectionRefusal.message}
+            </p>
+          )}
           <ConfigPillGroup
             value={backend}
             options={backends.map((b) => b.id)}
             // Naming runs as a one-shot task, so a backend with no task facet
             // cannot be selected here (spec D13).
             getOptionDisabledReason={(id) =>
-              backendFacetRefusalIn(backends, id, "tasks")
+              backendExecutionRefusalIn(
+                availableBackends,
+                id,
+                namingExecutionRequirements,
+              )?.message ?? null
             }
             onChange={(value) => {
               const nextEntry = backends.find((b) => b.id === value);

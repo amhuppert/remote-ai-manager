@@ -133,6 +133,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
 
       await dispatchTaskRun(
         {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "codex",
           prompt: SECRET_PROMPT,
@@ -201,6 +202,7 @@ describe("section 7.4 — primitive safety and observability (Task 7.4)", () => 
 
       await dispatchConversationTurn(
         {
+          executionClass: "ordinary-conversation" as const,
           kind: "conversation_turn",
           backend: "claude",
           prompt: SECRET_PROMPT,

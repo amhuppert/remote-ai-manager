@@ -123,9 +123,9 @@ describe("cursor descriptor — facets", () => {
 describe("cursor descriptor — conversation capabilities", () => {
   it("declares exactly the Phase 1 capability values", () => {
     expect(cursorConversationCapabilities).toEqual({
-      queue: { acceptsWhileRunning: false, deliveryTiming: "next_turn" },
+      queue: { acceptsWhileRunning: true, deliveryTiming: "next_turn" },
       continuationStrength: "precise_session",
-      fork: "unsupported",
+      fork: "synthetic",
       structuredOutput: "post_validation",
       contextWindowMetrics: false,
       nativeMidTurnAskUser: false,

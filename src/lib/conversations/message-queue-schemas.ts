@@ -3,12 +3,12 @@ import { z } from "zod";
 import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
 import { messageContentBlockSchema } from "@/lib/conversations/message-content-schemas";
 
-// Lifecycle of a durably-queued follow-up message. `pending` and `delivering`
-// are active; `delivered`, `failed`, and `cancelled` are terminal. Ordered to
-// match the lifecycle progression described in design "Data Models".
+// Uncertain deliveries retain their content and block automatic delivery until
+// the user explicitly reviews whether repeating the request is appropriate.
 export const PENDING_QUEUED_MESSAGE_STATUSES = [
   "pending",
   "delivering",
+  "uncertain",
   "delivered",
   "failed",
   "cancelled",
@@ -21,17 +21,30 @@ export type PendingQueuedMessageStatus = z.infer<
   typeof pendingQueuedMessageStatusSchema
 >;
 
-/** A row the queue may still act on: awaiting delivery, or being delivered. */
+/** A row still owned by the queue, including a delivery awaiting review. */
 export function isActiveQueuedMessageStatus(
   status: PendingQueuedMessageStatus,
-): boolean {
-  return status === "pending" || status === "delivering";
+): status is Exclude<PendingQueuedMessageStatus, "delivered" | "cancelled"> {
+  return (
+    status === "pending" ||
+    status === "delivering" ||
+    queuedMessageNeedsReview(status)
+  );
 }
+
+export function queuedMessageNeedsReview(
+  status: PendingQueuedMessageStatus,
+): boolean {
+  return status === "uncertain" || status === "failed";
+}
+
+export const queueReviewActionSchema = z.enum(["retry", "discard"]);
+export type QueueReviewAction = z.infer<typeof queueReviewActionSchema>;
 
 /**
  * A row that will never change again. The client reads this as "stop showing it
- * as pending": a delivered row is now a transcript message, and a cancelled or
- * failed one will never become anything at all.
+ * as pending": a delivered row is now a transcript message, and a cancelled
+ * row was explicitly discarded.
  */
 export function isTerminalQueuedMessageStatus(
   status: PendingQueuedMessageStatus,
@@ -100,6 +113,9 @@ export const QUEUE_ERROR_CODES = [
   "NON_INTERACTIVE_CONVERSATION",
   "UNSUPPORTED_BACKEND",
   "NOT_CANCELLABLE",
+  "NOT_REVIEWABLE",
+  "INVALID_QUEUE_REVIEW",
+  "QUEUE_REVIEW_REQUIRED",
 ] as const;
 
 export const queueErrorCodeSchema = z.enum(QUEUE_ERROR_CODES);

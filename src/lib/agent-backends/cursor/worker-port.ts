@@ -92,6 +92,8 @@ export interface CursorAttachInput {
   ref: string | null;
   modelSelection: BackendModelSelection;
   mcpServers: Record<string, CursorWorkerMcpServer>;
+  /** Granted only after the parent verifies this worker owns the conversation. */
+  recoverAbandonedRun?: boolean;
 }
 
 export interface CursorTurnInput {

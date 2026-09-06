@@ -225,9 +225,9 @@ export interface DrainSelf {
  * `RunCommandInput` mapping as the direct prompt path (project-sentinel
  * sessions map to `sessionName: null` + `noticeSessionName`). The queue row is
  * marked `delivered` only after the run resolves. A service throw is a system
- * error — rejections and fallbacks resolve as outcomes — so the row is settled
- * terminally (`failed`, error recorded) rather than returned to `pending`,
- * which would retry a deterministic failure on every idle entry. Never throws.
+ * error — rejections and fallbacks resolve as outcomes — so the row is retained
+ * for review (`failed`, error recorded). Returning it to `pending` would retry
+ * a deterministic failure on every idle entry. Never throws.
  */
 async function runQueuedCommand(
   batch: ClaimedQueuedBatch,
@@ -406,6 +406,8 @@ export async function drainConversationQueue(
         sessionName,
         conversationId,
       });
+    }
+    if (self.getSnapshot().can(event)) {
       self.send(event);
       logger.info("queue.drain_dispatched", {
         conversationId,

@@ -506,10 +506,15 @@ describe("cursor worker attach", () => {
   it("re-passes the same option set on resume and reports the ref eagerly", async () => {
     const harness = createHarness();
     await handshake(harness);
-    await attach(harness, { mode: "resume", ref: "agent-ref-1" });
+    await attach(harness, {
+      mode: "resume",
+      ref: "agent-ref-1",
+      recoverAbandonedRun: true,
+    });
 
     expect(harness.sdk.resumes).toHaveLength(1);
     expect(harness.sdk.resumes[0]?.ref).toBe("agent-ref-1");
+    expect(harness.sdk.resumes[0]?.options.recoverAbandonedRun).toBe(true);
     expect(harness.sdk.resumes[0]?.options.disallowedTools).toStrictEqual([
       "askQuestion",
       "await",

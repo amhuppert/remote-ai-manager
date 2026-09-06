@@ -11,9 +11,20 @@ import {
   readConfig as defaultReadConfig,
   readRawConfig as defaultReadRawConfig,
   canonicalizeRawGlobalConfig,
+  materializeGlobalConfig,
   writeRawConfig as defaultWriteRawConfig,
 } from "@/lib/config/loader";
 import { intersectKeys } from "@/lib/config/cascade";
+import { deepEqualJson } from "@/lib/shared/deep-equal";
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
+import {
+  namingExecutionRequirements,
+  compactionExecutionRequirements,
+  compactionRepairRequirements,
+} from "./task-admission";
+import { resolveCompactionConfig } from "./cascade";
+import { resolveConversationNamingConfig } from "./schemas";
 import { rawGlobalConfigSchema } from "@/lib/config/schemas";
 import type { GlobalConfig, RawGlobalConfig } from "@/lib/config/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
@@ -102,6 +113,41 @@ export function createConfigRouteHandlers(deps: ConfigRouteDeps = defaultDeps) {
       log.warn("config.update_effective_validation_error", { error: detail });
       return NextResponse.json(
         { error: `Invalid config: ${detail}` },
+        { status: 400 },
+      );
+    }
+
+    const previous = materializeGlobalConfig(await deps.readRawConfig());
+    const candidate = materializeGlobalConfig(canonical);
+    const naming = resolveConversationNamingConfig(candidate);
+    const previousNaming = resolveConversationNamingConfig(previous);
+    const namingSelectionChanged =
+      naming.backend !== previousNaming.backend ||
+      !deepEqualJson(naming.modelSelection, previousNaming.modelSelection);
+    const compaction = resolveCompactionConfig(candidate);
+    try {
+      if (
+        namingSelectionChanged ||
+        (naming.enabled && !deepEqualJson(naming, previousNaming))
+      )
+        await assertBackendExecution(
+          naming.backend,
+          namingExecutionRequirements,
+        );
+      if (!deepEqualJson(compaction, resolveCompactionConfig(previous))) {
+        await assertBackendExecution(
+          compaction.backend,
+          compactionExecutionRequirements,
+        );
+        await assertBackendExecution(
+          compaction.backend,
+          compactionRepairRequirements,
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof BackendAdmissionError)) throw error;
+      return NextResponse.json(
+        { error: error.message, code: error.code, refusal: error.refusal },
         { status: 400 },
       );
     }

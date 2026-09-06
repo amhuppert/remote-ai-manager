@@ -73,6 +73,7 @@ function createInput(
   overrides: Partial<ConversationBackendCreateInput> = {},
 ): ConversationBackendCreateInput {
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId: CONVERSATION_ID,
     projectPath: "/repo",
     projectName: "repo",
@@ -519,6 +520,7 @@ describe("failure classification matrix", () => {
     // prompt arriving in that window must not be attached to the wedged
     // worker — it must wait for teardown and then get a fresh one.
     const teardown = deferredSignal();
+    const teardownStarted = deferredSignal();
     let turnIndex = 0;
     const harness = createPersistingHarness({
       create: {
@@ -526,7 +528,10 @@ describe("failure classification matrix", () => {
       },
       deps: { stallTimeoutMs: 20 },
       worker: {
-        closeGate: () => teardown.promise,
+        closeGate: () => {
+          teardownStarted.resolve();
+          return teardown.promise;
+        },
         onTurn: (turn, worker) => {
           turnIndex += 1;
           if (turnIndex === 1) {
@@ -540,8 +545,8 @@ describe("failure classification matrix", () => {
       },
     });
 
-    const stalled = await harness.send();
-    expect(stalled.failure?.kind).toBe("timeout");
+    const stalled = harness.send();
+    await teardownStarted.promise;
 
     // Teardown is still in flight, so the wedged worker is still registered.
     const racing = harness.send();
@@ -550,6 +555,7 @@ describe("failure classification matrix", () => {
     expect(elementAt(harness.transport.workers, 0).turns).toHaveLength(1);
 
     teardown.resolve();
+    expect((await stalled).failure?.kind).toBe("timeout");
     const recovered = await racing;
 
     expect(recovered.failure).toBeNull();
@@ -572,17 +578,22 @@ describe("failure classification matrix", () => {
     // Lifecycle callers order worktree removal behind close(); a worker still
     // in its ladder is still sitting in that worktree as its cwd.
     const teardown = deferredSignal();
+    const teardownStarted = deferredSignal();
     const harness = createPersistingHarness({
       deps: { stallTimeoutMs: 20 },
       worker: {
-        closeGate: () => teardown.promise,
+        closeGate: () => {
+          teardownStarted.resolve();
+          return teardown.promise;
+        },
         onTurn: (turn, worker) => {
           worker.sendInputAccepted(turn.runId);
         },
       },
     });
 
-    await harness.send();
+    const sending = harness.send();
+    await teardownStarted.promise;
     let closed = false;
     const closing = harness.runtime.close().then(() => {
       closed = true;
@@ -592,7 +603,7 @@ describe("failure classification matrix", () => {
     expect(closed).toBe(false);
 
     teardown.resolve();
-    await closing;
+    await Promise.all([closing, sending]);
     expect(closed).toBe(true);
   });
 

@@ -1,3 +1,8 @@
+import {
+  executionIntentSchema,
+  taskExecutionProfileSchema,
+  backendAdmissionRefusalSchema,
+} from "@/lib/agent-backends/execution-admission";
 /**
  * Capability-aware execution vocabulary for the AgentCall primitive.
  *
@@ -79,6 +84,7 @@ const structuredOutputRepairInputSchema = z.object({
 });
 
 const baseRequestFields = {
+  ...executionIntentSchema.shape,
   laneRef: laneRefSchema.optional(),
   prompt: z.string().min(1),
   // Governing instructions for the call, expressed uniformly across
@@ -120,6 +126,7 @@ export const agentCallRequestSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("task_run"),
+      executionProfile: taskExecutionProfileSchema.optional(),
       backend: agentBackendIdShapeSchema,
       ...baseRequestFields,
     })
@@ -194,6 +201,7 @@ export type NormalizedAgentCallFailureKind = z.infer<
 >;
 
 export const normalizedAgentCallErrorSchema = z.object({
+  code: backendAdmissionRefusalSchema.shape.code.optional(),
   failureKind: normalizedAgentCallFailureKindSchema,
   backend: agentBackendSchema,
   message: z.string(),

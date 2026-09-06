@@ -55,7 +55,9 @@ type FakeForkImpl = (
  * Builds the outcome a real adapter's synthetic path produces: a seed from
  * the actual source transcript, or a ContinuityForkError when unbuildable.
  */
-function syntheticForkImpl(backend: "claude" | "codex"): FakeForkImpl {
+function syntheticForkImpl(
+  backend: "claude" | "codex" | "cursor",
+): FakeForkImpl {
   return async (_ref, input) => {
     const seed = await buildSyntheticForkSeed(
       input.sourceTranscriptPath,
@@ -71,7 +73,10 @@ function syntheticForkImpl(backend: "claude" | "codex"): FakeForkImpl {
   };
 }
 
-function makeFakeContinuity(backend: "claude" | "codex", fork: FakeForkImpl) {
+function makeFakeContinuity(
+  backend: "claude" | "codex" | "cursor",
+  fork: FakeForkImpl,
+) {
   const forkCalls: FakeForkCall[] = [];
   const adapter: BackendContinuityAdapter = {
     backend,
@@ -91,6 +96,7 @@ function makeFakeContinuity(backend: "claude" | "codex", fork: FakeForkImpl) {
 function createTestServices(
   overrides: {
     claudeFork?: FakeForkImpl;
+    removeTranscript?(transcriptPath: string): Promise<void>;
     codexFork?: FakeForkImpl;
   } = {},
 ) {
@@ -110,6 +116,10 @@ function createTestServices(
     "codex",
     overrides.codexFork ?? syntheticForkImpl("codex"),
   );
+  const cursorContinuity = makeFakeContinuity(
+    "cursor",
+    syntheticForkImpl("cursor"),
+  );
   const conversations = createConversationService({
     mutateSession: state.mutateSession,
     createSessionConversation: state.createSessionConversation,
@@ -119,8 +129,13 @@ function createTestServices(
     setConversationPendingPromptText: state.setConversationPendingPromptText,
     stopConversationActor: async () => {},
     configDir: TEST_DIR,
+    removeTranscript: overrides.removeTranscript,
     getContinuityAdapter: (backend) =>
-      backend === "codex" ? codexContinuity.adapter : claudeContinuity.adapter,
+      backend === "cursor"
+        ? cursorContinuity.adapter
+        : backend === "codex"
+          ? codexContinuity.adapter
+          : claudeContinuity.adapter,
   });
   return { state, conversations, claudeContinuity, codexContinuity };
 }
@@ -1179,7 +1194,7 @@ describe("forkConversation", () => {
         projectPath: "/proj",
         anchorMessageId: "uuid-a1",
         sourceTranscriptPath: transcriptPath,
-        messageIndex: 2,
+        messageIndex: 1,
       },
     });
   });
@@ -1297,7 +1312,7 @@ describe("forkConversation", () => {
     ).rejects.toThrow("Invalid messageIndex");
   });
 
-  it("case 4 (assistant fork): synthetic_seed outcome — backendRef null, forkMode synthetic, pendingPromptText holds the seed", async () => {
+  it("case 4 (assistant fork): synthetic_seed outcome — backendRef null, forkMode synthetic, history is separate from the draft", async () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations, claudeContinuity } = createTestServices({
@@ -1323,14 +1338,13 @@ describe("forkConversation", () => {
     expect(fork).toBeTruthy();
     expect(fork!.backendRef).toBeNull();
     expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
-    // For assistant forks pendingPromptText was null; the seed becomes its value.
-    expect(fork!.pendingPromptText).not.toBeNull();
-    expect(fork!.pendingPromptText).toContain("hello there");
-    expect(fork!.pendingPromptText).toContain("hi back");
+    expect(fork!.forkedFrom!.syntheticSeed).toBeDefined();
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("hello there");
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("hi back");
     expect(claudeContinuity.forkCalls).toHaveLength(1);
   });
 
-  it("case 4 (user fork): synthetic_seed outcome prepends the seed in front of the user's edited prompt", async () => {
+  it("case 4 (user fork): synthetic_seed outcome preserves the user draft", async () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations } = createTestServices({
@@ -1357,11 +1371,10 @@ describe("forkConversation", () => {
     expect(fork).toBeTruthy();
     expect(fork!.backendRef).toBeNull();
     expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
-    expect(fork!.pendingPromptText).not.toBeNull();
-    // Seed should appear, ending with a separator before the user's edited text.
-    expect(fork!.pendingPromptText).toContain("first question");
-    expect(fork!.pendingPromptText).toContain("first answer");
-    expect(fork!.pendingPromptText).toContain("---");
+    expect(fork!.forkedFrom!.syntheticSeed).toBeDefined();
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("first question");
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("first answer");
+    expect(fork!.forkedFrom!.syntheticSeed).not.toContain("rewritten turn");
     expect(fork!.pendingPromptText!.endsWith("rewritten turn")).toBe(true);
   });
 
@@ -1436,12 +1449,12 @@ describe("forkConversation", () => {
     expect(fork!.backendRef).toBeNull();
     expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
     expect(fork!.forkedFrom!.forkLocator).toBeNull();
-    expect(fork!.pendingPromptText).not.toBeNull();
-    expect(fork!.pendingPromptText).toContain("hello there");
-    expect(fork!.pendingPromptText).toContain("hi back");
+    expect(fork!.forkedFrom!.syntheticSeed).toBeDefined();
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("hello there");
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("hi back");
   });
 
-  it("codex source: fork produces a synthetic seed (forkMode synthetic, backendRef null, seed in pendingPromptText)", async () => {
+  it("codex source: fork produces a synthetic seed (forkMode synthetic, backendRef null, immutable seed)", async () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations } = createTestServices();
@@ -1475,40 +1488,142 @@ describe("forkConversation", () => {
     expect(fork!.agentBackend).toBe("codex");
     expect(fork!.backendRef).toBeNull();
     expect(fork!.forkedFrom!.forkMode).toBe("synthetic");
-    expect(fork!.pendingPromptText).not.toBeNull();
-    expect(fork!.pendingPromptText).toContain("codex question");
-    expect(fork!.pendingPromptText).toContain("codex answer");
+    expect(fork!.forkedFrom!.syntheticSeed).toBeDefined();
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("codex question");
+    expect(fork!.forkedFrom!.syntheticSeed).toContain("codex answer");
   });
 
-  it("unsupported outcome: fork proceeds with no backend continuity (forkMode null, backendRef null, no seed added)", async () => {
+  it("keeps an exclusive synthetic history seed separate from the editable user draft", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices();
+    await seedWithSourceTranscript(
+      state,
+      sourceId,
+      transcriptPath,
+      [
+        userEntry("original context", "2024-01-01T00:00:00Z"),
+        assistantEntry("anchored answer", "uuid-a1", "2024-01-01T00:00:01Z"),
+        userEntry("message to edit", "2024-01-01T00:00:02Z"),
+        assistantEntry("future answer", "uuid-a2", "2024-01-01T00:00:03Z"),
+      ],
+      {
+        agentBackend: "codex",
+        backendRef: { backend: "codex", ref: "source" },
+      },
+    );
+    const result = await conversations.forkConversation({
+      projectPath: "/proj",
+      sessionName: "test",
+      sourceConversationId: sourceId,
+      messageIndex: 2,
+    });
+    const fork = await state.getConversation(
+      "/proj",
+      "test",
+      result.conversationId,
+    );
+    expect(fork?.pendingPromptText).toBe("message to edit");
+    expect(fork?.forkedFrom?.syntheticSeed).toContain("anchored answer");
+    expect(fork?.forkedFrom?.syntheticSeed).not.toContain("message to edit");
+    expect(fork?.forkedFrom?.syntheticSeed).not.toContain("future answer");
+    expect(fork?.backendRef).toBeNull();
+  });
+
+  it.each([1, 2])(
+    "creates an independent Cursor synthetic fork at index %s",
+    async (messageIndex) => {
+      const sourceId = crypto.randomUUID();
+      const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+      const { state, conversations } = createTestServices();
+      await seedWithSourceTranscript(
+        state,
+        sourceId,
+        transcriptPath,
+        [
+          userEntry("hello", "2024-01-01T00:00:00Z"),
+          assistantEntry("hi", "uuid-a1", "2024-01-01T00:00:01Z"),
+          userEntry("continue", "2024-01-01T00:00:02Z"),
+        ],
+        {
+          agentBackend: "cursor",
+          backendRef: { backend: "cursor", ref: "cursor-source" },
+        },
+      );
+      const sourceBytes = await readFile(transcriptPath, "utf8");
+      const result = await conversations.forkConversation({
+        projectPath: "/proj",
+        sessionName: "test",
+        sourceConversationId: sourceId,
+        messageIndex,
+      });
+      const fork = await state.getConversation(
+        "/proj",
+        "test",
+        result.conversationId,
+      );
+      expect(result.forkMode).toBe("synthetic");
+      expect(fork?.backendRef).toBeNull();
+      expect(fork?.agentBackend).toBe("cursor");
+      expect(fork?.transcriptPath).not.toBe(transcriptPath);
+      expect(fork?.forkedFrom?.syntheticSeed).toContain("Assistant: hi");
+      expect(fork?.forkedFrom?.syntheticSeed).not.toContain("continue");
+      expect(fork?.pendingPromptText).toBe(
+        messageIndex === 2 ? "continue" : null,
+      );
+      expect(await readFile(transcriptPath, "utf8")).toBe(sourceBytes);
+    },
+  );
+
+  it("cleans the provisional fork when an adapter unexpectedly reports unsupported", async () => {
     const sourceId = crypto.randomUUID();
     const transcriptPath = path.join(TEST_DIR, "source.jsonl");
     const { state, conversations } = createTestServices({
       claudeFork: async () => ({ kind: "unsupported" }),
     });
-
     await seedWithSourceTranscript(state, sourceId, transcriptPath, [
-      userEntry("hello there", "2024-01-01T00:00:00Z"),
-      assistantEntry("hi back", "uuid-a1", "2024-01-01T00:00:01Z"),
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi", "uuid-a1", "2024-01-01T00:00:01Z"),
     ]);
+    await expect(
+      conversations.forkConversation({
+        projectPath: "/proj",
+        sessionName: "test",
+        sourceConversationId: sourceId,
+        messageIndex: 1,
+      }),
+    ).rejects.toMatchObject({ kind: "fork_failed" });
+    expect(
+      (await state.getSession("/proj", "test"))!.conversations.map((c) => c.id),
+    ).toEqual([sourceId]);
+  });
 
-    const result = await conversations.forkConversation({
-      projectPath: "/proj",
-      sessionName: "test",
-      sourceConversationId: sourceId,
-      messageIndex: 1, // assistant fork
+  it("removes the provisional row even when transcript cleanup fails", async () => {
+    const sourceId = crypto.randomUUID();
+    const transcriptPath = path.join(TEST_DIR, "source.jsonl");
+    const { state, conversations } = createTestServices({
+      claudeFork: async () => ({ kind: "unsupported" }),
+      async removeTranscript() {
+        throw new Error("file cleanup unavailable");
+      },
     });
-
-    const session = await state.getSession("/proj", "test");
-    const fork = session!.conversations.find(
-      (c) => c.id === result.conversationId,
-    );
-    expect(fork).toBeTruthy();
-    expect(fork!.backendRef).toBeNull();
-    expect(fork!.forkedFrom!.forkMode).toBeNull();
-    // No synthetic seed: an assistant fork keeps pendingPromptText empty.
-    expect(fork!.pendingPromptText).toBeNull();
-    expect(result.forkMode).toBeNull();
+    await seedWithSourceTranscript(state, sourceId, transcriptPath, [
+      userEntry("hello", "2024-01-01T00:00:00Z"),
+      assistantEntry("hi", "uuid-a1", "2024-01-01T00:00:01Z"),
+    ]);
+    await expect(
+      conversations.forkConversation({
+        projectPath: "/proj",
+        sessionName: "test",
+        sourceConversationId: sourceId,
+        messageIndex: 1,
+      }),
+    ).rejects.toMatchObject({ kind: "fork_failed" });
+    expect(
+      (await state.getSession("/proj", "test"))!.conversations.map(
+        (conversation) => conversation.id,
+      ),
+    ).toEqual([sourceId]);
   });
 
   it("writes the forked transcript under the injected configDir", async () => {

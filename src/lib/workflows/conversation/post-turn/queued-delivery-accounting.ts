@@ -5,13 +5,13 @@
  * transcript: for a queued (auto-drained) turn the queue — not the transcript
  * — owns the user content until the backend confirms acceptance, so the
  * coalesced user entry is appended exactly once on `input_accepted` (append
- * BEFORE the queue mark, so a failed mark cannot cause a second append), the
- * claimed rows are marked delivered only after that append succeeds, and a
- * batch that never reached acceptance is returned to `pending` — never
- * guessed `failed` — so it is never silently lost. Normal turns append their
- * user entry at dispatch and never touch queue marks.
+ * BEFORE the queue mark), and the claimed rows leave the queue only after
+ * both durable writes succeed. Any incomplete handoff is retained for review:
+ * a missing acknowledgement does not prove the request never ran.
+ * Normal turns append their user entry at dispatch and never touch queue marks.
  */
 
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import type { QueuedDeliveryMetadata } from "../types";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -19,20 +19,20 @@ import { getErrorMessage } from "@/lib/shared/errors";
 const logger = createLogger("conversation-actor");
 
 export interface QueuedDeliveryAccountingDeps {
-  markQueuedDelivered(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    ids: string[];
-    deliveryAttemptId: string;
-  }): Promise<void>;
-  markQueuedPending(input: {
+  markQueuedUncertain(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
     ids: string[];
     deliveryAttemptId: string;
     error: string;
+  }): Promise<void>;
+  markQueuedDelivered(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
   }): Promise<void>;
 }
 
@@ -45,8 +45,8 @@ export interface QueuedDeliveryAccounting {
    */
   handleInputAccepted(): Promise<void>;
   /**
-   * Turn `finally`: return a claimed batch that never reached acceptance to
-   * `pending`. Mark failures are logged, never rethrown.
+   * Turn `finally`: retain any incomplete delivery for review. Mark failures
+   * are logged; the original claim remains recoverable after restart.
    */
   settleAfterTurn(): Promise<void>;
 }
@@ -61,12 +61,10 @@ export function createQueuedDeliveryAccounting(
     appendUserEntry(): Promise<void>;
   },
 ): QueuedDeliveryAccounting {
-  // Guards the queued-delivery transcript append. Set true the instant the
-  // coalesced user entry is appended on backend acceptance so a repeated
-  // `input_accepted` cannot re-append, and so a later `markQueuedDelivered`
-  // failure cannot trigger a second append. Read on all exit paths to decide
-  // whether a queued batch must be returned to `pending` (no acceptance).
+  // A successful transcript append and a successful queue acknowledgement are
+  // separate facts. Retain ownership until both have completed.
   let queuedUserEntryAppended = false;
+  let deliveryRecorded = false;
 
   return {
     async appendUserEntryAtDispatch(): Promise<void> {
@@ -75,11 +73,11 @@ export function createQueuedDeliveryAccounting(
     },
 
     async handleInputAccepted(): Promise<void> {
-      if (!input.queuedDelivery || queuedUserEntryAppended) return;
-      await input.appendUserEntry();
-      // Mark appended before the queue write so a `markQueuedDelivered`
-      // failure cannot cause the entry to be appended twice.
-      queuedUserEntryAppended = true;
+      if (!input.queuedDelivery || deliveryRecorded) return;
+      if (!queuedUserEntryAppended) {
+        await input.appendUserEntry();
+        queuedUserEntryAppended = true;
+      }
       await deps.markQueuedDelivered({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -87,8 +85,9 @@ export function createQueuedDeliveryAccounting(
         ids: input.queuedDelivery.messageIds,
         deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
       });
+      deliveryRecorded = true;
       logger.info("queue.accepted", {
-        sessionName: input.sessionName,
+        ...scopeRefFromStoreSessionName(input.sessionName),
         conversationId: input.conversationId,
         messageIds: input.queuedDelivery.messageIds,
         deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
@@ -96,31 +95,26 @@ export function createQueuedDeliveryAccounting(
     },
 
     async settleAfterTurn(): Promise<void> {
-      // Queued delivery that never reached backend acceptance (turn completed,
-      // errored, or aborted before `input_accepted`): return the claimed batch
-      // to `pending` so it is never silently lost (req 4.2). No transcript
-      // entry was appended for it. All acceptance failures are treated as
-      // recoverable — the turn result does not surface a terminal
-      // queue-acceptance signal, so we never guess `failed` here.
-      if (!input.queuedDelivery || queuedUserEntryAppended) return;
+      if (!input.queuedDelivery || deliveryRecorded) return;
       try {
-        await deps.markQueuedPending({
+        await deps.markQueuedUncertain({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           conversationId: input.conversationId,
           ids: input.queuedDelivery.messageIds,
           deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-          error: "queued delivery did not reach backend acceptance",
+          error:
+            "Delivery may have reached the agent, but its acknowledgement was not durably completed. Review before retrying or discarding.",
         });
-        logger.info("queue.return_pending", {
-          sessionName: input.sessionName,
+        logger.warn("queue.delivery_review_required", {
+          ...scopeRefFromStoreSessionName(input.sessionName),
           conversationId: input.conversationId,
           messageIds: input.queuedDelivery.messageIds,
           deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
         });
       } catch (err) {
-        logger.error("queue.return_pending_failed", {
-          sessionName: input.sessionName,
+        logger.error("queue.delivery_review_failed", {
+          ...scopeRefFromStoreSessionName(input.sessionName),
           conversationId: input.conversationId,
           messageIds: input.queuedDelivery.messageIds,
           deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,

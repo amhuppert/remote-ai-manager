@@ -6,6 +6,8 @@
  */
 
 import { NextResponse } from "next/server";
+import { commandRequestRefusal } from "@/lib/commands/route-admission";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import {
   notFound,
   resolveProjectSessionOr404,
@@ -69,6 +71,7 @@ import { holdsActionableGate } from "@/lib/workflow-graph/lifecycle-classifier";
 const logger = createLogger("prompt");
 
 const DEFAULT_NEGOTIATION_ROUNDS = 3;
+
 const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD = "major" as const;
 
 /**
@@ -221,6 +224,11 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
       }
     }
 
+    const commandRefusal = await commandRequestRefusal(
+      body.prompt,
+      body.backend,
+    );
+    if (commandRefusal) return commandRefusal;
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
@@ -275,6 +283,11 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             },
           );
         } catch (err) {
+          if (err instanceof BackendAdmissionError) {
+            emit("error", { message: err.message, code: err.code });
+            emit("done", {});
+            return;
+          }
           if (err instanceof CollabBriefRequiredError) {
             emit("error", { message: err.message, code: err.code });
             emit("done", {});
@@ -417,6 +430,11 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     }
 
     const trimmedPrompt = body.prompt.trim();
+    const commandRefusal = await commandRequestRefusal(
+      trimmedPrompt,
+      body.backend ?? conversation.agentBackend,
+    );
+    if (commandRefusal) return commandRefusal;
     if (hasCollabPrefix(trimmedPrompt)) {
       const brief = stripCollabPrefix(trimmedPrompt).trim();
       if (brief.length === 0) {
@@ -574,6 +592,11 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             },
           );
         } catch (err) {
+          if (err instanceof BackendAdmissionError) {
+            emit("error", { message: err.message, code: err.code });
+            emit("done", {});
+            return;
+          }
           if (err instanceof BackendMismatchError) {
             emit("error", { message: err.message, code: "BACKEND_MISMATCH" });
             emit("done", {});

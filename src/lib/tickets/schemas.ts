@@ -725,6 +725,11 @@ export type QuickTicketConversationContext = z.infer<
 
 export const quickTicketCreateWarningSchema = z.discriminatedUnion("code", [
   z.object({
+    code: z.literal("enrichment_unavailable"),
+    message: z.string().min(1).max(500),
+    refusal: backendAdmissionRefusalSchema.optional(),
+  }),
+  z.object({
     code: z.literal("conversation_source_unavailable"),
     message: z.string().min(1).max(500),
   }),
@@ -989,3 +994,4 @@ export const ticketChangedEventSchema = z
   })
   .strict();
 export type TicketChangedEvent = z.infer<typeof ticketChangedEventSchema>;
+import { backendAdmissionRefusalSchema } from "@/lib/agent-backends/execution-admission";

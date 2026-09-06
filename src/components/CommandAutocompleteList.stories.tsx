@@ -106,3 +106,31 @@ export const ErrorState = {
     error: "Failed to load commands",
   },
 } satisfies Story;
+
+export const BackendAvailability = {
+  args: {
+    ...Default.args,
+    items: [
+      {
+        id: "ticket",
+        name: "/ticket",
+        description: "Cursor does not support task execution.",
+        disabled: true,
+        badge: "Unavailable",
+      },
+      {
+        id: "commit",
+        name: "/commit",
+        description:
+          "Commit with a default message. Automatic fixes are unavailable.",
+        badge: "Limited assistance",
+      },
+      {
+        id: "spec",
+        name: "/spec",
+        description: "Author a native Command Center spec.",
+        badge: "command",
+      },
+    ],
+  },
+} satisfies Story;

@@ -119,6 +119,7 @@ describe("dispatchConversationTurn", () => {
     await expect(() =>
       dispatchConversationTurn(
         {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "claude",
           prompt: "hi",
@@ -139,6 +140,7 @@ describe("dispatchConversationTurn", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hello",
       },
@@ -169,7 +171,11 @@ describe("dispatchConversationTurn", () => {
     };
 
     await dispatchConversationTurn(
-      { kind: "conversation_turn", prompt: "hello" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "hello",
+      },
       {
         runtime,
         capabilityView: CAPABILITY_VIEW,
@@ -188,6 +194,7 @@ describe("dispatchConversationTurn", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         outputSchema: {
@@ -242,6 +249,7 @@ describe("dispatchConversationTurn", () => {
 
     await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         tooling,
@@ -267,6 +275,7 @@ describe("dispatchConversationTurn", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         tooling: { servers: [] },
@@ -303,6 +312,7 @@ describe("dispatchConversationTurn", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
       },
@@ -328,6 +338,7 @@ describe("dispatchConversationTurn", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
       },
@@ -360,6 +371,7 @@ describe("dispatchConversationTurn", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
       },
@@ -392,6 +404,7 @@ describe("dispatchConversationTurn", () => {
 
     await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         laneRef: { workflowId: "wf-1", laneId: "lane-A" },
@@ -441,6 +454,7 @@ describe("dispatchConversationTurn", () => {
 
     await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         laneRef: { workflowId: "wf-1", laneId: "lane-X" },
@@ -489,6 +503,7 @@ describe("dispatchConversationTurn", () => {
 
     await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         laneRef: { workflowId: "wf-1", laneId: "lane-Y" },
@@ -531,6 +546,7 @@ describe("dispatchConversationTurn", () => {
 
     await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "hi",
         laneRef: { workflowId: "wf-1", laneId: "lane-B" },
@@ -578,6 +594,7 @@ describe("dispatchConversationTurn — widened result mapping", () => {
 
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "format",
         outputSchema: { type: "object" },
@@ -610,7 +627,11 @@ describe("dispatchConversationTurn — widened result mapping", () => {
       },
     });
     const result = await dispatchConversationTurn(
-      { kind: "conversation_turn", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "hi",
+      },
       {
         runtime,
         capabilityView: CAPABILITY_VIEW,
@@ -648,7 +669,11 @@ describe("dispatchConversationTurn — widened result mapping", () => {
       },
     });
     const result = await dispatchConversationTurn(
-      { kind: "conversation_turn", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "hi",
+      },
       {
         runtime,
         capabilityView: CAPABILITY_VIEW,
@@ -673,7 +698,11 @@ describe("dispatchConversationTurn — widened result mapping", () => {
       throw new Error("QuerySession ended before the turn completed");
     };
     const result = await dispatchConversationTurn(
-      { kind: "conversation_turn", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "hi",
+      },
       {
         runtime,
         capabilityView: CAPABILITY_VIEW,
@@ -706,7 +735,11 @@ describe("dispatchConversationTurn — widened result mapping", () => {
       },
     });
     const result = await dispatchConversationTurn(
-      { kind: "conversation_turn", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "hi",
+      },
       {
         runtime,
         capabilityView: CAPABILITY_VIEW,

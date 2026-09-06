@@ -94,6 +94,12 @@ export const forkConversation = withTracing(async (request, { params }) => {
 
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof BackendAdmissionError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code, refusal: err.refusal },
+        { status: 422 },
+      );
+    }
     if (err instanceof ForkValidationError) {
       const status = err.kind === "source_not_found" ? 404 : 400;
       logger.warn("fork.error.typed", {
@@ -132,3 +138,4 @@ export const forkConversation = withTracing(async (request, { params }) => {
     });
   }
 });
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";

@@ -75,6 +75,7 @@ afterEach(async () => {
 
 function createInput(): ConversationBackendCreateInput {
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId: CONVERSATION_ID,
     projectPath,
     projectName: "repo",

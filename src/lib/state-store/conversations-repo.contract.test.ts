@@ -122,6 +122,8 @@ function makeFullConversation(
       sourceBackendRef: { backend: "claude", ref: "src-sess" },
       forkLocator: "msg-4",
       forkMode: "native",
+      syntheticSeed: "User: durable anchored context",
+      syntheticSeedAcceptedRef: { backend: "cursor", ref: "agent-seeded" },
     },
     role: "iteration",
     contextTokens: 12_000,
@@ -1404,6 +1406,8 @@ function buildMaximalConversation(): ConversationState {
       // Non-default so the column is proven durable. The combination is not a
       // real fork state — a maximal fixture is a shape, not a scenario.
       forkPending: true,
+      syntheticSeed: "User: durable fork context",
+      syntheticSeedAcceptedRef: { backend: "cursor", ref: "agent-seeded" },
     },
     role: "validator",
     // activeTurnSource is intentionally omitted here (see fieldPolicies):

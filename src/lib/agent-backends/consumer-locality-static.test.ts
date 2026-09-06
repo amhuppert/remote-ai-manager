@@ -343,3 +343,38 @@ describe("consumer-locality static half: scoped backend-identity count", () => {
     ).toBe(SCOPED_BACKEND_IDENTITY_BRANCH_LINES);
   });
 });
+
+// This syntax ratchet covers the conventional runner bindings and direct
+// registry calls; aliases must still be reviewed at the dependency boundary.
+function rawTaskDispatches(source: string): string[] {
+  return [
+    ...source.matchAll(
+      /\b(?:runner|taskRunner)\s*\.\s*run\s*\(|\bgetTaskRunner\s*\([^)]*\)\s*\.\s*run\s*\(/g,
+    ),
+  ].map((match) => match[0]);
+}
+
+describe("task execution admission seam", () => {
+  it("recognizes raw dispatch without treating admitted dispatch as raw", () => {
+    expect(
+      rawTaskDispatches(
+        "runner.run(request); deps.taskRunner.run(request); getTaskRunner(backend).run(request)",
+      ),
+    ).toHaveLength(3);
+    expect(
+      rawTaskDispatches("runAdmittedTask(backend, request, { runner })"),
+    ).toEqual([]);
+  });
+
+  it("has no raw task dispatch in neutral production consumers", () => {
+    const violations = listLibSources(LIB_ROOT)
+      .filter((file) => !file.endsWith("-fixture.ts"))
+      .flatMap((file) =>
+        rawTaskDispatches(readFileSync(file, "utf8")).map((call) => ({
+          file: path.relative(LIB_ROOT, file),
+          call,
+        })),
+      );
+    expect(violations).toEqual([]);
+  });
+});

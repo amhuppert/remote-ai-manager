@@ -54,6 +54,7 @@ import type {
 } from "./types";
 import {
   prepareTurnActor,
+  finalizeQueuedDeliveryActor,
   executePromptActor,
   runTaskRunActor,
 } from "./actors";
@@ -141,6 +142,9 @@ function taskRunFromEvent(
 ): TaskRunActive {
   return {
     kind: "task_run",
+    executionClass: event.executionClass,
+    executionProfile: event.executionProfile,
+    requiresPrivilegedInstructions: event.requiresPrivilegedInstructions,
     promptText: event.promptText,
     backend: event.backend ?? context.agentBackend,
     modelSelection: event.modelSelection ?? null,
@@ -240,6 +244,7 @@ export const conversationMachine = setup({
 
   actors: {
     prepareTurn: prepareTurnActor,
+    finalizeQueuedDelivery: finalizeQueuedDeliveryActor,
     executePrompt: executePromptActor,
     runTaskRun: runTaskRunActor,
   },
@@ -884,6 +889,10 @@ export const conversationMachine = setup({
                 worktreePath: context.worktreePath,
                 conversationId: context.conversationId,
                 agentBackend: activeTurn.backend,
+                executionClass: activeTurn.executionClass,
+                executionProfile: activeTurn.executionProfile,
+                requiresPrivilegedInstructions:
+                  activeTurn.requiresPrivilegedInstructions,
                 backendRef: context.backendRef,
                 promptText: activeTurn.promptText,
                 modelSelection: activeTurn.modelSelection,
@@ -941,6 +950,44 @@ export const conversationMachine = setup({
     // FINALIZING TURN — update metadata, release resources
     // ========================================================
     finalizingTurn: {
+      always: [
+        {
+          guard: ({ context }) =>
+            context.activeTurn?.kind === "conversation_turn" &&
+            context.activeTurn.queuedDelivery !== undefined,
+          target: "settlingQueuedDelivery",
+        },
+        { target: "applyingTurnResult" },
+      ],
+    },
+    settlingQueuedDelivery: {
+      invoke: {
+        src: "finalizeQueuedDelivery",
+        input: ({ context }) => {
+          const queuedDelivery =
+            context.activeTurn?.kind === "conversation_turn"
+              ? context.activeTurn.queuedDelivery
+              : undefined;
+          if (!queuedDelivery)
+            throw new Error("Queue settlement requires a delivery attempt");
+          return {
+            projectPath: context.projectPath,
+            sessionName: context.sessionName,
+            conversationId: context.conversationId,
+            persistence: context.transient ? "ephemeral" : "durable",
+            queuedDelivery,
+          };
+        },
+        onDone: "applyingTurnResult",
+        onError: {
+          target: "applyingTurnResult",
+          actions: assign({
+            lastError: ({ event }) => extractError(event.error),
+          }),
+        },
+      },
+    },
+    applyingTurnResult: {
       always: [
         // Debug mode: the attached debug workflow interprets the turn
         // outcome (advance / follow-up / verify-cleanup / failed) and the

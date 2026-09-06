@@ -201,18 +201,73 @@ describe("cursor continuity resume", () => {
 });
 
 describe("cursor fork", () => {
-  it("reports fork unsupported rather than aliasing resume", async () => {
-    const { adapter, transport } = createAdapter({});
+  it("returns a bounded transcript seed without resuming or copying the source agent", async () => {
+    const { buildSyntheticForkSeed } =
+      await import("@/lib/sessions/synthetic-fork-seed");
+    const transport = createScriptedTransport({});
+    const adapter = createCursorContinuityAdapter({
+      transport,
+      resolveBinding: async () => {
+        throw new Error("fork must not attach the source");
+      },
+      buildSyntheticForkSeed: (transcriptPath, messageIndex) =>
+        buildSyntheticForkSeed(transcriptPath, messageIndex, {
+          readConversationMessages: async () => [
+            {
+              role: "user",
+              content: [{ type: "text", text: "earlier context" }],
+            },
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "anchored answer" }],
+            },
+            {
+              role: "user",
+              content: [{ type: "text", text: "future message" }],
+            },
+          ],
+        }),
+    });
     const outcome = await adapter.fork(ref("agent-live"), {
       projectPath: "/repo",
       anchorMessageId: null,
-      sourceTranscriptPath: "/repo/t.jsonl",
-      messageIndex: 0,
+      sourceTranscriptPath: "/source.jsonl",
+      messageIndex: 1,
     });
-
-    expect(outcome).toEqual({ kind: "unsupported" });
-    // No ref was copied and no agent was created in fork's name.
+    expect(outcome.kind).toBe("synthetic_seed");
+    if (outcome.kind !== "synthetic_seed")
+      throw new Error("expected synthetic history");
+    expect(outcome.seed).toContain("earlier context");
+    expect(outcome.seed).toContain("anchored answer");
+    expect(outcome.seed).not.toContain("future message");
     expect(transport.startInputs).toHaveLength(0);
+    await expect(
+      adapter.fork(
+        { backend: "claude", ref: "source" },
+        {
+          projectPath: "/repo",
+          anchorMessageId: null,
+          sourceTranscriptPath: "/source.jsonl",
+          messageIndex: 1,
+        },
+      ),
+    ).rejects.toThrow(ContinuityRefMismatchError);
+  });
+
+  it("refuses an unreadable history instead of creating an empty fork", async () => {
+    const adapter = createCursorContinuityAdapter({
+      transport: createScriptedTransport({}),
+      resolveBinding: async () => BINDING,
+      buildSyntheticForkSeed: async () => null,
+    });
+    await expect(
+      adapter.fork(ref("source"), {
+        projectPath: "/repo",
+        anchorMessageId: null,
+        sourceTranscriptPath: "/missing.jsonl",
+        messageIndex: 1,
+      }),
+    ).rejects.toMatchObject({ name: "ContinuityForkError" });
   });
 });
 

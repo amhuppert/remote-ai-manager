@@ -3,6 +3,8 @@ import {
   getStaticBackendModelCatalog,
 } from "@/lib/agent-backends/catalog";
 import { validateModelSelection } from "@/lib/agent-backends/model-selection";
+import type { ExecutionCatalogEntry } from "@/lib/agent-backends/execution-admission";
+import { validateWorkflowExecutionAdmission } from "./execution-admission";
 import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
@@ -220,6 +222,7 @@ export function validateWorkflowDefinition(
   deps: BackendCapabilityDeps = {},
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
+    ...validateWorkflowExecutionAdmission(definition, deps.executionEntryFor),
     ...validateContextOutputSchemas(definition.executionContexts),
     ...validateLaneDependencyAcyclicity(definition),
     ...validateExplicitLaneBarrierCoverage(definition),
@@ -555,6 +558,7 @@ export function validateResolvedWorkflow(
   deps: BackendCapabilityDeps = {},
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
+    ...validateWorkflowExecutionAdmission(resolved, deps.executionEntryFor),
     ...validateCohortWriteRestriction(resolved.executionContexts, deps),
   ];
 
@@ -611,6 +615,7 @@ function resolvedSelectionUseSite(site: {
  * cannot enforce, and every registered one can.
  */
 export interface BackendCapabilityDeps {
+  executionEntryFor?(backend: AgentBackendId): ExecutionCatalogEntry;
   fsWriteRestrictionFor?(backend: AgentBackendId): FsWriteRestrictionSupport;
   configuredModelSelectionFor?(
     backend: AgentBackendId,

@@ -1,3 +1,8 @@
+import type {
+  ExecutionIntent,
+  ExecutionClass,
+  TaskExecutionProfile,
+} from "@/lib/agent-backends/execution-admission";
 /**
  * Conversation machine types.
  *
@@ -109,7 +114,8 @@ export interface ConversationTurnActive {
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
  *  by a downstream workflow context. */
-export interface TaskRunActive {
+export interface TaskRunActive extends ExecutionIntent {
+  executionProfile?: TaskExecutionProfile;
   kind: "task_run";
   promptText: string;
   backend: AgentBackendId;
@@ -234,6 +240,9 @@ export type ConversationEvent =
     }
   | {
       type: "SUBMIT_TASK_RUN";
+      executionClass: ExecutionClass;
+      executionProfile?: TaskExecutionProfile;
+      requiresPrivilegedInstructions?: boolean;
       promptText: string;
       backend?: AgentBackendId;
       modelSelection?: BackendModelSelection;
@@ -478,7 +487,8 @@ export interface PrepareTurnInput {
  *  primitive's `task_run` request; field set is intentionally narrower than
  *  ExecutePromptInput because there is no SDK streaming, no image flow, and
  *  no debug-mode context. */
-export interface RunTaskRunInput {
+export interface RunTaskRunInput extends ExecutionIntent {
+  executionProfile?: TaskExecutionProfile;
   /** Construction-time persistence choice (see {@link ExecutePromptInput.persistence}). */
   persistence: ConversationPersistenceMode;
   projectPath: string;
@@ -523,4 +533,13 @@ export interface VerifyCleanupOutput {
   failedConditions: string[];
   missingFiles: string[];
   remediationPrompt: string | null;
+}
+
+/** Attempt-scoped finalization preserves the claim until dispatch has stopped. */
+export interface FinalizeQueuedDeliveryInput {
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+  persistence: ConversationInput["persistence"];
+  queuedDelivery: QueuedDeliveryMetadata;
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useId, useState } from "react";
+import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-admission";
 import { cn } from "@/lib/ui/cn";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import type {
@@ -26,6 +27,7 @@ import ClipMessageButton from "./notepad-capture/ClipMessageButton";
 import GenerateNameFromMessageButton from "./GenerateNameFromMessageButton";
 
 interface MessageActionsProps {
+  forkRefusal?: BackendAdmissionRefusal | null;
   /** The 0-based index of this message in the conversation */
   messageIndex: number;
   /** Content blocks of the message — used for the Copy action */
@@ -95,6 +97,7 @@ function CompactableMessageActions({
   role,
   onFork,
   forkProjectName,
+  forkRefusal,
   compactionTarget,
   messageRef,
 }: MessageActionsProps & { compactionTarget: ContextArtifactTarget }) {
@@ -149,6 +152,7 @@ function CompactableMessageActions({
         role={role}
         onFork={onFork}
         forkProjectName={forkProjectName}
+        forkRefusal={forkRefusal}
         compactionTarget={compactionTarget}
         messageRef={messageRef}
       >
@@ -188,6 +192,7 @@ function ActionBar({
   role,
   onFork,
   forkProjectName,
+  forkRefusal,
   compactionTarget,
   messageRef,
   children,
@@ -198,6 +203,7 @@ function ActionBar({
   | "role"
   | "onFork"
   | "forkProjectName"
+  | "forkRefusal"
   | "compactionTarget"
   | "messageRef"
 > & {
@@ -233,6 +239,8 @@ function ActionBar({
         <ForkAction
           messageIndex={messageIndex}
           onFork={onFork}
+          role={role}
+          forkRefusal={forkRefusal}
           {...(forkProjectName === undefined ? {} : { forkProjectName })}
         />
       )}
@@ -250,19 +258,25 @@ function ActionBar({
  * one-click action it has always been (R7).
  */
 function ForkAction({
+  role,
   messageIndex,
   onFork,
   forkProjectName,
+  forkRefusal,
 }: {
+  role?: TranscriptMessage["role"];
+  forkRefusal?: BackendAdmissionRefusal | null;
   messageIndex: number;
   onFork: NonNullable<MessageActionsProps["onFork"]>;
   forkProjectName?: string;
 }) {
   const [forking, setForking] = useState(false);
+  const refusalId = useId();
+  const refusal = messageIndex === 0 && role === "user" ? null : forkRefusal;
 
   const runFork = useCallback(
     (profile?: AgentProfileRef) => {
-      if (forking) return;
+      if (forking || refusal) return;
       const result = onFork(messageIndex, profile);
       if (result instanceof Promise) {
         setForking(true);
@@ -272,13 +286,30 @@ function ForkAction({
         );
       }
     },
-    [messageIndex, onFork, forking],
+    [messageIndex, onFork, forking, refusal],
   );
+
+  if (refusal)
+    return (
+      <span className="flex items-center gap-xs">
+        <button
+          className={msgActionBtnClass}
+          disabled
+          title="Fork conversation from this message"
+          aria-describedby={refusalId}
+        >
+          <ForkIcon />
+        </button>
+        <span id={refusalId} className="text-xs text-text-secondary">
+          {refusal.message}
+        </span>
+      </span>
+    );
 
   const label = forking ? "Forking…" : "Fork";
   const glyph = forking ? <Spinner size="sm" tone="inherit" /> : <ForkIcon />;
 
-  if (messageIndex === 0 && forkProjectName !== undefined) {
+  if (messageIndex === 0 && role === "user" && forkProjectName !== undefined) {
     return (
       <AgentProfileChoicePopover
         projectName={forkProjectName}

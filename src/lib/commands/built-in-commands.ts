@@ -13,6 +13,108 @@
 
 import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
 import type { CommandItem } from "./schemas";
+import type { BuiltInCommandName } from "./schemas";
+import type { ExecutionRequirements } from "@/lib/agent-backends/execution-admission";
+
+export const messageGenerationRequirements = {
+  facet: "tasks",
+  executionClass: "nongoverned-task",
+  executionProfile: "standard",
+  operation: "message-generation",
+} as const satisfies ExecutionRequirements;
+export const automaticRepairRequirements = {
+  facet: "tasks",
+  executionClass: "governed-execution",
+  executionProfile: "standard",
+  requiresPrivilegedInstructions: true,
+  operation: "automatic-repair",
+} as const satisfies ExecutionRequirements;
+
+interface CommandExecution {
+  required: readonly ExecutionRequirements[];
+  stages: readonly {
+    stage: "message-generation" | "validation-repair" | "conflict-assistance";
+    requirements: readonly ExecutionRequirements[];
+  }[];
+}
+
+export const BUILT_IN_COMMAND_EXECUTION = {
+  "/spec": { required: [], stages: [] },
+  "/align": { required: [], stages: [] },
+  "/ticket": {
+    required: [
+      { ...messageGenerationRequirements, operation: "ticket" },
+      {
+        ...messageGenerationRequirements,
+        operation: "ticket-repair",
+        executionProfile: "isolated-one-shot",
+      },
+    ],
+    stages: [],
+  },
+  "/collab": {
+    required: [
+      automaticRepairRequirements,
+      {
+        facet: "conversation",
+        executionClass: "governed-execution",
+        operation: "collaboration",
+      },
+    ],
+    stages: [],
+  },
+  "/commit": {
+    required: [],
+    stages: [
+      {
+        stage: "message-generation",
+        requirements: [
+          messageGenerationRequirements,
+          {
+            ...messageGenerationRequirements,
+            executionProfile: "isolated-one-shot",
+          },
+        ],
+      },
+      {
+        stage: "validation-repair",
+        requirements: [automaticRepairRequirements],
+      },
+    ],
+  },
+  "/merge": {
+    required: [],
+    stages: [
+      {
+        stage: "message-generation",
+        requirements: [
+          messageGenerationRequirements,
+          {
+            ...messageGenerationRequirements,
+            executionProfile: "isolated-one-shot",
+          },
+        ],
+      },
+      {
+        stage: "validation-repair",
+        requirements: [automaticRepairRequirements],
+      },
+      {
+        stage: "conflict-assistance",
+        requirements: [automaticRepairRequirements],
+      },
+    ],
+  },
+  "/rebase": {
+    required: [],
+    stages: [
+      {
+        stage: "conflict-assistance",
+        requirements: [automaticRepairRequirements],
+      },
+    ],
+  },
+} as const satisfies Record<BuiltInCommandName, CommandExecution>;
 
 interface BuiltInCommand {
   readonly item: CommandItem;

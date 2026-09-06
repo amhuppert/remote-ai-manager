@@ -1,4 +1,8 @@
 import { z } from "zod";
+import type {
+  ConversationExecutionPolicy,
+  TaskExecutionPolicy,
+} from "./execution-admission";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "./conversation";
 import type { BackendContinuityAdapter } from "./continuity";
@@ -190,6 +194,7 @@ export interface AgentBackendMetadata {
 }
 
 export interface AgentBackendConversationFacet {
+  execution: ConversationExecutionPolicy;
   factory: ConversationBackendFactory;
   /** Session/thread lifecycle (start/validate/resumeOrRecover/fork). */
   continuity: BackendContinuityAdapter;
@@ -225,6 +230,7 @@ export type FsWriteRestrictionSupport = z.infer<
 >;
 
 export interface AgentBackendTaskFacet {
+  execution: TaskExecutionPolicy;
   runner: AgentTaskRunner;
   structuredOutput: StructuredOutputSupport;
   transcript: BackendTaskTranscriptProjection;

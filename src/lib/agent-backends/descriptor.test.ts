@@ -128,6 +128,10 @@ function makeDescriptor(
       }),
     },
     conversation: {
+      execution: {
+        classes: ["ordinary-conversation"],
+        instructionDelivery: "user-message",
+      },
       factory: fakeConversationFactory(backend),
       continuity: fakeContinuity(backend),
       capabilities: {
@@ -152,6 +156,11 @@ function makeDescriptor(
       },
     },
     tasks: {
+      execution: {
+        classes: ["nongoverned-task"],
+        instructionDelivery: "privileged",
+        profiles: ["standard", "isolated-one-shot"],
+      },
       runner: fakeTaskRunner(backend),
       structuredOutput: "backend_native",
       transcript: {

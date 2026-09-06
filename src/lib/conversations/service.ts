@@ -1,4 +1,8 @@
 import crypto from "node:crypto";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
+import { backendForkRefusal } from "@/lib/agent-backends/fork-admission";
+import { isOrdinaryConversationRole } from "./schemas";
 import { rm } from "node:fs/promises";
 import {
   DEFAULT_AGENT_BACKEND_ID,
@@ -223,6 +227,17 @@ export function createConversationService(
         "createConversation accepts either a profile reference or a pre-resolved profileSnapshot, not both.",
       );
     }
+
+    await assertBackendExecution(
+      opts?.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
+      {
+        facet: "conversation",
+        operation: "create-conversation",
+        executionClass: isOrdinaryConversationRole(opts?.role ?? null)
+          ? "ordinary-conversation"
+          : "governed-execution",
+      },
+    );
 
     // Before the row exists: an unresolvable reference must refuse the creation
     // rather than leave a conversation running under a profile nobody chose.
@@ -506,8 +521,8 @@ export function createConversationService(
     const targetRole = targetMessage.role;
 
     // Case 3 (user fork at index 0) is a "start over" — no backend derivation
-    // needed. Cases 1 and 2 carry forward the source SDK session, so the
-    // source must have one.
+    // needed. Cases 1 and 2 derive history from the source agent, so the
+    // source must have a backend reference.
     const needsBackendRef = !(targetRole === "user" && messageIndex === 0);
     const sourceBackendRef = resolveSourceBackendRef(source);
     if (needsBackendRef && !sourceBackendRef) {
@@ -517,12 +532,32 @@ export function createConversationService(
       );
     }
 
+    if (needsBackendRef && sourceBackendRef) {
+      const descriptor = getBackendDescriptor(sourceBackendRef.backend);
+      const refusal = backendForkRefusal(
+        {
+          id: descriptor.id,
+          label: descriptor.metadata.label,
+          capabilities: descriptor.conversation?.capabilities ?? null,
+        },
+        messageIndex,
+        targetRole,
+      );
+      if (refusal) {
+        logger.warn("conversation.fork_unavailable", {
+          sourceConversationId,
+          ...refusal,
+        });
+        throw new BackendAdmissionError(refusal);
+      }
+    }
+
     // --- Phase 2: Compute role-aware fork parameters ---
     //
     // Three cases:
     //   (1) assistant fork at any index → inclusive copy + inclusive anchor.
     //       The new conversation keeps the assistant's response visible; the
-    //       SDK fork (next task) will anchor on that assistant UUID.
+    //       native backend fork anchors on that assistant UUID.
     //   (2) user fork at index N > 0 → exclusive copy + exclusive anchor.
     //       The new conversation copies messages 0..N-1; the user's text at
     //       N becomes pendingPromptText for re-prompting after edit.
@@ -638,14 +673,14 @@ export function createConversationService(
     //
     // The adapter normalizes the outcome:
     // - native: an eagerly-forked backend session, persisted as backendRef.
-    // - synthetic_seed: a transcript-derived seed prepended to
-    //   pendingPromptText; backendRef stays null so the next prompt starts a
-    //   fresh backend session.
-    // - unsupported: the fork proceeds with no backend continuity at all.
+    // - synthetic_seed: immutable history stored separately from the editable
+    //   draft; backendRef stays null so the next prompt starts a fresh agent.
+    // - unsupported: creation fails and provisional artifacts are removed.
     // If the adapter can produce no outcome it throws, and the provisional row
     // is removed — no conversation is created.
     let backendRef: AgentSessionRef | null = null;
     let forkMode: "native" | "synthetic" | null = null;
+    let syntheticSeed: string | undefined;
 
     if (derivedSourceRef) {
       const continuity = getContinuityAdapter(derivedSourceRef.backend);
@@ -655,11 +690,20 @@ export function createConversationService(
           projectPath,
           anchorMessageId: forkLocator,
           sourceTranscriptPath: source.transcriptPath,
-          messageIndex,
+          messageIndex: targetRole === "user" ? messageIndex - 1 : messageIndex,
         });
+        if (outcome.kind === "unsupported")
+          throw new Error(
+            "The backend cannot fork this conversation with its history.",
+          );
       } catch (err) {
         const reason = getErrorMessage(err);
-        await removeProvisionalFork(projectPath, sessionName, newId);
+        await removeProvisionalFork(
+          projectPath,
+          sessionName,
+          newId,
+          transcriptPath,
+        );
         logger.warn("conversation.fork.failed", {
           projectPath,
           sessionName,
@@ -684,10 +728,7 @@ export function createConversationService(
           forkedSessionRef: outcome.ref.ref,
         });
       } else if (outcome.kind === "synthetic_seed") {
-        pendingPromptText =
-          pendingPromptText && pendingPromptText.length > 0
-            ? `${outcome.seed}\n\n---\n\n${pendingPromptText}`
-            : outcome.seed;
+        syntheticSeed = outcome.seed;
         forkMode = "synthetic";
         logger.info("conversation.fork.synthetic", {
           projectPath,
@@ -696,13 +737,6 @@ export function createConversationService(
           sourceSessionRef: derivedSourceRef.ref,
           forkLocator,
           seedLength: outcome.seed.length,
-        });
-      } else {
-        logger.warn("conversation.fork.unsupported", {
-          projectPath,
-          sessionName,
-          sourceConversationId,
-          backend: derivedSourceRef.backend,
         });
       }
 
@@ -718,6 +752,7 @@ export function createConversationService(
           conversation.pendingPromptText = settledPendingPromptText;
           if (conversation.forkedFrom) {
             conversation.forkedFrom.forkMode = forkMode;
+            conversation.forkedFrom.syntheticSeed = syntheticSeed;
             conversation.forkedFrom.forkPending = false;
           }
         },
@@ -746,7 +781,20 @@ export function createConversationService(
     projectPath: string,
     sessionName: string,
     conversationId: string,
+    transcriptPath: string | null,
   ): Promise<void> {
+    if (transcriptPath) {
+      try {
+        await removeTranscript(transcriptPath);
+      } catch (err) {
+        logger.error("conversation.fork.transcript_cleanup_failed", {
+          projectPath,
+          sessionName,
+          conversationId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
     try {
       await mutateSession(
         projectPath,

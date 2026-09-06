@@ -134,6 +134,47 @@ afterEach(() => {
 });
 
 describe("PromptComposer cancellation affordance", () => {
+  it.each(["retry", "discard"] as const)(
+    "offers %s for an uncertain delivery and blocks another send",
+    async (action) => {
+      const entry = makeQueueEntry({
+        id: "held",
+        status: "uncertain",
+        content: [{ type: "text", text: "possibly delivered" }],
+      });
+      const props = {
+        ...makeProps({ ...makeConversation([entry]), status: "awaiting" }),
+        sending: false,
+        promptText: "another request",
+      };
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async (input) => {
+          if (String(input).endsWith("/queue/held"))
+            return Response.json({ resolved: true, id: "held", action });
+          return Response.json({});
+        });
+      renderWithQuery(<PromptComposer {...props} />);
+      expect(screen.getByText(/may repeat work/i)).toBeInTheDocument();
+      expect(screen.getByTestId("prompt-send")).toBeDisabled();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name:
+            action === "retry" ? "Retry delivery" : "Discard queued message",
+        }),
+      );
+      await waitFor(() =>
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "/api/projects/proj%20name/sessions/sess%20name/conversations/conv-1/queue/held",
+          expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({ action }),
+          }),
+        ),
+      );
+    },
+  );
+
   it("cancels a pending queued entry via DELETE and removes it optimistically", async () => {
     const entry = makeQueueEntry({
       id: "q1",

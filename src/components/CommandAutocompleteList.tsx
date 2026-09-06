@@ -16,6 +16,7 @@ import {
  * are sourced, scored, and labelled.
  */
 export interface CommandAutocompleteListItem {
+  disabled?: boolean;
   id: string;
   /** Short label rendered prominently (e.g. `/spec-init`) */
   name: string;
@@ -76,6 +77,7 @@ export function CommandAutocompleteList({
           key={item.id}
           id={`command-autocomplete-option-${i}`}
           active={i === selectedIndex}
+          disabled={item.disabled}
           onHover={() => onHover(i)}
           onSelect={() => onSelect(item)}
         >
@@ -85,7 +87,7 @@ export function CommandAutocompleteList({
             className="shrink-0 text-[0.8rem] whitespace-nowrap text-text-primary"
           />
           {item.description !== undefined && (
-            <span className="min-w-0 flex-1 overflow-hidden text-[0.72rem] text-ellipsis whitespace-nowrap text-text-secondary">
+            <span className="min-w-0 flex-1 text-[0.72rem] whitespace-normal text-text-secondary">
               {item.description}
             </span>
           )}

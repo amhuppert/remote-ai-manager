@@ -1,3 +1,7 @@
+import type {
+  ExecutionIntent,
+  TaskExecutionProfile,
+} from "@/lib/agent-backends/execution-admission";
 /**
  * Named entrypoint workflow callers use to drive a single `task_run` turn
  * through the conversation actor.
@@ -44,7 +48,8 @@ import type {
 
 const logger = createLogger("conversation.execute-workflow-task-run");
 
-export interface ExecuteWorkflowTaskRunInput {
+export interface ExecuteWorkflowTaskRunInput extends ExecutionIntent {
+  executionProfile?: TaskExecutionProfile;
   projectPath: string;
   sessionName: string;
   conversationId: string;
@@ -346,6 +351,9 @@ async function runOnce(
 
   actor.send({
     type: "SUBMIT_TASK_RUN",
+    executionClass: input.executionClass,
+    executionProfile: input.executionProfile,
+    requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
     promptText: input.prompt,
     ...(input.modelSelection !== undefined
       ? { modelSelection: input.modelSelection }

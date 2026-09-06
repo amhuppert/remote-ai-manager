@@ -1,4 +1,8 @@
 import type {
+  ConversationExecutionPolicy,
+  TaskExecutionPolicy,
+} from "../execution-admission";
+import type {
   AgentBackendDescriptor,
   AgentBackendMetadata,
   BackendConversationCapabilities,
@@ -14,6 +18,17 @@ import type { McpBackendCapabilities } from "@/lib/mcp/backend-capabilities";
 import type { BackendNativeMemory } from "../native-memory";
 import { getDefaultClaudeModel, getEffortLevelsForModel } from "../schemas";
 import { CLAUDE_DEFAULT_STALL_TIMEOUT_MS } from "./shared";
+
+export const claudeConversationExecution: ConversationExecutionPolicy = {
+  classes: ["ordinary-conversation", "governed-execution"],
+  instructionDelivery: "privileged",
+};
+
+export const claudeTaskExecution: TaskExecutionPolicy = {
+  classes: ["nongoverned-task", "governed-execution"],
+  instructionDelivery: "privileged",
+  profiles: ["standard", "isolated-one-shot"],
+};
 
 /**
  * Backend catalog metadata for Claude — the single source for model labels,
@@ -149,6 +164,7 @@ export function createClaudeBackendDescriptor(
       },
     },
     conversation: {
+      execution: claudeConversationExecution,
       factory: deps.conversationFactory,
       continuity: deps.continuity,
       capabilities: claudeConversationCapabilities,
@@ -157,6 +173,7 @@ export function createClaudeBackendDescriptor(
       transcript: claudeConversationTranscriptProjection,
     },
     tasks: {
+      execution: claudeTaskExecution,
       runner: deps.taskRunner,
       structuredOutput: "post_validation",
       transcript: claudeTaskTranscriptProjection,

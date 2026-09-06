@@ -1,3 +1,9 @@
+import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
+import {
+  BackendAdmissionError,
+  type ExecutionClass,
+} from "@/lib/agent-backends/execution-admission";
 /**
  * Production actor implementations for the conversation machine.
  *
@@ -168,7 +174,10 @@ import {
   createBackgroundTasksLostHandler,
 } from "./pre-turn/notices-drain";
 import { resolveConversationProfileInjection } from "./pre-turn/profile-injection";
-import { resolveSyntheticForkSeed } from "./pre-turn/fork-seed";
+import {
+  resolveSyntheticForkSeed,
+  acknowledgeSyntheticForkSeed,
+} from "./pre-turn/fork-seed";
 import { registerFocusMemoryIfPresent } from "./pre-turn/focus-memory";
 import { wireTurnAbort } from "./pre-turn/abort-wiring";
 import { createQueuedDeliveryAccounting } from "./post-turn/queued-delivery-accounting";
@@ -393,6 +402,12 @@ export interface TurnExecutionDeps {
 /** Transcript I/O: JSONL append, image persistence, transcript reads. */
 export interface TranscriptDeps {
   getTranscriptPath(conversationId: string): Promise<string>;
+  /** Durable queue handoff: deduplicate by message id and propagate disk errors. */
+  appendTranscriptEntryOnce(
+    conversationId: string,
+    entry: TranscriptEntry & { id: string },
+    meta?: TranscriptBroadcastMeta,
+  ): Promise<void>;
 
   // `meta` is forwarded to `appendTranscriptEntry` so callers that know the
   // project + session identity (the conversation turn actor and external-turn
@@ -506,11 +521,19 @@ export interface CapabilityDeps {
  * Durable queue delivery result. Used only by auto-drained queued turns to
  * record the outcome of a claimed delivery batch against the message queue.
  * `markQueuedDelivered` is called after the coalesced user transcript entry
- * is appended; `markQueuedPending` returns a batch to `pending` for a
- * recoverable acceptance failure; `markQueuedFailed` marks it terminally
- * `failed`. Wired to `messageQueueService` in production.
+ * is appended. Proven non-delivery may return to `pending`; rejected and
+ * uncertain deliveries retain their input for explicit review. Wired to
+ * `messageQueueService` in production.
  */
 export interface QueueDeliveryDeps {
+  markQueuedUncertain(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+    error: string;
+  }): Promise<void>;
   markQueuedDelivered(input: {
     projectPath: string;
     sessionName: string;
@@ -574,6 +597,7 @@ export type ActorDurableWriteSeams = Pick<
   | "markQueuedDelivered"
   | "markQueuedPending"
   | "markQueuedFailed"
+  | "markQueuedUncertain"
   | "recordNotepadDeliveries"
   | "recordMemoryIndexDeliveries"
   | "settleNotepadChangeNotice"
@@ -688,6 +712,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     acquireConversationLock: lockMod.acquireConversationLock,
     acquireQuerySlot: semaphoreMod.acquireQuerySlot,
     getTranscriptPath: transcriptMod.getTranscriptPath,
+    appendTranscriptEntryOnce: (cid, entry, meta) =>
+      transcriptMod.appendTranscriptEntryOnce(cid, entry, undefined, meta),
     readConfig: configMod.readConfig,
     safeAppendTranscriptEntry: (
       cid: string,
@@ -829,6 +855,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     markQueuedDelivered: messageQueueMod.messageQueueService.markDelivered,
     markQueuedPending: messageQueueMod.messageQueueService.markPending,
     markQueuedFailed: messageQueueMod.messageQueueService.markFailed,
+    markQueuedUncertain: messageQueueMod.messageQueueService.markUncertain,
     log: logger,
   } satisfies ActorImplementationDeps;
 }
@@ -979,7 +1006,24 @@ function formatTurnStartMcpApplyFailure(
 // Shared AgentCall dispatch
 // ============================================================
 
+function admissionFailure(error: BackendAdmissionError): PromptActorResult {
+  return {
+    ...buildFailedTurnResult({
+      contentBlocks: [],
+      error: error.message,
+      continuationDisposition: "retain",
+    }),
+    failure: {
+      kind: "capability_unavailable",
+      message: error.message,
+      code: error.code,
+      retryable: false,
+    },
+  };
+}
+
 interface DispatchTurnViaAgentCallInput {
+  executionClass: ExecutionClass;
   executeAgentCall: ActorImplementationDeps["executeAgentCall"];
   getRuntime: () => ConversationBackendRuntime;
   replaceRuntime: () => Promise<ConversationBackendRuntime>;
@@ -1041,6 +1085,7 @@ async function dispatchTurnViaAgentCall(
 
   const request: AgentCallRequest = {
     kind: "conversation_turn",
+    executionClass: input.executionClass,
     prompt: input.promptText,
     backend: input.backend,
     writeCapability: "write_capable",
@@ -1273,6 +1318,7 @@ async function resetMemoryIndexAfterBackendCompaction(
  */
 export async function executePromptForMachine(
   input: ExecutePromptInput,
+  signal?: AbortSignal,
 ): Promise<PromptActorResult> {
   // Route the actor's deps through the persistence facet: durable passes them
   // through; ephemeral gates every durable write seam to a no-op (Design 4).
@@ -1297,6 +1343,58 @@ export async function executePromptForMachine(
     );
   }
   const runtimeState = runtime;
+  const persistedConversation =
+    input.persistence === "ephemeral"
+      ? null
+      : await deps.getConversation(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        );
+  if (input.persistence !== "ephemeral" && input.queuedDelivery === undefined) {
+    if (
+      persistedConversation?.pendingQueue.some((row) =>
+        queuedMessageNeedsReview(row.status),
+      )
+    ) {
+      const error = "Review queued deliveries before sending another prompt.";
+      deps.log.warn("queue.prompt_blocked_for_review", {
+        ...scopeRefFromStoreSessionName(input.sessionName),
+        conversationId: input.conversationId,
+      });
+      runtimeState.streamEmit?.("error", {
+        message: error,
+        code: "QUEUE_REVIEW_REQUIRED",
+      });
+      return buildFailedTurnResult({
+        contentBlocks: [],
+        error,
+        continuationDisposition: "retain",
+      });
+    }
+  }
+
+  const executionClass: ExecutionClass =
+    isOrdinaryConversationRole(input.role) &&
+    runtimeState.workflowContext === undefined &&
+    input.fsWritePolicy === undefined
+      ? "ordinary-conversation"
+      : "governed-execution";
+  try {
+    await assertBackendExecution(input.agentBackend, {
+      facet: "conversation",
+      operation: "conversation-turn",
+      executionClass,
+      requiresFsWriteRestriction: input.fsWritePolicy !== undefined,
+    });
+  } catch (error) {
+    if (!(error instanceof BackendAdmissionError)) throw error;
+    runtimeState.streamEmit?.("error", {
+      message: error.message,
+      code: error.code,
+    });
+    return admissionFailure(error);
+  }
   runtimeState.currentTurnAutonomous = input.autonomous === true;
 
   const config = await deps.readConfig();
@@ -1516,7 +1614,17 @@ export async function executePromptForMachine(
     conversationId: input.conversationId,
     queuedDelivery: input.queuedDelivery,
     appendUserEntry: () =>
-      safeAppendWithMeta(input.conversationId, buildUserTranscriptEntry()),
+      input.queuedDelivery
+        ? deps.appendTranscriptEntryOnce(
+            input.conversationId,
+            {
+              ...buildUserTranscriptEntry(),
+              id:
+                currentTurnMessageId ?? input.queuedDelivery.deliveryAttemptId,
+            },
+            broadcastMeta,
+          )
+        : safeAppendWithMeta(input.conversationId, buildUserTranscriptEntry()),
   });
 
   await queuedAccounting.appendUserEntryAtDispatch();
@@ -1874,6 +1982,7 @@ export async function executePromptForMachine(
         : null;
 
     const newRuntime = await factory.createRuntime({
+      executionClass,
       conversationId: input.conversationId,
       projectPath: input.projectPath,
       projectName,
@@ -1972,6 +2081,7 @@ export async function executePromptForMachine(
     input.agentBackend,
     config,
   );
+  signal?.throwIfAborted();
   const abortWiring = wireTurnAbort(deps, {
     runtimeState,
     conversationId: input.conversationId,
@@ -1991,6 +2101,8 @@ export async function executePromptForMachine(
     },
   });
   const abortController = abortWiring.abortController;
+  const abortInvocation = () => abortController.abort(signal?.reason);
+  signal?.addEventListener("abort", abortInvocation, { once: true });
 
   // ---------------------------------------------------------------
   // Build turn input and execute
@@ -1998,6 +2110,7 @@ export async function executePromptForMachine(
   const contentBlocks: MessageContentBlock[] = [];
   let persistedContentEventCount = 0;
   let sawErrorEvent = false;
+  let seedBackendRef = input.backendRef;
 
   // onEvent: translate backend events into existing SSE emit path
   const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
@@ -2090,11 +2203,21 @@ export async function executePromptForMachine(
             settled,
           });
         }
+        if (syntheticForkSeed && seedBackendRef) {
+          await acknowledgeSyntheticForkSeed(deps, {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            seed: syntheticForkSeed,
+            backendRef: seedBackendRef,
+          });
+        }
         await queuedAccounting.handleInputAccepted();
         break;
       }
 
       case "backend_init":
+        seedBackendRef = event.backendRef;
         runtimeState.sendToMachine?.({
           type: "BACKEND_INIT",
           backendRef: event.backendRef,
@@ -2152,7 +2275,7 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
       agentBackend: input.agentBackend,
       backendRef: input.backendRef,
-      forkedFrom: input.forkedFrom,
+      forkedFrom: persistedConversation?.forkedFrom ?? input.forkedFrom,
       transcriptPath: input.transcriptPath,
     });
 
@@ -2444,6 +2567,7 @@ export async function executePromptForMachine(
     // normalizes every failure through the backend's failure classifier, so
     // the actor consumes only the widened `AgentCallResult`.
     agentCallResult = await dispatchTurnViaAgentCall({
+      executionClass,
       executeAgentCall: deps.executeAgentCall,
       getRuntime: () => backendRuntime!,
       replaceRuntime: recreateRuntimeForTurn,
@@ -2507,7 +2631,12 @@ export async function executePromptForMachine(
       // Pre-turn MCP rejection surfaces its formatted message directly; a
       // normalized dispatch throw keeps the legacy "SDK error:" surface.
       if (turnlessFailure.error.failureKind === "capability_unavailable") {
-        runtimeState.streamEmit?.("error", { message: errorMsg });
+        runtimeState.streamEmit?.("error", {
+          message: errorMsg,
+          ...(turnlessFailure.error.code !== undefined
+            ? { code: turnlessFailure.error.code }
+            : {}),
+        });
       } else {
         deps.log.error("prompt.sdk_error", {
           ...scopeRef,
@@ -2572,6 +2701,7 @@ export async function executePromptForMachine(
       continuationDisposition: "retain",
     });
   } finally {
+    signal?.removeEventListener("abort", abortInvocation);
     abortWiring.cleanup();
     runtimeState.currentTurnAutonomous = undefined;
     runtimeState.currentTurnMessageId = undefined;
@@ -2812,6 +2942,19 @@ export async function runTaskRunTurnForMachine(
   const deps = resolveConversationPersistenceAdapter(
     input.persistence,
   ).gateActorDurableWrites(await getDeps());
+  try {
+    await assertBackendExecution(input.agentBackend, {
+      facet: "tasks",
+      operation: "task-run",
+      executionClass: input.executionClass,
+      executionProfile: input.executionProfile ?? "standard",
+      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
+      requiresFsWriteRestriction: input.fsWritePolicy !== undefined,
+    });
+  } catch (error) {
+    if (!(error instanceof BackendAdmissionError)) throw error;
+    return admissionFailure(error);
+  }
   const transcriptProjection = getTaskTranscriptProjection(input.agentBackend);
 
   // Diagnostic identity (R1.3) — see the note in `executePromptForMachine`. A
@@ -2942,6 +3085,9 @@ export async function runTaskRunTurnForMachine(
 
   const request: AgentCallRequest = {
     kind: "task_run",
+    executionClass: input.executionClass,
+    executionProfile: input.executionProfile ?? "standard",
+    requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
     prompt: effectivePrompt,
     backend: input.agentBackend,
     writeCapability: permissions.writeCapability,
@@ -3127,6 +3273,9 @@ export async function runTaskRunTurnForMachine(
             kind: failureKind,
             message: errorMsg,
             retryable: result.outcome.error.retryable,
+            ...(result.outcome.error.code !== undefined
+              ? { code: result.outcome.error.code }
+              : {}),
             ...(result.outcome.error.retryAfterHint !== undefined
               ? { retryAfterHint: result.outcome.error.retryAfterHint }
               : {}),
@@ -3235,4 +3384,39 @@ export async function verifyCleanupForMachine(
   }
 
   return verification;
+}
+
+/** Cancellation must finish dispatch and teardown before review can repeat work. */
+export async function finalizeQueuedDeliveryForMachine(
+  input: import("./types").FinalizeQueuedDeliveryInput,
+): Promise<void> {
+  const runtime = getConversationRuntime(
+    conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    ),
+  );
+  await runtime?.turnCompletion;
+  const deps = resolveConversationPersistenceAdapter(
+    input.persistence,
+  ).gateActorDurableWrites(await getDeps());
+  try {
+    await deps.markQueuedUncertain({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      ids: input.queuedDelivery.messageIds,
+      deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+      error:
+        "Delivery ended without a durable acknowledgement. Review before retrying or discarding.",
+    });
+  } catch (error) {
+    deps.log.error("queue.finalization_failed", {
+      ...scopeRefFromStoreSessionName(input.sessionName),
+      conversationId: input.conversationId,
+      deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+      error: getErrorMessage(error),
+    });
+  }
 }

@@ -1,3 +1,4 @@
+import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
 /**
  * Agent run job service: a one-shot backend task run as a job.
  *
@@ -24,7 +25,6 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
-import { getTaskRunner } from "@/lib/agent-backends/registry";
 import { backendLabel } from "@/lib/agent-backends/catalog";
 import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
 import {
@@ -390,9 +390,9 @@ export function cancelAgentRun(runId: string, owner: RunOwner): CancelResult {
 export async function runAgentTaskDefault(
   input: AgentRunExecInput,
 ): Promise<AgentRunExecResult> {
-  const runner = getTaskRunner(input.backend);
   try {
-    const result = await runner.run({
+    const result = await runAdmittedTask(input.backend, {
+      executionClass: "nongoverned-task",
       workingDirectory: input.workingDirectory,
       prompt: input.prompt,
       modelSelection: input.modelSelection,

@@ -276,6 +276,9 @@ function liveTaskRun(
 
   return async (input) => {
     const actorResult = await runTaskRunTurnForMachine({
+      executionClass: input.executionClass,
+      executionProfile: input.executionProfile,
+      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
       persistence: "ephemeral",
       projectPath: input.projectPath,
       projectName: "repo",

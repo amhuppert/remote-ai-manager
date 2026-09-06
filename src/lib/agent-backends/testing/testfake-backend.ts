@@ -589,6 +589,10 @@ export function createTestFakeBackend(
       }),
     },
     conversation: {
+      execution: {
+        classes: ["ordinary-conversation"],
+        instructionDelivery: "user-message",
+      },
       factory,
       continuity,
       capabilities,
@@ -600,6 +604,11 @@ export function createTestFakeBackend(
       transcript: conversationTranscriptProjection,
     },
     tasks: {
+      execution: {
+        classes: ["nongoverned-task"],
+        instructionDelivery: "user-message",
+        profiles: ["standard", "isolated-one-shot"],
+      },
       runner,
       structuredOutput: "post_validation",
       transcript: taskTranscriptProjection,

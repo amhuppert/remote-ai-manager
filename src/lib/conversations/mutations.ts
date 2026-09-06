@@ -1,4 +1,14 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  conversationTargetApiBase,
+  type ConversationTarget,
+} from "./conversation-target";
+import { queueReviewResponseSchema } from "@/lib/prompt/schemas";
+import type { QueueReviewAction } from "./message-queue-schemas";
+import {
+  useMutation,
+  useQueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { conversationKeys } from "./query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
@@ -690,6 +700,38 @@ export function useGenerateConversationNameMutation() {
       for (const queryKey of genericConversationInvalidateKeys(variables)) {
         void queryClient.invalidateQueries({ queryKey });
       }
+    },
+  });
+}
+
+/** Review changes are reconciled from durable state even if the response is lost. */
+export function useReviewQueuedMessageMutation(
+  target: ConversationTarget | null,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: QueueReviewAction }) => {
+      if (!target)
+        throw new Error("A conversation is required for queue review");
+      return mutationFetch(
+        `${conversationTargetApiBase(target)}/queue/${encodeURIComponent(id)}`,
+        "review-queued-message",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        },
+        queueReviewResponseSchema,
+      );
+    },
+    onSettled: async () => {
+      if (!target) return;
+      const keys: QueryKey[] = [...genericConversationInvalidateKeys(target)];
+      if (target.scope === "session")
+        keys.push(sessionKeys.detail(target.projectName, target.sessionName));
+      await Promise.all(
+        keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      );
     },
   });
 }

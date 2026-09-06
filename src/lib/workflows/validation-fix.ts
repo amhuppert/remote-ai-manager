@@ -357,6 +357,8 @@ async function fixValidationErrorsImpl(
       conversationId,
       worktreePath,
       kind: "task_run",
+      executionClass: "governed-execution",
+      executionProfile: "standard",
       prompt,
       systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
       origin: { source: "workflow" },

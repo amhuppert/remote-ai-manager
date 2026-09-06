@@ -46,7 +46,7 @@ describe("GET /api/agent-backends", () => {
     expect(cursor.label).toBe("Cursor");
     expect(cursor.defaultModelId).toBe("composer-2.5");
     expect(cursor.capabilities?.queue).toEqual({
-      acceptsWhileRunning: false,
+      acceptsWhileRunning: true,
       deliveryTiming: "next_turn",
     });
     // Facet presence is what the facet-gated pickers read; the wire has to
@@ -83,6 +83,7 @@ describe("GET /api/agent-backends", () => {
           "capabilities",
           "defaultModelId",
           "defaultTimeoutMs",
+          "execution",
           "facets",
           "id",
           "label",

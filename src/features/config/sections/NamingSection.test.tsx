@@ -3,7 +3,21 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { renderWithQuery } from "@/test/component-mocks";
+import {
+  createTestQueryClient,
+  renderWithQuery as renderQuery,
+} from "@/test/component-mocks";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
+
+function renderWithQuery(ui: React.ReactElement) {
+  const client = createTestQueryClient();
+  client.setQueryData(
+    backendCatalogKeys.catalog(),
+    listBackendCatalogEntries(),
+  );
+  return renderQuery(ui, client);
+}
 
 import { NamingSection } from "./NamingSection";
 import { makeController } from "./test-controller";

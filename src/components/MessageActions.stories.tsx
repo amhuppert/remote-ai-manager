@@ -154,3 +154,19 @@ export const CompactFailed = {
     ]),
   ],
 } satisfies Story;
+
+export const ForkUnavailable = {
+  args: {
+    role: "assistant",
+    forkRefusal: {
+      backend: "cursor",
+      operation: "fork",
+      code: "backend-fork-unsupported",
+      message: "Cursor cannot fork this conversation with its history.",
+    },
+  },
+} satisfies Story;
+
+export const CursorStartOver = {
+  args: { ...ForkUnavailable.args, role: "user", messageIndex: 0 },
+} satisfies Story;

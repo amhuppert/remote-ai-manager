@@ -25,6 +25,7 @@ describe("agentCallRequestSchema", () => {
   it("accepts a minimal conversation_turn request", () => {
     const parsed = agentCallRequestSchema.parse({
       kind: "conversation_turn",
+      executionClass: "ordinary-conversation",
       prompt: "hello",
     });
     expect(parsed.kind).toBe("conversation_turn");
@@ -33,6 +34,7 @@ describe("agentCallRequestSchema", () => {
   it("accepts a conversation_turn with lane reuse, tooling, and structured output", () => {
     const req: AgentCallRequest = agentCallRequestSchema.parse({
       kind: "conversation_turn",
+      executionClass: "ordinary-conversation",
       prompt: "hello",
       backend: "claude",
       laneRef: { workflowId: "wf-1", laneId: "primary" },
@@ -61,6 +63,7 @@ describe("agentCallRequestSchema", () => {
     expect(
       agentCallRequestSchema.safeParse({
         kind: "task_run",
+        executionClass: "nongoverned-task",
         backend: "codex",
         prompt: "do the thing",
         modelSelection: {
@@ -73,6 +76,7 @@ describe("agentCallRequestSchema", () => {
     expect(
       agentCallRequestSchema.safeParse({
         kind: "task_run",
+        executionClass: "nongoverned-task",
         backend: "codex",
         prompt: "do the thing",
         modelSelection: { modelId: "gpt-5.2" },
@@ -89,6 +93,7 @@ describe("agentCallRequestSchema", () => {
       expect(
         agentCallRequestSchema.safeParse({
           kind: "task_run",
+          executionClass: "nongoverned-task",
           backend: "codex",
           prompt: "do the thing",
           modelSelection: {
@@ -114,6 +119,8 @@ describe("agentCallRequestSchema", () => {
       ]) {
         const result = agentCallRequestSchema.safeParse({
           kind,
+          executionClass:
+            kind === "task_run" ? "nongoverned-task" : "ordinary-conversation",
           ...(kind === "task_run" ? { backend: "codex" } : {}),
           prompt: "do the thing",
           [field]: "value",
@@ -127,6 +134,7 @@ describe("agentCallRequestSchema", () => {
   it("carries governing systemInstructions on both request kinds", () => {
     const conversation = agentCallRequestSchema.parse({
       kind: "conversation_turn",
+      executionClass: "ordinary-conversation",
       prompt: "hello",
       systemInstructions: "the governing charter",
     });
@@ -134,6 +142,7 @@ describe("agentCallRequestSchema", () => {
 
     const task = agentCallRequestSchema.parse({
       kind: "task_run",
+      executionClass: "nongoverned-task",
       backend: "codex",
       prompt: "do the thing",
       systemInstructions: "the governing charter",
@@ -144,6 +153,7 @@ describe("agentCallRequestSchema", () => {
   it("accepts a task_run request and requires an explicit backend", () => {
     const parsed = agentCallRequestSchema.parse({
       kind: "task_run",
+      executionClass: "nongoverned-task",
       backend: "codex",
       prompt: "do the thing",
       systemInstructions: "be terse",
@@ -161,6 +171,7 @@ describe("agentCallRequestSchema", () => {
   it("accepts an explicit structured-output repair budget including opt-out", () => {
     const parsed = agentCallRequestSchema.parse({
       kind: "task_run",
+      executionClass: "nongoverned-task",
       backend: "codex",
       prompt: "do the thing",
       outputSchema: { type: "object" },
@@ -175,6 +186,7 @@ describe("agentCallRequestSchema", () => {
       expect(
         agentCallRequestSchema.safeParse({
           kind: "conversation_turn",
+          executionClass: "ordinary-conversation",
           prompt: "do the thing",
           outputSchema: { type: "object" },
           structuredOutputRepair: { maxAttempts },
@@ -186,6 +198,7 @@ describe("agentCallRequestSchema", () => {
   it("rejects a task_run that omits the backend", () => {
     const result = agentCallRequestSchema.safeParse({
       kind: "task_run",
+      executionClass: "nongoverned-task",
       prompt: "do the thing",
     });
     expect(result.success).toBe(false);
@@ -202,6 +215,7 @@ describe("agentCallRequestSchema", () => {
   it("rejects an empty prompt", () => {
     const result = agentCallRequestSchema.safeParse({
       kind: "conversation_turn",
+      executionClass: "ordinary-conversation",
       prompt: "",
     });
     expect(result.success).toBe(false);
@@ -214,6 +228,7 @@ describe("agentCallRequestSchema", () => {
   it("accepts timeoutMs: 0 as the no-timeout sentinel", () => {
     const result = agentCallRequestSchema.safeParse({
       kind: "task_run",
+      executionClass: "nongoverned-task",
       backend: "codex",
       prompt: "validate context",
       timeoutMs: 0,
@@ -224,6 +239,7 @@ describe("agentCallRequestSchema", () => {
   it("rejects negative timeoutMs", () => {
     const result = agentCallRequestSchema.safeParse({
       kind: "task_run",
+      executionClass: "nongoverned-task",
       backend: "codex",
       prompt: "validate context",
       timeoutMs: -1,

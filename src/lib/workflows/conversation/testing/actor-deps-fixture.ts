@@ -100,6 +100,7 @@ export function createActorImplementationDepsFixture(
     ),
     safeAppendTranscriptEntry: vi.fn(async () => {}),
     safeAppendTranscriptEntryOnce: vi.fn(async () => {}),
+    appendTranscriptEntryOnce: vi.fn(async () => {}),
     saveTranscriptImage: vi.fn(
       async (
         _id: string,
@@ -207,6 +208,7 @@ export function createActorImplementationDepsFixture(
     markQueuedDelivered: vi.fn(async () => {}),
     markQueuedPending: vi.fn(async () => {}),
     markQueuedFailed: vi.fn(async () => {}),
+    markQueuedUncertain: vi.fn(async () => {}),
     log: createCapturingLogger(),
     ...overrides,
   } as ActorImplementationDeps;

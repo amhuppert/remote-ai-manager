@@ -1,4 +1,6 @@
 "use client";
+import SyntheticForkBadge from "@/features/session/conversation/SyntheticForkBadge";
+import { useForkAvailability } from "@/lib/conversations/use-fork-availability";
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { catalogBackendSelectionDefaults } from "@/lib/agent-backends/catalog";
@@ -61,6 +63,7 @@ export default function PaneConversationBody({
   const conversationState = sessionQuery.data?.conversations.find(
     (c) => c.id === conversationId,
   );
+  const forkRefusal = useForkAvailability(conversationState, selectedBackend);
   const messagesQuery = useConversationMessagesQuery(
     projectName,
     sessionName,
@@ -143,6 +146,7 @@ export default function PaneConversationBody({
       <MessageRow
         msg={row.msg}
         queuedMetadata={row.msg.queued ? row.msg.queued.metadata : undefined}
+        queuedStatus={row.msg.queued?.status}
         provisional={row.msg.provisional}
         messageIndex={row.messageIndex}
         part={row.part}
@@ -152,6 +156,7 @@ export default function PaneConversationBody({
         thinkingExpansionCommand={thinkingExpansionCommand}
         onFork={handleFork}
         forkProjectName={projectName}
+        forkRefusal={forkRefusal}
         compactionTarget={compactionTarget}
         conversationName={conversationName}
         lastMessageExtras={null}
@@ -159,6 +164,7 @@ export default function PaneConversationBody({
     ),
     [
       selectedBackend,
+      forkRefusal,
       sessionQuery.data?.worktreePath,
       thinkingExpansionCommand,
       handleFork,
@@ -183,6 +189,9 @@ export default function PaneConversationBody({
         conversationName={conversationState?.name ?? null}
         within={bodyRef}
       />
+      {conversationState?.forkedFrom?.forkMode === "synthetic" && (
+        <SyntheticForkBadge />
+      )}
       <ConversationTranscript
         scope={{ kind: "session", projectName, sessionName, conversationId }}
         backend={selectedBackend}

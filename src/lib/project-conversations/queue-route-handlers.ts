@@ -18,6 +18,8 @@ import {
   cancelQueuedMessage,
   enqueueQueuedMessage,
   parseQueueEnqueueBody,
+  parseQueueReviewBody,
+  reviewQueuedMessage,
   type QueueOperationDeps,
 } from "@/lib/prompt/queue-operations";
 import { queueMessage as defaultQueueMessage } from "@/lib/prompt/queue";
@@ -26,10 +28,7 @@ import {
   messageQueueService,
 } from "@/lib/conversations/message-queue-service";
 import { clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches } from "@/lib/state-store";
-import {
-  hasLiveConversationActor as defaultHasLiveConversationActor,
-  ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
-} from "@/lib/workflows/conversation/manager";
+import { ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain } from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import { admitConfiguredModelSelection } from "@/lib/agent-backends/model-selection-admission";
 import { createProjectConversationService } from "./service";
@@ -59,11 +58,9 @@ function defaultDeps(): ProjectQueueRouteDeps {
     toQueuedMessageView: defaultToQueuedMessageView,
     clearConversationPendingPromptTextIfMatches:
       defaultClearConversationPendingPromptTextIfMatches,
-    hasLiveConversationActor: defaultHasLiveConversationActor,
     ensureConversationActorAndDrain: defaultEnsureConversationActorAndDrain,
-    recoverAbandonedDeliveries: (input) =>
-      messageQueueService.recoverAbandonedDeliveries(input),
     cancel: (input) => messageQueueService.cancel(input),
+    resolveDelivery: (input) => messageQueueService.resolveDelivery(input),
   };
 }
 
@@ -114,7 +111,31 @@ export function createProjectQueueRouteHandlers(
     );
   }
 
-  return { POST, DELETE };
+  async function REVIEW(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const body = await parseQueueReviewBody(request);
+    if (!body.ok) return body.response;
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId, conversation } = resolved.value;
+    const messageId = (await context.params)["messageId"] ?? "";
+
+    return reviewQueuedMessage(
+      deps,
+      {
+        projectPath,
+        scope: { scope: "project" },
+        conversationId,
+        conversation,
+      },
+      messageId,
+      body.value,
+    );
+  }
+
+  return { POST, DELETE, REVIEW };
 }
 
 const _handlers = createProjectQueueRouteHandlers();
@@ -122,3 +143,5 @@ export const projectConversationQueuePOST = withTracing(_handlers.POST);
 export const projectConversationQueueCancelDELETE = withTracing(
   _handlers.DELETE,
 );
+
+export const projectConversationQueueReviewPOST = withTracing(_handlers.REVIEW);

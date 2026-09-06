@@ -1,3 +1,4 @@
+import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { existsSync } from "node:fs";
@@ -469,15 +470,19 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     objective: string,
     projectPath: string,
   ): Promise<string> {
-    const runner = getTaskRunner("claude");
-    const result = await runner.run({
-      workingDirectory: projectPath,
-      prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
-      modelSelection: { modelId: "haiku", parameters: {} },
-      timeoutMs: 60_000,
-      executionProfile: "isolated-one-shot",
-      autonomous: true,
-    });
+    const result = await runAdmittedTask(
+      "claude",
+      {
+        executionClass: "nongoverned-task",
+        workingDirectory: projectPath,
+        prompt: `Generate a short name (2-4 words, Title Case, space-separated) for a coding session with this objective. Output ONLY the name, nothing else.\n\nObjective: ${objective}`,
+        modelSelection: { modelId: "haiku", parameters: {} },
+        timeoutMs: 60_000,
+        executionProfile: "isolated-one-shot",
+        autonomous: true,
+      },
+      { getRunner: getTaskRunner },
+    );
 
     if (result.error) {
       logger.warn("session.name_generation_failed", {

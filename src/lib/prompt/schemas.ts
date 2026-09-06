@@ -4,7 +4,10 @@ import {
   documentFeedbackPayloadSchema,
   notepadFeedbackPayloadSchema,
 } from "@/lib/conversations/message-content-schemas";
-import { queuedMessageViewSchema } from "@/lib/conversations/message-queue-schemas";
+import {
+  queuedMessageViewSchema,
+  queueReviewActionSchema,
+} from "@/lib/conversations/message-queue-schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
@@ -99,3 +102,15 @@ export const queueCancellationResponseSchema = z.object({
 export type QueueCancellationResponse = z.infer<
   typeof queueCancellationResponseSchema
 >;
+
+export const queueReviewRequestSchema = z
+  .object({ action: queueReviewActionSchema })
+  .strict();
+export type QueueReviewRequest = z.infer<typeof queueReviewRequestSchema>;
+
+export const queueReviewResponseSchema = z.object({
+  resolved: z.literal(true),
+  id: z.string(),
+  action: queueReviewActionSchema,
+});
+export type QueueReviewResponse = z.infer<typeof queueReviewResponseSchema>;

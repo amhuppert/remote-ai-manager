@@ -1,6 +1,9 @@
 import { Buffer } from "node:buffer";
 import { createLogger } from "@/lib/logging";
 import type { FileSnapshot } from "./content-store";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
+
 import {
   composeQuickTicketDiagnosticReport,
   type QuickTicketDiagnosticEnvironment,
@@ -15,6 +18,13 @@ import type {
 
 const logger = createLogger("tickets.create-attachment-planner");
 
+export type PreparedEnrichment =
+  | {
+      status: "ready";
+      backend: AgentBackendId;
+      modelSelection: BackendModelSelection;
+    }
+  | { status: "unavailable"; warning: QuickTicketCreateWarning };
 export interface CaptureQuickTicketScreenshotInput {
   ticketId: string;
   attachmentId: string;
@@ -34,12 +44,15 @@ export interface CreateAttachmentPlannerDeps {
   ): Promise<FileSnapshot>;
   deleteSnapshot(snapshotKey: string): Promise<void>;
   diagnosticEnvironment(): QuickTicketDiagnosticEnvironment;
+  prepareEnrichment(): Promise<PreparedEnrichment>;
   scheduleConversationSnapshotRefresh(input: {
     projectName: string;
     number: number;
     attachmentId: string;
   }): void;
   scheduleEnrichment(input: {
+    backend: AgentBackendId;
+    modelSelection: BackendModelSelection;
     ticket: TicketDetail;
     diagnostics: QuickTicketDiagnostics;
     conversationContext?: QuickTicketConversationContext;
@@ -256,6 +269,28 @@ export function createCreateAttachmentPlanner(
           }
         }
 
+        let enrichment:
+          | Extract<PreparedEnrichment, { status: "ready" }>
+          | undefined;
+        if (diagnostics !== undefined && input.autoStartRequested !== true) {
+          try {
+            const prepared = await deps.prepareEnrichment();
+            if (prepared.status === "ready") enrichment = prepared;
+            else warnings.push(prepared.warning);
+          } catch (error) {
+            warnings.push({
+              code: "enrichment_unavailable",
+              message:
+                "Ticket created. Automatic enrichment is unavailable because its configuration could not be prepared.",
+            });
+            logger.warn("tickets.enrichment_unavailable", {
+              ticketId: input.ticketId,
+              phase: "preparation",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         logger.info("tickets.create_attachment_planner.plan_complete", {
           ticketId: input.ticketId,
           attachmentCount: attachments.length,
@@ -282,11 +317,13 @@ export function createCreateAttachmentPlanner(
               );
             }
           }
-          if (diagnostics === undefined || input.autoStartRequested === true) {
+          if (diagnostics === undefined || enrichment === undefined) {
             return;
           }
           try {
             deps.scheduleEnrichment({
+              backend: enrichment.backend,
+              modelSelection: enrichment.modelSelection,
               ticket,
               diagnostics,
               ...(acceptedConversationContext !== undefined

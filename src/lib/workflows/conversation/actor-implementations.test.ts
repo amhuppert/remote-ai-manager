@@ -1,3 +1,5 @@
+import { createPendingEntry } from "@/lib/conversations/message-queue-service";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PrepareTurnInput, ExecutePromptInput } from "./types";
 import type { ActorImplementationDeps } from "./actor-implementations";
@@ -820,6 +822,120 @@ describe("executePromptForMachine", () => {
     _resetActorDepsForTesting();
     _resetForTesting();
   });
+
+  it("returns and streams a nonretryable admission refusal before creating a runtime", async () => {
+    const input = makeExecutePromptInput({
+      agentBackend: "cursor",
+      fsWritePolicy: { mode: "allowlist", allowWrite: [], denyWrite: [] },
+    });
+    const streamEmit = vi.fn();
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      ),
+      { abortController: new AbortController(), streamEmit },
+    );
+    const result = await executePromptForMachine(input);
+    expect(result.failure).toMatchObject({
+      kind: "capability_unavailable",
+      code: "backend-role-unsupported",
+      retryable: false,
+    });
+    expect(result.continuationDisposition).toBe("retain");
+    expect(streamEmit).toHaveBeenCalledWith(
+      "error",
+      expect.objectContaining({ code: "backend-role-unsupported" }),
+    );
+    expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+    expect(mockSendTurn).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "retains fork history until durable input acceptance (%s)",
+    async (accepted) => {
+      const fixture = createPersistenceFixture();
+      const selection = {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      };
+      const input = makeExecutePromptInput({
+        agentBackend: "cursor",
+        backendRef: { backend: "cursor", ref: "agent-created" },
+        modelSelection: selection,
+        forkedFrom: {
+          sourceConversationId: "source",
+          messageIndex: 1,
+          forkMode: "synthetic",
+          forkPending: false,
+          syntheticSeed: "anchored history",
+        },
+      });
+      const seeds: Array<string | null | undefined> = [];
+      const backend = createMockBackendRuntime({
+        backend: "cursor",
+        modelSelection: selection,
+        sendTurn: async (turn) => {
+          seeds.push(turn.syntheticForkSeed);
+          if (accepted) await turn.onEvent({ type: "input_accepted" });
+          return { ...defaultTurnResult, backendRef: input.backendRef };
+        },
+      });
+      try {
+        fixture.seedProject(input.projectPath);
+        fixture.seedSession(input.projectPath, input.sessionName);
+        await fixture.seedConversation(
+          input.projectPath,
+          input.sessionName,
+          makeSharedConversationState({
+            id: input.conversationId,
+            agentBackend: "cursor",
+            backendRef: input.backendRef,
+            forkedFrom: input.forkedFrom,
+          }),
+        );
+        setActorDeps(
+          createMockDeps({
+            getConversation: fixture.store.getConversation,
+            mutateConversation: fixture.store.mutateConversation,
+            getConversationBackendFactory: () => ({
+              backend: "cursor",
+              createRuntime: async () => backend,
+              validateModelSelection: () => {},
+            }),
+          }),
+        );
+        registerConversationRuntime(
+          conversationRuntimeKey(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+          ),
+          { abortController: new AbortController() },
+        );
+        expect((await executePromptForMachine(input)).error).toBeNull();
+        const stored = await fixture
+          .recreateStore()
+          .getConversation(
+            input.projectPath,
+            input.sessionName,
+            input.conversationId,
+          );
+        expect(stored?.forkedFrom?.syntheticSeedAcceptedRef).toEqual(
+          accepted ? input.backendRef : undefined,
+        );
+        expect(stored?.forkedFrom?.syntheticSeed).toBe("anchored history");
+        expect((await executePromptForMachine(input)).error).toBeNull();
+        expect(seeds).toEqual([
+          "anchored history",
+          accepted ? null : "anchored history",
+        ]);
+      } finally {
+        fixture.close();
+      }
+    },
+  );
 
   it("creates a new backend runtime when none exists", async () => {
     const input = makeExecutePromptInput();
@@ -3969,12 +4085,12 @@ describe("executePromptForMachine", () => {
 
     it("claims and prepends pending boundaries for a queued turn without changing stored user text", async () => {
       const append = vi.fn<
-        ActorImplementationDeps["safeAppendTranscriptEntry"]
+        ActorImplementationDeps["appendTranscriptEntryOnce"]
       >(async () => {});
       const claimWorkflowResults = vi.fn(async () => claimedResults());
       setActorDeps(
         createMockDeps({
-          safeAppendTranscriptEntry: append,
+          appendTranscriptEntryOnce: append,
           claimWorkflowResults,
         } as unknown as Partial<ActorImplementationDeps>),
       );
@@ -4627,6 +4743,64 @@ describe("executePromptForMachine", () => {
   // the call path so test code can assert primitive composition
   // without falling back to vi.mock on internal modules.
   // ---------------------------------------------------------------
+  it("blocks a direct actor turn when recovery has retained an uncertain delivery", async () => {
+    const row = {
+      ...createPendingEntry({
+        id: "held",
+        content: [{ type: "text", text: "retained" }],
+        now: "now",
+      }),
+      status: "uncertain" as const,
+    };
+    setActorDeps(
+      createMockDeps({
+        getConversation: async () =>
+          makeSharedConversationState({ pendingQueue: [row] }),
+      }),
+    );
+    const input = makeExecutePromptInput({ persistence: "durable" });
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+    const result = await executePromptForMachine(input);
+    expect(result.error).toBe(
+      "Review queued deliveries before sending another prompt.",
+    );
+    expect(mockSendTurn).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch after cancellation during runtime creation", async () => {
+    const controller = new AbortController();
+    const backendRuntime = createMockBackendRuntime();
+    setActorDeps(
+      createMockDeps({
+        getConversationBackendFactory: () => ({
+          backend: "claude",
+          createRuntime: async () => {
+            controller.abort();
+            return backendRuntime;
+          },
+        }),
+      }),
+    );
+    const input = makeExecutePromptInput();
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      ),
+      { abortController: new AbortController() },
+    );
+    await executePromptForMachine(input, controller.signal).catch(() => {});
+    expect(mockSendTurn).not.toHaveBeenCalled();
+  });
+
   it("routes the conversation turn through deps.executeAgentCall (Task 6.1 parity)", async () => {
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     setActorDeps(
@@ -4805,14 +4979,14 @@ describe("executePromptForMachine", () => {
     };
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     const appendSpy = vi.fn<
-      ActorImplementationDeps["safeAppendTranscriptEntry"]
+      ActorImplementationDeps["appendTranscriptEntryOnce"]
     >(async () => {});
     setActorDeps(
       createMockDeps({
         executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
           typeof vi.fn
         >,
-        safeAppendTranscriptEntry: appendSpy,
+        appendTranscriptEntryOnce: appendSpy,
       } as unknown as Partial<ActorImplementationDeps>),
     );
 
@@ -5089,7 +5263,7 @@ describe("executePromptForMachine", () => {
   describe("queued-delivery transcript policy", () => {
     function userAppendCalls() {
       return vi
-        .mocked(mockDeps.safeAppendTranscriptEntry)
+        .mocked(mockDeps.appendTranscriptEntryOnce)
         .mock.calls.filter(
           ([, entry]) => (entry as { role?: string }).role === "user",
         );
@@ -5098,7 +5272,7 @@ describe("executePromptForMachine", () => {
     it("appends exactly one user transcript entry after backend acceptance and marks rows delivered", async () => {
       const appendOrder: string[] = [];
       mockDeps = createMockDeps({
-        safeAppendTranscriptEntry: vi.fn(async (_id, entry) => {
+        appendTranscriptEntryOnce: vi.fn(async (_id, entry) => {
           if ((entry as { role?: string }).role === "user") {
             appendOrder.push("append");
           }
@@ -5156,7 +5330,7 @@ describe("executePromptForMachine", () => {
       expect(appendOrder).toEqual(["append", "markDelivered"]);
     });
 
-    it("appends nothing and returns rows to pending when the turn throws before acceptance", async () => {
+    it("appends nothing and holds rows for review when dispatch throws", async () => {
       mockSendTurn.mockRejectedValue(new Error("backend dispatch failed"));
 
       const input = makeExecutePromptInput({
@@ -5179,8 +5353,8 @@ describe("executePromptForMachine", () => {
 
       expect(userAppendCalls()).toHaveLength(0);
       expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
-      expect(mockDeps.markQueuedPending).toHaveBeenCalledTimes(1);
-      expect(mockDeps.markQueuedPending).toHaveBeenCalledWith(
+      expect(mockDeps.markQueuedUncertain).toHaveBeenCalledTimes(1);
+      expect(mockDeps.markQueuedUncertain).toHaveBeenCalledWith(
         expect.objectContaining({
           ids: ["m1"],
           deliveryAttemptId: "att-1",
@@ -5878,6 +6052,10 @@ describe("executePromptForMachine", () => {
         const getMemoryIndexBlock = vi.fn(async () =>
           memoryBlock(MEMORY_BLOCK),
         );
+        mockFactory.createRuntime.mockResolvedValue({
+          ...mockBackendRuntime,
+          backend: agentBackend,
+        });
         setActorDeps(createMockDeps({ getMemoryIndexBlock }));
         const input = makeExecutePromptInput({
           agentBackend,
@@ -7540,6 +7718,7 @@ describe("runTaskRunTurnForMachine", () => {
     overrides: Partial<RunTaskRunInput> = {},
   ): RunTaskRunInput {
     return {
+      executionClass: "nongoverned-task" as const,
       persistence: "durable",
       projectPath: "/projects/repo",
       projectName: "repo",
@@ -7575,6 +7754,32 @@ describe("runTaskRunTurnForMachine", () => {
   afterEach(() => {
     _resetActorDepsForTesting();
     _resetForTesting();
+  });
+
+  it("preserves the admission code on a refused task result", async () => {
+    mockDeps = createMockDeps({
+      executeAgentCall: defaultExecuteAgentCall,
+      getTaskRunner: vi.fn(() => {
+        throw new Error("refused tasks must not resolve a runner");
+      }),
+    });
+    setActorDeps(mockDeps);
+    const result = await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        agentBackend: "cursor",
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+      }),
+    );
+    expect(result.failure).toMatchObject({
+      kind: "capability_unavailable",
+      code: "backend-facet-unsupported",
+      retryable: false,
+    });
+    expect(result.continuationDisposition).toBe("retain");
+    expect(mockDeps.getTaskRunner).not.toHaveBeenCalled();
   });
 
   it("registers an abort controller for the turn and threads its signal into the runner, unregistering after", async () => {

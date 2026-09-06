@@ -88,6 +88,7 @@ export async function runStaleClaudePumpResumeTurn(identity: {
   > | null = null;
   try {
     runtime = await claudeConversationBackendFactory.createRuntime({
+      executionClass: "ordinary-conversation" as const,
       ...identity,
       conversationTarget: sessionConversationTarget(
         identity.projectName,

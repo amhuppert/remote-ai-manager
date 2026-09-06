@@ -7,6 +7,8 @@ import {
   PromptEditorSlashCommandPopup,
   type SlashCommandPopupHandle,
 } from "@/components/session/prompt/PromptEditorSlashCommandPopup";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import type { CommandItem } from "@/lib/commands/schemas";
 const mockCommands: CommandItem[] = [
   {
@@ -67,6 +69,10 @@ function renderPopup(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  client.setQueryData(
+    backendCatalogKeys.catalog(),
+    listBackendCatalogEntries(),
+  );
   return render(
     <QueryClientProvider client={client}>
       <PromptEditorSlashCommandPopup

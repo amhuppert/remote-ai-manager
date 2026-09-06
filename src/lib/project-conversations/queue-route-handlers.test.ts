@@ -134,7 +134,7 @@ function harness(overrides: Partial<ProjectQueueRouteDeps> = {}): Harness {
       metadata: entry.metadata,
     }),
     clearConversationPendingPromptTextIfMatches: async () => true,
-    hasLiveConversationActor: () => true,
+    resolveDelivery: async () => "not_found",
     ensureConversationActorAndDrain: async (
       _projectPath,
       _sessionName,
@@ -142,7 +142,6 @@ function harness(overrides: Partial<ProjectQueueRouteDeps> = {}): Harness {
     ) => {
       drains.push(conversationId);
     },
-    recoverAbandonedDeliveries: async () => 0,
     cancel: async (input) => {
       writes.push({
         op: "cancel",
@@ -396,28 +395,6 @@ describe("project conversation queue routes", () => {
       expect(((await res.json()) as { code: string }).code).toBe(
         "NOT_CANCELLABLE",
       );
-    });
-
-    it("recovers a delivery abandoned by a dead actor so the row is cancellable again", async () => {
-      const recovered: string[] = [];
-      const h = harness({
-        hasLiveConversationActor: () => false,
-        recoverAbandonedDeliveries: async ({ conversationId }) => {
-          recovered.push(conversationId);
-          return 1;
-        },
-      });
-      const conversation = makeConv({ id: "c1", status: "running" });
-      conversation.pendingQueue = [pendingEntry("q-1", "follow-up")];
-      h.store.set("c1", conversation);
-
-      const res = await h.handlers.DELETE(
-        deleteRequest(),
-        ctx({ name: "demo", conversationId: "c1", messageId: "q-1" }),
-      );
-
-      expect(recovered).toEqual(["c1"]);
-      expect(res.status).toBe(200);
     });
   });
 

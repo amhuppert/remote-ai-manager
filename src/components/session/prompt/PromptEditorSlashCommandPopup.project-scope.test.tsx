@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { PromptEditorSlashCommandPopup } from "@/components/session/prompt/PromptEditorSlashCommandPopup";
 import type { AgentCapabilityCascadeKind } from "@/lib/agent-capabilities/schemas";
 import type { CommandItem } from "@/lib/commands/schemas";
@@ -72,6 +73,10 @@ beforeEach(() => {
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : String(input);
+      if (url === "/api/agent-backends")
+        return Promise.resolve(
+          jsonResponse({ backends: listBackendCatalogEntries() }),
+        );
       if (url.includes("agent-capabilities")) {
         return Promise.resolve(jsonResponse(emptyCascadeView(url)));
       }
@@ -173,7 +178,7 @@ describe("project conversation slash-command catalog", () => {
 
     await waitForCommand("/commit");
     expect(
-      screen.getByText("A worktree command file named commit"),
+      await screen.findByText("A worktree command file named commit"),
     ).toBeInTheDocument();
   });
 

@@ -54,6 +54,7 @@ describe("hop 1 — prompt options to the conversation lifecycle's turn request"
       getConversation: async () => ({
         id: "conversation-1",
         agentBackend: "claude",
+        pendingQueue: [],
       }),
       createConversation: async () => ({ id: "conversation-1" }),
       setConversationBackend: async () => {},

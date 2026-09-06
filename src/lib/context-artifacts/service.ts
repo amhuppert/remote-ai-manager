@@ -10,6 +10,11 @@
  * compaction backend/model instead of the conversation's own.
  */
 
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
+import {
+  compactionExecutionRequirements,
+  compactionRepairRequirements,
+} from "@/lib/config/task-admission";
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { createKeyedMutex } from "@/lib/shared/keyed-mutex";
@@ -483,6 +488,8 @@ export function createCompactionService(
       sessionName: laneSessionName,
       conversationId: `compaction-${artifactId}`,
       kind: "task_run",
+      executionClass: "nongoverned-task",
+      executionProfile: "standard",
       prompt,
       outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
       timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
@@ -989,6 +996,11 @@ export function createCompactionService(
     }
 
     const config = await deps.resolveConfig(input.projectPath);
+    await assertBackendExecution(
+      config.backend,
+      compactionExecutionRequirements,
+    );
+    await assertBackendExecution(config.backend, compactionRepairRequirements);
     const modelSelection =
       input.kind === "conversation_compaction"
         ? config.conversationModelSelection

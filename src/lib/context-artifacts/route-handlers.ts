@@ -1,3 +1,4 @@
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 /**
  * Context-artifact endpoints for both conversation scopes
  * (docs/design/conversation-compaction/README.md §9, §11).
@@ -431,22 +432,32 @@ export function createContextArtifactRouteHandlers(
     const caller = await resolveCaller(request, body.callerConversationId);
     if (!caller.ok) return caller.response;
 
-    const result = await deps.getService().trigger({
-      kind: body.kind,
-      scope: target.scope,
-      projectPath: target.projectPath,
-      projectName: target.projectName,
-      sessionName: target.sessionName,
-      conversationId: target.conversationId,
-      transcriptPath: target.conversation.transcriptPath,
-      ...(body.messageIndex !== undefined
-        ? { messageIndex: body.messageIndex }
-        : {}),
-      ...(body.force !== undefined ? { force: body.force } : {}),
-      createdBy: caller.createdBy,
-      createdByConversationId: caller.callerConversationId,
-      trigger: caller.createdBy === "agent" ? "agent_api" : "ui_api",
-    });
+    const result = await deps
+      .getService()
+      .trigger({
+        kind: body.kind,
+        scope: target.scope,
+        projectPath: target.projectPath,
+        projectName: target.projectName,
+        sessionName: target.sessionName,
+        conversationId: target.conversationId,
+        transcriptPath: target.conversation.transcriptPath,
+        ...(body.messageIndex !== undefined
+          ? { messageIndex: body.messageIndex }
+          : {}),
+        ...(body.force !== undefined ? { force: body.force } : {}),
+        createdBy: caller.createdBy,
+        createdByConversationId: caller.callerConversationId,
+        trigger: caller.createdBy === "agent" ? "agent_api" : "ui_api",
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof BackendAdmissionError)) throw error;
+        return NextResponse.json(
+          { error: error.message, code: error.code, refusal: error.refusal },
+          { status: 400 },
+        );
+      });
+    if (result instanceof Response) return result;
 
     if (result.outcome === "invalid") {
       return invalidRequest([{ path: "", message: result.error }]);

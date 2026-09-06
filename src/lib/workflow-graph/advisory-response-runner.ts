@@ -185,6 +185,8 @@ export function createGraphWorkflowAdvisoryResponseRunner(
         sessionName: input.sessionName,
         conversationId: input.conversationId,
         kind: "task_run",
+        executionClass: "governed-execution",
+        executionProfile: "standard",
         prompt,
         outputFormat: { type: "json_schema", schema: outputSchema },
         modelSelection: context.implementer.agent.modelSelection,

@@ -198,6 +198,7 @@ describe("executeWorkflowTaskRun", () => {
     ).toBeUndefined();
 
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -225,6 +226,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("releases a settled conversation chain from the in-flight registry", async () => {
     const call = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -244,6 +246,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("reuses the existing actor on a second call with the same identifiers", async () => {
     const first = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -265,6 +268,7 @@ describe("executeWorkflowTaskRun", () => {
     expect(actorAfterFirst).toBeDefined();
 
     const second = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -290,6 +294,7 @@ describe("executeWorkflowTaskRun", () => {
     // for a validator turn that would report a stale PASS for a validation
     // that never ran.
     const first = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -305,6 +310,7 @@ describe("executeWorkflowTaskRun", () => {
     expect(firstResult.kind).toBe("text");
 
     const second = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -332,6 +338,7 @@ describe("executeWorkflowTaskRun", () => {
   it("cancels the in-flight turn and reports it as aborted when the caller's signal fires", async () => {
     const controller = new AbortController();
     const call = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -361,6 +368,7 @@ describe("executeWorkflowTaskRun", () => {
     controller.abort();
 
     const result = await executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -381,6 +389,7 @@ describe("executeWorkflowTaskRun", () => {
     const structured = { answer: 42, label: "the-meaning" };
 
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -414,6 +423,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("returns the raw final text when outputFormat is omitted", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -442,6 +452,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("forwards timeoutMs through SUBMIT_TASK_RUN into the runTaskRun input", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -469,6 +480,7 @@ describe("executeWorkflowTaskRun", () => {
     };
 
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "governed-execution" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -491,6 +503,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("leaves the runTaskRun input unrestricted when no fsWritePolicy is supplied", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -508,6 +521,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("forwards the structured-output transcript field into the runTaskRun input", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -542,6 +556,7 @@ describe("executeWorkflowTaskRun", () => {
     registerAbortController(CONVERSATION_ID, controller);
 
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -567,6 +582,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("resolves to an error TaskRunResult when the entrypoint timer fires", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -622,6 +638,7 @@ describe("executeWorkflowTaskRun", () => {
       },
     ];
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -649,6 +666,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("preserves the adapter continuation verdict on failed task_run results", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -678,6 +696,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("pins the conversation actor to the provided worktreePath instead of the session worktree", async () => {
     const callPromise = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -704,6 +723,7 @@ describe("executeWorkflowTaskRun", () => {
 
   it("rebinds an existing idle actor bound elsewhere to the requested worktreePath", async () => {
     const first = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -725,6 +745,7 @@ describe("executeWorkflowTaskRun", () => {
     );
 
     const second = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -752,6 +773,7 @@ describe("executeWorkflowTaskRun", () => {
     let firstSettled = false;
 
     const first = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -770,6 +792,7 @@ describe("executeWorkflowTaskRun", () => {
     // dispatch its SUBMIT_TASK_RUN until the first finalizes, so no new
     // runTaskRun invocation should be observable yet.
     const second = executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: CONVERSATION_ID,
@@ -833,6 +856,7 @@ describe("executeWorkflowTaskRun", () => {
       });
 
       const call = executeWorkflowTaskRun({
+        executionClass: "nongoverned-task" as const,
         projectPath: PROJECT_PATH,
         sessionName: SESSION_NAME,
         conversationId: CONVERSATION_ID,
@@ -893,6 +917,7 @@ describe("executeWorkflowTaskRun", () => {
 
     it("classifies the entrypoint timeout as a timeout failure", async () => {
       const callPromise = executeWorkflowTaskRun({
+        executionClass: "nongoverned-task" as const,
         projectPath: PROJECT_PATH,
         sessionName: SESSION_NAME,
         conversationId: CONVERSATION_ID,
@@ -994,6 +1019,7 @@ describe("executeWorkflowTaskRun", () => {
 
       const call = executeWorkflowTaskRun(
         {
+          executionClass: "nongoverned-task" as const,
           projectPath: PROJECT_PATH,
           sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
           conversationId: CONVERSATION_ID,
@@ -1036,6 +1062,7 @@ describe("executeWorkflowTaskRun", () => {
       const log = createCapturingLogger();
       const call = executeWorkflowTaskRun(
         {
+          executionClass: "nongoverned-task" as const,
           projectPath: PROJECT_PATH,
           sessionName: SESSION_NAME,
           conversationId: CONVERSATION_ID,

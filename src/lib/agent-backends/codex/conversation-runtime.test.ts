@@ -83,6 +83,7 @@ function makeCreateInput(
   const conversationId = rest.conversationId ?? "conv-123";
   const projectName = rest.projectName ?? "test-project";
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId,
     projectPath: "/test/project",
     projectName,
@@ -438,7 +439,7 @@ describe("CodexConversationRuntime", () => {
       expect(result.tokenUsage).toBeNull();
     });
 
-    it("prepends session instructions and synthetic fork seed on first turn only", async () => {
+    it("prepends session instructions and the requested synthetic fork seed", async () => {
       const thread = makeCapturingThread(minimalSuccessEvents());
       startThreadFn.mockReturnValue(thread);
 
@@ -471,6 +472,26 @@ describe("CodexConversationRuntime", () => {
       const promptIdx = inputStr.indexOf("Do the thing");
       expect(instructionsIdx).toBeLessThan(forkSeedIdx);
       expect(forkSeedIdx).toBeLessThan(promptIdx);
+    });
+
+    it("delivers a pending synthetic seed to an eagerly created thread", async () => {
+      const thread = makeCapturingThread(minimalSuccessEvents());
+      resumeThreadFn.mockReturnValue(thread);
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          persistedRef: { backend: "codex", ref: "thread-created" },
+        }),
+        deps,
+      );
+      await runtime.sendTurn(
+        makeTurnInput({
+          promptText: "retry first prompt",
+          syntheticForkSeed: "anchored history",
+        }),
+      );
+      expect(thread.capturedInput).toBe(
+        "anchored history\n\nretry first prompt",
+      );
     });
 
     // Spec `memory` R5.4/D4: the static advisory contract rides Codex's
@@ -2698,6 +2719,7 @@ describe("codexConversationBackendFactory", () => {
     it("exposes the validated complete model selection", async () => {
       const selectedModel = modelSelection("o3-pro");
       const runtime = await codexConversationBackendFactory.createRuntime({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "conv-1",
         projectPath: "/p",
         projectName: "proj",

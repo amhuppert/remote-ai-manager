@@ -10,7 +10,8 @@ import {
   agentProfileSnapshotSchema,
   type AgentProfileRef,
 } from "@/lib/agent-profiles/schemas";
-import { backendFacetRefusalFor } from "@/lib/agent-backends/facet-gating";
+import { workflowBackendRefusal } from "./backend-admission";
+import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import {
   MEMORY_IMPLEMENTER_POLICY_DEFAULT,
   MEMORY_VALIDATOR_POLICY_DEFAULT,
@@ -74,7 +75,10 @@ function agentConfigBackendRefusal(input: unknown): string | undefined {
   }
   const parsed = agentBackendSchema.safeParse(input.backend);
   if (!parsed.success) return undefined;
-  return backendFacetRefusalFor(parsed.data, "tasks") ?? undefined;
+  return (
+    workflowBackendRefusal(getBackendCatalogEntry(parsed.data)) ??
+    `${parsed.data} is not admitted to workflow roles`
+  );
 }
 
 export const graphWorkflowAgentConfigSchema = z.preprocess(

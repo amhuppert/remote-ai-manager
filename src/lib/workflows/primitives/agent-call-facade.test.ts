@@ -163,7 +163,11 @@ describe("executeAgentCall — backend selection", () => {
     const runtime = makeConversationRuntime("claude", { capture });
 
     const result = await executeAgentCall(
-      { kind: "conversation_turn", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "hi",
+      },
       buildDepsForConversation({ runtime, view: CLAUDE_VIEW }),
     );
 
@@ -178,6 +182,7 @@ describe("executeAgentCall — backend selection", () => {
 
     await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "inspect this image",
         imageRefs: [
@@ -206,7 +211,12 @@ describe("executeAgentCall — backend selection", () => {
     const capture = { value: null as AgentTaskRequest | null };
     const runner = makeTaskRunner("codex", { capture });
     const result = await executeAgentCall(
-      { kind: "task_run", backend: "codex", prompt: "hi" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "hi",
+      },
       buildDepsForTask({ runner, view: CODEX_VIEW }),
     );
     expect(capture.value?.prompt).toBe("hi");
@@ -230,7 +240,11 @@ describe("executeAgentCall — backend selection", () => {
       },
     };
     const result = await executeAgentCall(
-      { kind: "conversation_turn", prompt: "go" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "go",
+      },
       deps,
     );
     expect(result.backend).toBe("codex");
@@ -276,7 +290,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: {
           type: "object",
@@ -304,7 +320,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
         structuredOutputRepair: { maxAttempts: 0 },
@@ -333,6 +351,7 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -356,7 +375,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object" },
       },
@@ -379,7 +400,11 @@ describe("executeAgentCall — structured-output gate", () => {
     let calls = 0;
     const runtime = makeConversationRuntime("claude");
     await executeAgentCall(
-      { kind: "conversation_turn", prompt: "go" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        prompt: "go",
+      },
       buildDepsForConversation({
         runtime,
         view: CLAUDE_VIEW,
@@ -402,7 +427,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
       },
@@ -446,7 +473,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
       },
@@ -488,7 +517,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
         structuredOutputRepair: { maxAttempts: 0 },
@@ -524,7 +555,9 @@ describe("executeAgentCall — structured-output gate", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object" },
       },
@@ -564,7 +597,9 @@ describe("executeAgentCall — structured-output gate fall-through", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
       },
@@ -594,7 +629,9 @@ describe("executeAgentCall — structured-output gate fall-through", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
       },
@@ -629,7 +666,9 @@ describe("executeAgentCall — structured-output gate fall-through", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: { type: "object", required: ["ok"] },
       },
@@ -698,7 +737,9 @@ describe("executeAgentCall — guaranteed structured-output validation", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         outputSchema: {
           type: "object",
@@ -730,6 +771,7 @@ describe("executeAgentCall — timeout normalization across backends", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -754,7 +796,9 @@ describe("executeAgentCall — capability_unavailable for tooling", () => {
     };
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
+        backend: "claude",
         prompt: "go",
         tooling: { servers: [] },
       },
@@ -773,6 +817,7 @@ describe("executeAgentCall — capability_unavailable for tooling", () => {
 describe("resolveSchedulingHint — write-capable defaults", () => {
   it("treats an unspecified write capability as write_capable so worktree safety is preserved", () => {
     const hint = resolveSchedulingHint({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       prompt: "go",
     });
@@ -782,6 +827,7 @@ describe("resolveSchedulingHint — write-capable defaults", () => {
 
   it("honors an explicit artifact_only request and allows parallel scheduling", () => {
     const hint = resolveSchedulingHint({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: "go",
@@ -810,6 +856,7 @@ function buildDepsForConversation(
   input: ConversationDepsHelperInput,
 ): AgentCallFacadeDeps {
   return {
+    defaultConversationBackend: input.runtime.backend,
     resolveConversationRuntime: () => ({
       runtime: input.runtime,
       capabilityView: input.view,
@@ -863,6 +910,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -887,7 +935,15 @@ describe("executeAgentCall — semantic task execution intent", () => {
 
   it("fails loudly when a task_run has neither taskExecution nor resolveTaskRunner", async () => {
     await expect(
-      executeAgentCall({ kind: "task_run", backend: "codex", prompt: "x" }, {}),
+      executeAgentCall(
+        {
+          executionClass: "nongoverned-task" as const,
+          kind: "task_run",
+          backend: "codex",
+          prompt: "x",
+        },
+        {},
+      ),
     ).rejects.toThrow(/taskExecution.*or deps\.resolveTaskRunner/);
   });
 
@@ -896,7 +952,12 @@ describe("executeAgentCall — semantic task execution intent", () => {
 
     await expect(
       executeAgentCall(
-        { kind: "task_run", backend: "codex", prompt: "x" },
+        {
+          executionClass: "nongoverned-task" as const,
+          kind: "task_run",
+          backend: "codex",
+          prompt: "x",
+        },
         {
           taskExecution: { workingDirectory: "/tmp/wt" },
           getTaskRunner,
@@ -916,6 +977,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
     // the originating session can grant identity.
     await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -943,6 +1005,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
 
     await executeAgentCall(
       {
+        executionClass: "governed-execution" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "review",
@@ -978,6 +1041,7 @@ describe("executeAgentCall — semantic task execution intent", () => {
     // knows nothing about it must not be able to drop the lane's restriction.
     await executeAgentCall(
       {
+        executionClass: "governed-execution" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "review",
@@ -1009,7 +1073,12 @@ describe("executeAgentCall — semantic task execution intent", () => {
     const runner = makeTaskRunner("codex", { capture });
 
     await executeAgentCall(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         resolveTaskRunner: () => ({
           runner,
@@ -1037,7 +1106,12 @@ describe("executeAgentCall — semantic task execution intent", () => {
     const runner = makeTaskRunner("codex", { capture });
 
     await executeAgentCall(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         resolveTaskRunner: () => ({
           runner,
@@ -1059,7 +1133,12 @@ describe("executeAgentCall — pre-turn MCP apply hook", () => {
     runtime.sendTurn = sendTurn;
 
     const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+      },
       {
         resolveConversationRuntime: () => ({
           runtime,
@@ -1087,7 +1166,12 @@ describe("executeAgentCall — continuity recording", () => {
   it("reports backendRef and continuationDisposition after a completed call", async () => {
     const recorded: unknown[] = [];
     const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+      },
       {
         resolveConversationRuntime: () => ({
           runtime: makeConversationRuntime("claude"),
@@ -1112,7 +1196,12 @@ describe("executeAgentCall — continuity recording", () => {
 
   it("never masks the turn result when recording throws", async () => {
     const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+      },
       {
         resolveConversationRuntime: () => ({
           runtime: makeConversationRuntime("claude"),
@@ -1136,7 +1225,12 @@ describe("executeAgentCall — failure normalization via the descriptor classifi
       throw new Error("resume session not found");
     };
     const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+      },
       {
         resolveConversationRuntime: () => ({
           runtime,
@@ -1190,6 +1284,7 @@ describe("executeAgentCall — failure normalization via the descriptor classifi
     }));
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -1228,6 +1323,7 @@ describe("executeAgentCall — widened result fields", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "hi",
@@ -1255,6 +1351,7 @@ describe("executeAgentCall — widened result fields", () => {
     });
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "codex",
         prompt: "hi",
@@ -1356,6 +1453,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
@@ -1529,6 +1627,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
@@ -1611,6 +1710,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
@@ -1690,6 +1790,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
@@ -1796,6 +1897,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
@@ -1864,6 +1966,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
@@ -1921,6 +2024,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "produce a manifest",
@@ -1987,6 +2091,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
@@ -2030,6 +2135,7 @@ describe("executeAgentCall — structured-output repair", () => {
 
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "produce a manifest",
@@ -2047,6 +2153,13 @@ describe("executeAgentCall — structured-output repair", () => {
 describe("buildStructuredOutputRepairRequest", () => {
   const schema = { type: "object", required: ["summary"] };
   const governingFields = {
+    executionClass: "governed-execution" as const,
+    requiresPrivilegedInstructions: true,
+    fsWritePolicy: {
+      mode: "allowlist" as const,
+      allowWrite: [],
+      denyWrite: [],
+    },
     systemInstructions: "the governing charter",
     laneRef: { workflowId: "wf-1", laneId: "primary" },
     writeCapability: "read_only" as const,
@@ -2103,6 +2216,7 @@ describe("buildStructuredOutputRepairRequest", () => {
     });
 
     expect(repair).toEqual({
+      executionProfile: "isolated-one-shot",
       kind: "task_run",
       backend: "codex",
       prompt: "your prior output failed validation",
@@ -2115,6 +2229,7 @@ describe("buildStructuredOutputRepairRequest", () => {
   it("omits governing fields the original request never set", () => {
     const repair = buildStructuredOutputRepairRequest({
       request: {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         prompt: "produce a manifest",
         outputSchema: schema,
@@ -2124,6 +2239,7 @@ describe("buildStructuredOutputRepairRequest", () => {
     });
 
     expect(repair).toEqual({
+      executionClass: "ordinary-conversation",
       kind: "conversation_turn",
       backend: "claude",
       prompt: "your prior output failed validation",

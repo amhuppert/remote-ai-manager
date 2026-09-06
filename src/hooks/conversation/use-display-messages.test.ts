@@ -406,6 +406,20 @@ describe("buildDisplayProjection", () => {
     expect(result.filter((m) => m.queued)).toHaveLength(0);
   });
 
+  it("keeps an uncertain delivery visible for review even when a transcript receipt exists", () => {
+    const result = buildDisplayProjection({
+      messages: [msgWithId("held", "user", "retained")],
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("held", "retained", "uncertain")],
+      optimisticQueue: [],
+    });
+    expect(result.filter((row) => row.queued)).toMatchObject([
+      { queued: { id: "held", status: "uncertain" } },
+    ]);
+  });
+
   it("drops a durable queue row whose id is already a transcript row id (delivered, refetch pending)", () => {
     // Between the transcript append and the session-detail refetch the cached
     // durable row still reads `delivering` — the transcript row wins.
@@ -502,7 +516,7 @@ describe("buildDisplayProjection", () => {
     });
   });
 
-  it("excludes cancelled and failed pending-queue entries from the projection", () => {
+  it("excludes cancelled entries and retains failed entries for review", () => {
     const messages = [msg("assistant", "working")];
     const result = buildDisplayProjection({
       messages,
@@ -517,9 +531,10 @@ describe("buildDisplayProjection", () => {
       optimisticQueue: [],
     });
 
-    expect(result).toHaveLength(2);
-    expect(result[1]?.content).toEqual([{ type: "text", text: "pending one" }]);
-    expect(result[1]?.queued?.id).toBe("c");
+    expect(result).toHaveLength(3);
+    expect(result[1]?.queued?.status).toBe("failed");
+    expect(result[2]?.content).toEqual([{ type: "text", text: "pending one" }]);
+    expect(result[2]?.queued?.id).toBe("c");
   });
 
   it("marks a delivering pending-queue entry with delivering status", () => {

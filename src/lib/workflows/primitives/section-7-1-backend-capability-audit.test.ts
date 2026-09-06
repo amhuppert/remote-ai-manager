@@ -203,6 +203,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
     };
     const result = await executeAgentCall(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "anything",
@@ -263,6 +264,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
     };
     const result = await executeAgentCall(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "hi",
@@ -317,7 +319,12 @@ describe("section 7.1 — structured-output enforcement always flows through the
       validateStructuredOutput: validate,
     };
     const result = await executeAgentCall(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+      },
       deps,
     );
     expect(validate).not.toHaveBeenCalled();
@@ -372,6 +379,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     };
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "codex",
         prompt: "hi",
@@ -422,6 +430,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     };
     const result = await dispatchConversationTurn(
       {
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "hi",
@@ -461,6 +470,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
     };
     const result = await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "do",
@@ -553,7 +563,12 @@ describe("section 7.1 — native mid-turn ask-user is observable only on backend
       },
     };
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "do" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "do",
+      },
       {
         runner,
         capabilityView: CODEX_CAPABILITY_VIEW,
@@ -596,7 +611,12 @@ describe("section 7.1 — capability view is attached to every dispatched result
       async close() {},
     };
     const result = await dispatchConversationTurn(
-      { kind: "conversation_turn", backend: "claude", prompt: "hi" },
+      {
+        executionClass: "ordinary-conversation" as const,
+        kind: "conversation_turn",
+        backend: "claude",
+        prompt: "hi",
+      },
       {
         runtime,
         capabilityView: CLAUDE_CAPABILITY_VIEW,
@@ -624,7 +644,12 @@ describe("section 7.1 — capability view is attached to every dispatched result
       },
     };
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "do" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "do",
+      },
       {
         runner,
         capabilityView: CODEX_CAPABILITY_VIEW,

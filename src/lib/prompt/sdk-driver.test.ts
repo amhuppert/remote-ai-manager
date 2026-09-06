@@ -1,3 +1,4 @@
+import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
@@ -527,6 +528,44 @@ describe("waitForTurnCompletion — turn ends parked on a user question", () => 
 });
 
 describe("executePromptStream (facade)", () => {
+  it.each(["hello", "/commit", "/collab examine this"])(
+    "blocks %s while a delivery needs review",
+    async (prompt) => {
+      const held = makeConversation({
+        pendingQueue: [
+          {
+            ...createPendingEntry({
+              id: "held",
+              content: [{ type: "text", text: "previous request" }],
+              now: "now",
+            }),
+            status: "uncertain",
+          },
+        ],
+      });
+      deps = createTestDeps({
+        getConversation: async () => held,
+        dispatchConversationCommand: vi.fn(async () => ({
+          status: "dispatched" as const,
+          jobId: "job",
+          usedFallback: false,
+        })),
+        dispatchCollabStart: vi.fn(async () => ({ workflowId: "workflow" })),
+      });
+      const executor = createPromptExecutor(deps);
+      await expect(
+        executor.executePromptStream(
+          "/projects/repo",
+          makeSession(),
+          prompt,
+          vi.fn(),
+          held.id,
+        ),
+      ).rejects.toThrow("Review queued deliveries");
+      expect(deps.executeConversationTurn).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns conversationId for existing conversation", async () => {
     deps = createTestDeps();
     const executor = createPromptExecutor(deps);
@@ -1661,6 +1700,7 @@ describe("conversation command interception", () => {
         identifier: "repo#1",
         confirmationPersisted: true,
       })),
+      getConversationBackend: async () => "claude",
       getConversationRole: vi.fn(async () => null),
       evaluateSessionMergeAdmission: vi.fn(async () => ({
         admitted: true as const,

@@ -1,3 +1,4 @@
+import type { ExecutionIntent } from "./execution-admission";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type {
   ConversationBackgroundActivity,
@@ -261,7 +262,7 @@ export interface ConversationBackendRuntime {
   close(): Promise<void>;
 }
 
-export interface ConversationBackendCreateInput {
+export interface ConversationBackendCreateInput extends ExecutionIntent {
   conversationId: string;
   /**
    * Conversation ID this runtime addresses on the CC side: the identity put

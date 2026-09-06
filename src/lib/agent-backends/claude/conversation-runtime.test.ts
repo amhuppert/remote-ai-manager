@@ -279,6 +279,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     const selectedModel = modelSelection("fable", "max");
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-model-selection",
       projectPath: "/project",
       projectName: "proj",
@@ -307,6 +308,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-native-memory",
       projectPath: "/project",
       projectName: "proj",
@@ -337,6 +339,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
 
     await expect(
       createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "conv-native-memory-policy",
         projectPath: "/project",
         projectName: "proj",
@@ -368,6 +371,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
 
     await expect(
       createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "conv-native-memory-helper",
         projectPath: "/project",
         projectName: "proj",
@@ -398,6 +402,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
 
     await expect(
       createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "conv-native-memory-refresh",
         projectPath: "/project",
         projectName: "proj",
@@ -417,6 +422,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-native-memory-cwd",
       projectPath: "/project",
       projectName: "proj",
@@ -439,6 +445,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-session-scope",
       projectPath: "/project",
       projectName: "proj",
@@ -462,6 +469,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await claudeConversationBackendFactory.createRuntime({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-plc",
       projectPath: "/project",
       projectName: "proj",
@@ -487,6 +495,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-disallow",
       projectPath: "/project",
       projectName: "proj",
@@ -511,6 +520,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "collab-wf-1-9f3a2b",
       ccScopeConversationId: "conv-originating",
       projectPath: "/project",
@@ -545,6 +555,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       queryMock.mockReturnValue(mock.query);
 
       const runtime = await createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "conv-ordinary",
         conversationCapability: "cccc1.spawn-minted.sig",
         projectPath: "/project",
@@ -571,6 +582,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       queryMock.mockReturnValue(mock.query);
 
       const runtime = await createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "collab-wf-1-9f3a2b",
         ccScopeConversationId: "conv-originating",
         projectPath: "/project",
@@ -616,6 +628,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       schema,
     };
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-projection",
       projectPath: "/project",
       projectName: "proj",
@@ -706,6 +719,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     const instruction = renderStructuredOutputInstruction(schema);
     const promptText = `Correct the prior response.\n\n${instruction}\n\nReturn only the corrected JSON object.`;
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-structured-repair",
       projectPath: "/project",
       projectName: "proj",
@@ -756,6 +770,7 @@ describe("ClaudeConversationRuntime — SDK options", () => {
       required: ["summary"],
     };
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-structured-image",
       projectPath: "/project",
       projectName: "proj",
@@ -812,6 +827,7 @@ describe("ClaudeConversationRuntime — alignment version metadata", () => {
   it("reports the alignment version baked in at creation", async () => {
     queryMock.mockReturnValue(createControllableMockQuery().query);
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-av",
       projectPath: "/project",
       projectName: "proj",
@@ -835,6 +851,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     const externalEvents: ConversationBackendEvent[] = [];
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-ext-1",
       projectPath: "/project",
       projectName: "proj",
@@ -949,6 +966,7 @@ describe("ClaudeConversationRuntime — external turn events", () => {
     const externalEvents: ConversationBackendEvent[] = [];
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-ext-2",
       projectPath: "/project",
       projectName: "proj",
@@ -1067,6 +1085,7 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-idle",
       projectPath: "/project",
       projectName: "proj",
@@ -1115,6 +1134,7 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-reject",
       projectPath: "/project",
       projectName: "proj",
@@ -1162,6 +1182,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wire-1",
       projectPath: "/project",
       projectName: "proj",
@@ -1200,6 +1221,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-agent-deny",
       projectPath: "/project",
       projectName: "proj",
@@ -1245,6 +1267,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-capability-apply",
       projectPath: "/project",
       projectName: "proj",
@@ -1282,6 +1305,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wire-3",
       projectPath: "/project",
       projectName: "proj",
@@ -1327,6 +1351,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wire-4",
       projectPath: "/project",
       projectName: "proj",
@@ -1405,6 +1430,7 @@ describe("ClaudeConversationRuntime — static external MCP passthrough", () => 
     queryMock.mockReturnValue(mock.query);
 
     await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-init-policy",
       projectPath: "/project",
       projectName: "proj",
@@ -1449,6 +1475,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-structured-output-exhausted",
       projectPath: "/project",
       projectName: "proj",
@@ -1496,6 +1523,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-stale-resume",
       projectPath: "/project",
       projectName: "proj",
@@ -1541,6 +1569,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-stale-pump",
       projectPath: "/project",
       projectName: "proj",
@@ -1574,6 +1603,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-err-1",
       projectPath: "/project",
       projectName: "proj",
@@ -1626,6 +1656,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-err-2",
       projectPath: "/project",
       projectName: "proj",
@@ -1679,6 +1710,7 @@ describe("ClaudeConversationRuntime — error result classification", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-usage-1",
       projectPath: "/project",
       projectName: "proj",
@@ -1736,6 +1768,7 @@ describe("ClaudeConversationRuntime — notifyTurnStarting", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-notify",
       projectPath: "/project",
       projectName: "proj",
@@ -1789,6 +1822,7 @@ describe("ClaudeConversationRuntime — retryable error propagation", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-retryable",
       projectPath: "/project",
       projectName: "proj",
@@ -1852,6 +1886,7 @@ describe("ClaudeConversationRuntime — retryable error propagation", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-aborted-not-thrown",
       projectPath: "/project",
       projectName: "proj",
@@ -1963,6 +1998,7 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wait-hold",
       projectPath: "/project",
       projectName: "proj",
@@ -2014,6 +2050,7 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wait-monitor",
       projectPath: "/project",
       projectName: "proj",
@@ -2059,6 +2096,7 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wait-flag-off",
       projectPath: "/project",
       projectName: "proj",
@@ -2118,6 +2156,7 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-wait-timeout",
       projectPath: "/project",
       projectName: "proj",
@@ -2176,6 +2215,7 @@ describe("ClaudeConversationRuntime — compaction pass-through (sendTurn)", () 
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-compact",
       projectPath: "/project",
       projectName: "proj",
@@ -2221,6 +2261,7 @@ describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-accept-order",
       projectPath: "/project",
       projectName: "proj",
@@ -2282,6 +2323,7 @@ describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-accept-once",
       projectPath: "/project",
       projectName: "proj",
@@ -2350,6 +2392,7 @@ describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-accept-dispatch-fail",
       projectPath: "/project",
       projectName: "proj",
@@ -2416,6 +2459,7 @@ describe("ClaudeConversationRuntime — sendTurn awaits event handler drain", ()
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-drain",
       projectPath: "/project",
       projectName: "proj",
@@ -2496,6 +2540,7 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-queue-pending",
       projectPath: "/project",
       projectName: "proj",
@@ -2540,6 +2585,7 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-queue-dead",
       projectPath: "/project",
       projectName: "proj",
@@ -2563,6 +2609,7 @@ describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-queue-reject",
       projectPath: "/project",
       projectName: "proj",
@@ -2629,6 +2676,7 @@ describe("ClaudeConversationRuntime — agent profile delivery", () => {
     const snapshot = buildAgentProfileSnapshot(profile);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-profile",
       projectPath: "/project",
       projectName: "proj",
@@ -2748,6 +2796,7 @@ describe("ClaudeConversationRuntime — agent profile delivery", () => {
       queryMock.mockReturnValue(mock.query);
 
       const runtime = await createRuntimeWithFakeDeps({
+        executionClass: "ordinary-conversation" as const,
         conversationId: "conv-persisted-profile",
         projectPath: "/project",
         projectName: "proj",
@@ -2848,6 +2897,7 @@ describe("ClaudeConversationRuntime — memory advisory contract delivery", () =
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
+      executionClass: "ordinary-conversation" as const,
       conversationId: "conv-memory-contract",
       projectPath: "/project",
       projectName: "proj",

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { backendExecutionSchema } from "./execution-admission";
 import { createLogger } from "@/lib/logging";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import {
@@ -106,6 +107,27 @@ function validateDescriptorCompleteness(
   }
   if (descriptors.has(descriptor.id)) {
     throw new Error(`Backend "${descriptor.id}" is already registered`);
+  }
+
+  const execution = backendExecutionSchema.safeParse({
+    conversation: descriptor.conversation
+      ? {
+          ...descriptor.conversation.execution,
+          fsWriteRestriction: descriptor.conversation.fsWriteRestriction,
+        }
+      : null,
+    tasks: descriptor.tasks
+      ? {
+          ...descriptor.tasks.execution,
+          fsWriteRestriction: descriptor.tasks.fsWriteRestriction,
+        }
+      : null,
+  });
+  if (!execution.success) {
+    rejectDescriptor(
+      descriptor.id,
+      `has invalid execution policy: ${summarizeIssues(execution.error)}`,
+    );
   }
 
   const metadata = backendMetadataIntegritySchema.safeParse(

@@ -17,6 +17,12 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import {
+  BackendAdmissionError,
+  type ExecutionCatalogEntry,
+  type ExecutionRequirements,
+} from "@/lib/agent-backends/execution-admission";
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   ConversationBackendEvent,
@@ -161,6 +167,9 @@ export interface ContinuityRecord {
 }
 
 export interface AgentCallFacadeDeps {
+  getExecutionEntry?(
+    backend: AgentBackendId,
+  ): ExecutionCatalogEntry | Promise<ExecutionCatalogEntry>;
   resolveConversationRuntime?: (
     request: Extract<AgentCallRequest, { kind: "conversation_turn" }>,
   ) => ConversationRuntimeResolution | Promise<ConversationRuntimeResolution>;
@@ -252,6 +261,8 @@ export function buildStructuredOutputRepairRequest(input: {
 }): AgentCallRequest {
   const { request, prompt, backend } = input;
   const carried = {
+    executionClass: request.executionClass,
+    requiresPrivilegedInstructions: request.requiresPrivilegedInstructions,
     prompt,
     ...(request.outputSchema !== undefined
       ? { outputSchema: request.outputSchema }
@@ -273,6 +284,7 @@ export function buildStructuredOutputRepairRequest(input: {
   return request.kind === "task_run"
     ? {
         kind: "task_run",
+        executionProfile: "isolated-one-shot",
         backend,
         ...carried,
         // A repair turn runs the same agent against the same worktree; letting
@@ -281,7 +293,14 @@ export function buildStructuredOutputRepairRequest(input: {
           ? { fsWritePolicy: request.fsWritePolicy }
           : {}),
       }
-    : { kind: "conversation_turn", backend, ...carried };
+    : {
+        kind: "conversation_turn",
+        backend,
+        ...carried,
+        ...(request.fsWritePolicy !== undefined
+          ? { fsWritePolicy: request.fsWritePolicy }
+          : {}),
+      };
 }
 
 export async function executeAgentCall(
@@ -289,6 +308,64 @@ export async function executeAgentCall(
   deps: AgentCallFacadeDeps,
 ): Promise<AgentCallResult> {
   const parsed = agentCallRequestSchema.parse(request);
+  const backend = parsed.backend ?? deps.defaultConversationBackend;
+  if (backend === undefined)
+    throw new Error("AgentCall admission requires an explicit backend");
+  const requirements: ExecutionRequirements =
+    parsed.kind === "task_run"
+      ? {
+          facet: "tasks",
+          operation: "agent-call",
+          executionClass: parsed.executionClass,
+          executionProfile: parsed.executionProfile ?? "standard",
+          requiresPrivilegedInstructions: parsed.requiresPrivilegedInstructions,
+          requiresFsWriteRestriction: parsed.fsWritePolicy !== undefined,
+        }
+      : {
+          facet: "conversation",
+          operation: "agent-call",
+          executionClass: parsed.executionClass,
+          requiresPrivilegedInstructions: parsed.requiresPrivilegedInstructions,
+          requiresFsWriteRestriction: parsed.fsWritePolicy !== undefined,
+        };
+  try {
+    const entry = await deps.getExecutionEntry?.(backend);
+    await assertBackendExecution(backend, requirements, entry);
+    if (
+      requirements.facet === "tasks" &&
+      parsed.outputSchema !== undefined &&
+      (parsed.structuredOutputRepair?.maxAttempts ?? 1) > 0
+    ) {
+      await assertBackendExecution(
+        backend,
+        { ...requirements, executionProfile: "isolated-one-shot" },
+        entry,
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof BackendAdmissionError)) throw error;
+    return finalizeAgentCall(
+      {
+        backend,
+        backendRef: deps.taskExecution?.resumeRef ?? null,
+        capabilities: capabilityViewForBackend(backend),
+        usage: {},
+        artifacts: [],
+        outcome: {
+          kind: "failed",
+          error: {
+            failureKind: "capability_unavailable",
+            backend,
+            message: error.message,
+            code: error.code,
+            retryable: false,
+          },
+        },
+        continuationDisposition: "retain",
+      },
+      deps,
+    );
+  }
 
   if (parsed.kind === "conversation_turn") {
     return finalizeAgentCall(await executeConversationTurn(parsed, deps), deps);
@@ -392,6 +469,12 @@ async function executeConversationTurn(
     : request;
 
   const resolution = await deps.resolveConversationRuntime(effectiveRequest);
+  if (
+    resolution.runtime.backend !== requestedBackend ||
+    resolution.capabilityView.backend !== requestedBackend
+  ) {
+    throw new Error("Conversation execution backend mismatch");
+  }
 
   const mcpFailure = await runMcpApplyHook(
     effectiveRequest,
@@ -551,6 +634,8 @@ async function executeTaskRun(
 
   const classifyFailure = resolveClassifier(request.backend, deps);
   const dispatchDeps: DispatchTaskRunDeps = {
+    executionEntry: await deps.getExecutionEntry?.(request.backend),
+    executionProfile: request.executionProfile ?? "standard",
     runner: resolution.runner,
     capabilityView: resolution.capabilityView,
     workingDirectory: resolution.workingDirectory,

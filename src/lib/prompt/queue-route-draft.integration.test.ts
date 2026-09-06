@@ -126,9 +126,8 @@ function handlers(onQueue?: () => Promise<void>) {
     }),
     clearConversationPendingPromptTextIfMatches:
       store.clearConversationPendingPromptTextIfMatches,
-    hasLiveConversationActor: () => true,
+    resolveDelivery: async () => "not_found",
     ensureConversationActorAndDrain: async () => {},
-    recoverAbandonedDeliveries: async () => 0,
     cancel: async () => "not_found",
   });
 }

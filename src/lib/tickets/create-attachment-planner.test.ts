@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { QuickTicketDiagnostics } from "./schemas";
+import type { QuickTicketDiagnostics, TicketDetail } from "./schemas";
 import {
   createCreateAttachmentPlanner,
   type CreateAttachmentPlannerDeps,
@@ -64,6 +64,13 @@ function makeDeps(
       };
     },
     scheduleConversationSnapshotRefresh() {},
+    async prepareEnrichment() {
+      return {
+        status: "ready",
+        backend: "codex",
+        modelSelection: { modelId: "gpt-5.4", parameters: {} },
+      };
+    },
     scheduleEnrichment() {},
     generateId() {
       id += 1;
@@ -76,7 +83,83 @@ function makeDeps(
   };
 }
 
+function ticketForPlan(attachments: TicketDetail["attachments"]): TicketDetail {
+  return {
+    id: "ticket-1",
+    projectPath: "/repos/source",
+    projectName: "source",
+    number: 1,
+    title: "Bug",
+    description: "",
+    workType: "bug",
+    status: "not_started",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    attachments,
+    sessions: [],
+    relationships: [],
+    statusUpdates: { total: 0, recent: [] },
+  };
+}
+
 describe("createCreateAttachmentPlanner", () => {
+  it("keeps attachments and warns when optional enrichment cannot run", async () => {
+    const scheduleEnrichment =
+      vi.fn<CreateAttachmentPlannerDeps["scheduleEnrichment"]>();
+    const plan = await createCreateAttachmentPlanner(
+      makeDeps({
+        scheduleEnrichment,
+        async prepareEnrichment() {
+          return {
+            status: "unavailable",
+            warning: {
+              code: "enrichment_unavailable",
+              message:
+                "Ticket created. Automatic enrichment is unavailable with Cursor.",
+            },
+          };
+        },
+      }),
+    ).plan({ ticketId: "ticket-1", diagnostics: diagnostics() });
+    expect(plan.warnings).toMatchObject([{ code: "enrichment_unavailable" }]);
+    expect(plan.attachments.map((a) => a.payload.kind)).toEqual([
+      "note",
+      "file",
+    ]);
+    plan.afterCommit(ticketForPlan(plan.attachments));
+    expect(scheduleEnrichment).not.toHaveBeenCalled();
+  });
+  it("schedules the selection captured before commit even if preparation later changes", async () => {
+    const scheduleEnrichment =
+      vi.fn<CreateAttachmentPlannerDeps["scheduleEnrichment"]>();
+    let backend: "codex" | "cursor" = "codex";
+    const prepareEnrichment = vi.fn<
+      CreateAttachmentPlannerDeps["prepareEnrichment"]
+    >(async () => ({
+      status: "ready",
+      backend,
+      modelSelection: {
+        modelId: "captured-model",
+        parameters: { fast: "false" },
+      },
+    }));
+    const plan = await createCreateAttachmentPlanner(
+      makeDeps({ prepareEnrichment, scheduleEnrichment }),
+    ).plan({ ticketId: "ticket-1", diagnostics: diagnostics() });
+    backend = "cursor";
+    plan.afterCommit(ticketForPlan(plan.attachments));
+    expect(prepareEnrichment).toHaveBeenCalledTimes(1);
+    expect(scheduleEnrichment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: "codex",
+        modelSelection: {
+          modelId: "captured-model",
+          parameters: { fast: "false" },
+        },
+      }),
+    );
+  });
+
   it("plans report, screenshot, and pending conversation in deterministic order", async () => {
     const planner = createCreateAttachmentPlanner(makeDeps());
 
@@ -170,6 +253,8 @@ describe("createCreateAttachmentPlanner", () => {
     plan.afterCommit(ticket);
 
     expect(scheduleEnrichment).toHaveBeenCalledWith({
+      backend: "codex",
+      modelSelection: { modelId: "gpt-5.4", parameters: {} },
       ticket,
       diagnostics: diagnostics({
         removed: ["screenshot", "conversation"],
@@ -227,6 +312,8 @@ describe("createCreateAttachmentPlanner", () => {
     plan.afterCommit(ticket);
 
     expect(scheduleEnrichment).toHaveBeenCalledWith({
+      backend: "codex",
+      modelSelection: { modelId: "gpt-5.4", parameters: {} },
       ticket,
       diagnostics: diagnostics({ screenshot: undefined }),
     });
@@ -358,6 +445,8 @@ describe("createCreateAttachmentPlanner", () => {
       attachmentId: "attachment-3",
     });
     expect(scheduleEnrichment).toHaveBeenCalledWith({
+      backend: "codex",
+      modelSelection: { modelId: "gpt-5.4", parameters: {} },
       ticket,
       diagnostics: diagnostics(),
       conversationContext: {

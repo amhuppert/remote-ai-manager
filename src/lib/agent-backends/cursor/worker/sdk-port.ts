@@ -15,6 +15,9 @@ import type {
   CursorWorkerSendMessage,
   CursorWorkerSendOptions,
 } from "./entry";
+import { createLogger } from "@/lib/logging";
+
+const logger = createLogger("cursor-worker");
 
 /**
  * The real `@cursor/sdk` behind the worker's port (spec D2, D11, D18).
@@ -76,6 +79,37 @@ async function loadSdkModule(): Promise<typeof import("@cursor/sdk")> {
 type SdkModule = Awaited<ReturnType<typeof loadSdkModule>>;
 type SdkAgent = Awaited<ReturnType<SdkModule["Agent"]["create"]>>;
 type SdkRun = Awaited<ReturnType<SdkAgent["send"]>>;
+
+interface ResumeRecoveryDeps<T> {
+  resume(): Promise<T>;
+  listRuns(cursor?: string): Promise<{
+    items: readonly { id: string; status: import("@cursor/sdk").RunStatus }[];
+    nextCursor?: string;
+  }>;
+  cancelRun(id: string): Promise<void>;
+}
+
+/** Only the worker owning this conversation may cancel an abandoned local run. */
+export async function resumeWithAbandonedRunRecovery<T>(
+  deps: ResumeRecoveryDeps<T>,
+  allowed: boolean,
+): Promise<T> {
+  if (!allowed) return deps.resume();
+  let cursor: string | undefined;
+  do {
+    const page = await deps.listRuns(cursor);
+    const active = page.items.find((run) => run.status === "running");
+    if (active) {
+      await deps.cancelRun(active.id);
+      logger.info("cursor-worker.abandoned_run_cancelled", {
+        runId: active.id,
+      });
+      break;
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+  return deps.resume();
+}
 
 function toAgentOptions(
   sdk: SdkModule,
@@ -166,8 +200,21 @@ export async function loadCursorWorkerSdk(): Promise<CursorWorkerSdk> {
       return wrapAgent(await sdk.Agent.create(toAgentOptions(sdk, options)));
     },
     async resume(ref, options) {
+      const agentOptions = toAgentOptions(sdk, options);
+      const local = {
+        runtime: "local" as const,
+        cwd: options.cwd,
+        store: agentOptions.local?.store,
+      };
       return wrapAgent(
-        await sdk.Agent.resume(ref, toAgentOptions(sdk, options)),
+        await resumeWithAbandonedRunRecovery(
+          {
+            resume: () => sdk.Agent.resume(ref, agentOptions),
+            listRuns: (cursor) => sdk.Agent.listRuns(ref, { ...local, cursor }),
+            cancelRun: (id) => sdk.Agent.cancelRun(id, local),
+          },
+          options.recoverAbandonedRun === true,
+        ),
       );
     },
   };

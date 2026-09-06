@@ -43,6 +43,7 @@ const TESTFAKE_MODEL_SELECTION = {
 
 function makeCreateInput(): ConversationBackendCreateInput {
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId: "conv-testfake",
     projectPath: "/projects/fake",
     projectName: "fake",
@@ -256,6 +257,7 @@ describe("createTestFakeBackend task runner", () => {
   it("returns the scripted task result with testfake_frame transcript entries", async () => {
     const fake = createTestFakeBackend();
     const result = await fake.descriptor.tasks!.runner.run({
+      executionClass: "nongoverned-task" as const,
       workingDirectory: "/tmp",
       prompt: "do it",
       modelSelection: TESTFAKE_MODEL_SELECTION,

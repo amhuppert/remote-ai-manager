@@ -12,6 +12,8 @@ import { agentProfileKeys } from "@/lib/agent-profiles/query-keys";
 import type { AgentProfileLibraryListing } from "@/lib/agent-profiles/schemas";
 import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { WorkflowSection } from "./WorkflowSection";
 import { makeController } from "./test-controller";
 
@@ -47,6 +49,10 @@ function render(ui: React.ReactElement) {
     defaultOptions: { queries: { retry: false } },
   });
   client.setQueryData(agentProfileKeys.globalList(), GLOBAL_LISTING);
+  client.setQueryData(
+    backendCatalogKeys.catalog(),
+    listBackendCatalogEntries(),
+  );
   return rtlRender(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );

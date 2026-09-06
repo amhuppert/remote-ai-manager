@@ -167,7 +167,8 @@ export function createProjectPromptExecutor(
     const executionTarget = await deps.resolveExecutionTarget(projectPath);
     // Read config so the synthetic session inherits global defaults; values not
     // overridden fall back to the session-schema defaults.
-    await deps.readConfig();
+    const config = await deps.readConfig();
+    const command = parseConversationCommand(input.promptText);
 
     let conversation: ConversationState;
     if (input.conversationId !== undefined) {
@@ -181,7 +182,17 @@ export function createProjectPromptExecutor(
         );
       }
       conversation = existing;
+      if (command)
+        admitCommand(
+          input.backend ?? existing.agentBackend,
+          `/${command.command}`,
+        );
     } else {
+      if (command)
+        admitCommand(
+          input.backend ?? config.defaultAgentBackend,
+          `/${command.command}`,
+        );
       conversation = await deps.createProjectConversation(projectPath, {
         ...(input.backend ? { agentBackend: input.backend } : {}),
         ...(input.creationRequestId !== undefined
@@ -278,3 +289,5 @@ export function executeProjectPromptStream(
 ): Promise<PromptStreamResult> {
   return defaultExecutor.executeProjectPromptStream(input);
 }
+import { admitCommand } from "@/lib/commands/admission";
+import { parseConversationCommand } from "@/lib/conversation-commands/parse";

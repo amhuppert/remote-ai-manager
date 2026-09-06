@@ -121,6 +121,8 @@ export function createPlanRepairAgentRunner(
       sessionName: invocation.sessionName,
       conversationId: invocation.conversationId,
       kind: "task_run",
+      executionClass: "governed-execution",
+      executionProfile: "standard",
       prompt: invocation.prompt,
       outputFormat: {
         type: "json_schema",

@@ -540,6 +540,8 @@ async function dispatchConflictTurn(input: {
     conversationId: input.conversationId,
     worktreePath: input.worktreePath,
     kind: "task_run",
+    executionClass: "governed-execution",
+    executionProfile: "standard",
     prompt: input.prompt,
     systemInstructions: input.systemInstructions,
     timeoutMs: input.timeoutMs,

@@ -209,6 +209,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
@@ -305,6 +306,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     const request = (round: number): AgentCallRequest => ({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: `round ${round}`,
@@ -403,6 +405,7 @@ describe("createCollaborationProductionCallAgent", () => {
       >;
 
     await callAgent({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
@@ -470,6 +473,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     const request = (round: number): AgentCallRequest => ({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: `round ${round}`,
@@ -556,6 +560,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     const request = (round: number): AgentCallRequest => ({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: `round ${round}`,
@@ -666,6 +671,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     const request = (round: number): AgentCallRequest => ({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: `round ${round}`,
@@ -752,6 +758,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: "round 1",
@@ -834,6 +841,7 @@ describe("createCollaborationProductionCallAgent", () => {
       });
 
       await callAgent({
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "round 1",
@@ -899,6 +907,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: "round 1",
@@ -967,6 +976,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: "round 1",
@@ -1065,6 +1075,7 @@ describe("createCollaborationProductionCallAgent", () => {
       });
 
       const resultPromise = callAgent({
+        executionClass: "ordinary-conversation" as const,
         kind: "conversation_turn",
         backend: "claude",
         prompt: "round 1",
@@ -1127,6 +1138,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
@@ -1183,6 +1195,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
@@ -1267,6 +1280,7 @@ describe("createCollaborationProductionCallAgent", () => {
       >;
     const workBody = "do the actual work and cover every field";
     const result = await callAgent({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: `${workBody}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
@@ -1344,6 +1358,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     await callAgent({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: "no schema here",
@@ -1388,6 +1403,7 @@ describe("createCollaborationProductionCallAgent", () => {
 
     await expect(
       callAgent({
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "no lane here",
@@ -1530,6 +1546,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
 
   function governedRequest(workflowId: string): AgentCallRequest {
     return {
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: prefixPromptWithTicketBlock(
@@ -1590,6 +1607,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     });
 
     await callAgent({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: "round 1",
@@ -1695,6 +1713,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     });
 
     await callAgent({
+      executionClass: "ordinary-conversation" as const,
       kind: "conversation_turn",
       backend: "claude",
       prompt: prefixPromptWithTicketBlock(
@@ -1823,6 +1842,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
 
     function codexWorkRequest(): AgentCallRequest {
       return {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "do the collaborative work",

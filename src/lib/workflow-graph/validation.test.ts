@@ -8,6 +8,7 @@ import {
   seedAssignment,
 } from "./test-fixtures";
 import { getFsWriteRestrictionForBackend } from "@/lib/agent-backends/catalog";
+import { getBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import { isUpstreamVisibleToDownstream } from "./lane-readiness";
 import {
   getEligibleContextIds,
@@ -45,6 +46,23 @@ function withPlanOutputSchema(
 }
 
 describe("workflow-graph validation", () => {
+  it("refuses governed staffing even when a restricted backend has a task facet", () => {
+    const definition = createResolvedWorkflowDefinition();
+    const result = validateResolvedWorkflow(definition, {
+      executionEntryFor(backend) {
+        const entry = structuredClone(getBackendCatalogEntry(backend));
+        if (entry.execution.tasks)
+          entry.execution.tasks.classes = ["nongoverned-task"];
+        return entry;
+      },
+    });
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "backend-role-unsupported" }),
+      ]),
+    );
+  });
+
   it("refuses readiness checks that would be deferred by a non-full placement", () => {
     const definition = createWorkflowDefinition();
     const context = definition.executionContexts[0]!;

@@ -446,35 +446,23 @@ describe("PUT /api/config", () => {
     expect(deps.writeRawConfig).toHaveBeenCalled();
   });
 
-  it("persists canonical model ids instead of accepted aliases", async () => {
-    const aliasSelection = {
-      modelId: "composer-latest",
-      parameters: { fast: "true" },
-    };
+  it("persists Cursor conversation defaults with canonical model ids", async () => {
     const response = await handlers.PUT(
       makePutRequest({
+        defaultAgentBackend: "cursor",
         agentBackends: {
           cursor: {
-            modelSelection: aliasSelection,
+            modelSelection: {
+              modelId: "composer-latest",
+              parameters: { fast: "true" },
+            },
           },
-        },
-        compaction: {
-          backend: "cursor",
-          conversationModelSelection: aliasSelection,
-          messageModelSelection: aliasSelection,
-          timeoutMs: 180_000,
-        },
-        conversationNaming: {
-          enabled: true,
-          backend: "cursor",
-          modelSelection: aliasSelection,
-          timeoutMs: null,
         },
       }),
     );
-
     expect(response.status).toBe(200);
     expect(deps.writeRawConfig).toHaveBeenCalledWith({
+      defaultAgentBackend: "cursor",
       agentBackends: {
         cursor: {
           modelSelection: {
@@ -483,28 +471,76 @@ describe("PUT /api/config", () => {
           },
         },
       },
-      compaction: {
-        backend: "cursor",
-        conversationModelSelection: {
-          modelId: "composer-2.5",
-          parameters: { fast: "true" },
-        },
-        messageModelSelection: {
-          modelId: "composer-2.5",
-          parameters: { fast: "true" },
-        },
-        timeoutMs: 180_000,
-      },
-      conversationNaming: {
-        enabled: true,
-        backend: "cursor",
-        modelSelection: {
-          modelId: "composer-2.5",
-          parameters: { fast: "true" },
-        },
-        timeoutMs: null,
-      },
     });
+  });
+
+  it.each(["conversationNaming", "compaction"])(
+    "refuses an unsupported %s selection before saving",
+    async (field) => {
+      const selection = {
+        modelId: "composer-2.5",
+        parameters: { fast: "true" },
+      };
+      const block =
+        field === "conversationNaming"
+          ? { backend: "cursor", enabled: true, modelSelection: selection }
+          : {
+              backend: "cursor",
+              conversationModelSelection: selection,
+              messageModelSelection: selection,
+            };
+      const response = await handlers.PUT(makePutRequest({ [field]: block }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "backend-facet-unsupported",
+      });
+      expect(deps.writeRawConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a new unsupported naming selection even when naming is disabled", async () => {
+    const response = await handlers.PUT(
+      makePutRequest({
+        conversationNaming: {
+          enabled: false,
+          backend: "cursor",
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
+        },
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "backend-facet-unsupported",
+    });
+    expect(deps.writeRawConfig).not.toHaveBeenCalled();
+  });
+
+  it("allows unrelated edits and disabling unsupported stored naming", async () => {
+    const conversationNaming = {
+      backend: "cursor" as const,
+      enabled: true,
+      modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
+    };
+    deps.readRawConfig = async () => ({ conversationNaming });
+    expect(
+      (
+        await handlers.PUT(
+          makePutRequest({ conversationNaming, tailscaleEnabled: false }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await handlers.PUT(
+          makePutRequest({
+            conversationNaming: { ...conversationNaming, enabled: false },
+          }),
+        )
+      ).status,
+    ).toBe(200);
   });
 
   it("rejects a Cursor selection that is not a complete catalog variant", async () => {

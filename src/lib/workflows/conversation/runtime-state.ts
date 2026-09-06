@@ -26,6 +26,9 @@ export interface ConversationRuntimeState {
   /** AbortController for cancelling in-flight SDK queries. */
   abortController: AbortController;
 
+  /** Settles only when an invoked prompt can no longer dispatch or write. */
+  turnCompletion?: Promise<void>;
+
   /** Release function for the per-conversation single-flight lock. */
   releaseConversationLock?: () => void;
 

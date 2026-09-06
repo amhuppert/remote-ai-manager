@@ -25,7 +25,10 @@ import {
   storeSessionNameFromScopeRef,
   type ConversationScopeRef,
 } from "@/lib/conversations/conversation-target";
-import { queueEnqueueRequestSchema } from "@/lib/prompt/schemas";
+import {
+  queueEnqueueRequestSchema,
+  queueReviewRequestSchema,
+} from "@/lib/prompt/schemas";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -33,11 +36,14 @@ import type {
   PendingQueuedMessage,
   QueueErrorCode,
   QueuedMessageView,
+  QueueReviewAction,
 } from "@/lib/conversations/message-queue-schemas";
 import type {
   QueueCancellationResponse,
   QueueEnqueueRequest,
   QueueEnqueueResponse,
+  QueueReviewRequest,
+  QueueReviewResponse,
 } from "@/lib/prompt/schemas";
 import type {
   DocumentFeedbackPayload,
@@ -86,21 +92,18 @@ export interface QueueOperationDeps {
     conversationId: string,
     expected: string,
   ): Promise<boolean>;
-  hasLiveConversationActor(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-  ): boolean;
   ensureConversationActorAndDrain(
     projectPath: string,
     sessionName: string,
     conversationId: string,
   ): Promise<void>;
-  recoverAbandonedDeliveries(input: {
+  resolveDelivery(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
-  }): Promise<number>;
+    id: string;
+    action: QueueReviewAction;
+  }): Promise<"resolved" | "not_found" | "not_reviewable">;
   cancel(input: {
     projectPath: string;
     sessionName: string;
@@ -319,14 +322,7 @@ export async function enqueueQueuedMessage(
   return NextResponse.json(response);
 }
 
-/**
- * Cancel a queued message before delivery.
- *
- * When no live actor owns the conversation (e.g. after a process restart), a row
- * may be stranded in `delivering` from an attempt whose owner is gone. Recovering
- * it back to `pending` first is what makes cancellation possible at all in that
- * state; a live actor still owning the attempt must not be disturbed.
- */
+/** Cancel a pending message. Claimed deliveries require explicit review after settlement. */
 export async function cancelQueuedMessage(
   deps: QueueOperationDeps,
   target: ResolvedQueueTarget,
@@ -345,20 +341,6 @@ export async function cancelQueuedMessage(
 
   const storeSessionName = storeSessionNameFromScopeRef(scope);
   const projectName = deps.getProjectDisplayName(projectPath);
-
-  if (
-    !deps.hasLiveConversationActor(
-      projectPath,
-      storeSessionName,
-      conversationId,
-    )
-  ) {
-    await deps.recoverAbandonedDeliveries({
-      projectPath,
-      sessionName: storeSessionName,
-      conversationId,
-    });
-  }
 
   const result = await deps.cancel({
     projectPath,
@@ -388,8 +370,93 @@ export async function cancelQueuedMessage(
   }
 
   return queueError(
-    "This message has already been delivered and can no longer be cancelled",
+    "This message is no longer pending; wait for delivery or use its review controls",
     "NOT_CANCELLABLE",
     409,
   );
+}
+
+/** Resolve a retained delivery explicitly before automatic draining can resume. */
+export async function reviewQueuedMessage(
+  deps: Pick<
+    QueueOperationDeps,
+    "resolveDelivery" | "ensureConversationActorAndDrain"
+  >,
+  target: ResolvedQueueTarget,
+  messageId: string,
+  body: QueueReviewRequest,
+): Promise<Response> {
+  const { projectPath, scope, conversationId, conversation } = target;
+  if (conversation.role !== null)
+    return queueError(
+      "Queue review is not available for managed workflow conversations",
+      "NON_INTERACTIVE_CONVERSATION",
+      403,
+    );
+  if (conversation.status === "running")
+    return queueError(
+      "Wait for the active turn to stop before reviewing delivery",
+      "NOT_REVIEWABLE",
+      409,
+    );
+  const sessionName = storeSessionNameFromScopeRef(scope);
+  const result = await deps.resolveDelivery({
+    projectPath,
+    sessionName,
+    conversationId,
+    id: messageId,
+    action: body.action,
+  });
+  if (result === "not_found") return notFound("Queued message not found");
+  if (result === "not_reviewable")
+    return queueError(
+      "This message does not need delivery review",
+      "NOT_REVIEWABLE",
+      409,
+    );
+  logger.info("queue.review_resolved", {
+    projectPath,
+    ...scope,
+    conversationId,
+    messageIds: [messageId],
+    action: body.action,
+  });
+  try {
+    await deps.ensureConversationActorAndDrain(
+      projectPath,
+      sessionName,
+      conversationId,
+    );
+  } catch (error) {
+    logger.error("queue.post_review_drain_failed", {
+      projectPath,
+      ...scope,
+      conversationId,
+      messageIds: [messageId],
+      error: getErrorMessage(error),
+    });
+  }
+  return NextResponse.json({
+    resolved: true,
+    id: messageId,
+    action: body.action,
+  } satisfies QueueReviewResponse);
+}
+
+export async function parseQueueReviewBody(
+  request: Request,
+): Promise<RouteResolution<QueueReviewRequest>> {
+  const parsed = queueReviewRequestSchema.safeParse(
+    await request.json().catch(() => null),
+  );
+  if (!parsed.success)
+    return {
+      ok: false,
+      response: queueError(
+        "Choose retry or discard for this delivery",
+        "INVALID_QUEUE_REVIEW",
+        400,
+      ),
+    };
+  return { ok: true, value: parsed.data };
 }

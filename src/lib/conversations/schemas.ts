@@ -171,6 +171,10 @@ export const forkedFromSchema = z
     sourceBackendRef: persistedAgentSessionRefSchema.nullable().optional(),
     forkLocator: z.string().nullable().optional(),
     forkMode: z.enum(["native", "synthetic"]).nullable().default(null),
+    /** Immutable history for a synthetic fork, independent of the editable draft. */
+    syntheticSeed: z.string().max(24_000).optional(),
+    /** Provider acceptance, independent of eagerly persisted agent creation. */
+    syntheticSeedAcceptedRef: agentSessionRefSchema.optional(),
     /**
      * True between the provisional insert and the adapter's answer: this row
      * exists so the fork's profile snapshot is durable BEFORE provider

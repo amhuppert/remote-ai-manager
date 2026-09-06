@@ -761,7 +761,7 @@ export class CodexConversationRuntime
       );
     }
 
-    if (this.isFirstTurn && input.syntheticForkSeed) {
+    if (input.syntheticForkSeed) {
       textParts.push(input.syntheticForkSeed);
     }
 

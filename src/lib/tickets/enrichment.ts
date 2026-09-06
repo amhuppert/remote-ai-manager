@@ -1,3 +1,5 @@
+import { runAdmittedTask } from "@/lib/agent-backends/task-execution";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
@@ -219,18 +221,28 @@ export function createTicketEnrichmentService(
 
       let result: AgentTaskResult;
       try {
-        const runner = deps.getTaskRunner(input.backend);
-        result = await runner.run({
-          workingDirectory: input.projectPath,
-          prompt: buildEnrichmentPrompt(input),
-          modelSelection: input.modelSelection,
-          outputSchema: TICKET_ENRICHMENT_OUTPUT_SCHEMA,
-          timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
-          tooling: { portableMcp: { servers: [] } },
-          executionProfile: "isolated-one-shot",
-          autonomous: true,
-        });
+        result = await runAdmittedTask(
+          input.backend,
+          {
+            executionClass: "nongoverned-task",
+            workingDirectory: input.projectPath,
+            prompt: buildEnrichmentPrompt(input),
+            modelSelection: input.modelSelection,
+            outputSchema: TICKET_ENRICHMENT_OUTPUT_SCHEMA,
+            timeoutMs: TICKET_ENRICHMENT_TIMEOUT_MS,
+            tooling: { portableMcp: { servers: [] } },
+            executionProfile: "isolated-one-shot",
+            autonomous: true,
+          },
+          { getRunner: (backend) => deps.getTaskRunner(backend) },
+        );
       } catch (error) {
+        if (error instanceof BackendAdmissionError)
+          logger.warn("tickets.enrichment_unavailable", {
+            ticketId: input.ticketId,
+            phase: "execution",
+            ...error.refusal,
+          });
         return failure(input, "execution", {
           failureKind: "thrown",
           errorType: errorType(error),

@@ -1,3 +1,5 @@
+import { commandRequestRefusal } from "@/lib/commands/route-admission";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 /**
  * Project-conversation route handlers — session-less prompt + lifecycle.
  *
@@ -259,6 +261,11 @@ export function createProjectConversationRouteHandlers(
               : {}),
           });
         } catch (err) {
+          if (err instanceof BackendAdmissionError) {
+            emit("error", { message: err.message, code: err.code });
+            emit("done", {});
+            return;
+          }
           if (err instanceof BackendMismatchError) {
             emit("error", { message: err.message, code: "BACKEND_MISMATCH" });
             emit("done", {});
@@ -388,6 +395,11 @@ export function createProjectConversationRouteHandlers(
     );
     if (!parsed.ok) return parsed.response;
 
+    const refusal = await commandRequestRefusal(
+      parsed.value.prompt,
+      parsed.value.backend,
+    );
+    if (refusal) return refusal;
     return streamPrompt(project.value, undefined, parsed.value);
   }
 
@@ -416,6 +428,11 @@ export function createProjectConversationRouteHandlers(
     );
     if (!parsed.ok) return parsed.response;
 
+    const refusal = await commandRequestRefusal(
+      parsed.value.prompt,
+      parsed.value.backend ?? resolved.value.conversation.agentBackend,
+    );
+    if (refusal) return refusal;
     return streamPrompt(projectPath, conversationId, parsed.value);
   }
 

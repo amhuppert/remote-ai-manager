@@ -112,7 +112,11 @@ describe("dispatchTaskRun", () => {
     const { runner } = makeStubRunner("codex");
     await expect(() =>
       dispatchTaskRun(
-        { kind: "conversation_turn", prompt: "hi" },
+        {
+          executionClass: "ordinary-conversation" as const,
+          kind: "conversation_turn",
+          prompt: "hi",
+        },
         {
           runner,
           capabilityView: CODEX_VIEW,
@@ -132,6 +136,7 @@ describe("dispatchTaskRun", () => {
 
     const result = await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "do it",
@@ -164,7 +169,12 @@ describe("dispatchTaskRun", () => {
   it("uses a default timeout when the request omits it", async () => {
     const { runner, capturedInput } = makeStubRunner("codex");
     await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -178,7 +188,12 @@ describe("dispatchTaskRun", () => {
   it("uses no timeout when request and caller defaults omit it", async () => {
     const { runner, capturedInput } = makeStubRunner("codex");
     await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -192,7 +207,12 @@ describe("dispatchTaskRun", () => {
     const { runner, capturedInput } = makeStubRunner("codex");
 
     await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "review" },
+      {
+        executionClass: "governed-execution" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "review",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -222,7 +242,12 @@ describe("dispatchTaskRun", () => {
     const { runner, capturedInput } = makeStubRunner("codex");
 
     await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "implement" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "implement",
+      },
       { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
     );
 
@@ -233,7 +258,12 @@ describe("dispatchTaskRun", () => {
     const { runner, capturedInput } = makeStubRunner("codex");
 
     await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -252,6 +282,7 @@ describe("dispatchTaskRun", () => {
     const { runner, capturedInput } = makeStubRunner("codex");
     await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -273,6 +304,7 @@ describe("dispatchTaskRun", () => {
     const schema = { type: "object", properties: { ok: { type: "boolean" } } };
     const result = await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -297,6 +329,7 @@ describe("dispatchTaskRun", () => {
 
     await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "repair",
@@ -321,7 +354,13 @@ describe("dispatchTaskRun", () => {
       },
     });
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go", timeoutMs: 0 },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+        timeoutMs: 0,
+      },
       { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
     );
     expect(result.outcome.kind).toBe("failed");
@@ -338,7 +377,13 @@ describe("dispatchTaskRun", () => {
       result: { error: null, timedOut: true, text: null },
     });
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go", timeoutMs: 5 },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+        timeoutMs: 5,
+      },
       { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
     );
     expect(result.outcome.kind).toBe("failed");
@@ -361,7 +406,12 @@ describe("dispatchTaskRun", () => {
       },
     });
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
     );
     expect(result.outcome.kind).toBe("failed");
@@ -396,7 +446,12 @@ describe("dispatchTaskRun", () => {
     });
 
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -421,7 +476,12 @@ describe("dispatchTaskRun", () => {
     const resumeRef = { backend: "codex" as const, ref: "thread-viable" };
 
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -441,7 +501,12 @@ describe("dispatchTaskRun", () => {
     const resumeRef = { backend: "codex" as const, ref: "thread-stale" };
 
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CODEX_VIEW,
@@ -484,7 +549,12 @@ describe("dispatchTaskRun", () => {
       },
     });
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "claude", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "claude",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CLAUDE_TASK_VIEW,
@@ -502,7 +572,12 @@ describe("dispatchTaskRun", () => {
       throws: new Error("connection reset"),
     });
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
     );
     expect(result.outcome.kind).toBe("failed");
@@ -517,7 +592,12 @@ describe("dispatchTaskRun", () => {
     const { runner } = makeStubRunner("claude");
     await expect(() =>
       dispatchTaskRun(
-        { kind: "task_run", backend: "codex", prompt: "go" },
+        {
+          executionClass: "nongoverned-task" as const,
+          kind: "task_run",
+          backend: "codex",
+          prompt: "go",
+        },
         {
           runner,
           capabilityView: CODEX_VIEW,
@@ -539,7 +619,12 @@ describe("dispatchTaskRun", () => {
       },
     });
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "claude", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "claude",
+        prompt: "go",
+      },
       {
         runner,
         capabilityView: CLAUDE_TASK_VIEW,
@@ -557,7 +642,12 @@ describe("dispatchTaskRun", () => {
   it("returns the same outcome shape as the conversation path on a completed run", async () => {
     const { runner } = makeStubRunner("codex");
     const result = await dispatchTaskRun(
-      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        backend: "codex",
+        prompt: "go",
+      },
       { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
     );
     expect(Object.keys(result).sort()).toEqual(
@@ -586,6 +676,7 @@ describe("dispatchTaskRun", () => {
     const { runner } = makeStubRunner("codex");
     await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -635,6 +726,7 @@ describe("dispatchTaskRun", () => {
     });
     await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -666,6 +758,7 @@ describe("dispatchTaskRun", () => {
     const { runner, capturedInput } = makeStubRunner("codex");
     await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",
@@ -693,6 +786,7 @@ describe("dispatchTaskRun", () => {
 
     await dispatchTaskRun(
       {
+        executionClass: "nongoverned-task" as const,
         kind: "task_run",
         backend: "codex",
         prompt: "go",

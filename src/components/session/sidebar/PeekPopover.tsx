@@ -1,4 +1,7 @@
 "use client";
+import SyntheticForkBadge from "@/features/session/conversation/SyntheticForkBadge";
+import { useForkAvailability } from "@/lib/conversations/use-fork-availability";
+import { useSessionQuery } from "@/lib/sessions/queries";
 
 import {
   autoUpdate,
@@ -399,6 +402,17 @@ export default function PeekPopover({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bodyMounted, setBodyMounted] = useState(false);
   const messageCount = transcriptMessages.length;
+  const forkSession = useSessionQuery(
+    conversation.projectName,
+    conversation.sessionName,
+  );
+  const forkSource = forkSession.data?.conversations.find(
+    (candidate) => candidate.id === conversation.id,
+  );
+  const forkRefusal = useForkAvailability(
+    forkSource,
+    conversation.agentBackend,
+  );
 
   const setBodyRef = useCallback((node: HTMLDivElement | null) => {
     bodyRef.current = node;
@@ -561,6 +575,9 @@ export default function PeekPopover({
               >
                 {title}
               </span>
+              {forkSource?.forkedFrom?.forkMode === "synthetic" && (
+                <SyntheticForkBadge />
+              )}
               <button
                 type="button"
                 className="inline-flex min-h-[28px] cursor-pointer items-center justify-center gap-[5px] rounded-sm border border-solid border-cyan-dim bg-cyan-glow px-[9px] py-[4px] font-mono text-[9.5px] font-semibold tracking-[0.07em] whitespace-nowrap text-cyan uppercase hover:border-cyan hover:bg-cyan hover:text-text-inverse"
@@ -643,6 +660,7 @@ export default function PeekPopover({
                     worktreePath={conversation.worktreePath}
                     onFork={onFork}
                     forkProjectName={forkProjectName}
+                    forkRefusal={forkRefusal}
                     lastMessageExtras={null}
                   />
                 ))

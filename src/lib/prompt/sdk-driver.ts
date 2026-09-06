@@ -1,3 +1,4 @@
+import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
 /**
  * Prompt execution facade — delegates to the conversation lifecycle module.
  *
@@ -684,6 +685,17 @@ export async function executePromptStream(
     if (!existing) {
       throw new Error(`Conversation not found: ${conversationId}`);
     }
+    if (
+      existing.pendingQueue.some((row) => queuedMessageNeedsReview(row.status))
+    ) {
+      logger.warn("queue.prompt_blocked_for_review", {
+        ...scopeRef,
+        conversationId,
+      });
+      throw new Error(
+        "Review queued deliveries before sending another prompt.",
+      );
+    }
     // Backend is locked after the first prompt has been sent
     if (options?.backend && options.backend !== existing.agentBackend) {
       if (existing.promptCount > 0) {
@@ -718,6 +730,12 @@ export async function executePromptStream(
       ...(options?.profile !== undefined ? { profile: options.profile } : {}),
     };
   }
+
+  if (parsedCommand || isCollab)
+    admitCommand(
+      resolvedBackend,
+      isCollab ? "/collab" : `/${parsedCommand!.command}`,
+    );
 
   const commandModelSelection = parsedCommand
     ? modelSelection === undefined
@@ -1176,3 +1194,4 @@ function emitErrorAndDone(
   emit("error", { message });
   emit("done", {});
 }
+import { admitCommand } from "@/lib/commands/admission";

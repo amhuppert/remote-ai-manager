@@ -1,3 +1,4 @@
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
 /**
  * Production composition of `AsymmetricCollaborationSliceDeps.callAgent`.
  *
@@ -294,6 +295,11 @@ function buildInnerCallAgent(
       continuity.resumeRef.backend === "claude"
         ? continuity.resumeRef
         : null;
+    await assertBackendExecution(backend, {
+      facet: "conversation",
+      operation: "collaboration",
+      executionClass: "governed-execution",
+    });
     const factory = resolveConversationFactory(backend);
     const conversationId =
       claudeResumeRef?.ref ?? `collab-${input.workflowId}-${newId()}`;
@@ -313,6 +319,7 @@ function buildInnerCallAgent(
         ? [request.systemInstructions]
         : [];
     const runtime = await factory.createRuntime({
+      executionClass: "governed-execution",
       conversationId,
       ccScopeConversationId: input.originatingConversationId,
       projectPath: input.projectPath,

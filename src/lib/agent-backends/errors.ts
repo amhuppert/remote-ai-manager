@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { backendAdmissionRefusalSchema } from "./execution-admission";
 
 export const agentFailureKindSchema = z.enum([
   "timeout",
@@ -14,6 +15,7 @@ export const agentFailureKindSchema = z.enum([
 export type AgentFailureKind = z.infer<typeof agentFailureKindSchema>;
 
 export const agentFailureClassificationSchema = z.object({
+  code: backendAdmissionRefusalSchema.shape.code.optional(),
   kind: agentFailureKindSchema,
   message: z.string(),
   retryable: z.boolean(),

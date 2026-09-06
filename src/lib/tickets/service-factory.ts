@@ -102,11 +102,6 @@ import {
   type TicketOperationLock,
 } from "./operation-lock";
 import { getTicketProjectOperationGate } from "./project-operation-gate";
-import type {
-  QuickTicketConversationContext,
-  QuickTicketDiagnostics,
-  TicketDetail,
-} from "./schemas";
 import { createTicketService, type TicketService } from "./service";
 import {
   createTicketStatusUpdateService,
@@ -177,18 +172,10 @@ function quickTicketDiagnosticEnvironment() {
   };
 }
 
-function scheduleTicketEnrichment(input: {
-  ticket: TicketDetail;
-  diagnostics: QuickTicketDiagnostics;
-  conversationContext?: QuickTicketConversationContext;
-}): void {
+function scheduleTicketEnrichment(
+  input: Parameters<CreateAttachmentPlannerDeps["scheduleEnrichment"]>[0],
+): void {
   void (async () => {
-    const config = await readConfig();
-    const backend = config.defaultAgentBackend;
-    const backendDefaults = resolveConfiguredAgentBackendDefaults(
-      config,
-      backend,
-    );
     await getTicketEnrichmentService().enrich({
       projectName: input.ticket.projectName,
       projectPath: input.ticket.projectPath,
@@ -203,8 +190,8 @@ function scheduleTicketEnrichment(input: {
       ...(input.conversationContext !== undefined
         ? { conversationContext: input.conversationContext }
         : {}),
-      backend,
-      modelSelection: backendDefaults.modelSelection,
+      backend: input.backend,
+      modelSelection: input.modelSelection,
     });
   })().catch((error: unknown) => {
     logger.warn("tickets.service_factory.enrichment_schedule_failed", {
@@ -230,6 +217,38 @@ function getCreateTicketAttachmentPlanner(): CreateAttachmentPlanner {
         return getTicketContentStore().delete(snapshotKey);
       },
       diagnosticEnvironment: quickTicketDiagnosticEnvironment,
+      async prepareEnrichment() {
+        const config = await readConfig();
+        const backend = config.defaultAgentBackend;
+        try {
+          await assertBackendExecution(backend, {
+            facet: "tasks",
+            executionClass: "nongoverned-task",
+            executionProfile: "isolated-one-shot",
+            operation: "ticket-enrichment",
+          });
+        } catch (error) {
+          if (!(error instanceof BackendAdmissionError)) throw error;
+          logger.warn("tickets.enrichment_unavailable", {
+            ...error.refusal,
+            phase: "preparation",
+          });
+          return {
+            status: "unavailable",
+            warning: {
+              code: "enrichment_unavailable",
+              message: `Ticket created. Automatic enrichment is unavailable with ${backendLabel(backend)}.`,
+              refusal: error.refusal,
+            },
+          };
+        }
+        return {
+          status: "ready",
+          backend,
+          modelSelection: resolveConfiguredAgentBackendDefaults(config, backend)
+            .modelSelection,
+        };
+      },
       scheduleConversationSnapshotRefresh(input) {
         getConversationSnapshotRefreshService().schedule(input);
       },
@@ -825,3 +844,7 @@ function getTicketKickoffDispatcher() {
     }),
   );
 }
+import { assertBackendExecution } from "@/lib/agent-backends/task-execution";
+import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
+import type { CreateAttachmentPlannerDeps } from "./create-attachment-planner";
+import { backendLabel } from "@/lib/agent-backends/catalog";

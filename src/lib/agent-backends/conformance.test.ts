@@ -97,6 +97,7 @@ function buildCreateInput(
   modelSelection: BackendModelSelection,
 ): ConversationBackendCreateInput {
   return {
+    executionClass: "ordinary-conversation" as const,
     conversationId,
     projectPath: "/conformance",
     projectName: "conformance",
@@ -118,6 +119,7 @@ function buildTaskRequest(
   modelSelection: BackendModelSelection,
 ): AgentTaskRequest {
   return {
+    executionClass: "nongoverned-task" as const,
     workingDirectory: "/conformance",
     prompt: "conformance task run",
     modelSelection,
@@ -320,6 +322,7 @@ const cursorDescriptor = createCursorBackendDescriptor({
   },
   continuity: createCursorContinuityAdapter({
     transport: cursorTransport,
+    buildSyntheticForkSeed: async () => "User: conformance history",
     resolveBinding: async () => ({
       conversationId: "conformance-cursor-continuity",
       cwd: "/conformance",

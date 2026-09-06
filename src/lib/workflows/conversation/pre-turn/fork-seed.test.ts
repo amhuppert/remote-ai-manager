@@ -66,7 +66,7 @@ describe("shouldBuildRuntimeSyntheticSeed", () => {
     ).toBe(false);
   });
 
-  it("returns false for Claude synthetic fallback — seed already in pendingPromptText", () => {
+  it("does not rebuild Claude synthetic history from the transcript", () => {
     expect(
       shouldBuildRuntimeSyntheticSeed({
         forkedFrom: { ...forkedFromBase, forkMode: "synthetic" },
@@ -218,3 +218,62 @@ describe("resolveSyntheticForkSeed", () => {
     expect(seed).toBeNull();
   });
 });
+
+it.each(["claude", "codex", "cursor"] as const)(
+  "uses the immutable %s fork seed without reading a mutable transcript",
+  async (agentBackend) => {
+    const readConversationMessages = vi.fn(async () => []);
+    const input = {
+      sessionName: "test",
+      agentBackend,
+      backendRef: null,
+      forkedFrom: { messageIndex: 2, syntheticSeed: "anchored history" },
+      transcriptPath: "/fork.jsonl",
+    };
+    expect(
+      await resolveSyntheticForkSeed({ readConversationMessages }, input),
+    ).toBe("anchored history");
+    expect(readConversationMessages).not.toHaveBeenCalled();
+    expect(
+      await resolveSyntheticForkSeed(
+        { readConversationMessages },
+        {
+          ...input,
+          backendRef: { backend: agentBackend, ref: "independent-agent" },
+        },
+      ),
+    ).toBe("anchored history");
+    expect(
+      await resolveSyntheticForkSeed(
+        { readConversationMessages },
+        {
+          ...input,
+          backendRef: { backend: agentBackend, ref: "independent-agent" },
+          forkedFrom: {
+            ...input.forkedFrom,
+            syntheticSeedAcceptedRef: {
+              backend: agentBackend,
+              ref: "independent-agent",
+            },
+          },
+        },
+      ),
+    ).toBeUndefined();
+    expect(
+      await resolveSyntheticForkSeed(
+        { readConversationMessages },
+        {
+          ...input,
+          backendRef: { backend: agentBackend, ref: "replacement-agent" },
+          forkedFrom: {
+            ...input.forkedFrom,
+            syntheticSeedAcceptedRef: {
+              backend: agentBackend,
+              ref: "independent-agent",
+            },
+          },
+        },
+      ),
+    ).toBe("anchored history");
+  },
+);

@@ -33,6 +33,7 @@ import {
   type CapturingLogger,
 } from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import { createGraphWorkflowResultDeliveriesRepo } from "@/lib/state-store/graph-workflow-result-deliveries-repo";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -111,6 +112,94 @@ afterEach(() => {
 });
 
 describe("collectRehydrationCandidates", () => {
+  it.each(["session", "project"] as const)(
+    "recovers an ordinary %s queue even without a resumable snapshot",
+    async (scope) => {
+      const fixture = createPersistenceFixture();
+      const projectPath = "/queue-startup";
+      const sessionName =
+        scope === "project" ? PROJECT_CONVERSATION_SESSION_SENTINEL : "session";
+      const conversationId = `queued-${scope}`;
+      const key = { projectPath, sessionName, conversationId };
+      try {
+        fixture.seedProject(projectPath);
+        const conversation = makeConversationState({
+          id: conversationId,
+          scope,
+          agentBackend: "cursor",
+          status: "running",
+          activeTurnSource: "user",
+          totalCostUsd: 0.42,
+        });
+        if (scope === "project")
+          await fixture.seedProjectConversation(projectPath, conversation);
+        else {
+          fixture.seedSession(projectPath, sessionName);
+          await fixture.seedConversation(
+            projectPath,
+            sessionName,
+            conversation,
+          );
+        }
+        const queue = createMessageQueueService({
+          ...fixture.deps,
+          getProjectDisplayName: () => "queue-startup",
+          broadcast: () => {},
+          now: () => ts,
+          newId: () => crypto.randomUUID(),
+        });
+        await queue.enqueue({
+          ...key,
+          content: [{ type: "text", text: "in flight at crash" }],
+        });
+        await queue.claimNextTurnBatch(key);
+        await queue.enqueue({
+          ...key,
+          content: [{ type: "text", text: "later" }],
+        });
+        setConversationQueueDeps({
+          ...queue,
+          runConversationCommand: async () => {
+            throw new Error("not a command");
+          },
+        });
+        setMachineFactory(createTestMachine);
+        const count = await rehydrateConversationActors({
+          mutateConversation: fixture.store.mutateConversation,
+          readAllForStartup: () => readAllForStartupFromDb(fixture.db),
+          listAllProjectConversations:
+            fixture.store.listAllProjectConversations,
+          getProjectDisplayName: () => "queue-startup",
+          getConversationMachineSnapshot: () =>
+            scope === "project" ? { interrupted: true } : null,
+          validateRestoredSnapshot: () =>
+            fakeSnapshot({ status: "active", value: "executing", context: {} }),
+        });
+        expect(count).toBe(1);
+        expect(
+          getConversationActor(
+            projectPath,
+            sessionName,
+            conversationId,
+          )?.getSnapshot().value,
+        ).toBe("idle");
+        const reloaded = await fixture
+          .recreateStore()
+          .getConversation(projectPath, sessionName, conversationId);
+        expect(reloaded?.pendingQueue.map((row) => row.status)).toEqual([
+          "uncertain",
+          "pending",
+        ]);
+        expect(reloaded?.status).toBe("awaiting");
+        expect(reloaded?.activeTurnSource).toBeNull();
+        expect(reloaded?.totalCostUsd).toBe(0.42);
+        expect(await queue.claimNextTurnBatch(key)).toBeNull();
+      } finally {
+        _resetForTesting();
+        fixture.close();
+      }
+    },
+  );
   it("flattens session and project conversations with the right keying", () => {
     const state = stateWith([conv({ id: "s1" })]);
     const candidates = collectRehydrationCandidates(state, [
@@ -724,7 +813,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
     ).toBeDefined();
   });
 
-  it("still starts the actor when recovery throws (recovery failure does not abort rehydrate)", async () => {
+  it("does not start an actor when durable recovery fails", async () => {
     setMachineFactory(createTestMachine);
 
     const recoverAbandonedDeliveries = vi.fn(async () => {
@@ -737,14 +826,14 @@ describe("rehydrateOneConversationActor startup recovery", () => {
     );
 
     expect(recoverAbandonedDeliveries).toHaveBeenCalledTimes(1);
-    expect(started).toBe(true);
+    expect(started).toBe(false);
     expect(
       getConversationActor(
         DEFAULT_INPUT.projectPath,
         DEFAULT_INPUT.sessionName,
         CONV_ID,
-      )?.getSnapshot().status,
-    ).toBe("active");
+      ),
+    ).toBeUndefined();
   });
 
   it("resets abandoned workflow-result claims through a restarted store before actor selection", async () => {
@@ -912,7 +1001,7 @@ describe("project-scope rehydration diagnostics", () => {
       projectRehydrateArgs(log),
     );
 
-    expect(started).toBe(true);
+    expect(started).toBe(false);
     const failed = log.entries.find(
       (e) => e.message === "queue.recover_failed",
     );

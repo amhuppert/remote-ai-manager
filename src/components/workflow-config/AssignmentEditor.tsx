@@ -9,7 +9,7 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { getConfiguredBackendModelCatalog } from "@/lib/agent-backends/catalog";
-import { backendFacetRefusal } from "@/lib/agent-backends/facet-gating";
+import { workflowBackendRefusal } from "@/lib/workflow-graph/backend-admission";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import {
   formatAgentProfileRef,
@@ -111,7 +111,7 @@ export function AgentRuntimeFields({
           // A workflow role is dispatched through the backend's task facet, so
           // a backend registering none cannot hold an assignment. The refusal
           // is the catalog's, not this editor's (spec D13).
-          disabledReason={(entry) => backendFacetRefusal(entry, "tasks")}
+          disabledReason={(entry) => workflowBackendRefusal(entry)}
         />
       </FieldRow>
       <FieldRow label="Model selection">

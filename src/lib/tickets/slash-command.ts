@@ -363,6 +363,8 @@ export function createTicketCommandRunner(
         sessionName: scopeSessionName,
         conversationId: input.conversationId,
         kind: "task_run",
+        executionClass: "nongoverned-task",
+        executionProfile: "standard",
         prompt: buildTicketGenerationPrompt({
           hint: input.hint,
           fallbackContext,

@@ -81,9 +81,8 @@ function createTestDeps(
     clearConversationPendingPromptTextIfMatches: vi
       .fn()
       .mockResolvedValue(true),
-    hasLiveConversationActor: vi.fn().mockReturnValue(true),
+    resolveDelivery: async () => "not_found",
     ensureConversationActorAndDrain: vi.fn().mockResolvedValue(undefined),
-    recoverAbandonedDeliveries: vi.fn().mockResolvedValue(0),
     cancel: vi.fn().mockResolvedValue("cancelled"),
     ...overrides,
   } as QueueRouteDeps;

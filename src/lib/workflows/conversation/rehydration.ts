@@ -35,12 +35,13 @@ import {
   PROJECT_CONVERSATION_SESSION_SENTINEL,
   isProjectSentinel,
 } from "@/lib/conversations/project-conversation-scope";
-import type { ConversationSnapshotOwner } from "@/lib/state-store";
+import type { ConversationSnapshotOwner, StateStore } from "@/lib/state-store";
 // Deep import (not the barrel): the whole-state startup read is deliberately
 // NOT a StateStore method, so it is reachable only through the startup-owned
 // module. The `no-restricted-imports` startup-reader gate allowlists this file.
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { isActiveQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 
 // The `conversation-manager` module key is a stable log-query key: rehydration
 // events group with the manager's actor lifecycle events, so one module filter
@@ -93,18 +94,17 @@ interface RehydrateOneActorArgs {
     backendRef: AgentSessionRef | null;
     promptCount: number;
   };
-  snapshot: Snapshot<unknown>;
+  snapshot?: Snapshot<unknown>;
   /** Structured-log sink. Injected so a test can read what the restore emitted;
    *  log fields are a public identity surface (R1.3). */
   log?: Logger;
+  mutateConversation?: StateStore["mutateConversation"];
 }
 
 /**
- * Restore one conversation actor from a validated, resumable persisted
- * snapshot. Abandoned-delivery recovery runs BEFORE `actor.start()` so a
- * `delivering` row orphaned by the previous process is reset to `pending` and
- * reclaimed by this actor's first drain. Recovery failure must not abort the
- * restore. Returns true when the actor started, false when restore failed.
+ * Restore a resumable actor, or start an idle actor for an ordinary queue.
+ * Recovery precedes actor startup so orphaned deliveries require review before
+ * any automatic drain. A failed recovery prevents startup.
  *
  * Exported so the recovery-before-start ordering is unit-testable with a fake
  * snapshot and injected queue deps, without driving the real state store.
@@ -146,7 +146,9 @@ export async function rehydrateOneConversationActor(
         promptCount: conversation.promptCount,
         persistence: "durable",
       },
-      snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]>,
+      ...(snapshot
+        ? { snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]> }
+        : {}),
     });
 
     getActorRegistry().set(key, actor);
@@ -160,8 +162,8 @@ export async function rehydrateOneConversationActor(
     }
 
     // Recover abandoned `delivering` rows before the actor's first drain so a
-    // delivery attempt orphaned by the previous process is reset to `pending`
-    // and reclaimed by this actor. Recovery failure must not abort rehydrate.
+    // delivery attempt orphaned by the previous process requires review before
+    // this actor can drain later messages.
     try {
       await getConversationQueueDeps().recoverAbandonedDeliveries({
         projectPath,
@@ -173,6 +175,29 @@ export async function rehydrateOneConversationActor(
         conversationId: conversation.id,
         ...scopeRef,
         error: getErrorMessage(err),
+      });
+      throw err;
+    }
+
+    if (!snapshot) {
+      const mutateConversation =
+        args.mutateConversation ??
+        (await import("@/lib/state-store")).mutateConversation;
+      await mutateConversation(
+        projectPath,
+        storeSessionName,
+        conversation.id,
+        "conversation-manager.recoverIdle",
+        (record) => {
+          record.status = "awaiting";
+          record.activeTurnSource = null;
+          record.pendingQuestionId = null;
+          record.pendingQuestions = null;
+        },
+      );
+      log.info("conversation-manager.interrupted_turn_settled", {
+        conversationId: conversation.id,
+        ...scopeRef,
       });
     }
 
@@ -276,6 +301,7 @@ export function collectWorkflowResultRecoveryScopes(
 }
 
 export interface RehydrateConversationActorsDeps {
+  mutateConversation?: StateStore["mutateConversation"];
   /**
    * The startup-only whole-state read. Assembles the project/session/
    * conversation tree without touching the snapshot sidecar — resume tokens are
@@ -405,17 +431,24 @@ export async function rehydrateConversationActors(
       owner,
       conversation.id,
     );
-    if (persistedSnapshot == null) continue;
+    const snapshot =
+      persistedSnapshot == null
+        ? null
+        : resolved.validateRestoredSnapshot(
+            persistedSnapshot,
+            conversation.id,
+            1, // expected schema version
+          );
 
-    const snapshot = resolved.validateRestoredSnapshot(
-      persistedSnapshot,
-      conversation.id,
-      1, // expected schema version
-    );
-
-    if (!snapshot) continue;
-
-    if (!shouldRehydrateSnapshot(snapshot)) {
+    const resumeSnapshot =
+      snapshot && shouldRehydrateSnapshot(snapshot) ? snapshot : undefined;
+    const hasOrdinaryQueue =
+      conversation.role === null &&
+      !conversation.archived &&
+      conversation.pendingQueue.some((row) =>
+        isActiveQueuedMessageStatus(row.status),
+      );
+    if (!resumeSnapshot && !hasOrdinaryQueue) {
       skippedNonResumable++;
       continue;
     }
@@ -445,7 +478,8 @@ export async function rehydrateConversationActors(
         backendRef: conversation.backendRef ?? null,
         promptCount: conversation.promptCount ?? 0,
       },
-      snapshot,
+      snapshot: resumeSnapshot,
+      mutateConversation: resolved.mutateConversation,
     });
 
     if (started) count++;

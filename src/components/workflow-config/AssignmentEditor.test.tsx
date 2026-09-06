@@ -8,6 +8,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import { listBackendCatalogEntries } from "@/lib/agent-backends/catalog";
 import { agentProfileKeys } from "@/lib/agent-profiles/query-keys";
 import type { AgentProfileLibraryListing } from "@/lib/agent-profiles/schemas";
 import type {
@@ -64,6 +66,10 @@ function renderAssignment(
   props: Partial<React.ComponentProps<typeof AssignmentEditor>> = {},
 ) {
   const queryClient = createTestQueryClient();
+  queryClient.setQueryData(
+    backendCatalogKeys.catalog(),
+    listBackendCatalogEntries(),
+  );
   queryClient.setQueryData(agentProfileKeys.projectList(PROJECT), LISTING);
   const onChange = vi.fn();
   const value: AgentAssignment = props.value ?? VALIDATOR;
@@ -257,6 +263,10 @@ describe("AssignmentEditor instructions field", () => {
 
   it("falls back to the global library when no project scopes the picker", () => {
     const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      backendCatalogKeys.catalog(),
+      listBackendCatalogEntries(),
+    );
     queryClient.setQueryData(agentProfileKeys.globalList(), LISTING);
     renderWithQuery(
       <AssignmentEditor
@@ -277,6 +287,10 @@ describe("ContextValidatorEditor", () => {
     props: Partial<React.ComponentProps<typeof ContextValidatorEditor>> = {},
   ) {
     const queryClient = createTestQueryClient();
+    queryClient.setQueryData(
+      backendCatalogKeys.catalog(),
+      listBackendCatalogEntries(),
+    );
     queryClient.setQueryData(agentProfileKeys.projectList(PROJECT), LISTING);
     const onChange = vi.fn();
     const view = renderWithQuery(

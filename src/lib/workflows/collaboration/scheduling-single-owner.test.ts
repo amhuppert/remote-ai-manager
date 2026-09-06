@@ -482,6 +482,7 @@ describe("collaboration lane scheduling — single acquisition owner", () => {
     });
 
     const phasePromise = callAgent({
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       backend: "codex",
       prompt: "phase prompt",

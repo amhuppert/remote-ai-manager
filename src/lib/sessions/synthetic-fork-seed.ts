@@ -62,8 +62,9 @@ export async function buildSyntheticForkSeed(
       }
     }
 
+    if (blocks.length === 0) return null;
     const header =
-      "The following is the conversation history up to the fork point. Continue from here:\n";
+      "The following is the conversation history up to the fork point. Continue from here:\n\n";
     let body = blocks.join("\n\n");
 
     if (header.length + body.length > SYNTHETIC_FORK_MAX_CHARS) {
@@ -74,7 +75,7 @@ export async function buildSyntheticForkSeed(
       body = SYNTHETIC_FORK_TRUNCATION_PREFIX + body.slice(-budget);
     }
 
-    return header + "\n" + body;
+    return header + body;
   } catch (err) {
     logger.warn("synthetic_fork_seed.build_failed", {
       transcriptPath,

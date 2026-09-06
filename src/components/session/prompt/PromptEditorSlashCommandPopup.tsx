@@ -24,6 +24,8 @@ import {
 } from "@/lib/commands/queries";
 import { filterDisabledCommandItems } from "@/lib/commands/capability-filter";
 import { filterCommandsForScope } from "@/lib/commands/built-in-commands";
+import { applyCommandAvailability } from "@/lib/commands/command-availability";
+import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
 import {
   composeBackendCommandCatalog,
   isSkillTriggerActive,
@@ -120,6 +122,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   // a session worktree, and capabilities cascade through the project-scoped
   // conversation layer when a conversation exists.
   const projectScoped = scopeRef.scope === "project";
+  const backendCatalog = useBackendCatalogQuery();
   const sessionName = scopeRefSessionName(scopeRef);
   const sessionCommandsQuery = useCommandsQuery(
     projectName,
@@ -172,11 +175,17 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     // One exit point, so a command the scope cannot execute cannot re-enter the
     // catalog by being discovered instead of built in.
     return filterCommandsForScope(
-      composeBackendCommandCatalog({
-        discovered: filtered,
-        skillTriggerPrefix,
-        triggerChar,
-      }),
+      applyCommandAvailability(
+        composeBackendCommandCatalog({
+          discovered: filtered,
+          skillTriggerPrefix,
+          triggerChar,
+        }),
+        backendCatalog.isFetched && !backendCatalog.isError
+          ? backendCatalog.data
+          : [],
+        backend,
+      ),
       { scope: scopeRef, isWorkflowManagedConversation },
     );
   }, [
@@ -187,6 +196,10 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     triggerChar,
     isWorkflowManagedConversation,
     scopeRef,
+    backendCatalog.data,
+    backendCatalog.isFetched,
+    backendCatalog.isError,
+    backend,
   ]);
 
   const scored = useMemo<ScoredItem[]>(() => {
@@ -240,6 +253,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
         badge: s.item.type,
         source: s.item.source,
         matchIndices: s.matchIndices,
+        disabled: s.item.availability?.status === "unavailable",
       })),
     [scored],
   );
@@ -264,7 +278,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   const selectAt = useCallback(
     (index: number) => {
       const target = scoredRef.current[index];
-      if (!target) return;
+      if (!target || target.item.availability?.status === "unavailable") return;
       const trigger: "/" | "$" = target.item.name.startsWith("$") ? "$" : "/";
       const selection: SlashCommandSelection = {
         name: target.item.name,

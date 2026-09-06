@@ -672,6 +672,7 @@ describe("createWorkflowAgentCaller", () => {
         sessionKey: "session-two-turn",
         writeCapability: "write_capable",
         agentCallRequest: {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "codex",
           prompt: "work turn prompt",
@@ -679,6 +680,7 @@ describe("createWorkflowAgentCaller", () => {
           writeCapability: "write_capable",
         },
         formatFollowUp: {
+          executionClass: "nongoverned-task",
           kind: "task_run",
           backend: "codex",
           prompt: "format turn prompt",
@@ -741,6 +743,7 @@ describe("createWorkflowAgentCaller", () => {
         sessionKey: "session-two-turn-no-cont",
         writeCapability: "write_capable",
         agentCallRequest: {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "codex",
           prompt: "work",
@@ -748,6 +751,7 @@ describe("createWorkflowAgentCaller", () => {
           writeCapability: "write_capable",
         },
         formatFollowUp: {
+          executionClass: "nongoverned-task",
           kind: "task_run",
           backend: "codex",
           prompt: "format",
@@ -793,6 +797,7 @@ describe("createWorkflowAgentCaller", () => {
         sessionKey: "session-two-turn-fail",
         writeCapability: "write_capable",
         agentCallRequest: {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "codex",
           prompt: "work",
@@ -800,6 +805,7 @@ describe("createWorkflowAgentCaller", () => {
           writeCapability: "write_capable",
         },
         formatFollowUp: {
+          executionClass: "nongoverned-task",
           kind: "task_run",
           backend: "codex",
           prompt: "format",

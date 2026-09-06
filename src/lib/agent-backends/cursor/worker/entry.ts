@@ -71,6 +71,7 @@ export interface CursorWorkerMcpServer {
  * environment deliberately carries no `CURSOR_API_KEY` for the SDK to find.
  */
 export interface CursorWorkerAttachOptions {
+  recoverAbandonedRun?: boolean;
   apiKey: string;
   modelSelection: BackendModelSelection;
   cwd: string;
@@ -545,6 +546,9 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       settingSources: frame.settingSources,
       enableAgentRetries: frame.enableAgentRetries,
       mcpServers: frame.mcpServers,
+      ...(frame.recoverAbandonedRun !== undefined
+        ? { recoverAbandonedRun: frame.recoverAbandonedRun }
+        : {}),
     };
   }
 

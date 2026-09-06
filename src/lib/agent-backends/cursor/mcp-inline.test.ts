@@ -512,6 +512,7 @@ async function driveTurn(options: {
   let runCounter = 0;
   const runtime = new CursorConversationRuntime(
     {
+      executionClass: "ordinary-conversation" as const,
       conversationId: CONVERSATION_ID,
       projectPath: options.worktree,
       projectName: "command-center",

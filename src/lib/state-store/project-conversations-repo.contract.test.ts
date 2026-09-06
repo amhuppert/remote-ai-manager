@@ -91,6 +91,8 @@ function buildMaximalProjectConversation(): ConversationState {
       sourceBackendRef: { backend: "codex", ref: "src-thread" },
       forkLocator: "msg-7",
       forkMode: "synthetic",
+      syntheticSeed: "User: durable anchored context",
+      syntheticSeedAcceptedRef: { backend: "cursor", ref: "agent-seeded" },
       // Non-default so the column is proven durable. The combination is not a
       // real fork state — a maximal fixture is a shape, not a scenario.
       forkPending: true,

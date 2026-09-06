@@ -310,6 +310,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       const runner = makeRunnerErroring("claude", { timedOut: true });
       const result = await executeAgentCall(
         {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "claude",
           prompt: "p",
@@ -335,6 +336,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       const runner = makeRunnerErroring("codex", { error: "rate-limited" });
       const result = await executeAgentCall(
         {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "codex",
           prompt: "p",
@@ -368,6 +370,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
 
       const result = await executeAgentCall(
         {
+          executionClass: "nongoverned-task" as const,
           kind: "task_run",
           backend: "claude",
           prompt: "p",
@@ -433,6 +436,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
 
       const result = await executeAgentCall(
         {
+          executionClass: "ordinary-conversation" as const,
           kind: "conversation_turn",
           backend: "claude",
           prompt: "p",
@@ -489,6 +493,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
 
       const result = await executeAgentCall(
         {
+          executionClass: "ordinary-conversation" as const,
           kind: "conversation_turn",
           backend: "codex",
           prompt: "p",
@@ -736,7 +741,12 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       } as unknown as ConversationBackendRuntime;
 
       const successResult = await executeAgentCall(
-        { kind: "conversation_turn", backend: "claude", prompt: "p" },
+        {
+          executionClass: "ordinary-conversation" as const,
+          kind: "conversation_turn",
+          backend: "claude",
+          prompt: "p",
+        },
         {
           resolveConversationRuntime: () => ({
             runtime,
@@ -774,7 +784,12 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       } as unknown as AgentTaskRunner;
 
       const result = await executeAgentCall(
-        { kind: "task_run", backend: "codex", prompt: "p" },
+        {
+          executionClass: "nongoverned-task" as const,
+          kind: "task_run",
+          backend: "codex",
+          prompt: "p",
+        },
         {
           resolveTaskRunner: () => ({
             runner,

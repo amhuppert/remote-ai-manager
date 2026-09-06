@@ -221,6 +221,8 @@ export function createWorkflowCollaboratorCaller(
     const isAgentTwoCall = args.agent === "agent_two";
     const agentCallRequest: AgentCallRequest = {
       kind: "task_run",
+      executionClass: "governed-execution",
+      executionProfile: "standard",
       backend: args.backend,
       prompt: args.built.prompt,
       systemInstructions: args.systemInstructions,

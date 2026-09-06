@@ -70,6 +70,7 @@ function makeDeps(
   overrides: Partial<ConversationCommandDeps> = {},
 ): ConversationCommandDeps {
   return {
+    getConversationBackend: async () => "claude",
     getSession: vi.fn(async () => makeSession()),
     hasActiveJob: vi.fn(() => false),
     hasUncommittedChanges: vi.fn(async () => true),
@@ -283,6 +284,23 @@ describe("createConversationCommandService eligibility matrix", () => {
 });
 
 describe("createConversationCommandService eligible path", () => {
+  it("uses the default commit message directly when Cursor cannot generate it", async () => {
+    const deps = makeDeps({ getConversationBackend: async () => "cursor" });
+    const outcome =
+      await createConversationCommandService(deps).run(makeInput());
+    expect(outcome).toMatchObject({ status: "dispatched", usedFallback: true });
+    expect(deps.executeWorkflowTaskRun).not.toHaveBeenCalled();
+    expect(deps.dispatchCommitJob).toHaveBeenCalled();
+  });
+  it("refuses a directly invoked Cursor ticket command before ticket work", async () => {
+    const deps = makeDeps({ getConversationBackend: async () => "cursor" });
+    await expect(
+      createConversationCommandService(deps).run(
+        makeInput({ parsed: { command: "ticket", hint: "" } }),
+      ),
+    ).rejects.toMatchObject({ code: "backend-facet-unsupported" });
+    expect(deps.runTicketCommand).not.toHaveBeenCalled();
+  });
   it("dispatches a commit job with the generated message", async () => {
     const deps = makeDeps();
     const service = createConversationCommandService(deps);

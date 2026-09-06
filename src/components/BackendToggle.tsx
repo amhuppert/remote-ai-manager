@@ -82,7 +82,7 @@ export default function BackendToggle({
   disabledReason,
   touch = false,
 }: BackendToggleProps): React.JSX.Element {
-  const { data: backends } = useBackendCatalogQuery();
+  const { data: backends, isFetched, isError } = useBackendCatalogQuery();
 
   if (readOnly) {
     const entry = backends.find((b) => b.id === value);
@@ -120,7 +120,10 @@ export default function BackendToggle({
       )}
     >
       {backends.map((b) => {
-        const reason = disabledReason?.(b) ?? null;
+        const reason =
+          disabledReason && (!isFetched || isError)
+            ? "Backend availability is loading or unavailable"
+            : (disabledReason?.(b) ?? null);
         if (reason !== null) {
           const label = `${b.label} — ${reason}`;
           return (

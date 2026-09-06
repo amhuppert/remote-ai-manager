@@ -239,6 +239,9 @@ function productionTaskRun(
 
   return async (input) => {
     const actorResult = await runTaskRunTurnForMachine({
+      executionClass: input.executionClass,
+      executionProfile: input.executionProfile,
+      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
       persistence: "ephemeral",
       projectPath: input.projectPath,
       projectName: "repo",
@@ -437,6 +440,7 @@ describe("implementer task runs", () => {
     const dispatch = productionTaskRun("claude");
 
     await dispatch({
+      executionClass: "governed-execution" as const,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       conversationId: "implementer-conversation",

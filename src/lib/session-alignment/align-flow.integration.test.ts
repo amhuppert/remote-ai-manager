@@ -133,6 +133,7 @@ function setup(): Harness {
     runTicketCommand: async () => {
       throw new Error("the /align flow must not run the ticket command");
     },
+    getConversationBackend: async () => "claude",
     getConversationRole: async () => null,
     evaluateSessionMergeAdmission: async () => ({ admitted: true }),
   };

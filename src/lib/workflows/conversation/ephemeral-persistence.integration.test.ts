@@ -167,6 +167,7 @@ async function driveTaskRunTurn(
   actor.start();
   const settled = waitForState(actor, "idle");
   actor.send({
+    executionClass: "nongoverned-task" as const,
     type: "SUBMIT_TASK_RUN",
     promptText: "Validate the context.",
     timeoutMs: 30_000,
@@ -501,11 +502,13 @@ function makeFakeBackendActorDeps(
     executeAgentCall: async () => fakeCompletedAgentCall,
     getTaskRunner: unusedInTaskRun("getTaskRunner"),
     safeAppendTranscriptEntry: async () => {},
+    appendTranscriptEntryOnce: async () => {},
     safeAppendTranscriptEntryOnce: async () => {},
     saveTranscriptImage: async () => "/tmp/img.png",
     getNextImageIndex: async () => 0,
     getDebugLogUrl: (id) => `http://localhost/debug/${id}`,
     markQueuedDelivered: async () => {},
+    markQueuedUncertain: async () => {},
     markQueuedPending: async () => {},
     markQueuedFailed: async () => {},
   };
@@ -593,6 +596,7 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
     persistence: "durable" | "ephemeral";
   }): Promise<void> {
     await executeWorkflowTaskRun({
+      executionClass: "nongoverned-task" as const,
       projectPath: PROJECT_PATH,
       sessionName: opts.sessionName,
       conversationId: opts.conversationId,

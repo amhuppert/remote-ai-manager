@@ -176,6 +176,8 @@ export function createDefaultPlannerRunner(
         sessionName: input.sessionName,
         conversationId: input.conversationId,
         kind: "task_run",
+        executionClass: "governed-execution",
+        executionProfile: "standard",
         prompt: promptSections.join("\n\n"),
         systemInstructions,
         timeoutMs: 600_000,

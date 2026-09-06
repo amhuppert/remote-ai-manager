@@ -564,10 +564,10 @@ describe("drainConversationQueue command routing", () => {
     );
   });
 
-  it("marks the row failed (terminal, error recorded) when the run throws, never returning it to pending", async () => {
+  it("retains the row failed for review when the run throws, never returning it to pending", async () => {
     // A service throw is a system error: rejections and fallbacks resolve as
     // outcomes. Returning the row to pending would retry a deterministic
-    // failure on every idle entry, so the drain must settle it terminally.
+    // failure on every idle entry, so the drain must retain it for review.
     const deps = makeQueueDeps({
       claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
       runConversationCommand: vi.fn(async () => {
@@ -801,4 +801,76 @@ describe("drain integration over the real-store queue (text → command → text
       fixture.close();
     }
   });
+});
+
+it("retains the queued message when a direct prompt wins during profile admission", async () => {
+  const fixture = createPersistenceFixture();
+  try {
+    const { projectPath, sessionName, conversationId } = DRAIN_CONTEXT;
+    fixture.seedProject(projectPath);
+    fixture.seedSession(projectPath, sessionName);
+    await fixture.seedConversation(
+      projectPath,
+      sessionName,
+      conversationStateSchema.parse({
+        id: conversationId,
+        transcriptPath: null,
+        status: "running",
+        promptCount: 0,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        lastActivityAt: "2026-06-01T00:00:00.000Z",
+      }),
+    );
+    const queue = createMessageQueueService({
+      mutateConversation: fixture.deps.mutateConversation,
+      getConversation: fixture.deps.getConversation,
+      getProjectDisplayName: () => "test",
+      broadcast: () => {},
+      now: () => "2026-06-01T00:00:01.000Z",
+      newId: () => crypto.randomUUID(),
+    });
+    await queue.enqueue({
+      ...DRAIN_CONTEXT,
+      content: [{ type: "text", text: "retain me" }],
+    });
+    let accepts = true;
+    setConversationProfileAdmissionDeps({
+      async mutateConversation(p, s, c, label, mutate) {
+        const result = await fixture.deps.mutateConversation(
+          p,
+          s,
+          c,
+          label,
+          mutate,
+        );
+        accepts = false;
+        return result;
+      },
+    });
+    const sent: ConversationEvent[] = [];
+    await drainConversationQueue(
+      {
+        getSnapshot: () => ({ can: () => accepts }),
+        send: (event) => {
+          sent.push(event);
+        },
+      },
+      DRAIN_CONTEXT,
+      {
+        ...queue,
+        runConversationCommand: async () => {
+          throw new Error("not a command");
+        },
+      },
+    );
+    expect(sent).toEqual([]);
+    const reloaded = await fixture
+      .recreateStore()
+      .getConversation(projectPath, sessionName, conversationId);
+    expect(reloaded?.pendingQueue).toMatchObject([
+      { status: "pending", content: [{ type: "text", text: "retain me" }] },
+    ]);
+  } finally {
+    fixture.close();
+  }
 });

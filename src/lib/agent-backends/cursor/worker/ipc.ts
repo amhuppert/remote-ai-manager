@@ -558,6 +558,7 @@ const attachAgentFrameSchema = z
   .object({
     v: versionSchema,
     type: z.literal("attachAgent"),
+    recoverAbandonedRun: z.boolean().optional(),
     mode: z.enum(["create", "resume"]),
     ref: z.string().min(1).nullable(),
     modelSelection: backendModelSelectionSchema,

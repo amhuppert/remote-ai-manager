@@ -24,7 +24,7 @@ const queuedDelivery = {
 function makeDeps() {
   return {
     markQueuedDelivered: vi.fn(async () => {}),
-    markQueuedPending: vi.fn(async () => {}),
+    markQueuedUncertain: vi.fn(async () => {}),
   };
 }
 
@@ -44,7 +44,7 @@ describe("createQueuedDeliveryAccounting — normal turns", () => {
 
     expect(appendUserEntry).toHaveBeenCalledTimes(1);
     expect(deps.markQueuedDelivered).not.toHaveBeenCalled();
-    expect(deps.markQueuedPending).not.toHaveBeenCalled();
+    expect(deps.markQueuedUncertain).not.toHaveBeenCalled();
   });
 });
 
@@ -107,11 +107,10 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     await accounting.settleAfterTurn();
 
     expect(appendUserEntry).toHaveBeenCalledTimes(1);
-    // The entry WAS appended, so the batch is never returned to pending.
-    expect(deps.markQueuedPending).not.toHaveBeenCalled();
+    expect(deps.markQueuedUncertain).toHaveBeenCalledTimes(1);
   });
 
-  it("returns the batch to pending when the turn ends without acceptance", async () => {
+  it("retains the batch for review when the turn ends without acceptance", async () => {
     const deps = makeDeps();
     const accounting = createQueuedDeliveryAccounting(deps, {
       ...identity,
@@ -121,15 +120,15 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
 
     await accounting.settleAfterTurn();
 
-    expect(deps.markQueuedPending).toHaveBeenCalledWith({
+    expect(deps.markQueuedUncertain).toHaveBeenCalledWith({
       ...identity,
       ids: ["m1", "m2"],
       deliveryAttemptId: "attempt-1",
-      error: "queued delivery did not reach backend acceptance",
+      error: expect.stringContaining("may have reached the agent"),
     });
   });
 
-  it("does not return a successfully delivered batch to pending", async () => {
+  it("does not retain a successfully delivered batch for review", async () => {
     const deps = makeDeps();
     const accounting = createQueuedDeliveryAccounting(deps, {
       ...identity,
@@ -140,12 +139,12 @@ describe("createQueuedDeliveryAccounting — queued turns", () => {
     await accounting.handleInputAccepted();
     await accounting.settleAfterTurn();
 
-    expect(deps.markQueuedPending).not.toHaveBeenCalled();
+    expect(deps.markQueuedUncertain).not.toHaveBeenCalled();
   });
 
-  it("swallows a return-to-pending failure (turn result must not change)", async () => {
+  it("preserves the turn result when recording uncertainty fails", async () => {
     const deps = makeDeps();
-    deps.markQueuedPending.mockRejectedValueOnce(new Error("db down"));
+    deps.markQueuedUncertain.mockRejectedValueOnce(new Error("db down"));
     const accounting = createQueuedDeliveryAccounting(deps, {
       ...identity,
       queuedDelivery,

@@ -25,10 +25,11 @@ const basePending = {
 };
 
 describe("pendingQueuedMessageStatusSchema", () => {
-  it("accepts each of the five lifecycle values", () => {
+  it("accepts each of the six lifecycle values", () => {
     for (const value of [
       "pending",
       "delivering",
+      "uncertain",
       "delivered",
       "failed",
       "cancelled",
@@ -48,10 +49,11 @@ describe("pendingQueuedMessageStatusSchema", () => {
     );
   });
 
-  it("exposes the five statuses in lifecycle order", () => {
+  it("exposes the six statuses in lifecycle order", () => {
     expect(PENDING_QUEUED_MESSAGE_STATUSES).toEqual([
       "pending",
       "delivering",
+      "uncertain",
       "delivered",
       "failed",
       "cancelled",
@@ -280,13 +282,16 @@ describe("queueErrorCodeSchema", () => {
     expect(queueErrorCodeSchema.safeParse("empty_message").success).toBe(false);
   });
 
-  it("exposes the five error codes", () => {
+  it("exposes the queue admission and review error codes", () => {
     expect(QUEUE_ERROR_CODES).toEqual([
       "EMPTY_MESSAGE",
       "NOT_RUNNING",
       "NON_INTERACTIVE_CONVERSATION",
       "UNSUPPORTED_BACKEND",
       "NOT_CANCELLABLE",
+      "NOT_REVIEWABLE",
+      "INVALID_QUEUE_REVIEW",
+      "QUEUE_REVIEW_REQUIRED",
     ]);
   });
 });

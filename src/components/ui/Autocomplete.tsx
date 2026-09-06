@@ -244,6 +244,7 @@ const optionVariantClass: Record<AutocompleteOptionVariant, string> = {
 };
 
 export interface AutocompleteOptionProps {
+  disabled?: boolean;
   /** Whether this is the active (highlighted) option. */
   active: boolean;
   /** Stable id so a host can target it with `aria-activedescendant`. */
@@ -265,6 +266,7 @@ export interface AutocompleteOptionProps {
  * highlight) is composed by the caller.
  */
 export function AutocompleteOption({
+  disabled,
   active,
   id,
   semanticRole = "option",
@@ -279,11 +281,12 @@ export function AutocompleteOption({
       role={semanticRole}
       id={id}
       aria-selected={active}
+      aria-disabled={disabled || undefined}
       data-active={active}
       data-archived={archived}
       className={optionVariantClass[variant]}
       onMouseEnter={onHover}
-      onClick={onSelect}
+      onClick={disabled ? undefined : onSelect}
     >
       {children}
     </div>

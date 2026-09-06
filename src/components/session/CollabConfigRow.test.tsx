@@ -7,8 +7,10 @@ import CollabConfigRow, {
 } from "@/components/session/CollabConfigRow";
 import {
   getStaticBackendModelCatalog,
+  listBackendCatalogEntries,
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 
 const CLAUDE_CATALOG = getStaticBackendModelCatalog("claude");
@@ -24,6 +26,10 @@ function renderRow(overrides: Partial<CollabConfigRowProps> = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  queryClient.setQueryData(
+    backendCatalogKeys.catalog(),
+    listBackendCatalogEntries(),
+  );
   return render(
     <QueryClientProvider client={queryClient}>
       <CollabConfigRow

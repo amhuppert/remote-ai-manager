@@ -322,6 +322,7 @@ async function runLiveTurn(
       : { modelId: "sonnet", parameters: { effort: "medium" } };
 
   const runtime = await factory.createRuntime({
+    executionClass: "governed-execution" as const,
     conversationId: `live-envelope-${backend}`,
     projectPath: fixture.worktreePath,
     projectName: "envelope-live",

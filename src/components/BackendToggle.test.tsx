@@ -9,19 +9,41 @@ import {
   type BackendCatalogEntry,
 } from "@/lib/agent-backends/catalog";
 import BackendToggle from "./BackendToggle";
+import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
 
 afterEach(cleanup);
 
-function renderToggle(ui: React.ReactElement) {
+function renderToggle(ui: React.ReactElement, fetched = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  if (fetched)
+    client.setQueryData(
+      backendCatalogKeys.catalog(),
+      listBackendCatalogEntries(),
+    );
   return render(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );
 }
 
 describe("BackendToggle", () => {
+  it("does not authorize a gated choice from the hydration seed", () => {
+    const onChange = vi.fn();
+    renderToggle(
+      <BackendToggle
+        value="claude"
+        onChange={onChange}
+        disabledReason={() => null}
+      />,
+      false,
+    );
+    const codex = screen.getByRole("button", { name: /Codex/ });
+    expect(codex).toHaveAttribute("aria-disabled", "true");
+    expect(codex).toHaveAccessibleName(/loading or unavailable/);
+    codex.click();
+    expect(onChange).not.toHaveBeenCalled();
+  });
   it("offers every cataloged backend by label and reports selection", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

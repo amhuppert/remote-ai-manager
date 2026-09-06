@@ -1,4 +1,6 @@
 import { createLogger } from "@/lib/logging";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { admitCommand } from "@/lib/commands/admission";
 import {
   isWorkflowLaneRole,
   type ConversationRole,
@@ -116,6 +118,11 @@ export interface DispatchRebaseParams {
 }
 
 export interface ConversationCommandDeps {
+  getConversationBackend(
+    projectPath: string,
+    sessionName: string | null,
+    conversationId: string,
+  ): Promise<AgentBackendId>;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -321,7 +328,7 @@ export function createConversationCommandService(
     });
     await deps.appendNotice({
       conversationId: input.conversationId,
-      text: `Commit message generation failed (${reason}); proceeding with the default message: "${fallback}".`,
+      text: `Using the default ${ctx.command} message (${reason}): "${fallback}".`,
       projectName: input.projectName,
       storeSessionName: ctx.sessionName,
     });
@@ -336,6 +343,27 @@ export function createConversationCommandService(
     resolutionContext?: string;
     usedFallback: boolean;
   }> {
+    const backend = await deps.getConversationBackend(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    const availability = admitCommand(backend, `/${ctx.command}`);
+    const unavailable =
+      availability.status === "degraded"
+        ? availability.stages.find(
+            ({ stage }) => stage === "message-generation",
+          )
+        : undefined;
+    if (unavailable) {
+      logger.warn("command.assistance_unavailable", {
+        command: ctx.command,
+        stage: unavailable.stage,
+        ...unavailable.refusal,
+        outcome: "default-message",
+      });
+      return engageFallback(input, ctx, unavailable.refusal.message, null);
+    }
     const startedAt = performance.now();
     let resolved: ReturnType<typeof resolveGeneratedMessage>;
     try {
@@ -344,6 +372,8 @@ export function createConversationCommandService(
         sessionName: ctx.sessionName,
         conversationId: input.conversationId,
         kind: "task_run",
+        executionClass: "nongoverned-task",
+        executionProfile: "standard",
         prompt: buildGenerationPrompt(ctx),
         outputFormat: {
           type: "json_schema",
@@ -736,6 +766,20 @@ export function createConversationCommandService(
   }
 
   async function run(input: RunCommandInput): Promise<RunCommandOutcome> {
+    const backend = await deps.getConversationBackend(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    const availability = admitCommand(backend, `/${input.parsed.command}`);
+    if (availability.status === "degraded") {
+      for (const stage of availability.stages)
+        logger.warn("command.assistance_unavailable", {
+          command: input.parsed.command,
+          stage: stage.stage,
+          ...stage.refusal,
+        });
+    }
     if (input.parsed.command === "align") return runAlign(input);
     if (input.parsed.command === "ticket") return runTicket(input);
 
@@ -766,6 +810,15 @@ function getAlignmentService() {
 }
 
 const productionDeps: ConversationCommandDeps = {
+  async getConversationBackend(projectPath, sessionName, conversationId) {
+    const conversation =
+      sessionName === null
+        ? await getProjectConversation(projectPath, conversationId)
+        : await getConversation(projectPath, sessionName, conversationId);
+    if (!conversation)
+      throw new Error(`Conversation not found: ${conversationId}`);
+    return conversation.agentBackend;
+  },
   getSession(projectPath, sessionName) {
     return getSession(projectPath, sessionName);
   },

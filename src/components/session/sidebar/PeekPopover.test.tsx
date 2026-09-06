@@ -12,10 +12,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import {
   getStaticBackendModelCatalog,
+  listBackendCatalogEntries,
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
 import { defaultSelectionForModel } from "@/lib/agent-backends/model-selection";
 import { backendCatalogKeys } from "@/lib/agent-backends/query-keys";
+import { sessionKeys } from "@/lib/sessions/query-keys";
+import {
+  sessionStateSchema,
+  toPublicSessionState,
+} from "@/lib/sessions/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { useCollaborationStore } from "@/stores/collaboration.store";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
@@ -105,7 +112,39 @@ const PROJECT_MODEL_OPTIONS = [
 function renderPeek(
   overrides: Partial<React.ComponentProps<typeof PeekPopover>> = {},
   /** Wraps the popover — the profile picker inside it reads React Query. */
-  wrap: (ui: React.ReactElement) => React.ReactElement = (ui) => ui,
+  wrap: (ui: React.ReactElement) => React.ReactElement = (ui) => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      backendCatalogKeys.catalog(),
+      listBackendCatalogEntries(),
+    );
+    const conversation = overrides.conversation ?? BASE_CONVERSATION;
+    client.setQueryData(
+      sessionKeys.detail(conversation.projectName, conversation.sessionName),
+      toPublicSessionState(
+        sessionStateSchema.parse({
+          sessionName: conversation.sessionName,
+          worktreePath: conversation.worktreePath,
+          branchName: conversation.branchName,
+          createdAt: conversation.lastActivityAt,
+          lastActivityAt: conversation.lastActivityAt,
+          conversations: [
+            makeConversationState({
+              id: conversation.id,
+              agentBackend: conversation.agentBackend,
+              backendRef: {
+                backend: conversation.agentBackend,
+                ref: "source-ref",
+              },
+            }),
+          ],
+        }),
+      ),
+    );
+    return <QueryClientProvider client={client}>{ui}</QueryClientProvider>;
+  },
 ) {
   const anchorEl = document.createElement("button");
   anchorEl.textContent = "anchor";
@@ -269,6 +308,10 @@ describe("PeekPopover", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    queryClient.setQueryData(
+      backendCatalogKeys.catalog(),
+      listBackendCatalogEntries(),
+    );
     queryClient.setQueryData(
       backendCatalogKeys.projectModelOptions("command-center"),
       PROJECT_MODEL_OPTIONS,

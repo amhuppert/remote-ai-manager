@@ -16,12 +16,14 @@ import type { MessageContentBlock } from "@/lib/conversations/message-content-sc
 import {
   isActiveQueuedMessageStatus,
   pendingQueuedMessageSchema,
+  queuedMessageNeedsReview,
 } from "@/lib/conversations/message-queue-schemas";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import type {
   PendingQueuedMessage,
   QueuedMessageMetadata,
   QueuedMessageView,
+  QueueReviewAction,
 } from "@/lib/conversations/message-queue-schemas";
 
 const logger = createLogger("message-queue");
@@ -31,7 +33,7 @@ const logger = createLogger("message-queue");
  * `attemptCount`; a recoverable failure (`markPending`) returns the row to
  * `pending` with the count retained, so a poison message that fails every
  * delivery would otherwise cycle pending → delivering → pending forever. Once a
- * row reaches this cap, the claim paths refuse it: the row leaves the queue as
+ * row reaches this cap, the claim paths retain it for review as
  * `failed` with QUEUED_MESSAGE_ATTEMPT_LIMIT_REFUSAL_REASON recorded in `error`
  * and broadcast to the client — never a silent drop.
  */
@@ -103,7 +105,7 @@ export function appendPendingEntry(
 
 /**
  * Deep-detach a queue row from the Immer draft it was built over. A row that is
- * pruned from the queue (a terminal `delivered`/`failed`/`cancelled` result) is
+ * pruned from the queue (a terminal `delivered`/`cancelled` result) is
  * never re-inserted into the finalized state tree, so the store's
  * `createDraft`/`finishDraft` cycle revokes the draft proxies it still aliases —
  * notably the nested `content` array. Without this snapshot the post-mutation
@@ -124,9 +126,7 @@ function isAttemptLimitReached(entry: PendingQueuedMessage): boolean {
 }
 
 /**
- * Terminal refusal for a row at the attempt cap: `failed` with the refusal
- * reason recorded. Detached (see `detachQueueRow`) because the row is pruned
- * from the persisted queue and only survives on the broadcast.
+ * Retain a row at the attempt cap with its refusal reason for explicit review.
  */
 function refuseAttemptLimitEntry(
   entry: PendingQueuedMessage,
@@ -141,7 +141,7 @@ function refuseAttemptLimitEntry(
   });
 }
 
-/** Active rows are `pending` and `delivering`; order is preserved. Pure. */
+/** Rows still owned by the queue; order is preserved. Pure. */
 export function listActiveEntries(
   queue: readonly PendingQueuedMessage[],
 ): PendingQueuedMessage[] {
@@ -199,9 +199,9 @@ export function coalesceContent(
 /**
  * Claim a single `pending` row by id into `delivering` under `attemptId`. Only
  * a row whose status is `pending` is claimable. A pending row already at the
- * attempt cap is refused instead: pruned from the queue as `failed` with the
- * refusal reason and returned as `refused` so the caller can broadcast the
- * terminal outcome. Returns the next queue and the claimed row (or `null` if
+ * attempt cap is retained as `failed` with the refusal reason and returned as
+ * `refused` so the caller can broadcast the review requirement. Returns the next
+ * queue and the claimed row (or `null` if
  * the id is absent, not pending, or refused). Pure.
  */
 export function claimLiveDeliveryTransform(
@@ -214,6 +214,9 @@ export function claimLiveDeliveryTransform(
   claimed: PendingQueuedMessage | null;
   refused: PendingQueuedMessage | null;
 } {
+  if (queue.some((entry) => queuedMessageNeedsReview(entry.status))) {
+    return { queue: [...queue], claimed: null, refused: null };
+  }
   let claimed: PendingQueuedMessage | null = null;
   let refused: PendingQueuedMessage | null = null;
   const next: PendingQueuedMessage[] = [];
@@ -224,6 +227,7 @@ export function claimLiveDeliveryTransform(
     }
     if (isAttemptLimitReached(entry)) {
       refused = refuseAttemptLimitEntry(entry, now);
+      next.push(refused);
       continue;
     }
     claimed = {
@@ -246,9 +250,8 @@ export function claimLiveDeliveryTransform(
  *       turn by the caller — stopping before the first conversation command, or
  *   (b) a single command row at the head of the pending queue, claimed alone
  *       so the drain routes it to the command service (req 8.3).
- * Pending rows at the attempt cap are refused first — pruned from the queue as
- * `failed` with the refusal reason — so a poison row can never jam the head of
- * the queue; the batch is computed from the remaining rows.
+ * Pending rows at the attempt cap become `failed` and block later claims until
+ * explicit retry or discard, preserving both the payload and queue order.
  * Returns the next queue, the claimed rows in order, the refused rows, and the
  * parsed command for case (b) (`null` for plain batches). Pure.
  */
@@ -262,16 +265,30 @@ export function claimNextTurnBatchTransform(
   command: ParsedConversationCommand | null;
   refused: PendingQueuedMessage[];
 } {
+  // A claimed batch owns the next turn until acceptance or release. Letting a
+  // second drainer skip it can dispatch later model selections out of order.
+  if (
+    queue.some(
+      (entry) =>
+        entry.status === "delivering" || queuedMessageNeedsReview(entry.status),
+    )
+  ) {
+    return { queue: [...queue], claimed: [], command: null, refused: [] };
+  }
   const refused: PendingQueuedMessage[] = [];
   const survivors: PendingQueuedMessage[] = [];
   for (const entry of queue) {
     if (entry.status === "pending" && isAttemptLimitReached(entry)) {
-      refused.push(refuseAttemptLimitEntry(entry, now));
+      const held = refuseAttemptLimitEntry(entry, now);
+      refused.push(held);
+      survivors.push(held);
       continue;
     }
     survivors.push(entry);
   }
 
+  if (refused.length > 0)
+    return { queue: survivors, claimed: [], command: null, refused };
   const pending = survivors.filter((entry) => entry.status === "pending");
   const head = pending[0];
   if (!head) {
@@ -346,7 +363,7 @@ function applyDeliveryResult(
       continue;
     }
     const updated = update(entry);
-    // Terminal results (delivered/failed) are pruned from the persisted queue:
+    // Confirmed deliveries are pruned from the persisted queue:
     // nothing reads a terminal entry and retaining them grows the row
     // unboundedly. markPending is a retry (back to pending) and must be kept.
     if (prune) {
@@ -408,7 +425,7 @@ export function markPendingTransform(
   );
 }
 
-/** Terminal failure: mark matching delivering rows `failed`. Pure. */
+/** Known failure: retain the rejected input for review. Pure. */
 export function markFailedTransform(
   queue: readonly PendingQueuedMessage[],
   ids: readonly string[],
@@ -427,14 +444,30 @@ export function markFailedTransform(
       error,
       updatedAt: now,
     }),
-    true,
+    false,
+  );
+}
+
+/** Preserve an ambiguous attempt; only explicit review may release its rows. */
+export function markUncertainTransform(
+  queue: readonly PendingQueuedMessage[],
+  ids: readonly string[],
+  attemptId: string,
+  error: string,
+  now: string,
+): { queue: PendingQueuedMessage[]; affected: PendingQueuedMessage[] } {
+  return applyDeliveryResult(
+    queue,
+    ids,
+    attemptId,
+    (entry) => ({ ...entry, status: "uncertain", error, updatedAt: now }),
+    false,
   );
 }
 
 /**
- * Reset every `delivering` row to `pending`, clearing its delivery claim. Used
- * during actor startup / process recovery to reclaim rows whose owning attempt
- * is gone. Returns the next queue and the recovered rows. Pure.
+ * Hold abandoned claims for explicit review. A missing owner does not prove
+ * that the provider never received the request; replay could repeat its work.
  */
 export function recoverAbandonedDeliveriesTransform(
   queue: readonly PendingQueuedMessage[],
@@ -447,9 +480,9 @@ export function recoverAbandonedDeliveriesTransform(
     }
     const updated: PendingQueuedMessage = {
       ...entry,
-      status: "pending",
-      deliveryAttemptId: null,
-      deliveryStartedAt: null,
+      status: "uncertain",
+      error:
+        "Delivery was interrupted and may have reached the agent. Review before retrying or discarding.",
       updatedAt: now,
     };
     recovered.push(updated);
@@ -562,9 +595,21 @@ export interface MessageQueueService {
       error: string;
     },
   ): Promise<void>;
+  markUncertain(
+    input: ConversationKey & {
+      ids: string[];
+      deliveryAttemptId: string;
+      error: string;
+    },
+  ): Promise<void>;
   cancel(
     input: ConversationKey & { id: string },
   ): Promise<"cancelled" | "not_found" | "not_cancellable">;
+  /** Retry keeps position and payload with a fresh identity; discard removes it. */
+  resolveDelivery(
+    input: ConversationKey & { id: string; action: QueueReviewAction },
+  ): Promise<"resolved" | "not_found" | "not_reviewable">;
+  /** Only a process/actor owner that knows the prior delivery stopped may recover. */
   recoverAbandonedDeliveries(input: ConversationKey): Promise<number>;
 }
 
@@ -699,9 +744,9 @@ export function createMessageQueueService(
   }
 
   /**
-   * Broadcast rows refused at the attempt cap (terminal `failed` with the
-   * refusal reason) and log the refusal — the row already left the persisted
-   * queue in the same durable write as the claim.
+   * Broadcast rows refused at the attempt cap (`failed` with the
+   * refusal reason) and log the refusal. The retained payload and reason are
+   * committed in the same durable write as the claim decision.
    */
   function reportRefused(
     key: ConversationKey,
@@ -1040,10 +1085,125 @@ export function createMessageQueueService(
       sessionName,
       conversationId,
       messageIds: recovered.map((row) => row.id),
-      status: "pending",
+      status: "uncertain",
     });
 
     return recovered.length;
+  }
+
+  async function markUncertain(
+    input: ConversationKey & {
+      ids: string[];
+      deliveryAttemptId: string;
+      error: string;
+    },
+  ): Promise<void> {
+    const affected = await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "markQueuedUncertain",
+      (conversation) => {
+        const result = markUncertainTransform(
+          conversation.pendingQueue,
+          input.ids,
+          input.deliveryAttemptId,
+          input.error,
+          deps.now(),
+        );
+        conversation.pendingQueue = result.queue;
+        return result.affected;
+      },
+    );
+    if (affected.length === 0) return;
+    broadcastUpdated(
+      input,
+      deps.getProjectDisplayName(input.projectPath),
+      affected,
+    );
+    logger.warn("queue.delivery_uncertain", {
+      conversationId: input.conversationId,
+      messageIds: affected.map((row) => row.id),
+      deliveryAttemptId: input.deliveryAttemptId,
+      error: input.error,
+    });
+  }
+
+  async function resolveDelivery(
+    input: ConversationKey & { id: string; action: QueueReviewAction },
+  ): Promise<"resolved" | "not_found" | "not_reviewable"> {
+    const outcome = await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "resolveQueuedDelivery",
+      (conversation) => {
+        const entry = conversation.pendingQueue.find(
+          (row) => row.id === input.id,
+        );
+        if (!entry) return { result: "not_found" as const };
+        if (!queuedMessageNeedsReview(entry.status))
+          return { result: "not_reviewable" as const };
+        const now = deps.now();
+        // Retry is an explicit repeat: a fresh queue identity gives it a distinct
+        // transcript receipt even if the earlier attempt already appended one.
+        const updated = detachQueueRow(
+          input.action === "discard"
+            ? {
+                ...entry,
+                status: "cancelled",
+                cancelledAt: now,
+                updatedAt: now,
+              }
+            : {
+                ...entry,
+                id: deps.newId(),
+                status: "pending",
+                deliveryAttemptId: null,
+                deliveryStartedAt: null,
+                failedAt: null,
+                error: null,
+                attemptCount: 0,
+                updatedAt: now,
+              },
+        );
+        conversation.pendingQueue = conversation.pendingQueue.flatMap((row) =>
+          row.id !== input.id
+            ? [row]
+            : input.action === "discard"
+              ? []
+              : [updated],
+        );
+        return {
+          result: "resolved" as const,
+          entries:
+            input.action === "retry"
+              ? [
+                  detachQueueRow({
+                    ...entry,
+                    status: "cancelled",
+                    cancelledAt: now,
+                    updatedAt: now,
+                  }),
+                  updated,
+                ]
+              : [updated],
+        };
+      },
+    );
+    if (outcome.entries)
+      broadcastUpdated(
+        input,
+        deps.getProjectDisplayName(input.projectPath),
+        outcome.entries,
+      );
+    logger.info("queue.review_resolved", {
+      conversationId: input.conversationId,
+      messageId: input.id,
+      action: input.action,
+      result: outcome.result,
+    });
+    return outcome.result;
   }
 
   return {
@@ -1054,7 +1214,9 @@ export function createMessageQueueService(
     markDelivered,
     markPending,
     markFailed,
+    markUncertain,
     cancel,
+    resolveDelivery,
     recoverAbandonedDeliveries,
   };
 }

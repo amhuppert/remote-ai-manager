@@ -1,4 +1,5 @@
 "use client";
+import type { BackendAdmissionRefusal } from "@/lib/agent-backends/execution-admission";
 
 import { memo } from "react";
 import { cn } from "@/lib/ui/cn";
@@ -7,14 +8,20 @@ import MessageActions from "@/components/MessageActions";
 import ModelSelectionMetadata from "@/components/ModelSelectionMetadata";
 import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
-import { backendLabel } from "@/lib/agent-backends/catalog";
+import {
+  backendLabel,
+  queueCapabilityForBackend,
+} from "@/lib/agent-backends/catalog";
 import { formatLocalTime } from "@/lib/shared/format-local-time";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
-import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-schemas";
+import type {
+  QueuedMessageMetadata,
+  PendingQueuedMessageStatus,
+} from "@/lib/conversations/message-queue-schemas";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { MessagePartRange } from "@/lib/conversations/group-content-blocks";
@@ -72,6 +79,7 @@ export interface MessageRowProps {
    * `queuedMetadata` prop on `MessageContent`. Omit for transcript rows.
    */
   queuedMetadata?: QueuedMessageMetadata | null;
+  queuedStatus?: PendingQueuedMessageStatus | "accepted";
   /**
    * True for an in-flight optimistic row (streamed during an active turn):
    * its display index and content are not durable, so it gets no
@@ -98,6 +106,7 @@ export interface MessageRowProps {
    * choose. Omit and the action stays one-click at every index.
    */
   forkProjectName?: string;
+  forkRefusal?: BackendAdmissionRefusal | null;
   /**
    * Conversation identity for the per-message Compact action; omit on hosts
    * without it (the action is hidden). Must be referentially stable — this row
@@ -127,6 +136,7 @@ export interface MessageRowProps {
 const MessageRow = memo(function MessageRow({
   msg,
   queuedMetadata,
+  queuedStatus,
   provisional,
   messageIndex,
   part,
@@ -136,6 +146,7 @@ const MessageRow = memo(function MessageRow({
   thinkingExpansionCommand,
   onFork,
   forkProjectName,
+  forkRefusal,
   compactionTarget,
   conversationName,
   lastMessageExtras,
@@ -228,6 +239,20 @@ const MessageRow = memo(function MessageRow({
       {isFirstPart && (
         <div className={cn(messageRoleClass, roleColor)}>
           {isUserMsg ? "You" : backendLabel(selectedBackend)}
+          {queuedStatus ? (
+            <span className="ml-sm font-medium text-text-secondary normal-case">
+              {queuedStatus === "uncertain"
+                ? "Delivery uncertain"
+                : queuedStatus === "failed"
+                  ? "Delivery failed"
+                  : queuedStatus === "delivering"
+                    ? "Delivering"
+                    : queueCapabilityForBackend(selectedBackend)
+                          .deliveryTiming === "next_turn"
+                      ? "Queued for next turn"
+                      : "Queued"}
+            </span>
+          ) : null}
           {iterationIndex !== undefined && (
             <span
               className="message-iteration-badge ml-sm inline-flex items-center justify-center rounded-full bg-bg-raised px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-medium tracking-[0.02em] whitespace-nowrap text-text-secondary normal-case"
@@ -273,6 +298,7 @@ const MessageRow = memo(function MessageRow({
           role={msg.role}
           onFork={onFork}
           forkProjectName={forkProjectName}
+          forkRefusal={forkRefusal}
           compactionTarget={compactionTarget}
           messageRef={messageRef}
         />
