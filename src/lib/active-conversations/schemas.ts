@@ -48,6 +48,8 @@ const activeConversationSharedFields = {
   worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
   unread: z.boolean(),
+  // Sidebar rows carry archival state; the active-only feed omits it.
+  archived: z.boolean().optional(),
   // Which agent profile the conversation runs under, redacted (R6.3): identity
   // and provenance hashes only. Null for a legacy conversation. The row has no
   // key instruction text could occupy; optionality only spares the many sidebar

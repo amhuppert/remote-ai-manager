@@ -8,12 +8,24 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createClientLogger } from "@/lib/logging/client-logger";
+import { Button } from "@/components/ui/Button";
+import ConversationSessionSection from "./ConversationSessionSection";
+import ProjectAvatar from "./ProjectAvatar";
+import { Badge } from "@/components/ui/Badge";
+import {
+  buildSidebarContent,
+  filterSidebarScope,
+  isUnread,
+  needsAttention,
+  isRunning,
+} from "./conversation-session-groups";
 import { cn } from "@/lib/ui/cn";
 import type {
   ActiveConversation,
   SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
-import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
+import { useSidebarConversationsQuery } from "@/lib/active-conversations/queries";
 import { PlusIcon } from "@/components/icons";
 import NewConversationProfileButton from "@/components/agent-profiles/NewConversationProfileButton";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
@@ -56,10 +68,7 @@ import {
   useSidebarSessionFilter,
   useSetSidebarSessionFilter,
 } from "@/stores/session-detail.store";
-import {
-  useSidebarActiveListFilter,
-  useSidebarGroupByPersistent,
-} from "@/hooks/use-sidebar-persistent-filters";
+import { useSidebarActiveListFilter } from "@/hooks/use-sidebar-persistent-filters";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import ConversationSidebarHeader from "@/components/session/sidebar/ConversationSidebarHeader";
 import ConversationSidebarFilters from "@/components/session/sidebar/ConversationSidebarFilters";
@@ -101,17 +110,15 @@ import {
   type BackendSelectionDefaultsById,
 } from "@/lib/agent-backends/catalog";
 import {
-  filterConversations,
-  splitNeedsYou,
-  buildConversationSidebarSections,
   describeActiveRow,
   isClosedProjectConversation,
   type ActiveRowActionScope,
   type ActiveSidebarConversation,
   type SidebarListFilter,
   type AnnotatedSidebarConversation,
-  type SidebarSection,
 } from "@/components/session/sidebar/ConversationSidebar.helpers";
+
+const logger = createClientLogger("conversation-sidebar");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -149,7 +156,7 @@ function SidebarRowItem({
   // Right-click and touch long-press are handled by the row's ContextMenu
   // trigger (renderRow), so no manual long-press wiring lives here.
   return (
-    <div className="relative mx-[8px] my-[1px]">
+    <div className="relative">
       <ConversationSidebarRow
         href={href}
         conversation={conversation}
@@ -158,6 +165,7 @@ function SidebarRowItem({
         isLastInSession={row.isLastInSession}
         currentConversationId={activeConversationId}
         isClosed={closed}
+        showContext={false}
         onClick={onNavigate}
         onPeek={onPeek}
         onAcknowledge={onAcknowledge}
@@ -269,12 +277,23 @@ function ConversationSidebar({
   const effectiveCollapsed = showCollapseControl ? collapsed : false;
   const hydrateSidebar = useHydrateSidebar();
   const sidebarFilter = useSidebarFilter();
-  const [sidebarGroupBy] = useSidebarGroupByPersistent();
+  const [selectedProject, setProjectFilter] = useState<string | null>(null);
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [includeGraphWorkflows, setIncludeGraphWorkflows] = useState(false);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
   const sidebarSessionFilter = useSidebarSessionFilter();
   const setSidebarSessionFilter = useSetSidebarSessionFilter();
 
   // --- Active conversations query ---
-  const { data: activeData } = useActiveConversationsQuery();
+  const {
+    data: activeData,
+    isPending,
+    isFetching,
+    isError,
+    refetch,
+  } = useSidebarConversationsQuery(includeArchived);
   const clientStateReady = useClientStateReady();
   const activeConvoList = useMemo(
     () => (clientStateReady ? (activeData?.conversations ?? []) : []),
@@ -387,6 +406,8 @@ function ConversationSidebar({
 
   // --- Local UI state ---
   const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
+  const projectFilter =
+    activeListFilter === "project" ? projectName : selectedProject;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -406,6 +427,7 @@ function ConversationSidebar({
   const openPeek = useCallback(
     (anchorEl: HTMLElement, conversationId: string) => {
       setPeek({ anchorEl, conversationId });
+      logger.debug("sidebar.peek.open", { conversationId });
     },
     [],
   );
@@ -665,40 +687,83 @@ function ConversationSidebar({
     [projectName, sessionName, sidebarSessionFilter],
   );
 
-  const filterCounts = useMemo(() => {
-    const openRows = activeRows.filter(
-      (row) => !isClosedProjectConversation(row),
-    );
-    const { approvals, questions, finished } = splitNeedsYou(openRows);
-    return {
-      all: activeRows.length,
-      needs: approvals.length + questions.length + finished.length,
-      running: openRows.filter((row) => row.status === "running").length,
-      session: activeRows.filter(
-        (row) =>
-          row.scope === "session" &&
-          row.projectName === sessionScope.projectName &&
-          row.sessionName === sessionScope.sessionName,
-      ).length,
-    } satisfies Record<SidebarListFilter, number>;
-  }, [activeRows, sessionScope]);
-
-  const sidebarSections = useMemo(
+  const projects = useMemo(
+    () => [...new Set(activeRows.map((row) => row.projectName))].sort(),
+    [activeRows],
+  );
+  const eligibleRows = useMemo(
     () =>
-      buildConversationSidebarSections(
-        filterConversations(activeRows, sidebarFilter),
-        {
-          filter: activeListFilter,
-          groupBy: sidebarGroupBy,
-          sessionScope,
-        },
+      filterSidebarScope(activeRows, {
+        project: null,
+        includeArchived,
+        includeGraphWorkflows,
+      }),
+    [activeRows, includeArchived, includeGraphWorkflows],
+  );
+  const projectRows = useMemo(
+    () =>
+      eligibleRows.filter(
+        (row) => projectFilter === null || row.projectName === projectFilter,
       ),
-    [activeListFilter, activeRows, sessionScope, sidebarFilter, sidebarGroupBy],
+    [eligibleRows, projectFilter],
+  );
+  const filterCounts = useMemo(
+    () =>
+      ({
+        all: projectRows.length,
+        needs: projectRows.filter(needsAttention).length,
+        running: projectRows.filter(isRunning).length,
+        unread: projectRows.filter(isUnread).length,
+        project: eligibleRows.filter((row) => row.projectName === projectName)
+          .length,
+        session: projectRows.filter(
+          (row) =>
+            row.scope === "session" &&
+            row.projectName === sessionScope.projectName &&
+            row.sessionName === sessionScope.sessionName,
+        ).length,
+      }) satisfies Record<SidebarListFilter, number>,
+    [projectRows, sessionScope, eligibleRows, projectName],
   );
 
-  const hasConversationResults = sidebarSections.some(
-    (section) => section.items.length > 0,
+  const { groups: sidebarSections, needsInput: pinnedInput } = useMemo(
+    () =>
+      buildSidebarContent(activeRows, {
+        query: sidebarFilter,
+        project: projectFilter,
+        includeArchived,
+        includeGraphWorkflows,
+        filter: activeListFilter,
+        sessionScope,
+        expandedKeys,
+        activeConversationId,
+      }),
+    [
+      activeRows,
+      sidebarFilter,
+      projectFilter,
+      includeArchived,
+      includeGraphWorkflows,
+      activeListFilter,
+      sessionScope,
+      expandedKeys,
+      activeConversationId,
+    ],
   );
+
+  const toggleSession = useCallback((key: string) => {
+    setExpandedKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    logger.debug("sidebar.session.toggle", { groupKey: key });
+  }, []);
+
+  const hasConversationResults =
+    pinnedInput.length > 0 ||
+    sidebarSections.some((section) => section.items.length > 0);
 
   // Builds the right-click menu items for a given row (used by each row's
   // ContextMenu in renderRow). Defined before renderRow so it can be a stable
@@ -955,75 +1020,6 @@ function ConversationSidebar({
     ],
   );
 
-  const renderSections = useCallback(
-    <T extends ActiveSidebarConversation & Partial<{ archived: boolean }>>(
-      sections: SidebarSection<T>[],
-    ) => {
-      return sections.map((section) => {
-        if (section.items.length === 0) return null;
-        const isNeeds = section.kind === "needs";
-        const isFinished = isNeeds && section.tone === "finished";
-        const isClosedSection = section.kind === "closed";
-        const headerClass = cn(
-          "flex min-w-0 items-center gap-sm px-[12px] pb-[4px] font-mono text-[0.7rem] leading-[1.2] font-semibold tracking-[0.12em] uppercase",
-          isNeeds ? "pt-[10px]" : "pt-[12px]",
-          isFinished
-            ? "text-green"
-            : isNeeds
-              ? "text-amber"
-              : isClosedSection
-                ? "text-text-tertiary"
-                : "text-text-primary",
-          !isNeeds &&
-            "after:order-2 after:h-[1px] after:min-w-[16px] after:flex-1 after:[background-image:linear-gradient(to_right,var(--border-default),transparent)] after:content-['']",
-        );
-        const countClass = cn(
-          "order-1 font-medium",
-          isFinished
-            ? "text-green-dim"
-            : isNeeds
-              ? "text-amber-dim"
-              : "text-text-tertiary",
-        );
-        return (
-          <section
-            key={section.groupKey}
-            className="flex flex-col"
-            data-section-kind={section.kind}
-            data-section-tone={section.tone ?? undefined}
-          >
-            <div className={headerClass}>
-              {section.kind === "session" &&
-              section.projectLabel !== undefined &&
-              section.sessionLabel !== undefined ? (
-                <span className="inline-flex min-w-0 items-baseline gap-[5px] overflow-hidden text-ellipsis whitespace-nowrap">
-                  <span className="min-w-0 overflow-hidden text-ellipsis text-text-tertiary">
-                    {section.projectLabel}
-                  </span>
-                  <span className="shrink-0 text-text-tertiary">/</span>
-                  <span className="min-w-0 overflow-hidden text-ellipsis text-text-primary">
-                    {section.sessionLabel}
-                  </span>
-                </span>
-              ) : (
-                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                  {section.label}
-                </span>
-              )}
-              <span className={countClass}>
-                {section.kind === "needs"
-                  ? `(${section.items.length})`
-                  : section.items.length}
-              </span>
-            </div>
-            <div>{section.items.map((row) => renderRow(row))}</div>
-          </section>
-        );
-      });
-    },
-    [renderRow],
-  );
-
   return (
     <>
       {/* Backdrop for mobile drawer */}
@@ -1035,6 +1031,8 @@ function ConversationSidebar({
         onClick={onMobileClose}
       />
       <div
+        role="complementary"
+        aria-label="Conversations"
         className={cn(
           // `convo-sidebar` is kept as a structural hook: out-of-scope
           // conversation.css (`.convo-sidebar .convo-rename-input`, Stage B-4)
@@ -1052,9 +1050,9 @@ function ConversationSidebar({
           mobileOpen ? "max-768:translate-x-0" : "max-768:-translate-x-full",
         )}
       >
-        <div className="mb-header-content flex min-h-[28px] items-center justify-between gap-xs border-x-0 border-t-0 border-b border-solid border-border-subtle px-[10px] pt-[10px] pb-[8px]">
+        <div className="flex min-h-[28px] items-center justify-between gap-xs border-x-0 border-t-0 border-b border-solid border-border-subtle px-[10px] pt-[10px] pb-[8px]">
           <span className="inline-flex min-w-0 items-baseline gap-[5px] overflow-hidden font-mono text-[0.72rem] leading-[1.2] font-semibold tracking-[0.1em] whitespace-nowrap text-text-secondary uppercase">
-            Active Conversations{" "}
+            Conversations{" "}
             <span className="font-medium text-text-tertiary">
               ({filterCounts.all})
             </span>
@@ -1087,12 +1085,7 @@ function ConversationSidebar({
             {showCollapseControl && (
               <WithTooltip label="Collapse sidebar">
                 <button
-                  // Legacy parity: `.convo-sidebar-toggle{display:none}` at
-                  // max-768 was overridden by the later-sourced unlayered
-                  // `.btn-icon-only{display:flex}`, so the collapse toggle in fact
-                  // stayed visible on mobile and inherited the `.btn-icon-only`
-                  // 44px/1rem touch enlargement.
-                  className="relative flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.7rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-768:size-[44px] max-768:text-[1rem]"
+                  className="relative flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.7rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-768:hidden"
                   onClick={toggleCollapsed}
                   aria-label="Collapse sidebar"
                 >
@@ -1121,34 +1114,183 @@ function ConversationSidebar({
                 counts={filterCounts}
                 activeFilter={activeListFilter}
                 onFilterChange={(value) => {
+                  if (value === "project") setProjectFilter(projectName);
+                  if (value === "session")
+                    setProjectFilter(sessionScope.projectName);
+                  if (value === "all") setProjectFilter(null);
                   if (value !== "session") setSidebarSessionFilter(null);
                   setActiveListFilter(value);
+                  logger.debug("sidebar.list_filter", { filter: value });
                 }}
                 searchInputRef={searchInputRef}
               />
-              <ConversationSidebarFilters />
+              <ConversationSidebarFilters
+                projects={projects}
+                project={projectFilter}
+                onProjectChange={(value) => {
+                  setProjectFilter(value);
+                  setSidebarSessionFilter(null);
+                  setActiveListFilter(
+                    value === projectName ? "project" : "all",
+                  );
+                  logger.debug("sidebar.project_filter", { project: value });
+                }}
+                includeGraphWorkflows={includeGraphWorkflows}
+                onGraphWorkflowsChange={(value) => {
+                  setIncludeGraphWorkflows(value);
+                  logger.debug("sidebar.workflows_filter", {
+                    includeGraphWorkflows: value,
+                  });
+                }}
+                includeArchived={includeArchived}
+                onArchivedChange={(value) => {
+                  setIncludeArchived(value);
+                  logger.debug("sidebar.archived_filter", {
+                    includeArchived: value,
+                  });
+                }}
+              />
             </div>
 
-            <div className="flex flex-1 flex-col gap-0 overflow-y-auto bg-bg-base pt-[8px] pb-[16px]">
+            <div className="flex flex-wrap items-center justify-between gap-xs px-sm py-xs">
+              <span className="shrink-0 whitespace-nowrap pl-xs font-mono text-[0.7rem] tracking-[0.08em] text-text-tertiary uppercase">
+                Sessions {sidebarSections.length}
+              </span>
+              <div className="ml-auto flex shrink-0 items-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  touch
+                  onClick={() => {
+                    setExpandedKeys(
+                      (previous) =>
+                        new Set([
+                          ...previous,
+                          ...sidebarSections.map((group) => group.groupKey),
+                        ]),
+                    );
+                    logger.debug("sidebar.sessions.expand_all", {
+                      count: sidebarSections.length,
+                    });
+                  }}
+                >
+                  <span className="whitespace-nowrap">Expand all</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  touch
+                  onClick={() => {
+                    setExpandedKeys(new Set());
+                    logger.debug("sidebar.sessions.collapse_all");
+                  }}
+                >
+                  <span className="whitespace-nowrap">Collapse all</span>
+                </Button>
+              </div>
+            </div>
+            <div
+              className="flex min-h-0 flex-1 flex-col gap-lg overflow-y-auto bg-bg-void pb-lg"
+              aria-busy={clientStateReady && isFetching}
+            >
+              {pinnedInput.length > 0 && (
+                <section
+                  aria-label="Needs Input"
+                  data-section-kind="needs"
+                  className="mx-sm shrink-0 overflow-hidden rounded-lg border border-solid border-amber-dim bg-bg-base"
+                >
+                  <div className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-amber-dim bg-amber-glow px-md py-sm">
+                    <span
+                      className="size-[7px] rounded-full bg-amber"
+                      aria-hidden="true"
+                    />
+                    <h2 className="m-0 flex-1 font-mono text-[0.75rem] font-semibold tracking-[0.08em] uppercase text-amber">
+                      Needs Input
+                    </h2>
+                    <Badge tier="count">{pinnedInput.length}</Badge>
+                  </div>
+                  <div className="flex flex-col gap-sm p-sm">
+                    {pinnedInput.map((row) => (
+                      <div key={row.id} className="flex flex-col gap-xs">
+                        <div className="flex min-w-0 items-center gap-sm px-sm">
+                          <ProjectAvatar
+                            projectName={row.projectName}
+                            size="sm"
+                          />
+                          <span
+                            className="truncate font-mono text-[0.7rem] text-text-secondary"
+                            title={describeActiveRow(row).groupLabel}
+                          >
+                            {describeActiveRow(row).groupLabel}
+                          </span>
+                        </div>
+                        {renderRow(row)}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               <ActiveWorkSection
-                items={activeWorkItems}
-                attention={attentionItems}
+                items={activeWorkItems.filter(
+                  (item) =>
+                    projectFilter === null ||
+                    item.projectName === projectFilter,
+                )}
+                attention={attentionItems.filter(
+                  (item) =>
+                    projectFilter === null ||
+                    item.projectName === projectFilter,
+                )}
                 nowMs={nowMs}
                 onAction={handleActiveWorkAction}
                 onDismissAttention={handleDismissAttention}
               />
+              {(!clientStateReady || isPending) && (
+                <div
+                  role="status"
+                  className="flex items-center justify-center gap-sm p-xl font-mono text-[0.78rem] text-text-secondary"
+                >
+                  <Spinner size="sm" /> Loading conversations…
+                </div>
+              )}
+              {clientStateReady && isError && (
+                <div
+                  role="alert"
+                  className="flex flex-col items-center gap-sm p-lg font-mono text-[0.78rem] text-text-primary"
+                >
+                  Could not load conversations.
+                  <Button size="sm" onClick={() => void refetch()}>
+                    Retry
+                  </Button>
+                </div>
+              )}
               {hasConversationResults
-                ? renderSections(sidebarSections)
-                : activeWorkItems.length === 0 &&
-                  attentionItems.length === 0 && (
-                    <div className="px-md py-lg text-center font-mono text-[0.72rem] leading-[1.6] text-text-tertiary">
-                      {sidebarFilter
-                        ? "No matches."
-                        : "No active conversations."}
-                      <span className="mt-xs block text-[0.7rem] opacity-[0.7]">
-                        {sidebarFilter
-                          ? "Try clearing the search."
-                          : "New, running, or awaiting conversations will appear here."}
+                ? sidebarSections.map((section) => (
+                    <ConversationSessionSection
+                      key={section.groupKey}
+                      group={section}
+                      onToggle={() => toggleSession(section.groupKey)}
+                    >
+                      {section.items.map(renderRow)}
+                    </ConversationSessionSection>
+                  ))
+                : clientStateReady &&
+                  !isPending &&
+                  !isError && (
+                    <div className="flex flex-col items-center gap-sm px-lg py-2xl text-center font-mono text-[0.78rem] leading-[1.6] text-text-secondary">
+                      <span className="font-semibold text-text-primary">
+                        {sidebarFilter ||
+                        projectFilter ||
+                        activeListFilter !== "all"
+                          ? "No matching conversations"
+                          : "No conversations yet"}
+                      </span>
+                      <span>
+                        {sidebarFilter ||
+                        projectFilter ||
+                        activeListFilter !== "all"
+                          ? "Try another search or adjust your filters."
+                          : "Conversations from active sessions appear here."}
                       </span>
                     </div>
                   )}

@@ -1,6 +1,8 @@
 export const conversationKeys = {
   all: ["conversations"] as const,
   active: () => [...conversationKeys.all, "active"] as const,
+  sidebar: (includeArchived: boolean) =>
+    [...conversationKeys.active(), "sidebar", { includeArchived }] as const,
   lists: () => [...conversationKeys.all, "list"] as const,
   details: () => [...conversationKeys.all, "detail"] as const,
   messagesAll: () => [...conversationKeys.all, "messages"] as const,

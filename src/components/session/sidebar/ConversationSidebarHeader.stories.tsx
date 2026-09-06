@@ -51,7 +51,7 @@ const meta = {
     ),
   ],
   args: {
-    counts: { all: 6, needs: 0, running: 4, session: 1 },
+    counts: { all: 6, needs: 0, running: 4, unread: 1, project: 4, session: 1 },
     initialFilter: "",
     initialListFilter: "all" as SidebarListFilter,
   },
@@ -71,6 +71,6 @@ export const Populated: Story = {
 export const NeedsFilterActive: Story = {
   args: {
     initialListFilter: "needs",
-    counts: { all: 6, needs: 3, running: 2, session: 1 },
+    counts: { all: 6, needs: 3, running: 2, unread: 1, project: 4, session: 1 },
   },
 };

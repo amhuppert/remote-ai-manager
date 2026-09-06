@@ -186,6 +186,63 @@ beforeEach(() => {
 // ===========================================================================
 
 describe("GET /api/conversations/active", () => {
+  it("sidebar includes archived conversations only from active sessions and projects", async () => {
+    deps.readState.mockResolvedValue(
+      makeState({
+        sessions: {
+          active: {
+            sessionName: "active",
+            conversations: [
+              makeConversation({ id: "live" }),
+              makeConversation({ id: "archived", archived: true }),
+              makeConversation({ id: "validator", role: "validator" }),
+            ],
+          },
+          hidden: {
+            sessionName: "hidden",
+            archived: true,
+            conversations: [makeConversation({ id: "hidden", archived: true })],
+          },
+        },
+      }),
+    );
+    const response = await handlers.GET(
+      new Request(
+        "http://localhost/api/conversations/active?view=sidebar&includeArchived=true",
+      ),
+    );
+    const body = await response.json();
+    expect(body.conversations.map((row: { id: string }) => row.id)).toEqual([
+      "live",
+      "archived",
+      "validator",
+    ]);
+    expect(
+      body.conversations.find((row: { id: string }) => row.id === "archived")
+        .archived,
+    ).toBe(true);
+    const withoutArchive = await handlers.GET(
+      new Request("http://localhost/api/conversations/active?view=sidebar"),
+    );
+    expect(
+      (await withoutArchive.json()).conversations.map(
+        (row: { id: string }) => row.id,
+      ),
+    ).toEqual(["live", "validator"]);
+    const ordinary = await handlers.GET();
+    expect(
+      (await ordinary.json()).conversations.map(
+        (row: { id: string }) => row.id,
+      ),
+    ).toEqual(["live"]);
+    deps.getArchivedProjects = async () => new Set(["/home/user/my-project"]);
+    const hidden = await handlers.GET(
+      new Request(
+        "http://localhost/api/conversations/active?view=sidebar&includeArchived=true",
+      ),
+    );
+    expect((await hidden.json()).conversations).toEqual([]);
+  });
   it("includes conversations with 'new' status", async () => {
     vi.mocked(deps.readState).mockResolvedValue(
       makeState({

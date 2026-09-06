@@ -10,14 +10,8 @@ import {
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
-import type {
-  SidebarGroupBy,
-  SidebarListFilter,
-} from "@/components/session/sidebar/ConversationSidebar.helpers";
-import {
-  ACTIVE_LIST_FILTER_STORAGE_KEY,
-  GROUP_BY_STORAGE_KEY,
-} from "@/hooks/use-sidebar-persistent-filters";
+import type { SidebarListFilter } from "@/components/session/sidebar/ConversationSidebar.helpers";
+import { ACTIVE_LIST_FILTER_STORAGE_KEY } from "@/hooks/use-sidebar-persistent-filters";
 import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 
 type ActiveConversationsResponse = z.infer<
@@ -38,6 +32,7 @@ function makeSessionActive(
 ): SessionActiveConversation {
   return {
     scope: "session",
+    archived: overrides.archived ?? false,
     id: overrides.id,
     name: overrides.name ?? "Untitled conversation",
     status: overrides.status ?? "running",
@@ -377,7 +372,6 @@ const archivedAfterActionResponse = {
 interface HarnessProps {
   active: ActiveConversationsResponse;
   initialFilter?: string;
-  initialGroupBy?: SidebarGroupBy;
   initialActiveListFilter?: SidebarListFilter;
   initialSidebarCollapsed?: boolean;
   mobileOpen?: boolean;
@@ -387,12 +381,14 @@ interface HarnessProps {
 function SidebarHarness({
   active,
   initialFilter = "",
-  initialGroupBy = "project",
   initialActiveListFilter = "all",
   initialSidebarCollapsed = false,
   mobileOpen = false,
   activeConversationId = "conv-running",
 }: HarnessProps) {
+  const current = active.conversations.find(
+    (row) => row.id === activeConversationId,
+  );
   const queryClient = useMemo(() => {
     const qc = new QueryClient({
       defaultOptions: {
@@ -400,14 +396,12 @@ function SidebarHarness({
       },
     });
     qc.setQueryData(conversationKeys.active(), active);
+    qc.setQueryData(conversationKeys.sidebar(false), active);
+    qc.setQueryData(conversationKeys.sidebar(true), active);
     return qc;
   }, [active]);
 
   useLayoutEffect(() => {
-    window.sessionStorage.setItem(
-      GROUP_BY_STORAGE_KEY,
-      JSON.stringify(initialGroupBy),
-    );
     window.sessionStorage.setItem(
       ACTIVE_LIST_FILTER_STORAGE_KEY,
       JSON.stringify(initialActiveListFilter),
@@ -417,15 +411,9 @@ function SidebarHarness({
       sidebarCollapsed: initialSidebarCollapsed,
     });
     return () => {
-      window.sessionStorage.removeItem(GROUP_BY_STORAGE_KEY);
       window.sessionStorage.removeItem(ACTIVE_LIST_FILTER_STORAGE_KEY);
     };
-  }, [
-    initialActiveListFilter,
-    initialFilter,
-    initialGroupBy,
-    initialSidebarCollapsed,
-  ]);
+  }, [initialActiveListFilter, initialFilter, initialSidebarCollapsed]);
 
   useLayoutEffect(() => {
     const originalFetch = window.fetch;
@@ -457,12 +445,17 @@ function SidebarHarness({
         className="app"
         data-page="detail"
         data-mobile-panel={mobileOpen ? "chat" : "chat"}
-        style={{ height: "100%", width: "100%" }}
+        style={
+          {
+            height: "100%",
+            width: "100%",
+            "--convo-sidebar-w": "100%",
+          } as React.CSSProperties
+        }
       >
         <ConversationSidebar
-          key={initialGroupBy}
-          projectName="remote-ai-manager"
-          sessionName="conversation-ui-overhaul"
+          projectName={current?.projectName ?? "remote-ai-manager"}
+          sessionName={current?.scope === "session" ? current.sessionName : ""}
           activeConversationId={activeConversationId}
           mobileOpen={mobileOpen}
           onMobileClose={() => {}}
@@ -483,8 +476,8 @@ const meta = {
     (Story) => (
       <div
         style={{
-          height: 720,
-          width: 308,
+          height: 860,
+          width: 616,
           position: "relative",
           background: "var(--bg-void)",
           border: "1px solid var(--border-subtle)",
@@ -524,22 +517,7 @@ export const MixedStatuses = {
 export const ProjectRowsOnly = {
   args: {
     active: projectRowsOnlyResponse,
-    initialGroupBy: "session",
     activeConversationId: "project-running",
-  },
-} satisfies Story;
-
-export const GroupBySession = {
-  args: {
-    active: mixedResponse,
-    initialGroupBy: "session",
-  },
-} satisfies Story;
-
-export const GroupByProject = {
-  args: {
-    active: mixedResponse,
-    initialGroupBy: "project",
   },
 } satisfies Story;
 
@@ -575,7 +553,6 @@ export const MobileDrawerOpen = {
 export const NeedsYouTwoSections = {
   args: {
     active: needsYouResponse,
-    initialGroupBy: "session",
     activeConversationId: "conv-running-bg",
   },
 } satisfies Story;
@@ -583,7 +560,6 @@ export const NeedsYouTwoSections = {
 export const NeedsYouQuestionsOnly = {
   args: {
     active: needsYouQuestionsResponse,
-    initialGroupBy: "session",
     activeConversationId: "conv-running-bg",
   },
 } satisfies Story;
@@ -591,7 +567,6 @@ export const NeedsYouQuestionsOnly = {
 export const NeedsYouFinishedOnly = {
   args: {
     active: needsYouFinishedResponse,
-    initialGroupBy: "session",
     activeConversationId: "conv-running-bg",
   },
 } satisfies Story;
@@ -610,3 +585,132 @@ export const ArchivedAfterAction = {
     activeConversationId: "conv-archive-control",
   },
 } satisfies Story;
+
+const sessionNames = [
+  "Conversation panel redesign",
+  "Workflow architecture",
+  "Commercial release",
+  "Search performance",
+  "Conversation runtime",
+  "Knowledge capture",
+];
+const conversationNames = [
+  [
+    "Polish the conversation panel",
+    "Review keyboard navigation",
+    "Explore session grouping",
+    "Initial design direction",
+    "Earlier layout study",
+  ],
+  [
+    "Review graph workflow boundaries",
+    "Validate delivery contracts",
+    "Document approval semantics",
+    "Plan workflow changes",
+    "Architecture alternatives",
+  ],
+  [
+    "Prepare release candidate",
+    "Check upgrade behavior",
+    "Review release checklist",
+    "Audit distribution build",
+    "Release planning",
+  ],
+  [
+    "Profile search queries",
+    "Compare index strategies",
+    "Trace slow requests",
+    "Measure query baseline",
+    "Search design notes",
+  ],
+  [
+    "Fix conversation resume",
+    "Review lifecycle transitions",
+    "Add cancellation coverage",
+    "Investigate stalled turns",
+    "Runtime investigation",
+  ],
+  [
+    "Review memory retrieval",
+    "Refine note ranking",
+    "Test project scoping",
+    "Outline capture flow",
+    "Memory design notes",
+  ],
+];
+const busyResponse: ActiveConversationsResponse = {
+  ...emptyResponse,
+  conversations: sessionNames.flatMap((sessionName, sessionIndex) =>
+    Array.from({ length: 5 }, (_, index) =>
+      makeSessionActive({
+        id: `busy-${sessionIndex}-${index}`,
+        sessionName,
+        projectName:
+          sessionIndex === 2 || sessionIndex === 3
+            ? "active-recall"
+            : "command-center",
+        projectPath:
+          sessionIndex === 2 || sessionIndex === 3
+            ? "/projects/active-recall"
+            : "/projects/command-center",
+        name: conversationNames[sessionIndex]?.[index] ?? "Conversation",
+        agentBackend: (sessionIndex + index) % 2 === 0 ? "codex" : "claude",
+        status:
+          sessionIndex === 0 && index === 0
+            ? "running"
+            : sessionIndex === 1 && index === 1
+              ? "waiting_for_input"
+              : "awaiting",
+        lastActivityAt: minutesAgo(sessionIndex * 35 + index * 15 + 2),
+        pendingQuestion:
+          sessionIndex === 1 && index === 1
+            ? "Should approval apply to the full session or only the changed files?"
+            : null,
+        lastActivitySummary:
+          sessionIndex === 0 && index === 0
+            ? "Checking layout and keyboard interactions"
+            : null,
+        unread: sessionIndex === 2 && (index === 0 || index === 2),
+        role:
+          sessionIndex === 1 && index === 1
+            ? "validator"
+            : sessionIndex === 1 && index === 2
+              ? "iteration"
+              : null,
+        archived: index === 4,
+      }),
+    ),
+  ),
+};
+
+export const Default: Story = {
+  args: { active: busyResponse, activeConversationId: "busy-0-0" },
+};
+export const ThirtyConversations: Story = {
+  args: { active: busyResponse, activeConversationId: "busy-0-0" },
+};
+export const NarrowPanel: Story = {
+  args: { active: busyResponse, activeConversationId: "busy-0-0" },
+  decorators: [
+    (Story) => (
+      <div className="h-full w-[280px]">
+        <Story />
+      </div>
+    ),
+  ],
+};
+
+export const Unread: Story = {
+  args: {
+    active: busyResponse,
+    activeConversationId: "busy-0-0",
+    initialActiveListFilter: "unread",
+  },
+};
+export const CurrentProject: Story = {
+  args: {
+    active: busyResponse,
+    activeConversationId: "busy-0-0",
+    initialActiveListFilter: "project",
+  },
+};

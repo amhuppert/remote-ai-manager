@@ -255,7 +255,13 @@ export function annotateSessionPos<T extends ActiveSidebarConversation>(
 // ---------------------------------------------------------------------------
 
 export type SidebarGroupBy = "session" | "project";
-export type SidebarListFilter = "all" | "needs" | "running" | "session";
+export type SidebarListFilter =
+  | "all"
+  | "needs"
+  | "running"
+  | "unread"
+  | "project"
+  | "session";
 
 export interface SidebarGroup<T extends ActiveSidebarConversation> {
   groupKey: string;

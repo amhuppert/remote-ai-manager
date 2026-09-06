@@ -45,6 +45,7 @@ function sessionRow(
 ) {
   return {
     scope: "session" as const,
+    archived: false,
     id,
     name: overrides.name ?? id,
     status: "awaiting" as const,
@@ -114,6 +115,8 @@ function renderPage(args: {
     },
   });
   queryClient.setQueryData(conversationKeys.active(), args.active);
+  queryClient.setQueryData(conversationKeys.sidebar(false), args.active);
+  queryClient.setQueryData(conversationKeys.sidebar(true), args.active);
   for (const item of args.lookups ?? []) {
     queryClient.setQueryData(
       conversationKeys.lookup(item.conversationId),
@@ -202,6 +205,7 @@ describe("ConversationsPage", () => {
       pushStateSpy.mockClear();
       replaceStateSpy.mockClear();
 
+      fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
       fireEvent.click(screen.getByLabelText("Beta — awaiting"));
       fireEvent.click(
         await screen.findByRole("button", { name: "Open conversation" }),

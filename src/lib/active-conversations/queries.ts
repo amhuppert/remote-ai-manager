@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api/fetcher";
 import { activeConversationsResponseSchema } from "./schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -14,6 +14,18 @@ function activeConversationsQueryOptions() {
 
 export function useActiveConversationsQuery() {
   return useQuery(activeConversationsQueryOptions());
+}
+
+export function useSidebarConversationsQuery(includeArchived: boolean) {
+  return useQuery({
+    queryKey: conversationKeys.sidebar(includeArchived),
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      apiFetch(
+        `/api/conversations/active?view=sidebar&includeArchived=${includeArchived}`,
+        activeConversationsResponseSchema,
+      ),
+  });
 }
 
 /**

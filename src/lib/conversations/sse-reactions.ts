@@ -404,8 +404,8 @@ export function registerConversationSseReactions(
           );
         },
       );
-      queryClient.setQueryData(
-        conversationKeys.active(),
+      queryClient.setQueriesData(
+        { queryKey: conversationKeys.active() },
         (prev: ActiveConversationsResponse | undefined) => {
           if (!prev) return prev;
           return {
@@ -480,8 +480,8 @@ export function registerConversationSseReactions(
       // Background auto-naming is fire-and-forget and can land after the
       // turn's final conversation-status event, so this event is the only
       // signal that ever carries the name to the active rail and tab strip.
-      queryClient.setQueryData(
-        conversationKeys.active(),
+      queryClient.setQueriesData(
+        { queryKey: conversationKeys.active() },
         (prev: ActiveConversationsResponse | undefined) =>
           renamedInActive(prev, d.conversationId, d.name),
       );
@@ -514,6 +514,7 @@ export function registerConversationSseReactions(
           );
         },
       );
+      invalidateConversationViews(queryClient, d.projectName, d.sessionName);
     },
   );
 
@@ -553,8 +554,8 @@ export function registerConversationSseReactions(
     "conversation-background-activity",
     conversationBackgroundActivityEventSchema,
     (d) => {
-      queryClient.setQueryData(
-        conversationKeys.active(),
+      queryClient.setQueriesData(
+        { queryKey: conversationKeys.active() },
         (prev: ActiveConversationsResponse | undefined) => {
           if (!prev || !Array.isArray(prev.conversations)) return prev;
           let changed = false;

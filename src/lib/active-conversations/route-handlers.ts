@@ -480,8 +480,12 @@ async function readLastAssistantBlocks(
 export function createActiveConversationsRouteHandlers(
   deps: ActiveConversationsRouteDeps = defaultDeps,
 ) {
-  async function GET(): Promise<Response> {
+  async function GET(request?: Request): Promise<Response> {
     try {
+      const params = request ? new URL(request.url).searchParams : null;
+      const sidebar = params?.get("view") === "sidebar";
+      const includeArchived =
+        sidebar && params?.get("includeArchived") === "true";
       const [
         sessionItems,
         archivedProjects,
@@ -514,9 +518,12 @@ export function createActiveConversationsRouteHandlers(
         if (archivedProjects.has(projectPath)) continue;
         if (session.archived) continue;
         for (const convo of convos) {
-          if (convo.archived) continue;
+          if (convo.archived && !includeArchived) continue;
           if (!ACTIVE_STATUSES.has(convo.status)) continue;
-          if (convo.role === "iteration" || convo.role === "validator")
+          if (
+            !sidebar &&
+            (convo.role === "iteration" || convo.role === "validator")
+          )
             continue;
           if (convo.status !== "running") continue;
           transcriptTasks.push({
@@ -594,7 +601,7 @@ export function createActiveConversationsRouteHandlers(
             buildPendingApprovalStandings(activeExecution);
 
           for (const convo of convos) {
-            if (convo.archived) continue;
+            if (convo.archived && !includeArchived) continue;
             const pendingApproval =
               pendingApprovalStandings.get(convo.id) ?? null;
             const hasPendingQuestion =
@@ -603,7 +610,7 @@ export function createActiveConversationsRouteHandlers(
             // Human-input rows bypass the role filter so workflow-managed lane
             // conversations surface while a question or approval is pending.
             // Archival above remains authoritative.
-            if (!pendingApproval && !hasPendingQuestion) {
+            if (!sidebar && !pendingApproval && !hasPendingQuestion) {
               if (!ACTIVE_STATUSES.has(convo.status)) continue;
               if (convo.role === "iteration" || convo.role === "validator")
                 continue;
@@ -633,6 +640,7 @@ export function createActiveConversationsRouteHandlers(
 
             conversations.push({
               scope: "session",
+              ...(sidebar ? { archived: convo.archived } : {}),
               id: convo.id,
               name: convo.name ?? convo.summary ?? null,
               status: convo.status,
@@ -852,6 +860,13 @@ export function createActiveConversationsRouteHandlers(
           new Date(b.lastActivityAt).getTime() -
           new Date(a.lastActivityAt).getTime(),
       );
+
+      logger.debug("active_conversations.list", {
+        view: sidebar ? "sidebar" : "active",
+        includeArchived,
+        conversationCount: conversations.length,
+        archivedCount: conversations.filter((row) => row.archived).length,
+      });
 
       return NextResponse.json({
         conversations,

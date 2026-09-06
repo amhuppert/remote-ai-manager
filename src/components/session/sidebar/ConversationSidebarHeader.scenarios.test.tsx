@@ -6,7 +6,14 @@ import type { SidebarListFilter } from "./ConversationSidebar.helpers";
 import ConversationSidebarHeader from "./ConversationSidebarHeader";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 
-const DEFAULT_COUNTS = { all: 6, needs: 0, running: 4, session: 1 };
+const DEFAULT_COUNTS = {
+  all: 6,
+  needs: 0,
+  running: 4,
+  unread: 1,
+  project: 4,
+  session: 1,
+};
 
 function HeaderHarness({
   counts = DEFAULT_COUNTS,
@@ -63,11 +70,18 @@ describe("ConversationSidebarHeader", () => {
     render(
       <HeaderHarness
         initialListFilter="needs"
-        counts={{ all: 6, needs: 3, running: 2, session: 1 }}
+        counts={{
+          all: 6,
+          needs: 3,
+          running: 2,
+          unread: 1,
+          project: 4,
+          session: 1,
+        }}
       />,
     );
-    const button = screen.getByRole("tab", { name: /needs 3/i });
-    expect(button).toHaveAttribute("aria-selected", "true");
+    const button = screen.getByRole("radio", { name: /needs input 3/i });
+    expect(button).toHaveAttribute("aria-checked", "true");
     expect(button).toHaveTextContent("3");
   });
 });

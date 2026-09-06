@@ -241,7 +241,7 @@ describe("ConversationSidebarRow", () => {
     expect(onOpenMenu).toHaveBeenCalledWith({ x: 40, y: 52 });
   });
 
-  it("marks unread finished rows with the unread class and a Done prefix, and shows the acknowledge button", () => {
+  it("labels unread results and shows the acknowledge button", () => {
     const onAcknowledge = vi.fn();
     render(
       <ConversationSidebarRow
@@ -256,7 +256,7 @@ describe("ConversationSidebarRow", () => {
     );
 
     expect(screen.getByLabelText("unread")).toBeDefined();
-    expect(screen.getByText(/Done/)).toBeDefined();
+    expect(screen.getByText("Unread")).toBeDefined();
 
     const ack = screen.getByRole("button", { name: /Mark .* as read/i });
     fireEvent.click(ack);
@@ -321,9 +321,9 @@ describe("ConversationSidebarRow", () => {
       },
     };
 
-    it("renders the amber APPROVAL chip after the title", () => {
+    it("labels a pending approval", () => {
       render(<ConversationSidebarRow conversation={GATED} />);
-      expect(screen.getByText("approval")).toBeInTheDocument();
+      expect(screen.getByText("Approval")).toBeInTheDocument();
     });
 
     it("shows the gate status line with task progress and validator state", () => {
@@ -393,11 +393,11 @@ describe("ConversationSidebarRow", () => {
       "/projects/my-project?focus=project-convo-1",
     );
     expect(row.getAttribute("data-status")).toBe("awaiting");
-    expect(screen.getByText("main")).toBeDefined();
+    expect(screen.getByText("my-project / main")).toBeDefined();
     expect(screen.queryByText("my-session")).toBeNull();
     expect(screen.getByLabelText("agent: claude")).toBeDefined();
     expect(screen.getByLabelText("unread")).toBeDefined();
-    expect(screen.getByText(/Done/)).toBeDefined();
+    expect(screen.getByText("Unread")).toBeDefined();
   });
 
   it("renders project row breadcrumbs and activity without a synthetic session crumb", () => {
@@ -412,8 +412,7 @@ describe("ConversationSidebarRow", () => {
       />,
     );
 
-    expect(screen.getByText("root-tools")).toBeDefined();
-    expect(screen.getByText("main")).toBeDefined();
+    expect(screen.getByText("root-tools / main")).toBeDefined();
     expect(screen.queryByText("my-session")).toBeNull();
     expect(screen.getByText("Checked repo root health")).toBeDefined();
   });

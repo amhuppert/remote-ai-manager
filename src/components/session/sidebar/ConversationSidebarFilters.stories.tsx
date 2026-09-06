@@ -1,55 +1,29 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { useLayoutEffect } from "react";
-import type { SidebarGroupBy } from "@/components/session/sidebar/ConversationSidebar.helpers";
-import { GROUP_BY_STORAGE_KEY } from "@/hooks/use-sidebar-persistent-filters";
-import ConversationSidebarFilters from "@/components/session/sidebar/ConversationSidebarFilters";
+import { useState } from "react";
+import ConversationSidebarFilters from "./ConversationSidebarFilters";
 
-interface WrapperProps {
-  initialGroupBy: SidebarGroupBy;
+function FiltersHarness() {
+  const [project, setProject] = useState<string | null>(null);
+  const [archived, setArchived] = useState(false);
+  const [workflows, setWorkflows] = useState(false);
+  return (
+    <div className="w-[340px] bg-bg-base p-md">
+      <ConversationSidebarFilters
+        projects={["command-center", "active-recall"]}
+        project={project}
+        onProjectChange={setProject}
+        includeGraphWorkflows={workflows}
+        onGraphWorkflowsChange={setWorkflows}
+        includeArchived={archived}
+        onArchivedChange={setArchived}
+      />
+    </div>
+  );
 }
-
-function FiltersHarness({ initialGroupBy }: WrapperProps) {
-  useLayoutEffect(() => {
-    window.sessionStorage.setItem(
-      GROUP_BY_STORAGE_KEY,
-      JSON.stringify(initialGroupBy),
-    );
-    return () => {
-      window.sessionStorage.removeItem(GROUP_BY_STORAGE_KEY);
-    };
-  }, [initialGroupBy]);
-
-  return <ConversationSidebarFilters key={initialGroupBy} />;
-}
-
 const meta = {
   title: "Session/ConversationSidebarFilters",
   component: FiltersHarness,
-  decorators: [
-    (Story) => (
-      <div
-        style={{
-          width: 320,
-          padding: "var(--space-md)",
-          background: "var(--bg-void)",
-        }}
-      >
-        <Story />
-      </div>
-    ),
-  ],
-  args: {
-    initialGroupBy: "project" as SidebarGroupBy,
-  },
 } satisfies Meta<typeof FiltersHarness>;
-
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-export const GroupBySession: Story = {
-  args: { initialGroupBy: "session" },
-};
-
-export const GroupByProject: Story = {
-  args: { initialGroupBy: "project" },
-};
+export const Default: Story = {};

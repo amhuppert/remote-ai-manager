@@ -2,6 +2,9 @@
 
 import { useCallback, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
+import { Badge } from "@/components/ui/Badge";
+import { IconButton } from "@/components/ui/IconButton";
+import { StatusDot } from "@/components/ui/StatusDot";
 import { WithTooltip } from "@/components/ui/WithTooltip";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 
@@ -13,6 +16,7 @@ interface Props {
   isLastInSession?: boolean;
   currentConversationId?: string | null;
   isClosed?: boolean;
+  showContext?: boolean;
   onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
   onOpenMenu?: (point: { x: number; y: number }) => void;
   onClick?: () => void;
@@ -32,22 +36,6 @@ const ROLE_LABEL: Record<NonNullable<ActiveConversation["role"]>, string> = {
   validator: "validator",
   planner: "planner",
 };
-
-// Status dot color (legacy `.conversation-sidebar-row__dot[data-status]`). An
-// unread-finished or gated row recolors the dot amber, overriding status (the
-// legacy unread/gated rules are sourced after the status rules).
-const DOT_STATUS: Record<ActiveConversation["status"], string> = {
-  new: "bg-blue shadow-[0_0_6px_var(--color-blue-glow)]",
-  running: "bg-cyan shadow-[0_0_6px_var(--color-cyan-glow-strong)]",
-  waiting_for_input: "bg-amber shadow-[0_0_6px_var(--color-amber-glow)]",
-  awaiting: "bg-green shadow-[0_0_6px_var(--color-green-glow)]",
-};
-const DOT_AMBER = "bg-amber shadow-[0_0_6px_var(--color-amber)]";
-
-// Row badge recipe (legacy `.cc-badge` base merged with the row's
-// `.conversation-sidebar-row__badge` size override: 0.7rem / 1px 6px / gap 3px).
-const BADGE_BASE =
-  "inline-flex items-center justify-center gap-[3px] px-[6px] py-[1px] rounded-full font-mono text-[0.7rem] font-semibold leading-[1.2] whitespace-nowrap";
 
 function formatGateStatusLine(
   pendingApproval: NonNullable<ActiveConversation["pendingApproval"]>,
@@ -139,10 +127,9 @@ export default function ConversationSidebarRow({
   conversation,
   href,
   isActive,
-  isFirstInSession,
-  isLastInSession,
   currentConversationId,
   isClosed = false,
+  showContext = true,
   onPeek,
   onOpenMenu,
   onClick,
@@ -175,23 +162,17 @@ export default function ConversationSidebarRow({
     pendingApproval !== null ? formatGateStatusLine(pendingApproval) : null;
   const activityText = gateStatusLine ?? pendingQuestion ?? lastActivitySummary;
   const showActivity =
+    !conversation.archived &&
+    (status === "running" ||
+      status === "waiting_for_input" ||
+      (unread && status === "awaiting") ||
+      pendingApproval !== null) &&
     activityText !== null &&
     activityText.trim() !== "" &&
     activityText.trim() !== title.trim();
   const timeLabel = formatSidebarTime(conversation.lastActivityAt);
   const isUnreadFinished =
-    !isClosed && unread && status !== "waiting_for_input";
-  const statusPrefix = isClosed
-    ? null
-    : gateStatusLine !== null
-      ? null
-      : status === "waiting_for_input"
-        ? "Asks"
-        : isUnreadFinished
-          ? "Done"
-          : status === "running"
-            ? "Running"
-            : null;
+    !isClosed && !conversation.archived && unread && status === "awaiting";
   // A pending approval gate owns the row's resolution: dismissing (mark-read)
   // is suppressed until the gate is decided.
   const showAck =
@@ -205,31 +186,15 @@ export default function ConversationSidebarRow({
     !isClosed && backgroundActivity !== null && status === "awaiting";
 
   const gated = !isClosed && pendingApproval !== null;
-  const hasOverlay =
-    (!isClosed && pendingQuestion !== null) || gated || isUnreadFinished;
-
   const rowClassName = cn(
-    "relative flex w-full cursor-pointer flex-col items-start gap-[5px] overflow-hidden rounded-md border px-[12px] py-[8px] text-left text-inherit no-underline transition-[background-color,border-color] duration-[120ms] ease-[ease] hover:bg-bg-surface",
-    isClosed ? "border-dashed" : "border-solid",
-    isActive ? "bg-bg-surface" : "bg-transparent",
-    // Border color per side: active rows are border-strong, but a row that is
-    // first/last in its session keeps border-dim on that edge (legacy
-    // `.is-first/last-in-session` is sourced after `.is-active`).
-    isActive ? "border-x-border-strong" : "border-x-border-dim",
-    isActive && !isFirstInSession
-      ? "border-t-border-strong"
-      : "border-t-border-dim",
-    isActive && !isLastInSession
-      ? "border-b-border-strong"
-      : "border-b-border-dim",
-    isActive &&
-      "before:absolute before:top-[8px] before:bottom-[8px] before:left-[-1px] before:w-[2px] before:rounded-[1px] before:bg-cyan before:shadow-[0_0_6px_var(--color-cyan)] before:content-['']",
-    isClosed && "opacity-[0.72] hover:opacity-[0.92]",
-    isUnreadFinished &&
+    "group relative flex w-full cursor-pointer flex-col gap-sm rounded-md border border-solid pl-sm py-sm text-left no-underline transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]",
+    showAck ? "pr-3xl" : "pr-sm",
+    isActive
+      ? "border-border-default bg-bg-raised hover:bg-bg-elevated shadow-[inset_2px_0_0_var(--color-cyan)]"
+      : "border-transparent bg-bg-base hover:bg-bg-surface",
+    (gated || status === "waiting_for_input") &&
       !isActive &&
       "shadow-[inset_2px_0_0_var(--color-amber)]",
-    hasOverlay &&
-      "after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:[background-image:linear-gradient(90deg,var(--amber-glow),transparent_60%)] after:opacity-[0.65] after:content-['']",
   );
 
   const activityColor = isClosed
@@ -297,176 +262,169 @@ export default function ConversationSidebarRow({
   );
 
   return (
-    <a
-      ref={rowRef}
-      href={href ?? "#"}
-      className={rowClassName}
-      data-status={status}
-      onClick={handleClick}
-      onContextMenu={handleContextMenu}
-      aria-label={`${title} — ${isClosed ? "closed, click to reopen" : STATUS_LABEL[status]}${hasBackgroundActivity ? " — background activity" : ""}`}
-      aria-current={isActive ? "page" : undefined}
-    >
-      <span className="relative z-[1] flex w-full min-w-0 flex-1 flex-col gap-[5px]">
-        <span className="relative z-[1] flex w-full min-w-0 items-center gap-[6px] pr-[28px]">
-          <span
-            className={cn(
-              "mt-0 size-[7px] shrink-0 rounded-full",
-              isUnreadFinished || gated
-                ? DOT_AMBER
-                : hasBackgroundActivity
-                  ? DOT_STATUS.running
-                  : DOT_STATUS[status],
+    <div className="relative">
+      <a
+        ref={rowRef}
+        href={href ?? "#"}
+        className={rowClassName}
+        data-status={status}
+        data-archived={conversation.archived === true}
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
+        aria-label={`${title} — ${conversation.archived ? "archived" : isClosed ? "closed, click to reopen" : STATUS_LABEL[status]}${hasBackgroundActivity ? " — background activity" : ""}`}
+        aria-current={isActive ? "page" : undefined}
+      >
+        <span className="flex min-w-0 items-start gap-sm">
+          <span className="mt-xs flex shrink-0 items-center" aria-hidden="true">
+            {conversation.archived ||
+            isClosed ||
+            status === "new" ||
+            (status === "awaiting" && !unread && !hasBackgroundActivity) ? (
+              <span className="size-[7px] rounded-full border border-solid border-text-tertiary" />
+            ) : (
+              <StatusDot
+                tone={
+                  gated || status === "waiting_for_input"
+                    ? "amber"
+                    : status === "running" || hasBackgroundActivity
+                      ? "cyan"
+                      : "green"
+                }
+              />
             )}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1 overflow-hidden font-mono text-[0.86rem] leading-[1.25] font-bold text-ellipsis whitespace-nowrap text-text-primary">
+          </span>
+          <span
+            title={title}
+            className="min-w-0 flex-1 truncate font-mono text-[0.82rem] leading-[1.4] font-medium text-text-primary"
+          >
             {title}
           </span>
-          {!isClosed && pendingApproval !== null && (
-            <span
-              className="inline-flex h-[16px] shrink-0 items-center rounded-full border border-solid border-[var(--cc-amber-a35)] bg-amber-glow px-[6px] font-mono text-[0.58rem] font-semibold tracking-[0.06em] text-amber uppercase"
-              aria-label="approval required"
-            >
-              approval
-            </span>
-          )}
-          {isClosed && (
-            <WithTooltip label="Click to reopen">
-              <span
-                className="inline-flex shrink-0 items-center justify-center text-text-tertiary"
-                aria-label="reopens when selected"
-              >
-                <ReopenIcon />
-              </span>
-            </WithTooltip>
-          )}
-          {isUnreadFinished && (
-            <span
-              className="ml-[2px] size-[6px] shrink-0 rounded-full bg-amber shadow-[0_0_6px_var(--color-amber)]"
-              aria-label="unread"
-            />
-          )}
           {timeLabel !== "" && (
             <span
-              className="absolute top-[2px] right-0 min-w-[24px] shrink-0 text-right font-mono text-[0.7rem] leading-none text-text-tertiary"
+              className="mt-2xs shrink-0 font-mono text-[0.7rem] leading-[1.4] text-text-secondary"
               title={new Date(conversation.lastActivityAt).toLocaleString()}
             >
               {timeLabel}
             </span>
           )}
         </span>
-
-        <span className="relative z-[1] flex min-w-0 items-center gap-[6px]">
-          <span className="inline-flex shrink-0 items-center gap-xs">
+        <span className="flex min-w-0 flex-wrap items-center gap-xs pl-lg">
+          <Badge backend={agentBackend} aria-label={`agent: ${agentBackend}`}>
+            {agentBackend}
+          </Badge>
+          {conversation.archived ? (
+            <Badge tier="count">Archived</Badge>
+          ) : isClosed ? (
+            <WithTooltip label="Click to reopen">
+              <span
+                className="inline-flex items-center gap-xs font-mono text-[0.7rem] text-text-secondary"
+                aria-label="reopens when selected"
+              >
+                <ReopenIcon />
+                Closed
+              </span>
+            </WithTooltip>
+          ) : (
             <span
               className={cn(
-                BADGE_BASE,
-                "opacity-50",
-                agentBackend === "codex"
-                  ? "bg-violet-glow text-violet"
-                  : "bg-cyan-glow text-cyan",
+                "font-mono text-[0.7rem]",
+                gated || status === "waiting_for_input"
+                  ? "text-amber"
+                  : status === "running" || hasBackgroundActivity
+                    ? "text-cyan"
+                    : isUnreadFinished
+                      ? "text-green"
+                      : "text-text-secondary",
               )}
-              aria-label={`agent: ${agentBackend}`}
+              aria-label={
+                gated
+                  ? "approval required"
+                  : isUnreadFinished
+                    ? "unread"
+                    : undefined
+              }
             >
-              {agentBackend}
+              {gated
+                ? "Approval"
+                : status === "waiting_for_input"
+                  ? "Needs input"
+                  : status === "running"
+                    ? "Running"
+                    : hasBackgroundActivity
+                      ? "Background"
+                      : isUnreadFinished
+                        ? "Unread"
+                        : status === "new"
+                          ? "New"
+                          : "Ready"}
             </span>
-            {forkedFrom !== null && (
-              <WithTooltip label={formatForkTooltip(forkedFrom)}>
-                <span
-                  className={cn(
-                    BADGE_BASE,
-                    "bg-bg-raised text-text-secondary opacity-50",
-                  )}
-                  aria-label={`forked (${forkedFrom.mode})`}
-                >
-                  <ForkIcon />
-                  {forkedFrom.mode}
-                </span>
-              </WithTooltip>
-            )}
-            {debugActive && (
-              <WithTooltip label="Debug mode active">
-                <span
-                  className={cn(
-                    BADGE_BASE,
-                    "bg-violet-glow text-violet shadow-[0_0_6px_var(--color-violet-glow)]",
-                  )}
-                  aria-label="debug active"
-                >
-                  debug
-                </span>
-              </WithTooltip>
-            )}
-            {role !== null && (
+          )}
+          {forkedFrom !== null && (
+            <WithTooltip label={formatForkTooltip(forkedFrom)}>
               <span
-                className={cn(
-                  BADGE_BASE,
-                  "bg-bg-raised tracking-[0.06em] text-text-secondary uppercase",
-                )}
-                aria-label={`role: ${role}`}
+                className="inline-flex text-text-secondary"
+                aria-label={`forked (${forkedFrom.mode})`}
               >
-                {ROLE_LABEL[role]}
+                <ForkIcon />
               </span>
-            )}
-          </span>
-
-          <span className="flex min-w-0 flex-1 items-center gap-xs overflow-hidden font-mono text-[0.7rem] text-text-tertiary">
-            {breadcrumbLabels.map((label, index) => (
-              <span key={`${index}-${label}`}>
-                {index > 0 && (
-                  <span className="shrink-0 text-border-strong">/</span>
-                )}
-                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                  {label}
-                </span>
-              </span>
-            ))}
-          </span>
+            </WithTooltip>
+          )}
+          {debugActive && (
+            <Badge tier="count" aria-label="debug active">
+              debug
+            </Badge>
+          )}
+          {role !== null && (
+            <Badge tier="count" aria-label={`role: ${role}`}>
+              {ROLE_LABEL[role]}
+            </Badge>
+          )}
+          {showContext && (
+            <span className="min-w-0 truncate font-mono text-[0.7rem] text-text-secondary">
+              {breadcrumbLabels.join(" / ")}
+            </span>
+          )}
         </span>
-
         {showActivity && (
           <span
             className={cn(
-              "relative z-[1] line-clamp-2 font-mono text-[0.72rem] leading-[1.35]",
+              "pl-lg font-mono text-[0.72rem] leading-[1.5]",
+              status === "waiting_for_input" || gated
+                ? "line-clamp-2"
+                : "line-clamp-1",
               activityColor,
             )}
           >
-            {statusPrefix !== null && (
-              <span
-                className={cn(
-                  "mr-[4px]",
-                  statusPrefix === "Asks"
-                    ? "text-amber"
-                    : statusPrefix === "Done"
-                      ? "text-green"
-                      : "text-text-tertiary",
-                )}
-              >
-                {statusPrefix} &rsaquo;
-              </span>
+            {!isClosed && !gated && status === "waiting_for_input" && (
+              <span>Asks › </span>
             )}
             {activityText}
           </span>
         )}
-
-        {showAck && (
-          <span className="relative z-[1] mt-[2px] flex justify-end">
-            <button
-              type="button"
-              className="inline-flex h-[22px] cursor-pointer items-center gap-[5px] rounded-sm border border-solid border-amber-dim bg-amber-glow py-0 pr-[9px] pl-[7px] font-mono text-[0.62rem] font-bold tracking-[0.08em] text-amber uppercase transition-[background-color,border-color,transform] duration-[140ms] ease-[ease] hover:border-amber hover:bg-[var(--cc-amber-a22)] active:translate-y-[1px]"
+      </a>
+      {showAck && (
+        <div className="absolute right-xs top-1/2 -translate-y-1/2">
+          <WithTooltip label="Mark as read">
+            <IconButton
+              aria-label={`Mark "${title}" as read`}
               onClick={(event) => {
-                event.preventDefault();
                 event.stopPropagation();
                 onAcknowledge?.();
               }}
-              aria-label={`Mark "${title}" as read`}
             >
-              &#10003; OK
-            </button>
-          </span>
-        )}
-      </span>
-    </a>
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
+                <path d="m3 8 3 3 7-7" />
+              </svg>
+            </IconButton>
+          </WithTooltip>
+        </div>
+      )}
+    </div>
   );
 }

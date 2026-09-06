@@ -281,6 +281,42 @@ describe("useArchiveConversationMutation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("updates sidebar archive visibility optimistically and rolls both variants back on failure", async () => {
+    const client = makeClient();
+    const original = activeResponse([
+      { ...activeConvo({ id: "c1" }), archived: false },
+    ]);
+    client.setQueryData(conversationKeys.sidebar(false), original);
+    client.setQueryData(conversationKeys.sidebar(true), original);
+    let rejectFetch: (error: Error) => void = () => {};
+    fetchSpy.mockImplementation(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectFetch = reject;
+        }),
+    );
+    const { result } = renderHook(
+      () => useArchiveConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+    result.current.mutate({ conversationId: "c1", archived: true });
+    await waitFor(() =>
+      expect(
+        client.getQueryData<ActiveConversationsResponse>(
+          conversationKeys.sidebar(true),
+        )?.conversations[0]?.archived,
+      ).toBe(true),
+    );
+    rejectFetch(new Error("Archive failed"));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(client.getQueryData(conversationKeys.sidebar(false))).toEqual(
+      original,
+    );
+    expect(client.getQueryData(conversationKeys.sidebar(true))).toEqual(
+      original,
+    );
+  });
+
   it("optimistically flips archived in the cached list before the server resolves", async () => {
     const client = makeClient();
     const listKey = conversationKeys.list("p", "s");

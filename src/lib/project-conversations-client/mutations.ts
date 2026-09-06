@@ -5,7 +5,11 @@ import {
   type UseMutationResult,
 } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
-import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
+import {
+  cacheUpdate,
+  cachePrefixUpdate,
+  createOptimisticMutation,
+} from "@/lib/api/optimistic";
 import { consumePromptStream } from "@/lib/prompt/stream-transport";
 import { appendCursorContentDelta } from "@/lib/agent-backends/cursor/content-deltas";
 import { CURSOR_BACKEND_ID } from "@/lib/agent-backends/cursor/backend-id";
@@ -221,11 +225,11 @@ export function useMarkProjectConversationReadMutation(): UseMutationResult<
           { method: "POST" },
         ),
       updates: [
-        cacheUpdate<
+        cachePrefixUpdate<
           { projectName: string; conversationId: string },
           ActiveConversationsResponse
         >({
-          key: () => conversationKeys.active(),
+          prefix: () => conversationKeys.active(),
           update: (old, vars) =>
             patchedActiveConversation(old, vars.conversationId, (c) => ({
               ...c,
@@ -294,8 +298,8 @@ export function useAnswerProjectQuestionMutation(
                 : c,
             ),
         }),
-        cacheUpdate<AnswerQuestionRequest, ActiveConversationsResponse>({
-          key: () => conversationKeys.active(),
+        cachePrefixUpdate<AnswerQuestionRequest, ActiveConversationsResponse>({
+          prefix: () => conversationKeys.active(),
           update: (old) =>
             patchedActiveConversation(old, conversationId, (c) => ({
               ...c,

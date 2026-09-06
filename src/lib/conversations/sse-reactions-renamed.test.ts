@@ -10,6 +10,7 @@ import { registerConversationSseReactions } from "./sse-reactions";
 import {
   conversationRenamedEventSchema,
   type ConversationRenamedEvent,
+  type ConversationArchivedEvent,
   type ConversationState,
 } from "./schemas";
 import { makeConversationState } from "./testing/conversation-state-fixture";
@@ -75,7 +76,9 @@ function createEventTarget() {
   };
   return {
     target,
-    dispatch(event: ConversationRenamedEvent): void {
+    dispatch(
+      event: ConversationRenamedEvent | ConversationArchivedEvent,
+    ): void {
       const frame = new MessageEvent(event.type, {
         data: JSON.stringify({ ...event, _sentAt: 1 }),
       });
@@ -197,4 +200,43 @@ describe("conversation-renamed SSE reaction (session scope)", () => {
 
     expect(queryClient.getQueryData(conversationKeys.active())).toBeUndefined();
   });
+});
+
+it("patches names in both sidebar query variants without refetching", () => {
+  const queryClient = new QueryClient();
+  const events = createEventTarget();
+  registerAgainst(queryClient, events.target);
+  for (const includeArchived of [false, true]) {
+    queryClient.setQueryData(conversationKeys.sidebar(includeArchived), {
+      conversations: [makeActiveRow("c1", "Before")],
+    });
+  }
+  events.dispatch(renamedEvent("After", "c1"));
+  for (const includeArchived of [false, true]) {
+    expect(
+      queryClient.getQueryData<ActiveConversationsResponse>(
+        conversationKeys.sidebar(includeArchived),
+      )?.conversations[0]?.name,
+    ).toBe("After");
+  }
+});
+
+it("invalidates sidebar feeds when a conversation is archived in another view", () => {
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(conversationKeys.sidebar(true), {
+    conversations: [makeActiveRow("c1")],
+  });
+  const events = createEventTarget();
+  registerAgainst(queryClient, events.target);
+  events.dispatch({
+    type: "conversation-archived",
+    scope: "session",
+    projectName: "demo",
+    sessionName: "feature-x",
+    conversationId: "c1",
+    archived: true,
+  });
+  expect(
+    queryClient.getQueryState(conversationKeys.sidebar(true))?.isInvalidated,
+  ).toBe(true);
 });

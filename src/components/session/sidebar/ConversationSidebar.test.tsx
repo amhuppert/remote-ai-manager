@@ -110,6 +110,8 @@ function renderSidebarWithActiveData(
     },
   });
   queryClient.setQueryData(conversationKeys.active(), active);
+  queryClient.setQueryData(conversationKeys.sidebar(false), active);
+  queryClient.setQueryData(conversationKeys.sidebar(true), active);
 
   const sidebar = (
     <QueryClientProvider client={queryClient}>
@@ -145,6 +147,143 @@ describe("ConversationSidebar", () => {
     useSessionDetailStore.getState().resetStore();
   });
 
+  it("collapses sessions by default, expands individually, and supports expand/collapse all", async () => {
+    const sessionRows = ["latest", "older", "oldest"].map((name, index) => ({
+      ...currentProjectConversation,
+      scope: "session" as const,
+      sessionName: "panel",
+      branchName: "panel",
+      id: name,
+      name,
+      status: "awaiting" as const,
+      lastActivityAt: `2026-09-0${6 - index}T12:00:00Z`,
+    }));
+    renderSidebarWithActiveData({
+      ...activeConversations,
+      conversations: sessionRows,
+    });
+    expect(screen.getByText("latest")).toBeInTheDocument();
+    expect(screen.queryByText("older")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand panel (remote-ai-manager)" }),
+    );
+    expect(screen.getByText("older")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse all" }));
+    expect(screen.queryByText("older")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
+    expect(screen.getByText("oldest")).toBeInTheDocument();
+  });
+
+  it("Project selects the current project in the dropdown, and dropdown changes stay synchronized", async () => {
+    const user = userEvent.setup();
+    renderSidebarWithActiveData(activeConversations);
+    await user.click(screen.getByRole("radio", { name: /^Project / }));
+    expect(
+      screen.getByRole("combobox", { name: "Filter by project" }),
+    ).toHaveTextContent("remote-ai-manager");
+    expect(screen.getByText("Current project cockpit")).toBeInTheDocument();
+    expect(screen.queryByText("Other project cockpit")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by project" }),
+    );
+    await user.click(screen.getByRole("option", { name: "creative-ai" }));
+    expect(screen.getByText("Other project cockpit")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Project / })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await user.click(screen.getByRole("radio", { name: /^Project / }));
+    expect(
+      screen.getByRole("combobox", { name: "Filter by project" }),
+    ).toHaveTextContent("remote-ai-manager");
+  });
+
+  it("pins workflow input with workflows off and reveals older unread conversations via Unread", () => {
+    const sessionRows = [
+      {
+        name: "latest",
+        status: "awaiting" as const,
+        unread: false,
+        role: null,
+      },
+      {
+        name: "older-unread",
+        status: "awaiting" as const,
+        unread: true,
+        role: null,
+      },
+      {
+        name: "workflow-input",
+        status: "waiting_for_input" as const,
+        unread: false,
+        role: "validator" as const,
+      },
+      {
+        name: "workflow-running",
+        status: "running" as const,
+        unread: false,
+        role: "iteration" as const,
+      },
+    ].map((extra, index) => ({
+      ...currentProjectConversation,
+      scope: "session" as const,
+      sessionName: "panel",
+      branchName: "panel",
+      id: extra.name,
+      lastActivityAt: `2026-09-0${6 - index}T12:00:00Z`,
+      ...extra,
+    }));
+    renderSidebarWithActiveData({
+      ...activeConversations,
+      conversations: sessionRows,
+    });
+    const pinned = screen.getByRole("region", { name: "Needs Input" });
+    expect(within(pinned).getByText("workflow-input")).toBeInTheDocument();
+    expect(screen.queryByText("workflow-running")).not.toBeInTheDocument();
+    expect(screen.queryByText("older-unread")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Show graph workflow conversations" }),
+    );
+    expect(screen.getByText("workflow-running")).toBeInTheDocument();
+    expect(screen.getAllByText("workflow-input")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("radio", { name: /^Unread / }));
+    expect(screen.getByText("older-unread")).toBeInTheDocument();
+    expect(screen.queryByText("latest")).not.toBeInTheDocument();
+  });
+
+  it("search finds a hidden conversation and archived toggle reveals archived rows", () => {
+    const sessionRows = ["latest", "older", "archived"].map((name, index) => ({
+      ...currentProjectConversation,
+      scope: "session" as const,
+      sessionName: "panel",
+      branchName: "panel",
+      id: name,
+      name,
+      status: "awaiting" as const,
+      archived: name === "archived",
+      lastActivityAt: `2026-09-0${6 - index}T12:00:00Z`,
+    }));
+    renderSidebarWithActiveData({
+      ...activeConversations,
+      conversations: sessionRows,
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search conversations" }),
+      { target: { value: "older" } },
+    );
+    expect(screen.getByText("older")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.queryByText("archived")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Show archived conversations" }),
+    );
+    expect(screen.getByText("archived")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Show archived conversations" }),
+    );
+    expect(screen.queryByText("archived")).not.toBeInTheDocument();
+  });
+
   it("hydrates without replacing the tree when active conversations are already cached on the client", async () => {
     const serverClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -162,7 +301,7 @@ describe("ConversationSidebar", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
-    client.setQueryData(conversationKeys.active(), activeConversations);
+    client.setQueryData(conversationKeys.sidebar(false), activeConversations);
     const container = document.createElement("div");
     container.innerHTML = serverHtml;
     document.body.append(container);
@@ -261,7 +400,7 @@ describe("ConversationSidebar", () => {
     // The redundant inner toggle is gone and the content stays visible — there
     // is no way to strand the panel because the host owns collapse.
     expect(screen.queryByLabelText("Collapse sidebar")).toBeNull();
-    expect(screen.getByRole("tab", { name: /^All/ })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: /^All/ })).not.toBeNull();
   });
 
   it("leaves the sidebar shortcut available for a host-owned rail", () => {
@@ -880,7 +1019,7 @@ describe("ConversationSidebar", () => {
     });
   });
 
-  it("renders closed project conversations in Closed and excludes them from Needs/Run counts", () => {
+  it("keeps closed project conversations in their project group and excludes them from Needs/Running counts", () => {
     renderSidebarWithActiveData({
       conversations: [
         openWaitingProjectConversation,
@@ -904,9 +1043,11 @@ describe("ConversationSidebar", () => {
       specExecutions: [],
     });
 
-    expect(screen.getByRole("tab", { name: "Needs 1" })).not.toBeNull();
-    expect(screen.getByRole("tab", { name: "Run 1" })).not.toBeNull();
-    expect(screen.getByText("Closed")).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "Needs Input 1" })).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "Running 1" })).not.toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand Main (remote-ai-manager)" }),
+    );
     expect(screen.getByText("Closed waiting project cockpit")).not.toBeNull();
     expect(screen.getByText("Closed running project cockpit")).not.toBeNull();
   });

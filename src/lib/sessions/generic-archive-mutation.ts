@@ -1,7 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
-import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
+import {
+  cacheUpdate,
+  cachePrefixUpdate,
+  createOptimisticMutation,
+} from "@/lib/api/optimistic";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import {
@@ -51,11 +55,11 @@ export function useGenericArchiveSessionMutation() {
               variables.archived,
             ),
         }),
-        cacheUpdate<
+        cachePrefixUpdate<
           GenericArchiveSessionVariables,
           ActiveConversationsResponse
         >({
-          key: () => conversationKeys.active(),
+          prefix: () => conversationKeys.active(),
           update: (old, variables) =>
             variables.archived
               ? withoutSessionsActiveConversations(

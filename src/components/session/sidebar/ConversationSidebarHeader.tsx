@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, type RefObject } from "react";
-import { cn } from "@/lib/ui/cn";
+import { RadioGroup } from "radix-ui";
 import { WithTooltip } from "@/components/ui/WithTooltip";
+import { IconButton } from "@/components/ui/IconButton";
 import {
   useSidebarFilter,
   useSetSidebarFilter,
 } from "@/stores/session-detail.store";
-import type { SidebarListFilter } from "@/components/session/sidebar/ConversationSidebar.helpers";
+import type { SidebarListFilter } from "./ConversationSidebar.helpers";
 
 interface Props {
   counts: Record<SidebarListFilter, number>;
@@ -22,14 +23,28 @@ const FILTER_OPTIONS: {
   label: string;
   title: string;
 }[] = [
-  { value: "all", label: "All", title: "All active conversations" },
-  { value: "needs", label: "Needs", title: "Conversations awaiting Alex" },
-  { value: "running", label: "Run", title: "Currently running conversations" },
+  { value: "all", label: "All", title: "All conversations" },
   {
-    value: "session",
-    label: "Session",
-    title: "Only conversations in the current session",
+    value: "needs",
+    label: "Needs Input",
+    title: "Questions and approvals requiring your input",
   },
+  {
+    value: "running",
+    label: "Running",
+    title: "Conversations with running work",
+  },
+  {
+    value: "unread",
+    label: "Unread",
+    title: "Conversations with unread results",
+  },
+  {
+    value: "project",
+    label: "Project",
+    title: "Conversations in the current project",
+  },
+  { value: "session", label: "Session", title: "Only the current session" },
 ];
 
 export default function ConversationSidebarHeader({
@@ -40,87 +55,83 @@ export default function ConversationSidebarHeader({
 }: Props): React.JSX.Element {
   const filter = useSidebarFilter();
   const setFilter = useSetSidebarFilter();
-
-  const handleClear = useCallback(() => setFilter(""), [setFilter]);
-
+  const handleClear = useCallback(() => {
+    setFilter("");
+    searchInputRef?.current?.focus();
+  }, [setFilter, searchInputRef]);
   return (
-    <div className="flex flex-col gap-sm">
-      <div className="flex h-[30px] items-center gap-sm rounded-sm border border-solid border-border-default bg-bg-surface px-[8px] text-text-tertiary focus-within:border-cyan-dim focus-within:shadow-[0_0_0_1px_var(--color-cyan-glow)]">
-        <SearchIcon />
+    <div className="@container flex flex-col gap-sm">
+      <div className="flex min-h-[36px] items-center gap-sm rounded-md border border-solid border-border-default bg-bg-base px-sm text-text-secondary focus-within:border-cyan focus-within:shadow-[0_0_0_3px_var(--color-cyan-glow)] max-768:min-h-[44px]">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="m11 11 3 3M7 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeWidth="1.5"
+          />
+        </svg>
         <input
           ref={searchInputRef}
           id="conversation-sidebar-search"
           name="conversation-search"
           type="text"
-          placeholder="Filter conversations..."
+          placeholder="Find a conversation…"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(event) => setFilter(event.target.value)}
           aria-label="Search conversations"
-          className="min-w-0 flex-1 border-0 bg-transparent font-mono text-[0.78rem] text-text-primary outline-0 placeholder:text-text-tertiary"
+          className="min-w-0 flex-1 border-0 bg-transparent py-sm font-mono text-[0.78rem] text-text-primary outline-0 placeholder:text-text-tertiary [&::-webkit-search-cancel-button]:hidden"
         />
-        {filter.length > 0 && (
-          <WithTooltip label="Clear">
-            <button
-              type="button"
-              className="size-[18px] shrink-0 cursor-pointer rounded-sm border-0 bg-transparent font-mono text-[0.7rem] text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
-              onClick={handleClear}
-              aria-label="Clear search"
-            >
-              {"✕"}
-            </button>
+        {filter.length > 0 ? (
+          <WithTooltip label="Clear search">
+            <IconButton aria-label="Clear search" onClick={handleClear}>
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
+                <path d="m4 4 8 8m0-8-8 8" />
+              </svg>
+            </IconButton>
           </WithTooltip>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="font-mono text-[0.7rem] text-text-tertiary"
+          >
+            /
+          </span>
         )}
       </div>
-
-      <div
-        className="flex gap-[2px] rounded-sm border border-solid border-border-default bg-bg-surface p-[3px]"
-        role="tablist"
-      >
-        {FILTER_OPTIONS.map((option) => {
-          const active = activeFilter === option.value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="tab"
-              className={cn(
-                "inline-flex h-[24px] min-w-0 flex-1 cursor-pointer items-center justify-center gap-[4px] rounded-[3px] border-0 px-[6px] font-mono text-[0.7rem] font-semibold tracking-[0.08em] uppercase max-768:min-h-[var(--touch-target-min)]",
-                active
-                  ? "bg-bg-elevated text-text-primary"
-                  : "bg-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary",
-              )}
-              onClick={() => onFilterChange(option.value)}
-              aria-selected={active}
-              aria-label={`${option.label} ${counts[option.value]}`}
-              title={option.title}
-            >
-              <span>{option.label}</span>
-              <span
-                className={cn(
-                  "text-[0.7rem] font-semibold",
-                  active ? "text-cyan" : "text-text-tertiary",
-                )}
-              >
-                {counts[option.value]}
-              </span>
-            </button>
+      <RadioGroup.Root
+        value={activeFilter}
+        onValueChange={(value) => {
+          const option = FILTER_OPTIONS.find(
+            (option) => option.value === value,
           );
-        })}
-      </div>
+          if (option) onFilterChange(option.value);
+        }}
+        orientation="horizontal"
+        aria-label="Conversation status"
+        className="grid grid-cols-3 @[480px]:grid-cols-[0.7fr_1.5fr_1fr_1fr_1fr_1fr] min-w-0 gap-2xs rounded-md border border-solid border-border-subtle bg-bg-base p-2xs"
+      >
+        {FILTER_OPTIONS.map((option) => (
+          <RadioGroup.Item
+            key={option.value}
+            value={option.value}
+            aria-label={`${option.label} ${counts[option.value]}`}
+            title={option.title}
+            className="group inline-flex min-h-[30px] min-w-0 whitespace-nowrap cursor-pointer items-center justify-center gap-xs rounded-sm border-0 bg-transparent px-xs font-mono text-[0.7rem] font-medium text-text-secondary transition-colors data-[state=checked]:bg-bg-raised data-[state=checked]:text-text-primary data-[state=unchecked]:hover:bg-bg-surface data-[state=unchecked]:hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+          >
+            {option.label}
+            <span className="tabular-nums group-data-[state=checked]:text-cyan">
+              {counts[option.value]}
+            </span>
+          </RadioGroup.Item>
+        ))}
+      </RadioGroup.Root>
     </div>
-  );
-}
-
-function SearchIcon(): React.JSX.Element {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="m11 11 3 3M7 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.4"
-      />
-    </svg>
   );
 }

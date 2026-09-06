@@ -25,6 +25,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
 import {
   cacheUpdate,
+  cachePrefixUpdate,
   createOptimisticMutation,
   type OptimisticCacheUpdate,
 } from "@/lib/api/optimistic";
@@ -44,15 +45,20 @@ export function renamedInActive(
   };
 }
 
-function withoutActiveConversationIfArchived(
+function withActiveConversationArchived(
   active: ActiveConversationsResponse | undefined,
   conversationId: string,
   archived: boolean,
 ): ActiveConversationsResponse | undefined {
-  if (!archived || active === undefined) return undefined;
+  if (active === undefined) return undefined;
   return {
     ...active,
-    conversations: active.conversations.filter((c) => c.id !== conversationId),
+    conversations: active.conversations.flatMap((c) => {
+      if (c.id !== conversationId) return [c];
+      if (c.scope === "session" && c.archived !== undefined)
+        return [{ ...c, archived }];
+      return archived ? [] : [c];
+    }),
   };
 }
 
@@ -151,8 +157,8 @@ function genericConversationUpdates<
     vars: TVars,
   ) => ConversationState[] | undefined,
 ): ReadonlyArray<OptimisticCacheUpdate<TVars>> {
-  const active = cacheUpdate<TVars, ActiveConversationsResponse>({
-    key: () => conversationKeys.active(),
+  const active = cachePrefixUpdate<TVars, ActiveConversationsResponse>({
+    prefix: () => conversationKeys.active(),
     update: activeUpdate,
   });
   const wide: GenericConversationMutationVariables = vars;
@@ -266,13 +272,13 @@ export function useArchiveConversationMutation(
                 : c,
             ),
         }),
-        cacheUpdate<
+        cachePrefixUpdate<
           { conversationId: string; archived: boolean },
           ActiveConversationsResponse
         >({
-          key: () => conversationKeys.active(),
+          prefix: () => conversationKeys.active(),
           update: (old, vars) =>
-            withoutActiveConversationIfArchived(
+            withActiveConversationArchived(
               old,
               vars.conversationId,
               vars.archived,
@@ -319,11 +325,11 @@ export function useRenameConversationMutation(
               c.id === vars.conversationId ? { ...c, name: vars.name } : c,
             ),
         }),
-        cacheUpdate<
+        cachePrefixUpdate<
           { conversationId: string; name: string },
           ActiveConversationsResponse
         >({
-          key: () => conversationKeys.active(),
+          prefix: () => conversationKeys.active(),
           update: (old, vars) =>
             renamedInActive(old, vars.conversationId, vars.name),
         }),
@@ -371,11 +377,11 @@ export function useAnswerQuestionMutation(
         throw new Error(`Answer submission failed: ${res.status}`);
       },
       updates: [
-        cacheUpdate<
+        cachePrefixUpdate<
           { questionId: string; answers: Record<string, AskQuestionAnswer> },
           ActiveConversationsResponse
         >({
-          key: () => conversationKeys.active(),
+          prefix: () => conversationKeys.active(),
           update: (old) =>
             old === undefined
               ? undefined
@@ -513,11 +519,7 @@ export function useGenericArchiveConversationMutation() {
               c.id === v.conversationId ? { ...c, archived: v.archived } : c,
             ),
           (old, v) =>
-            withoutActiveConversationIfArchived(
-              old,
-              v.conversationId,
-              v.archived,
-            ),
+            withActiveConversationArchived(old, v.conversationId, v.archived),
         ),
       invalidateKeys: (vars) => genericConversationInvalidateKeys(vars),
     }),
@@ -553,20 +555,25 @@ export function useArchiveOtherConversationsMutation() {
               c.id === v.conversationId ? c : { ...c, archived: true },
             ),
         }),
-        cacheUpdate<typeof vars, ActiveConversationsResponse>({
-          key: () => conversationKeys.active(),
+        cachePrefixUpdate<typeof vars, ActiveConversationsResponse>({
+          prefix: () => conversationKeys.active(),
           update: (old, v) =>
             old === undefined
               ? undefined
               : {
                   ...old,
-                  conversations: old.conversations.filter(
-                    (c) =>
+                  conversations: old.conversations.flatMap((c) => {
+                    if (
                       c.id === v.conversationId ||
                       c.scope !== "session" ||
                       c.projectName !== v.projectName ||
-                      c.sessionName !== v.sessionName,
-                  ),
+                      c.sessionName !== v.sessionName
+                    )
+                      return [c];
+                    return c.archived !== undefined
+                      ? [{ ...c, archived: true }]
+                      : [];
+                  }),
                 },
         }),
       ],
@@ -604,11 +611,11 @@ export function useMarkConversationReadMutation() {
           { method: "POST" },
         ),
       updates: [
-        cacheUpdate<
+        cachePrefixUpdate<
           { projectName: string; sessionName: string; conversationId: string },
           ActiveConversationsResponse
         >({
-          key: () => conversationKeys.active(),
+          prefix: () => conversationKeys.active(),
           update: (old, vars) =>
             old === undefined
               ? undefined
