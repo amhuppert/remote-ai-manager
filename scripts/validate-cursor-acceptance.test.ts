@@ -187,15 +187,18 @@ describe("cursor acceptance test corpus", () => {
 });
 
 describe("cursor acceptance registered command", () => {
-  it("is registered in CommandCenter.json with an executable script", () => {
+  it("keeps the wrapper directly executable, registered or not", () => {
+    // a1797d53 took the command out of CommandCenter.json (the checked-in
+    // registry is pinned by repo-config.test.ts); the wrapper is invoked
+    // directly until it is registered again. If it is, paths stay forbidden.
     const validation = repoValidationConfigSchema.parse(
       readRegisteredValidation(),
     );
-
     const command = validation.commands["cursor-acceptance"];
-    expect(command).toBeDefined();
-    expect(command?.pathArgs).toBe("forbid");
-    expect(path.resolve(REPO_ROOT, command?.command.full ?? "")).toBe(WRAPPER);
+    if (command) {
+      expect(command.pathArgs).toBe("forbid");
+      expect(path.resolve(REPO_ROOT, command.command.full)).toBe(WRAPPER);
+    }
     expect(() => accessSync(WRAPPER, constants.X_OK)).not.toThrow();
   });
 
