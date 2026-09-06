@@ -252,12 +252,12 @@ function checkLoopControlOperation(
   }
   // The per-execution pass backstop is unraisable (R10.3). When it is the
   // budget that refused, a bigger per-loop cap buys nothing: the remedy is a
-  // predicate or template amendment that lets the running loops conclude.
+  // justified predicate amendment that lets an existing captured exit conclude.
   if (
     operation.type === "raise-loop-max-passes" &&
     loop.scope === "execution"
   ) {
-    return `raise-loop-max-passes cannot repair a backstop halt: the per-execution pass backstop is unraisable, so amend the exit predicate or the body template instead`;
+    return `raise-loop-max-passes cannot repair a backstop halt: the per-execution pass backstop is unraisable. Only a justified predicate amendment that lets an existing captured exit conclude can permit resume; otherwise decline repair. Template edits require another pass and cannot clear this halt`;
   }
   return null;
 }

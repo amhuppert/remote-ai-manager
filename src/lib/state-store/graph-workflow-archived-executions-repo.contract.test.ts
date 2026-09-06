@@ -524,7 +524,10 @@ function maximalResolvedContext(): Record<string, unknown> {
         },
       ],
     },
-    scriptValidator: { commands: ["typecheck", "test"] },
+    scriptValidator: {
+      commands: ["typecheck", "test"],
+      purpose: "infrastructure",
+    },
     scriptValidatorSource: "workflow",
     humanApprovalGate: { enabled: true },
     askUserQuestions: { enabled: true },
@@ -834,7 +837,10 @@ function buildMaximalExecution(): unknown {
               },
             ],
           },
-          scriptValidator: { commands: ["typecheck", "test"] },
+          scriptValidator: {
+            commands: ["typecheck", "test"],
+            purpose: "infrastructure",
+          },
           scriptValidatorSource: "workflow",
           humanApprovalGate: { enabled: true },
           askUserQuestions: { enabled: true },
@@ -1052,6 +1058,7 @@ function buildMaximalExecution(): unknown {
         // (decision D4) — persisted, so the archive has to carry it too.
         reservedOwnership: {
           mode: "owned",
+          stableRead: true,
           canonicalPrefixes: ["/wt/lane-1/src/api", "/wt/lane-1/docs"],
         },
         laneId: "lane-1",
@@ -1125,6 +1132,19 @@ function buildMaximalExecution(): unknown {
         // specialist entry only, so that one carries a settled verdict AND a
         // question token — every persisted key path, not a reachable state.
         validationRound: {
+          outputCandidate: {
+            value: { verdict: "pass" },
+            capturedAt: "2026-01-02T05:00:00.000Z",
+            iteration: 3,
+            parse: { source: "native", repaired: true, repairAttempts: 1 },
+            reviewedCandidate: {
+              identityScope: "owned",
+              headSha: "a".repeat(40),
+              candidateTreeHash: "b".repeat(40),
+              taskStateHash: "c".repeat(64),
+              outputHash: "f".repeat(64),
+            },
+          },
           seq: 4,
           candidate: {
             // The non-default scope, so a round-trip that dropped the field
@@ -1133,6 +1153,7 @@ function buildMaximalExecution(): unknown {
             headSha: "a".repeat(40),
             candidateTreeHash: "b".repeat(40),
             taskStateHash: "c".repeat(64),
+            outputHash: "f".repeat(64),
           },
           roster: [
             {
@@ -1277,6 +1298,8 @@ function buildMaximalExecution(): unknown {
     routeSettlements: {
       "ctx-1": {
         sourceContextId: "ctx-1",
+        effectiveSourceContextId: "loop-refine__p2__ctx-1",
+        edgeEvaluations: [{ edgeId: "edge-2", verdict: "active" }],
         captureIteration: 2,
         routeControlRevision: 3,
         activatedEdgeIds: ["edge-2"],
@@ -1391,6 +1414,13 @@ function buildMaximalExecution(): unknown {
     },
     contextOutputs: {
       "ctx-1": {
+        reviewedCandidate: {
+          identityScope: "owned",
+          headSha: "a".repeat(40),
+          candidateTreeHash: "b".repeat(40),
+          taskStateHash: "c".repeat(64),
+          outputHash: "f".repeat(64),
+        },
         // Accepted under ctx-1's authored outputSchema above (D5).
         value: {
           verdict: "pass",
@@ -1528,12 +1558,17 @@ function buildMaximalExecution(): unknown {
             contextId: "ctx-2",
             ownership: {
               mode: "owned",
+              stableRead: true,
               canonicalPrefixes: ["/wt/lane-2/src/ui"],
             },
           },
           {
             contextId: "ctx-3",
-            ownership: { mode: "readOnly", canonicalPrefixes: [] },
+            ownership: {
+              mode: "readOnly",
+              stableRead: true,
+              canonicalPrefixes: [],
+            },
           },
         ],
         createdAt: "2026-01-02T04:00:00Z",

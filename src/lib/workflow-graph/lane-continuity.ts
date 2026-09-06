@@ -1064,24 +1064,54 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         ? refless
         : { ...refless, ref: outcomeRef };
 
-    const overLimit =
-      outcome.contextLimitTokens !== undefined &&
-      outcome.contextTokens !== undefined &&
-      outcome.contextTokens > outcome.contextLimitTokens;
-    // A compaction deflates the recorded occupancy below the limit, so the
-    // numeric comparison alone would miss it — treat "compacted under a
-    // configured limit" as a rotation trigger too.
-    const compactionUnderLimit =
-      outcome.compactedThisTurn === true &&
-      outcome.contextLimitTokens !== undefined;
-
-    // Emit the schedule decision only on the false→true flag transition:
-    // re-emitting on every over-limit turn makes scheduled-vs-applied
-    // reconciliation in decisions.jsonl arithmetically meaningless (audit:
-    // 47 scheduled vs 26 applied read as lost rotations when most were
-    // duplicate schedules of one pending rotation).
-    const alreadyScheduled = laneState.metrics.rotateBeforeNextTurn === true;
-    if ((overLimit || compactionUnderLimit) && !alreadyScheduled) {
+    // Record the neutral outcome and the graph-only `limitEvaluation` in ONE
+    // execution mutation. The lane service stays the single decision site
+    // (`deriveLaneOutcome`), but the durable write happens once, here, inside
+    // the shared critical section — so a competing same-lane mutation cannot
+    // land between a separate read and a mirror-back and be silently clobbered.
+    let rotationScheduled = false;
+    const recorded = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (latest) => {
+        const existingGraphLane = latest.laneStates[contextId]?.[laneKey];
+        if (!existingGraphLane) return latest;
+        const existingNeutral = toNeutralLaneState(
+          latest,
+          existingGraphLane,
+          identity,
+          contextId,
+        );
+        const { state, contextLimitEvaluation } = deriveLaneOutcome(
+          existingNeutral,
+          outcome,
+          getNow(),
+        );
+        rotationScheduled =
+          state.metrics.rotateBeforeNextTurn === true &&
+          existingNeutral.metrics.rotateBeforeNextTurn !== true;
+        // Map the service's honest verdict onto the coarser graph label. A turn
+        // without occupancy metrics on a metrics-capable backend surfaces as
+        // "metrics_unavailable" rather than a fabricated "supported".
+        const limitEvaluation = toGraphLimitEvaluation(contextLimitEvaluation);
+        const mirrored = toGraphLaneState(
+          state,
+          identity,
+          contextId,
+          existingGraphLane,
+        );
+        const nextLane = graphWorkflowAgentSessionStateSchema.parse({
+          ...mirrored,
+          limitEvaluation,
+        });
+        return withLaneState(latest, contextId, identity, nextLane);
+      },
+    );
+    if (rotationScheduled) {
+      const overLimit =
+        outcome.contextLimitTokens !== undefined &&
+        outcome.contextTokens !== undefined &&
+        outcome.contextTokens > outcome.contextLimitTokens;
       const reason: "context_over_limit" | "compaction_detected" = overLimit
         ? "context_over_limit"
         : "compaction_detected";
@@ -1111,46 +1141,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
             : null,
       });
     }
-
-    // Record the neutral outcome and the graph-only `limitEvaluation` in ONE
-    // execution mutation. The lane service stays the single decision site
-    // (`deriveLaneOutcome`), but the durable write happens once, here, inside
-    // the shared critical section — so a competing same-lane mutation cannot
-    // land between a separate read and a mirror-back and be silently clobbered.
-    return deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (latest) => {
-        const existingGraphLane = latest.laneStates[contextId]?.[laneKey];
-        if (!existingGraphLane) return latest;
-        const existingNeutral = toNeutralLaneState(
-          latest,
-          existingGraphLane,
-          identity,
-          contextId,
-        );
-        const { state, contextLimitEvaluation } = deriveLaneOutcome(
-          existingNeutral,
-          outcome,
-          getNow(),
-        );
-        // Map the service's honest verdict onto the coarser graph label. A turn
-        // without occupancy metrics on a metrics-capable backend surfaces as
-        // "metrics_unavailable" rather than a fabricated "supported".
-        const limitEvaluation = toGraphLimitEvaluation(contextLimitEvaluation);
-        const mirrored = toGraphLaneState(
-          state,
-          identity,
-          contextId,
-          existingGraphLane,
-        );
-        const nextLane = graphWorkflowAgentSessionStateSchema.parse({
-          ...mirrored,
-          limitEvaluation,
-        });
-        return withLaneState(latest, contextId, identity, nextLane);
-      },
-    );
+    return recorded;
   }
 
   return {

@@ -29,6 +29,7 @@ import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execut
 import { releaseLoopPassSlotsForContexts } from "@/lib/workflow-graph/loop-budgets";
 import {
   classifyContextSchedulability,
+  isRouteSourceLanded,
   contextsPresentInLane,
   type ContextSchedulability,
 } from "@/lib/workflow-graph/lane-readiness";
@@ -55,6 +56,7 @@ import {
 } from "@/lib/workflow-graph/parallel-worktrees";
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
+import { settleLoops } from "./loop-settlement";
 import {
   SESSION_LANE_ID,
   SESSION_LANE_NAME,
@@ -78,6 +80,7 @@ import {
   transitionContextStatus,
 } from "@/lib/workflow-graph/context-transitions";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
+import { defaultGitClient } from "@/lib/git/client";
 import { getFinalizingSessionMergeJob } from "@/lib/jobs/queue";
 import {
   validateLaunchInputs,
@@ -350,6 +353,7 @@ export interface GraphWorkflowLaunchOutcome {
 export type WorkflowStartGuard =
   | "active_execution"
   | "uncommitted_changes"
+  | "session_branch_unavailable"
   // The symmetric half of the session delivery gate (R13): the session is
   // already being finalized by a merge, so seeding a run into it would install
   // live work in a session that is about to be marked finished.
@@ -832,6 +836,10 @@ export interface GraphWorkflowManagerDeps {
    * guard. Defaults to the real `git status --porcelain` reader.
    */
   readSessionWorktreeDirtyPaths?(worktreePath: string): Promise<DirtyPath[]>;
+  assertSessionBranchReady?(
+    worktreePath: string,
+    branchName: string,
+  ): Promise<void>;
   /**
    * The session's in-flight merge that will also finalize the session, or null.
    * Backs the launch guard that mirrors the delivery gate (R13). Defaults to the
@@ -1778,6 +1786,36 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       input.sessionName,
     );
     if (session) {
+      try {
+        if (deps.assertSessionBranchReady) {
+          await deps.assertSessionBranchReady(
+            session.worktreePath,
+            session.branchName,
+          );
+        } else {
+          await defaultGitClient.git(
+            [
+              "rev-parse",
+              "--verify",
+              "--quiet",
+              `refs/heads/${session.branchName}^{commit}`,
+            ],
+            session.worktreePath,
+          );
+        }
+      } catch (error) {
+        logger.warn("graph-workflow.start.session_branch_unavailable", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          branchName: session.branchName,
+          worktreePath: session.worktreePath,
+          error: getErrorMessage(error),
+        });
+        throw new WorkflowStartGuardError(
+          "session_branch_unavailable",
+          `Cannot start the workflow: session branch "${session.branchName}" does not resolve to a commit in the session worktree. Restore the session branch or repair its recorded branch name before launching.`,
+        );
+      }
       const preflightService =
         deps.preflightService ?? createPreflightPrerequisiteService();
       const global = await (deps.readGlobalConfig ?? readConfig)();
@@ -2519,7 +2557,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     // closure assignment, so a bare local reads as never at the emit site.
     const resumeCapture: {
       resolvedHaltReason: GraphWorkflowHaltReason | null;
-    } = { resolvedHaltReason: null };
+      loopLimitRefusal: {
+        executionId: string;
+        halt: Extract<GraphWorkflowHaltReason, { type: "loop_limit_reached" }>;
+      } | null;
+    } = { resolvedHaltReason: null, loopLimitRefusal: null };
     let hasInterrupted = false;
     let mergeRetryContextIds: string[] = [];
     let resetJoinIds: string[] = [];
@@ -2530,10 +2572,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     let refilledRoundContextIds: string[] = [];
     let retiredRoundContextIds: string[] = [];
 
-    const nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
+    const nextExecution = await deps.executionRepository
+      .mutateActive(projectPath, sessionName, (execution) => {
         if (
           options?.expectedExecutionId !== undefined &&
           execution.id !== options.expectedExecutionId
@@ -2595,6 +2635,29 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               ["paused", "halted"],
               `Graph workflow execution ${execution.id} halted because conflict resolution failed on ${blocking.kind}: ${blocking.message}${hint}. ` +
                 `An automatic resume would retry the join into the same failure; resume it manually once the backend is available.`,
+            );
+          }
+        }
+
+        if (
+          [execution.haltReason, ...execution.secondaryHaltReasons].some(
+            (reason) => reason?.type === "loop_limit_reached",
+          )
+        ) {
+          const assessment = settleLoops(structuredClone(execution), {
+            now: getNow(deps),
+          });
+          if (assessment.halt?.type === "loop_limit_reached") {
+            resumeCapture.loopLimitRefusal = {
+              executionId: execution.id,
+              halt: assessment.halt,
+            };
+            throw new GraphWorkflowTransitionConflictError(
+              "resume",
+              execution.status,
+              ["paused", "halted"],
+              `Loop ${assessment.halt.loopGroupId} remains exhausted at pass ${assessment.halt.pass}; resume would halt again. ` +
+                "Use cctl workflow live edit with raise-loop-max-passes or amend-loop-predicate so the next decision can change, or abandon the execution. Template-only edits cannot clear an exhausted limit; the execution-wide backstop cannot be raised.",
             );
           }
         }
@@ -2758,8 +2821,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           hasLiveIteration: false,
         });
         return execution;
-      },
-    );
+      })
+      .catch((error: unknown) => {
+        const refusal = resumeCapture.loopLimitRefusal;
+        if (refusal) {
+          logger.warn("graph-workflow.execution.resume_refused", {
+            executionId: refusal.executionId,
+            reason: "loop_limit_unchanged",
+            loopGroupId: refusal.halt.loopGroupId,
+            scope: refusal.halt.scope,
+            pass: refusal.halt.pass,
+            maxPasses: refusal.halt.maxPasses,
+          });
+        }
+        throw error;
+      });
 
     // Abort only after the epoch bump is committed: a zombie turn racing the
     // abort is already write-fenced, and the new loop is not kicked until
@@ -3328,9 +3404,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           snapshot.workingDefinition,
           snapshot,
         ).filter((contextId) => !excludedContextIds.has(contextId))) {
-          const placement = snapshot.workingDefinition.executionContexts.find(
+          const context = snapshot.workingDefinition.executionContexts.find(
             (context) => context.id === contextId,
-          )?.placement;
+          );
+          const placement = context?.placement;
           if (!placement) continue;
           const laneId =
             placement.lane === SESSION_LANE_NAME
@@ -3348,7 +3425,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           try {
             frozenOwnership.set(
               contextId,
-              canonicalizeOwnership({ placement, laneWorktreePath }),
+              canonicalizeOwnership({
+                placement,
+                laneWorktreePath,
+                stableRead: context?.outputSchema !== undefined,
+              }),
             );
           } catch (error) {
             // The envelope could not be resolved — an unreadable ancestor, an
@@ -3497,8 +3578,20 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           if (known) return known;
           const occupants: LaneOccupant[] = [];
           for (const state of Object.values(running.contextStates)) {
-            if (state.laneId !== laneId) continue;
-            if (state.status !== "running") continue;
+            if (
+              (state.laneId ??
+                (state.isolation === "session" ? SESSION_LANE_ID : null)) !==
+              laneId
+            )
+              continue;
+            if (
+              state.status !== "running" &&
+              !(
+                state.status === "completed" &&
+                !isRouteSourceLanded(running, state.contextId)
+              )
+            )
+              continue;
             occupants.push({
               contextId: state.contextId,
               ownership: state.reservedOwnership ?? UNKNOWN_OWNERSHIP,
@@ -3950,6 +4043,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
                   entry.contextId,
                   canonicalizeOwnership({
                     placement: staged.placement,
+                    stableRead: frozenOwnership.get(entry.contextId)
+                      ?.stableRead,
                     laneWorktreePath:
                       provisionedPathByLane.get(entry.laneId) ??
                       staged.laneWorktreePath,
@@ -4061,8 +4156,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
                   if (known) return known;
                   const occupants: LaneOccupant[] = [];
                   for (const state of Object.values(running.contextStates)) {
-                    if (state.laneId !== laneId) continue;
-                    if (state.status !== "running") continue;
+                    if (
+                      (state.laneId ??
+                        (state.isolation === "session"
+                          ? SESSION_LANE_ID
+                          : null)) !== laneId
+                    )
+                      continue;
+                    if (
+                      state.status !== "running" &&
+                      !(
+                        state.status === "completed" &&
+                        !isRouteSourceLanded(running, state.contextId)
+                      )
+                    )
+                      continue;
                     occupants.push({
                       contextId: state.contextId,
                       ownership: state.reservedOwnership ?? UNKNOWN_OWNERSHIP,

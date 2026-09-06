@@ -219,6 +219,7 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       // The dirty-worktree guard probes a real git worktree; these fixture
       // paths have none, so answer "clean" rather than let the probe decide.
       readSessionWorktreeDirtyPaths: async () => [],
+      assertSessionBranchReady: async () => {},
       async loadDefinition() {
         return createWorkflowDefinitionRecord({ id: "workflow-1" });
       },

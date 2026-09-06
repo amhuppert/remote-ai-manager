@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,6 +64,38 @@ describe("workflow document materializer", () => {
     await rm(configDir, { recursive: true, force: true });
     await rm(sourceWorktree, { recursive: true, force: true });
     await rm(laneWorktree, { recursive: true, force: true });
+  });
+
+  it("leaves an active reader on its complete revision while atomically publishing the next document", async () => {
+    const store = createSharedDocumentStore({
+      resolveConfigDir: () => configDir,
+    });
+    const source = path.join(sourceWorktree, PLAN_PATH);
+    const published = path.join(laneWorktree, PLAN_PATH);
+    await mkdir(path.dirname(source), { recursive: true });
+    await mkdir(path.dirname(published), { recursive: true });
+    await writeFile(source, "Complete approved revision");
+    await writeFile(published, "Complete prior revision");
+    await store.captureFromWorktree({
+      executionId: "execution-1",
+      worktreePath: sourceWorktree,
+      relativePath: PLAN_PATH,
+    });
+    const reader = await open(published, "r");
+    try {
+      await createWorkflowDocumentMaterializer({ store }).materialize({
+        execution: createWorkflowExecution({
+          sharedDocuments: [sharedEntry(PLAN_PATH, "doc-plan")],
+        }),
+        worktreePath: laneWorktree,
+      });
+      expect(await reader.readFile("utf-8")).toBe("Complete prior revision");
+      expect(await readFile(published, "utf-8")).toBe(
+        "Complete approved revision",
+      );
+    } finally {
+      await reader.close();
+    }
   });
 
   it("materializes the rendered charter and captured shared docs into a lane worktree", async () => {

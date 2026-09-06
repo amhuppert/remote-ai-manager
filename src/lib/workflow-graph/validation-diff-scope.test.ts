@@ -383,7 +383,16 @@ describe("candidateScopeForPlacement", () => {
     });
   });
 
-  it("scopes a read-only member to nothing at all", () => {
+  it("pins the full input tree for a read-only structured handoff", () => {
+    expect(
+      candidateScopeForPlacement(
+        { lane: "impl", mode: "readOnly" },
+        { stableRead: true },
+      ),
+    ).toEqual<CandidateScope>({ mode: "wholeTree" });
+  });
+
+  it("scopes an advisory read-only member to nothing at all", () => {
     // Not whole-tree: a read-only context shares the session worktree with
     // everything else running there, so the whole-tree delta is other contexts'
     // work, never its own.

@@ -166,6 +166,7 @@ Good acceptance criteria:
 - Fit entirely inside the context's scope.
 - Give the validator enough specificity to pass or reopen a task without inventing new edge cases.
 - Require **runtime reachability** for every capability the context introduces: name the production composition site (route handler, service factory, listener registration, UI control) and demand evidence through it — a composition-level smoke test or a typed wiring deliverable. If the wiring intentionally lands downstream, name the owning context in the criterion.
+- For composed UI delivery, the integration owner verifies the actual production route, companion behavior, and last-row scroll/click reachability. Leaf fidelity and a non-leaf screenshot exemption cannot satisfy this criterion. Enumerate the exercised branches and leave untaken paths explicitly unverified.
 - Preserve **deferral integrity**: an obligation one context defers ("verified in context X") is only validly deferred when X's acceptance criteria contain the matching obligation. Audit every deferral chain at planning time — each "verified later" claim must terminate in a criterion record that states it.
 
 Do not write acceptance criteria that:

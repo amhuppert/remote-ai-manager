@@ -18,6 +18,39 @@ import { evaluatePlanRepairTrigger } from "./plan-repair/trigger";
 import { isResumableHalt } from "./lifecycle-classifier";
 
 describe("cohort dispatch: script-first, then all at once (R16.1)", () => {
+  it("parks an infrastructure block without semantic remediation or failure spend", async () => {
+    const execution = createCohortExecution();
+    const beforeTasks = structuredClone(execution.taskStates);
+    const harness = createHarness({
+      execution,
+      runContextValidator: async (input) => ({
+        result: passResult(input.validator.id),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+      scriptValidatorOutcome: async () => ({
+        kind: "infra_error",
+        reason: "exception",
+        message: "Figma discovery incomplete",
+        readinessBlock: { commandName: "figma-ready", attempts: 3 },
+      }),
+    });
+    await harness.run();
+    const halted = harness.repository.read();
+    expect(halted.haltReason).toMatchObject({
+      type: "infrastructure_blocked",
+      contextId: "context-plan",
+      commandName: "figma-ready",
+      attempts: 3,
+    });
+    expect(isResumableHalt(halted.haltReason!)).toBe(true);
+    expect(halted.taskStates).toEqual(beforeTasks);
+    expect(harness.contextState()?.consecutiveFailureCount).toBe(
+      execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    );
+    expect(harness.runContextValidator).not.toHaveBeenCalled();
+  });
+
   it("launches zero specialists until the script validator passes", async () => {
     const harness = createHarness({
       execution: createCohortExecution(),

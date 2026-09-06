@@ -278,6 +278,44 @@ describe("parseAuditCliArgs", () => {
 });
 
 describe("loadAuditInput", () => {
+  it("loads an interrupted conversation retained only in iteration logs before computing costs", () => {
+    db.prepare(
+      `INSERT INTO conversations
+         (id, project_path, session_name, status, created_at, last_activity_at,
+          total_cost_usd, total_turns, transcript_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "conv-interrupted",
+      PROJECT_PATH,
+      SESSION_NAME,
+      "interrupted",
+      "2026-07-04T10:00:00Z",
+      "2026-07-04T10:30:00Z",
+      30.766538,
+      7,
+      null,
+    );
+    writeFileSync(
+      path.join(logsBaseDir, ACTIVE_ID, "contexts", "impl", "iterations.jsonl"),
+      JSON.stringify({
+        timestamp: "2026-07-04T10:00:05.000Z",
+        event: "iteration.conversation_resolved",
+        conversationId: "conv-interrupted",
+        iterationNumber: 1,
+      }),
+    );
+    const input = loadAuditInput(
+      { db, logsBaseDir, transcriptsDir: "/transcripts" },
+      { executionId: ACTIVE_ID },
+    );
+    expect(
+      input?.conversations.find((entry) => entry.id === "conv-interrupted"),
+    ).toMatchObject({
+      totalCostUsd: 30.766538,
+      transcriptPath: "/transcripts/conv-interrupted.jsonl",
+    });
+  });
+
   it("loads an active execution by id with events, conversations, and logs", () => {
     const input = loadAuditInput(
       { db, logsBaseDir, transcriptsDir: "/transcripts" },

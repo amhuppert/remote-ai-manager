@@ -17,12 +17,14 @@
  */
 
 import { createHash } from "node:crypto";
+import { stableStringify } from "@/lib/state-store/serialization";
 import type {
   SeededValidatorAssignment,
   ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowHaltReason,
+  GraphWorkflowContextOutput,
   GraphWorkflowTaskState,
   GraphWorkflowValidationCandidate,
   GraphWorkflowValidationRosterEntry,
@@ -92,12 +94,27 @@ export function freezeValidationCandidate(input: {
   tree: ValidationCandidateTree;
   taskStates: Readonly<Record<string, GraphWorkflowTaskState>>;
   contextId: string;
+  outputSchema?: Record<string, unknown>;
+  outputValue?: Record<string, unknown>;
 }): GraphWorkflowValidationCandidate {
   return {
     identityScope: input.tree.identityScope,
     headSha: input.tree.headSha,
     candidateTreeHash: input.tree.candidateTreeHash,
     taskStateHash: computeTaskStateHash(input.taskStates, input.contextId),
+    ...(input.outputSchema === undefined
+      ? {}
+      : {
+          outputHash: createHash("sha256")
+            .update(
+              stableStringify({
+                schema: input.outputSchema,
+                value: input.outputValue ?? null,
+              }),
+              "utf8",
+            )
+            .digest("hex"),
+        }),
   };
 }
 
@@ -170,10 +187,14 @@ export function openValidationRound(input: {
   candidate: GraphWorkflowValidationCandidate;
   assignments: readonly SeededValidatorAssignment[];
   startedAt: string;
+  outputCandidate?: GraphWorkflowContextOutput;
 }): GraphWorkflowValidationRound {
   return {
     seq: (input.previousRound?.seq ?? 0) + 1,
     candidate: input.candidate,
+    ...(input.outputCandidate === undefined
+      ? {}
+      : { outputCandidate: input.outputCandidate }),
     roster: buildValidationRoundRoster(input.assignments),
     specialists: Object.fromEntries(
       input.assignments.map((assignment) => [
@@ -373,8 +394,14 @@ export function reconcileValidationRoster(
  * called that drift could never complete while a sibling was still landing.
  */
 const CANDIDATE_COMPONENTS = {
-  wholeTree: ["identityScope", "headSha", "candidateTreeHash", "taskStateHash"],
-  owned: ["identityScope", "candidateTreeHash", "taskStateHash"],
+  wholeTree: [
+    "identityScope",
+    "headSha",
+    "candidateTreeHash",
+    "taskStateHash",
+    "outputHash",
+  ],
+  owned: ["identityScope", "candidateTreeHash", "taskStateHash", "outputHash"],
 } as const satisfies Record<
   GraphWorkflowValidationCandidate["identityScope"],
   readonly (keyof GraphWorkflowValidationCandidate)[]

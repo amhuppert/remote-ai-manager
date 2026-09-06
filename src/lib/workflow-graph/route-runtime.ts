@@ -689,7 +689,7 @@ function applySkips(
 
 /**
  * Write the bounded current settlement marker for every source whose routes are
- * decided, exactly once per `(source, captureIteration, routeControlRevision)`.
+ * decided, exactly once per `(source, effectiveSource, captureIteration, routeControlRevision)`.
  *
  * Only sources carrying a conditional outgoing edge get a marker: an
  * unconditional graph makes no routing decision worth recording, and writing
@@ -706,22 +706,38 @@ function writeRouteSettlements(
   options: { now: string },
 ): string[] {
   const settled: string[] = [];
-  for (const context of draft.workingDefinition.executionContexts) {
+  for (const sourceContextId of projection.settlementByContextId.keys()) {
     const outgoing = projection.edges.filter(
-      (edge) => edge.logicalSourceId === context.id,
+      (edge) => edge.logicalSourceId === sourceContextId,
     );
     if (!outgoing.some((edge) => edge.guard !== "none")) continue;
 
-    const settlement = projection.settlementByContextId.get(context.id);
-    if (settlement !== "completed" && settlement !== "skipped") continue;
-    if (!sourceSettled(context.id)) continue;
-    if (outgoing.some((edge) => edge.resolution.kind === "unresolved"))
+    const effectiveSourceContextId = outgoing[0]?.effectiveSourceId ?? null;
+    if (!sourceSettled(effectiveSourceContextId ?? sourceContextId)) continue;
+    if (
+      outgoing.some(
+        (edge) =>
+          edge.resolution.kind === "unresolved" ||
+          edge.resolution.kind === "unevaluable",
+      )
+    )
       continue;
 
     const record: GraphWorkflowRouteSettlement = {
-      sourceContextId: context.id,
-      captureIteration: draft.contextOutputs[context.id]?.iteration ?? null,
-      routeControlRevision: draft.routeControlRevisions[context.id] ?? 0,
+      sourceContextId,
+      effectiveSourceContextId,
+      captureIteration: effectiveSourceContextId
+        ? (draft.contextOutputs[effectiveSourceContextId]?.iteration ?? null)
+        : null,
+      routeControlRevision: draft.routeControlRevisions[sourceContextId] ?? 0,
+      edgeEvaluations: outgoing.flatMap((edge) => {
+        const verdict = edge.resolution.kind;
+        return verdict === "active" ||
+          verdict === "inactive" ||
+          verdict === "omitted"
+          ? [{ edgeId: edge.edgeId, verdict }]
+          : [];
+      }),
       activatedEdgeIds: outgoing
         .filter((edge) => edge.resolution.kind === "active")
         .map((edge) => edge.edgeId),
@@ -734,16 +750,17 @@ function writeRouteSettlements(
       settledAt: options.now,
     };
 
-    const existing = draft.routeSettlements[context.id];
+    const existing = draft.routeSettlements[sourceContextId];
     if (
       existing &&
+      existing.effectiveSourceContextId === record.effectiveSourceContextId &&
       existing.captureIteration === record.captureIteration &&
       existing.routeControlRevision === record.routeControlRevision
     ) {
       continue;
     }
-    draft.routeSettlements[context.id] = record;
-    settled.push(context.id);
+    draft.routeSettlements[sourceContextId] = record;
+    settled.push(sourceContextId);
   }
   return settled;
 }

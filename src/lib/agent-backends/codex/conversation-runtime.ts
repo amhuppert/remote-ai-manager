@@ -17,6 +17,7 @@ import type {
   TodoListItem,
 } from "@openai/codex-sdk";
 import { Codex } from "@openai/codex-sdk";
+import { isAdvisoryCodexDiagnostic } from "./stream-diagnostics";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   MessageContentBlock,
@@ -974,6 +975,13 @@ export class CodexConversationRuntime
         break;
 
       case "error":
+        if (isAdvisoryCodexDiagnostic(event.message)) {
+          logger.warn("codex-runtime.stream_advisory", {
+            conversationId: this.conversationId,
+            detail: event.message,
+          });
+          break;
+        }
         acc.setErrorMessage(event.message);
         break;
 

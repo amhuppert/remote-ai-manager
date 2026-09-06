@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -67,6 +74,30 @@ describe("shared document store", () => {
         relativePath: ".cc/graph-workflow-docs/missing.md",
       }),
     ).resolves.toBeNull();
+  });
+
+  it("preserves an open reader's complete document when a producer registers a replacement", async () => {
+    const store = makeStore();
+    const relativePath = "inventory.json";
+    const capture = {
+      executionId: "execution-1",
+      worktreePath: worktree,
+      relativePath,
+    };
+    await writeWorktreeFile(relativePath, "Complete revision 1");
+    await store.captureFromWorktree(capture);
+    const reader = await open(
+      path.join(configDir, "workflow-docs", "execution-1", relativePath),
+      "r",
+    );
+    try {
+      await writeWorktreeFile(relativePath, "Complete revision 2");
+      await store.captureFromWorktree(capture);
+      expect(await reader.readFile("utf-8")).toBe("Complete revision 1");
+      expect(await store.read(capture)).toBe("Complete revision 2");
+    } finally {
+      await reader.close();
+    }
   });
 
   it("keeps documents isolated per execution id", async () => {

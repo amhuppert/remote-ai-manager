@@ -84,6 +84,84 @@ function createDeps(
 }
 
 describe("createScriptValidatorRunner", () => {
+  it("retries warning-bearing readiness reports despite successful command exits", async () => {
+    const deps = createDeps({
+      submissions: [accepted("warning"), accepted("ready")],
+      results: [
+        {
+          kind: "passed",
+          runId: "warning",
+          exitCode: 0,
+          output: JSON.stringify({
+            status: "ready",
+            warnings: ["Figma component discovery incomplete"],
+            summary: "Partial inventory",
+          }),
+        },
+        {
+          kind: "passed",
+          runId: "ready",
+          exitCode: 0,
+          output: JSON.stringify({
+            status: "ready",
+            warnings: [],
+            summary: "Inventory complete",
+          }),
+        },
+      ],
+    });
+    const result = await createScriptValidatorRunner(deps).runScriptValidator({
+      ...BASE_INPUT,
+      purpose: "infrastructure",
+    });
+    expect(result.kind).toBe("pass");
+    expect(deps.writeFile).toHaveBeenCalledTimes(2);
+    expect(deps.writeFile.mock.calls[0]?.[1]).toContain(
+      "Figma component discovery incomplete",
+    );
+  });
+
+  it.each(["warning", "malformed", "timeout"])(
+    "exhausts readiness retries without reporting semantic failure (%s)",
+    async (failure) => {
+      const deps = createDeps({
+        submissions: [1, 2, 3].map((attempt) => accepted(`run-${attempt}`)),
+        results: [1, 2, 3].map(
+          (attempt): ValidationRunResult =>
+            failure === "timeout"
+              ? {
+                  kind: "timed_out",
+                  runId: `run-${attempt}`,
+                  timeoutMs: 60000,
+                  output: "Figma unavailable",
+                }
+              : {
+                  kind: "passed",
+                  runId: `run-${attempt}`,
+                  exitCode: 0,
+                  output:
+                    failure === "malformed"
+                      ? "discovery succeeded"
+                      : JSON.stringify({
+                          status: "ready",
+                          warnings: ["Discovery incomplete"],
+                          summary: "Partial inventory",
+                        }),
+                },
+        ),
+      });
+      const result = await createScriptValidatorRunner(deps).runScriptValidator(
+        { ...BASE_INPUT, purpose: "infrastructure" },
+      );
+      expect(result).toMatchObject({
+        kind: "infra_error",
+        reason: "exception",
+        readinessBlock: { commandName: "pre-merge", attempts: 3 },
+      });
+      expect(deps.writeFile).toHaveBeenCalledTimes(3);
+    },
+  );
+
   it("runs registered commands sequentially, stops on failure, and writes one artifact per command", async () => {
     const deps = createDeps({
       submissions: [accepted("run-typecheck"), accepted("run-test")],

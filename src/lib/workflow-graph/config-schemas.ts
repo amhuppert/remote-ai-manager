@@ -427,6 +427,7 @@ export function selectRunnableCohortAssignments<T extends ValidatorAssignment>(
 export const graphWorkflowScriptValidatorConfigSchema = z
   .object({
     commands: z.array(validationCommandNameSchema).default([]),
+    purpose: z.literal("infrastructure").optional(),
   })
   .strict();
 export type GraphWorkflowScriptValidatorConfig = z.infer<

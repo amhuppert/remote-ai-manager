@@ -97,7 +97,10 @@ function maximalResolvedContext(): Record<string, unknown> {
         },
       ],
     },
-    scriptValidator: { commands: ["typecheck", "test"] },
+    scriptValidator: {
+      commands: ["typecheck", "test"],
+      purpose: "infrastructure",
+    },
     scriptValidatorSource: "workflow",
     humanApprovalGate: { enabled: true },
     askUserQuestions: { enabled: true },
@@ -311,7 +314,10 @@ export function buildMaximalLaunchDocument(): Record<string, unknown> {
     ],
   };
   const authoredPolicies = {
-    scriptValidator: { commands: ["typecheck", "test"] },
+    scriptValidator: {
+      commands: ["typecheck", "test"],
+      purpose: "infrastructure",
+    },
     iterationPolicy: {
       maxIterations: 7,
       continuity: { enabled: false, contextLimitTokens: 90_000 },
@@ -771,7 +777,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               },
             ],
           },
-          scriptValidator: { commands: ["typecheck", "test"] },
+          scriptValidator: {
+            commands: ["typecheck", "test"],
+            purpose: "infrastructure",
+          },
           scriptValidatorSource: "workflow",
           humanApprovalGate: { enabled: true },
           askUserQuestions: { enabled: true },
@@ -999,6 +1008,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         reservedByBatchId: "batch-1",
         reservedOwnership: {
           mode: "owned",
+          stableRead: true,
           canonicalPrefixes: ["/wt/lane-1/src/api", "/wt/lane-1/docs"],
         },
         laneId: "lane-1",
@@ -1075,11 +1085,25 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         // not a reachable runtime state, since a specialist either rendered a
         // verdict or is waiting on an answer, never both.
         validationRound: {
+          outputCandidate: {
+            value: { verdict: "pass" },
+            capturedAt: "2026-01-02T05:00:00.000Z",
+            iteration: 3,
+            parse: { source: "native", repaired: true, repairAttempts: 1 },
+            reviewedCandidate: {
+              identityScope: "owned",
+              headSha: "a".repeat(40),
+              candidateTreeHash: "b".repeat(40),
+              taskStateHash: "c".repeat(64),
+              outputHash: "f".repeat(64),
+            },
+          },
           seq: 4,
           candidate: {
             headSha: "a".repeat(40),
             candidateTreeHash: "b".repeat(40),
             taskStateHash: "c".repeat(64),
+            outputHash: "f".repeat(64),
             // The non-default scope, so a round-trip that silently dropped the
             // field would read back as the whole-tree candidate this is not.
             identityScope: "owned",
@@ -1268,6 +1292,8 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     routeSettlements: {
       "ctx-1": {
         sourceContextId: "ctx-1",
+        effectiveSourceContextId: "loop-refine__p2__ctx-1",
+        edgeEvaluations: [{ edgeId: "edge-2", verdict: "active" }],
         captureIteration: 2,
         routeControlRevision: 3,
         activatedEdgeIds: ["edge-2"],
@@ -1393,6 +1419,13 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     },
     contextOutputs: {
       "ctx-1": {
+        reviewedCandidate: {
+          identityScope: "owned",
+          headSha: "a".repeat(40),
+          candidateTreeHash: "b".repeat(40),
+          taskStateHash: "c".repeat(64),
+          outputHash: "f".repeat(64),
+        },
         // An ACCEPTED output for ctx-1: every key and element type is admitted
         // by that context's authored outputSchema above (D5 keeps rejected
         // candidates out of contextOutputs entirely). Deliberately deep within
@@ -1526,12 +1559,17 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             contextId: "ctx-2",
             ownership: {
               mode: "owned",
+              stableRead: true,
               canonicalPrefixes: ["/wt/lane-2/src/ui"],
             },
           },
           {
             contextId: "ctx-3",
-            ownership: { mode: "readOnly", canonicalPrefixes: [] },
+            ownership: {
+              mode: "readOnly",
+              stableRead: true,
+              canonicalPrefixes: [],
+            },
           },
         ],
         createdAt: "2026-01-02T04:00:00Z",

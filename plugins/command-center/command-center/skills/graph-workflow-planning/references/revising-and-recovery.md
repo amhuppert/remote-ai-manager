@@ -35,7 +35,8 @@ A halt stops the execution durably with a typed reason; most are resumable after
 
 - `circuit_breaker` (`retry_exhaustion`) — a context accumulated consecutive validation failures (script or agent) up to its `circuitBreaker.consecutiveFailureThreshold` (seeded default 3).
 - `max_iterations` — a context exhausted `iterationPolicy.maxIterations` (seeded default 20).
-- `loop_limit_reached` — a loop exhausted `maxPasses` or the per-execution 25-pass backstop.
+- `loop_limit_reached` — a loop exhausted `maxPasses` or the per-execution 25-pass backstop. Resume requires a decision-changing edit: an affordable cap increase or a justified predicate that accepts the existing captured exit. A template-only edit cannot clear exhaustion; the 25-pass backstop stays fixed.
+- `infrastructure_blocked` — a readiness command exhausted its bounded retries. Restore the dependency or correct the command, then resume to rerun readiness; semantic failure counts remain intact.
 - `routing_cardinality` — a conditional fan-out under- or over-selected against its declared cardinality.
 - `ownership_violation` — a write in a shared worktree that no member's ownership covers.
 - `candidate_unstable` — a context's validation rounds kept concluding with no verdict because the reviewed tree would not hold still (5 in a row). A mismatch charges nothing and re-opens the round at once, so this budget is the only thing that bounds the loop; the halt carries the last drift stage and the components that moved.
@@ -55,6 +56,7 @@ When a halt of type `circuit_breaker`, `max_iterations`, `loop_limit_reached`, `
 Planner consequences:
 
 - Do not pad `iterationPolicy` or `circuitBreaker` "just in case" — an honest halt plus repair-or-operator is the designed recovery path, and a padded budget converts a planning defect into a longer, more expensive failure.
+- Read the repair prompt's editable/frozen context and task inventory before proposing operations. Append correction tasks after the completed prefix; completed tasks remain frozen. Verify the proposed operation count and diagnosis agree between runtime and the durable repair event.
 - Repair edits plan artifacts only. A defect that needs implementation (a missing foundation, an unbuilt contract) still needs a human or a new context; repair cannot code its way out.
 - Repair rewrites acceptance criteria through `update-context`, which replaces the WHOLE record list — there are no per-criterion operations at any tier. Ids that survive a repair keep their citations alive, so stable, well-named criterion ids are what make a repaired contract legible against the verdicts that provoked it.
 - Context validators surface plan-shaped concerns as non-blocking `plan` advisories during normal rounds; those advisories become plan-repair evidence when a halt lands, so a validator that keeps flagging the same plan concern is signal worth acting on before the breaker fires.

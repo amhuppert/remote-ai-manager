@@ -46,6 +46,7 @@ import {
   classifyContextLifecycle,
   classifyContextLifecycleFromPin,
   classifyExecutionEditability,
+  isLiveTaskLocked,
   pinContextInitialState,
   type ContextInitialStatePin,
   type ContextLifecycle,
@@ -1789,14 +1790,6 @@ function findLiveTask(
   taskId: string,
 ): GraphWorkflowTaskDefinition | undefined {
   return execution.workingDefinition.tasks.find((entry) => entry.id === taskId);
-}
-
-function isLiveTaskLocked(
-  execution: GraphWorkflowExecution,
-  taskId: string,
-): boolean {
-  const status = execution.taskStates[taskId]?.status;
-  return status === "completed" || status === "running";
 }
 
 /**

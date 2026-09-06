@@ -1596,6 +1596,30 @@ describe("graph workflow execution route handlers", () => {
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 
+  it("reports a missing session branch as a launch prerequisite, without claiming a held lease", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new WorkflowStartGuardError(
+        "session_branch_unavailable",
+        "Session branch csm/missing is unavailable",
+      ),
+    );
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "session_branch_unavailable",
+    });
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
   it("maps the uncommitted-changes guard error to a structured 409", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());

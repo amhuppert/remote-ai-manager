@@ -169,6 +169,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: at most one captured structured output per author-fixed execution context, written once when that context settles. In graph_workflow_executions.runtime_json.",
       "contextOutputs.*.value.**":
         "tracked: opaque validated agent output (a record of z.unknown values) in the author's own vocabulary, unschema'd here; sized by one context's authored outputSchema and written once per context. Deliberately NOT discharged as the whole `contextOutputs.**` subtree, so a growable field added beside `value` still has to answer to this gate. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.validationRound.outputCandidate.value.**":
+        "tracked: one schema-accepted output candidate per current validation round; replaced on the next round and sized by the context's authored outputSchema.",
       routeControlRevisions:
         "bounded: one small integer per execution context that owns conditional out-edges; keys are dropped with their context, so the map is sized by the live context set rather than by edit history. In graph_workflow_executions.runtime_json.",
       routeSettlements:
@@ -189,6 +191,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "tracked: opaque validated agent output (a record of z.unknown values) copied from that predecessor's capture, on the same accept-time subset contract as contextOutputs.*.value; sized by one context's authored outputSchema and written once, at loop activation. In graph_workflow_executions.runtime_json.",
       "routeSettlements.*.activatedEdgeIds":
         "bounded: subset of that source's outgoing edges. In graph_workflow_executions.runtime_json.",
+      "routeSettlements.*.edgeEvaluations":
+        "bounded: one evaluation per outgoing edge of the logical source. In graph_workflow_executions.runtime_json.",
       "routeSettlements.*.inactiveEdgeIds":
         "bounded: subset of that source's outgoing edges. In graph_workflow_executions.runtime_json.",
       "routeSettlements.*.omittedEdgeIds":
@@ -298,6 +302,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: one validator verdict's issues, written once per validation round and capped by the same output guards as the verdict itself.",
       "event.rejectedAgainstSchema.**":
         "tracked: opaque author-declared JSON Schema document (a record of z.unknown values) the output was refused against, on the same accept-time subset contract as the context's outputSchema; sized by one context's authored output shape and written once per rejection.",
+      "event.reviewedOutput.**":
+        "tracked: one schema-accepted payload retained with its validation verdict; sized by the context's authored outputSchema, without accumulating rounds in a single event.",
       "event.sessionRef.backend":
         "tracked: opaque registered agent-backend id (backend-neutral descriptor key), validated at the backend registry boundary; a single identifier, not a container.",
       "event.reviewArtifact.backend":

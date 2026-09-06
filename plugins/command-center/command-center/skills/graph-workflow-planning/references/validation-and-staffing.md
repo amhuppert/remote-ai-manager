@@ -49,6 +49,14 @@ Do not enable `scriptValidator` for a context intentionally planned to end in an
 
 If script commands are selected for an intentionally invalid intermediate state, the workflow will either halt or pressure the implementer to expand scope into later contexts. Put those deterministic commands on a later integration or final verification context instead.
 
+## Infrastructure readiness
+
+For discovery, authentication, or external-tool readiness, place a `full` context **before** refinement loops and select registered commands with `scriptValidator: { "commands": ["figma-ready"], "purpose": "infrastructure" }`. Register the command in the target project first; the name here is illustrative.
+
+Each command emits exactly one JSON object: `{ "status": "ready", "warnings": [], "summary": "Inventory complete" }`. Report partial discovery as `status: "blocked"` or include its warnings. Exit code 0 alone is insufficient: readiness requires a valid report, `ready`, and no warnings. The engine retries a blocked report, malformed output, or failed command up to three attempts, retaining each command log. Exhaustion produces resumable `infrastructure_blocked`, without semantic remediation or failure-count spend. Restore the dependency and resume to check it again. Unknown registrations still require correcting the command selection.
+
+For inventory generation, write to a temporary sibling, verify completeness and warnings, then atomically rename into the published path. Consumers use the published artifact's content digest. A failed discovery leaves the prior complete artifact intact; an incomplete inventory never becomes the reviewed input. Put generation and promotion in the registered producer command so the same checks govern every retry.
+
 ## Agent access: `agentValidation`
 
 Agent permissions cascade separately, per role and per leaf, through global defaults → workflow → execution context:

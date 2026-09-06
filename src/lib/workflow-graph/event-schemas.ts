@@ -37,6 +37,7 @@ import {
   graphWorkflowHaltReasonSchema,
   graphWorkflowRouteEdgeEvaluationSchema,
   graphWorkflowValidationAdvisorySchema,
+  graphWorkflowValidationCandidateSchema,
   graphWorkflowValidationIncidentStageSchema,
   graphWorkflowValidationReviewArtifactSchema,
   graphWorkflowValidationSessionRefSchema,
@@ -225,6 +226,8 @@ export const graphWorkflowRouteResolvedEventSchema = z.object({
   sessionName: z.string(),
   executionId: z.string(),
   sourceContextId: z.string(),
+  effectiveSourceContextId: z.string().nullable(),
+  edgeEvaluations: z.array(graphWorkflowRouteEdgeEvaluationSchema),
   captureIteration: z.number().int().min(1).nullable(),
   routeControlRevision: z.number().int().min(0),
   activatedEdgeIds: z.array(z.string()),
@@ -428,6 +431,8 @@ export const graphWorkflowValidationResultEventSchema = z.object({
    * reads what it read before either way.
    */
   roundSeq: z.number().int().positive().nullable().optional(),
+  reviewedCandidate: graphWorkflowValidationCandidateSchema.optional(),
+  reviewedOutput: contextOutputSchemaSchema.optional(),
   specialists: z.array(graphWorkflowValidationSpecialistEntrySchema).optional(),
 });
 export type GraphWorkflowValidationResultEvent = z.infer<

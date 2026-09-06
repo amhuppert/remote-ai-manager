@@ -20,18 +20,24 @@ import type { ContextPlacement } from "./definition-schemas";
  *    IS its change set;
  *  - `owned` scopes to the declared paths. Its lane worktree is shared with
  *    concurrent siblings, so the whole-tree delta is partly theirs;
- *  - `readOnly` scopes to nothing. A context with no write surface produces no
+ *  - observational `readOnly` scopes to nothing. A context with no write surface produces no
  *    changes, and whole-tree semantics would hand it every sibling's work — the
  *    read-only grade on the session lane is exactly where that is worst, since
- *    the session worktree carries everything running there.
+ *    the session worktree carries everything running there. Structured handoff
+ *    readers instead freeze the whole input tree and exclude concurrent writers.
  *
  * An absent placement is a context seeded before placement existed; whole-tree
  * is what it validated under, and nothing about it declares ownership to scope to.
  */
 export function candidateScopeForPlacement(
   placement: ContextPlacement | undefined,
+  options: { stableRead?: boolean } = {},
 ): CandidateScope {
-  if (placement === undefined || placement.mode === "full") {
+  if (
+    placement === undefined ||
+    placement.mode === "full" ||
+    (placement.mode === "readOnly" && options.stableRead)
+  ) {
     return WHOLE_TREE_CANDIDATE_SCOPE;
   }
   return {

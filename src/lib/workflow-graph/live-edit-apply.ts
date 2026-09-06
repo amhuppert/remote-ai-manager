@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+import { atomicWriteFile } from "@/lib/shared/atomic-write-json";
 import path from "node:path";
 import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
 import {
@@ -217,8 +217,7 @@ export async function defaultWriteCharterDocument(input: {
   markdown: string;
 }): Promise<void> {
   const absolutePath = path.join(input.worktreePath, CHARTER_DOCUMENT_PATH);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, input.markdown);
+  await atomicWriteFile(absolutePath, input.markdown);
 }
 
 // The doc-06 error contract (§"Error contract"): a code-bearing rejection is an

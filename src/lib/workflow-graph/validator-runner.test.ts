@@ -824,6 +824,46 @@ describe("parseValidatorResponse fenced-block parsing", () => {
 });
 
 describe("buildContextValidationPrompt", () => {
+  it("judges a structured reader's input artifacts without attributing the producer's diff to that reader", () => {
+    const prompt = buildContextValidationPrompt({
+      context: {
+        ...context,
+        placement: { lane: "session", mode: "readOnly" },
+        outputSchema: { type: "object" },
+      },
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+      diffScopeSection:
+        "These are the uncommitted changes this context produced",
+    });
+    expect(prompt).toContain("input artifacts");
+    expect(prompt).not.toContain("changes this context produced");
+  });
+
+  it("shows the exact captured handoff separately from task summaries", () => {
+    const value = {
+      issueIds: ["issue-1"],
+      instructions:
+        "Preserve the entire instruction, including its final requirement.",
+    };
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: seedAssignment(validatorConfig),
+      outputCandidate: {
+        value,
+        capturedAt: "2026-09-05T00:00:00Z",
+        iteration: 1,
+        parse: { source: "native" },
+      },
+    });
+    expect(prompt).toContain("Captured handoff under review");
+    expect(prompt).toContain(JSON.stringify(value, null, 2));
+    expect(prompt).toContain("issue IDs");
+  });
+
   it("requires resolved validation selections", () => {
     expectTypeOf<
       BuildContextValidationPromptInput["validationSelections"]

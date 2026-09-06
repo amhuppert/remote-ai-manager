@@ -3,6 +3,7 @@ import {
   writeFile as defaultWriteFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
   createArtifactRegistry,
@@ -24,6 +25,32 @@ import type { ValidationRunResult } from "@/lib/validation/schemas";
 
 const logger = createLogger("script-validator-runner");
 
+const READINESS_ATTEMPTS = 3;
+const readinessReportSchema = z
+  .object({
+    status: z.enum(["ready", "blocked"]),
+    warnings: z.array(z.string()).max(100),
+    summary: z.string().trim().min(1),
+  })
+  .strict();
+
+function readinessFailure(result: ValidationRunResult): string | null {
+  if (result.kind !== "passed")
+    return `Readiness command ended with ${result.kind}`;
+  let value: unknown;
+  try {
+    value = JSON.parse(result.output);
+  } catch {
+    return "Readiness command must return a JSON report with status, warnings, and summary";
+  }
+  const report = readinessReportSchema.safeParse(value);
+  if (!report.success)
+    return `Invalid readiness report: ${report.error.message}`;
+  if (report.data.status === "ready" && report.data.warnings.length === 0)
+    return null;
+  return [report.data.summary, ...report.data.warnings].join("\n");
+}
+
 export interface ScriptValidatorInput {
   projectPath: string;
   worktreePath: string;
@@ -41,6 +68,7 @@ export interface ScriptValidatorInput {
   timeoutMs?: number;
   /** Ordered registered commands selected for this context. */
   commands: string[];
+  purpose?: "infrastructure";
   /**
    * When supplied, the script validator runs against this resolved target's
    * worktree and branch instead of `input.worktreePath` / `input.branchName`.
@@ -74,6 +102,7 @@ export type ScriptValidatorOutcome =
   | (Exclude<ScriptValidationOutcome, { kind: "fail" }> & {
       treeState?: ValidationTreeState;
       command?: string | null;
+      readinessBlock?: { commandName: string; attempts: number };
     })
   | (Extract<ScriptValidationOutcome, { kind: "fail" }> & {
       logFilePath: string;
@@ -228,175 +257,211 @@ export function createScriptValidatorRunner(
     let finalTreeState: ValidationTreeState | undefined;
     let finalCommand: string | null = null;
     for (const commandRef of commandRefs) {
-      const beforeTreeState = await resolveTreeState(targetWorktreePath);
-      let submission: ValidationSubmission;
-      try {
-        submission = await deps.validationService.submitSystem({
-          source: "graph_script_validator",
-          command: commandRef,
-          scope: "changed",
-          projectPath: input.projectPath,
-          workflow: {
+      const maxAttempts =
+        input.purpose === "infrastructure" ? READINESS_ATTEMPTS : 1;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const beforeTreeState = await resolveTreeState(targetWorktreePath);
+        let submission: ValidationSubmission;
+        try {
+          submission = await deps.validationService.submitSystem({
+            source: "graph_script_validator",
+            command: commandRef,
+            scope: "changed",
+            projectPath: input.projectPath,
+            workflow: {
+              executionId: input.executionId,
+              contextId: input.contextId,
+            },
+            target: {
+              worktreePath: targetWorktreePath,
+              sessionName: input.sessionName,
+              branchName: targetBranchName,
+              ...(input.targetBranch
+                ? { targetBranch: input.targetBranch }
+                : {}),
+              contextId: input.contextId,
+            },
+          });
+        } catch (err) {
+          const message = getErrorMessage(err);
+          logger.error("script_validator.exception", {
             executionId: input.executionId,
             contextId: input.contextId,
-          },
-          target: {
-            worktreePath: targetWorktreePath,
-            sessionName: input.sessionName,
-            branchName: targetBranchName,
-            ...(input.targetBranch ? { targetBranch: input.targetBranch } : {}),
-            contextId: input.contextId,
-          },
-        });
-      } catch (err) {
-        const message = getErrorMessage(err);
-        logger.error("script_validator.exception", {
-          executionId: input.executionId,
-          contextId: input.contextId,
-          command: commandRef.name,
-          error: message,
-        });
-        return { kind: "infra_error", reason: "exception", message };
-      }
+            command: commandRef.name,
+            error: message,
+          });
+          return { kind: "infra_error", reason: "exception", message };
+        }
 
-      if (submission.kind === "invalid") {
-        return {
-          kind: "infra_error",
-          reason: "exception",
-          message: submission.message,
-        };
-      }
-      if (submission.kind === "not_started") {
-        if (submission.result.kind === "command_not_found") {
-          return unknownCommandOutcome(submission.result);
+        if (submission.kind === "invalid") {
+          return {
+            kind: "infra_error",
+            reason: "exception",
+            message: submission.message,
+          };
+        }
+        if (submission.kind === "not_started") {
+          if (submission.result.kind === "command_not_found") {
+            return unknownCommandOutcome(submission.result);
+          }
+          return {
+            kind: "infra_error",
+            reason: "exception",
+            message:
+              submission.result.kind === "cost_exceeds_limit"
+                ? `Validation command "${commandRef.name}" costs ${submission.result.cost}, exceeding the configured limit ${submission.result.limit}`
+                : `Validation command "${commandRef.name}" was not started (${submission.result.kind})`,
+          };
+        }
+
+        const result = await waitForSystemValidationCompletion(
+          deps.validationService,
+          submission.runId,
+          input.signal,
+        );
+        const afterTreeState = await resolveTreeState(targetWorktreePath);
+        const now = deps.now();
+        const relativeDir = path.join(...LOG_DIR_SEGMENTS, input.executionId);
+        const fileName = `${commandRef.name}-${formatTimestampForFilename(now)}-${submission.runId}.log`;
+        const logRelativePath = path.join(relativeDir, fileName);
+        const logFilePath = path.join(targetWorktreePath, logRelativePath);
+        const content = `${buildLogFileHeader(
+          input,
+          now,
+          targetBranchName,
+          beforeTreeState,
+          afterTreeState,
+          commandRef.name,
+          submission.runId,
+          result,
+        )}\n${outputFromResult(result)}\n`;
+        const registry =
+          deps.artifactRegistry ??
+          createArtifactRegistry({
+            writeFile: async (absolutePath, fileContents) => {
+              await deps.writeFile(
+                absolutePath,
+                typeof fileContents === "string"
+                  ? fileContents
+                  : Buffer.from(fileContents).toString("utf-8"),
+              );
+            },
+            ensureDir: async (absolutePath) => {
+              await deps.mkdir(absolutePath, { recursive: true });
+            },
+            now: () => now.toISOString(),
+          });
+
+        try {
+          await registry.write({
+            kind: "validation_log",
+            worktreePath: targetWorktreePath,
+            relativePath: logRelativePath,
+            contents: content,
+            audience: "internal_log",
+            source: { workflowId: input.executionId },
+          });
+        } catch (err) {
+          const cause =
+            err instanceof ArtifactRequiredFailure ? (err.cause ?? err) : err;
+          const message = getErrorMessage(cause);
+          logger.error("script_validator.write_log_failed", {
+            executionId: input.executionId,
+            contextId: input.contextId,
+            command: commandRef.name,
+            runId: submission.runId,
+            logFilePath,
+            error: message,
+          });
+          return { kind: "infra_error", reason: "exception", message };
+        }
+
+        finalTreeState = afterTreeState;
+        finalCommand = commandRef.name;
+        if (input.purpose === "infrastructure") {
+          const message = readinessFailure(result);
+          if (message !== null) {
+            logger.warn("script_validator.readiness_blocked", {
+              executionId: input.executionId,
+              contextId: input.contextId,
+              command: commandRef.name,
+              attempt,
+              maxAttempts,
+              runId: submission.runId,
+              logFilePath,
+              detail: message,
+            });
+            if (
+              attempt < maxAttempts &&
+              !input.signal?.aborted &&
+              result.kind !== "cancelled"
+            )
+              continue;
+            return {
+              kind: "infra_error",
+              reason: "exception",
+              message,
+              readinessBlock: {
+                commandName: commandRef.name,
+                attempts: attempt,
+              },
+            };
+          }
+        }
+        if (result.kind === "passed") {
+          logger.info("script_validator.command_passed", {
+            executionId: input.executionId,
+            contextId: input.contextId,
+            command: commandRef.name,
+            runId: submission.runId,
+            headSha: afterTreeState.headSha,
+            dirty: afterTreeState.dirty,
+            logFilePath,
+          });
+          break;
+        }
+        if (result.kind === "failed" && result.exitCode === null) {
+          const detail = result.output.trim();
+          const message = `Validation command "${commandRef.name}" could not be spawned${detail.length > 0 ? `: ${detail}` : ""}`;
+          logger.error("script_validator.command_spawn_failed", {
+            executionId: input.executionId,
+            contextId: input.contextId,
+            command: commandRef.name,
+            runId: submission.runId,
+            logFilePath,
+            error: detail,
+          });
+          return { kind: "infra_error", reason: "exception", message };
+        }
+        if (result.kind === "failed" || result.kind === "timed_out") {
+          const timedOut = result.kind === "timed_out";
+          logger.warn("script_validator.command_failed", {
+            executionId: input.executionId,
+            contextId: input.contextId,
+            command: commandRef.name,
+            runId: submission.runId,
+            timedOut,
+            logFilePath,
+          });
+          return {
+            kind: "fail",
+            summary: timedOut
+              ? `Validation command "${commandRef.name}" timed out`
+              : `Validation command "${commandRef.name}" failed`,
+            logFilePath,
+            logRelativePath,
+            timedOut,
+            runId: submission.runId,
+            treeState: afterTreeState,
+            command: commandRef.name,
+          };
         }
         return {
           kind: "infra_error",
           reason: "exception",
-          message:
-            submission.result.kind === "cost_exceeds_limit"
-              ? `Validation command "${commandRef.name}" costs ${submission.result.cost}, exceeding the configured limit ${submission.result.limit}`
-              : `Validation command "${commandRef.name}" was not started (${submission.result.kind})`,
+          message: `Validation command "${commandRef.name}" ended with ${result.kind}`,
         };
       }
-
-      const result = await waitForSystemValidationCompletion(
-        deps.validationService,
-        submission.runId,
-        input.signal,
-      );
-      const afterTreeState = await resolveTreeState(targetWorktreePath);
-      const now = deps.now();
-      const relativeDir = path.join(...LOG_DIR_SEGMENTS, input.executionId);
-      const fileName = `${commandRef.name}-${formatTimestampForFilename(now)}-${submission.runId}.log`;
-      const logRelativePath = path.join(relativeDir, fileName);
-      const logFilePath = path.join(targetWorktreePath, logRelativePath);
-      const content = `${buildLogFileHeader(
-        input,
-        now,
-        targetBranchName,
-        beforeTreeState,
-        afterTreeState,
-        commandRef.name,
-        submission.runId,
-        result,
-      )}\n${outputFromResult(result)}\n`;
-      const registry =
-        deps.artifactRegistry ??
-        createArtifactRegistry({
-          writeFile: async (absolutePath, fileContents) => {
-            await deps.writeFile(
-              absolutePath,
-              typeof fileContents === "string"
-                ? fileContents
-                : Buffer.from(fileContents).toString("utf-8"),
-            );
-          },
-          ensureDir: async (absolutePath) => {
-            await deps.mkdir(absolutePath, { recursive: true });
-          },
-          now: () => now.toISOString(),
-        });
-
-      try {
-        await registry.write({
-          kind: "validation_log",
-          worktreePath: targetWorktreePath,
-          relativePath: logRelativePath,
-          contents: content,
-          audience: "internal_log",
-          source: { workflowId: input.executionId },
-        });
-      } catch (err) {
-        const cause =
-          err instanceof ArtifactRequiredFailure ? (err.cause ?? err) : err;
-        const message = getErrorMessage(cause);
-        logger.error("script_validator.write_log_failed", {
-          executionId: input.executionId,
-          contextId: input.contextId,
-          command: commandRef.name,
-          runId: submission.runId,
-          logFilePath,
-          error: message,
-        });
-        return { kind: "infra_error", reason: "exception", message };
-      }
-
-      finalTreeState = afterTreeState;
-      finalCommand = commandRef.name;
-      if (result.kind === "passed") {
-        logger.info("script_validator.command_passed", {
-          executionId: input.executionId,
-          contextId: input.contextId,
-          command: commandRef.name,
-          runId: submission.runId,
-          headSha: afterTreeState.headSha,
-          dirty: afterTreeState.dirty,
-          logFilePath,
-        });
-        continue;
-      }
-      if (result.kind === "failed" && result.exitCode === null) {
-        const detail = result.output.trim();
-        const message = `Validation command "${commandRef.name}" could not be spawned${detail.length > 0 ? `: ${detail}` : ""}`;
-        logger.error("script_validator.command_spawn_failed", {
-          executionId: input.executionId,
-          contextId: input.contextId,
-          command: commandRef.name,
-          runId: submission.runId,
-          logFilePath,
-          error: detail,
-        });
-        return { kind: "infra_error", reason: "exception", message };
-      }
-      if (result.kind === "failed" || result.kind === "timed_out") {
-        const timedOut = result.kind === "timed_out";
-        logger.warn("script_validator.command_failed", {
-          executionId: input.executionId,
-          contextId: input.contextId,
-          command: commandRef.name,
-          runId: submission.runId,
-          timedOut,
-          logFilePath,
-        });
-        return {
-          kind: "fail",
-          summary: timedOut
-            ? `Validation command "${commandRef.name}" timed out`
-            : `Validation command "${commandRef.name}" failed`,
-          logFilePath,
-          logRelativePath,
-          timedOut,
-          runId: submission.runId,
-          treeState: afterTreeState,
-          command: commandRef.name,
-        };
-      }
-      return {
-        kind: "infra_error",
-        reason: "exception",
-        message: `Validation command "${commandRef.name}" ended with ${result.kind}`,
-      };
     }
 
     logger.info("script_validator.pass", {

@@ -45,7 +45,10 @@ export type LaneAdmissionVerdict =
   | { kind: "admit" }
   | {
       kind: "refuse";
-      reason: "full-access-exclusive" | "ownership-collision";
+      reason:
+        | "full-access-exclusive"
+        | "ownership-collision"
+        | "stable-read-exclusive";
       blockingContextId: string;
       /** The candidate's prefix and the occupant's, for a collision only. */
       collidingPrefixes: readonly [string, string] | null;
@@ -55,6 +58,7 @@ export interface CanonicalizeOwnershipInput {
   placement: ContextPlacement;
   /** Absolute path of the lane worktree the context will run in. */
   laneWorktreePath: string;
+  stableRead?: boolean;
 }
 
 export interface CanonicalizeOwnershipDeps {
@@ -91,8 +95,9 @@ function isWriteCapable(ownership: CanonicalOwnership): boolean {
 /**
  * May `candidate` join the lane its `occupants` already hold?
  *
- * Read-only members write nothing in the worktree, so they neither collide nor
- * are collided with. A full-access member declares no surface to be disjoint
+ * Observational readers can share with writers. Readers producing a structured
+ * handoff hold the lane against writers so captured findings see stable inputs.
+ * A full-access member declares no surface to be disjoint
  * FROM, so it takes the lane exclusively. Two owning members are admissible
  * exactly when no prefix of either covers a prefix of the other.
  *
@@ -104,10 +109,23 @@ export function classifyLaneAdmission(input: {
   occupants: readonly LaneOccupant[];
 }): LaneAdmissionVerdict {
   const { candidate, occupants } = input;
-  if (!isWriteCapable(candidate)) return { kind: "admit" };
+  if (!isWriteCapable(candidate) && !candidate.stableRead)
+    return { kind: "admit" };
 
   for (const occupant of occupants) {
-    if (!isWriteCapable(occupant.ownership)) continue;
+    if (
+      (candidate.stableRead && isWriteCapable(occupant.ownership)) ||
+      (occupant.ownership.stableRead && isWriteCapable(candidate))
+    ) {
+      return {
+        kind: "refuse",
+        reason: "stable-read-exclusive",
+        blockingContextId: occupant.contextId,
+        collidingPrefixes: null,
+      };
+    }
+    if (!isWriteCapable(occupant.ownership) || !isWriteCapable(candidate))
+      continue;
     if (candidate.mode === "full" || occupant.ownership.mode === "full") {
       return {
         kind: "refuse",
@@ -313,7 +331,13 @@ export function canonicalizeOwnership(
   const readLink = deps.readLink ?? defaultReadLink;
   const { placement } = input;
   if (placement.mode !== "owned") {
-    return { mode: placement.mode, canonicalPrefixes: [] };
+    return {
+      mode: placement.mode,
+      canonicalPrefixes: [],
+      ...(placement.mode === "readOnly" && input.stableRead
+        ? { stableRead: true as const }
+        : {}),
+    };
   }
 
   let root: string;

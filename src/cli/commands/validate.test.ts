@@ -603,6 +603,63 @@ describe("cctl validate run", () => {
     expect(result.stderr).toContain("lower-worker command profile");
   });
 
+  it("keeps polling an owned validation when the sandbox cannot persist its lease", async () => {
+    const host = hostWith((_request, index) =>
+      index === 0
+        ? json(
+            {
+              kind: "accepted",
+              runId: "vrun-readonly",
+              status: "queued",
+              position: 0,
+              lease: {
+                runId: "vrun-readonly",
+                token: "private-lease",
+                expiresAt: "2026-08-05T12:00:00.000Z",
+              },
+              requestedScope: "changed",
+              effectiveScope: "changed",
+            },
+            202,
+          )
+        : json({
+            runId: "vrun-readonly",
+            status: "passed",
+            position: null,
+            requestedScope: "changed",
+            effectiveScope: "changed",
+            result: {
+              kind: "passed",
+              runId: "vrun-readonly",
+              exitCode: 0,
+              output: "verified",
+            },
+          }),
+    );
+    host.writePrivateTextFile = async () => {
+      throw new Error("sandbox denies write");
+    };
+    const result = await runCli(
+      ["validate", "run", "test", "--queue-if-busy", "--json"],
+      env,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "passed",
+      runId: "vrun-readonly",
+    });
+    expect(
+      host.requests.some((request) => request.path.endsWith("/cancel")),
+    ).toBe(false);
+    expect(host.requests[1]?.init.headers["x-cc-validation-lease-token"]).toBe(
+      "private-lease",
+    );
+    expect(
+      result.stdout + result.stderr + host.progress.join("\n"),
+    ).not.toContain("private-lease");
+  });
+
   it.each(["SIGINT", "SIGTERM"] as const)(
     "cancels explicitly on %s before returning",
     async (signal) => {

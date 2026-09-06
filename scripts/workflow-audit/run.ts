@@ -280,8 +280,16 @@ function loadEvents(db: AuditDb, executionId: string): AuditEvent[] {
 function collectConversationIds(
   execution: AuditInput["execution"],
   events: AuditEvent[],
+  contextLogs: AuditInput["contextLogs"],
 ): string[] {
   const ids = new Set<string>();
+  for (const logs of Object.values(contextLogs)) {
+    for (const record of logs.iterations) {
+      if (record.event !== "iteration.conversation_resolved") continue;
+      const id = record.fields.conversationId;
+      if (typeof id === "string" && id.length > 0) ids.add(id);
+    }
+  }
   for (const task of Object.values(execution.taskStates)) {
     if (task.lastConversationId !== null) ids.add(task.lastConversationId);
   }
@@ -496,20 +504,21 @@ export function loadAuditInput(
   }
   const execution = parsed.execution;
   const events = loadEvents(deps.db, execution.id);
-  const conversations = loadConversations(
-    deps.db,
-    collectConversationIds(execution, events),
-    deps.transcriptsDir,
-  );
   const executionLogsDir = path.join(deps.logsBaseDir, execution.id);
   const logsDirExists = existsSync(executionLogsDir);
+  const contextLogs = logsDirExists ? loadContextLogs(executionLogsDir) : {};
+  const conversations = loadConversations(
+    deps.db,
+    collectConversationIds(execution, events, contextLogs),
+    deps.transcriptsDir,
+  );
   const runGit = deps.runGit;
   return {
     source: hit.source,
     execution,
     events,
     conversations,
-    contextLogs: logsDirExists ? loadContextLogs(executionLogsDir) : {},
+    contextLogs,
     lifecycle: logsDirExists
       ? readJsonlFile(path.join(executionLogsDir, "lifecycle.jsonl"))
       : [],

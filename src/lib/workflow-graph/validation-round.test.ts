@@ -40,6 +40,37 @@ function taskStates(
 }
 
 describe("computeTaskStateHash", () => {
+  it("binds validation identity to the captured handoff and its schema", () => {
+    const input = {
+      tree: {
+        identityScope: "wholeTree" as const,
+        headSha: "head",
+        candidateTreeHash: "tree",
+      },
+      taskStates: taskStates(taskState({ taskId: "t-1" })),
+      contextId: "ctx-1",
+      outputSchema: { type: "object", required: ["issues"] },
+      outputValue: { issues: ["issue-1"] },
+    };
+    const frozen = freezeValidationCandidate(input);
+    expect(
+      candidateIdentityMatches(
+        frozen,
+        freezeValidationCandidate({ ...input, outputValue: { issues: [] } }),
+      ),
+    ).toBe(false);
+    expect(
+      candidateIdentityMatches(
+        frozen,
+        freezeValidationCandidate({
+          ...input,
+          outputSchema: { type: "object" },
+        }),
+      ),
+    ).toBe(false);
+    expect(frozen.outputHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
   it("covers the context's task tuples and moves when one of them changes", () => {
     const before = taskStates(
       taskState({ taskId: "t-1", order: 1 }),

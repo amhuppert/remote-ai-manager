@@ -129,6 +129,7 @@ function isMintedInstanceId(
 export interface LoopContextLike {
   readonly id: string;
   readonly outputSchema?: Record<string, unknown> | undefined;
+  readonly scriptValidator?: { purpose?: "infrastructure" };
 }
 
 export interface LoopTaskLike {
@@ -279,6 +280,15 @@ export function validateLoopGroups(
   errors.push(...validateBodyDisjointness(projections));
 
   for (const projection of projections) {
+    for (const context of projection.contextsById.values()) {
+      if (context.scriptValidator?.purpose !== "infrastructure") continue;
+      errors.push({
+        code: "infrastructure-check-in-loop",
+        contextId: context.id,
+        field: `loopGroups[${projection.index}]`,
+        message: `Infrastructure readiness context "${context.id}" must precede loop "${projection.group.id}"; readiness retries cannot consume refinement passes`,
+      });
+    }
     errors.push(...validateBodyMembership(projection));
     errors.push(...validateBodyShape(projection));
     errors.push(...validateBoundaryEdges(definition, projection));
@@ -932,7 +942,8 @@ export function resolveLoopGroups<TContext extends LoopResolutionContext>(
   for (const edge of input.edges) {
     const sourceOwner = bodyOwnerByContextId.get(edge.sourceContextId);
     const targetOwner = bodyOwnerByContextId.get(edge.targetContextId);
-    if (sourceOwner !== undefined && targetOwner !== undefined) continue;
+    if (sourceOwner !== undefined && sourceOwner.id === targetOwner?.id)
+      continue;
     if (targetOwner !== undefined) {
       edges.push({
         ...edge,

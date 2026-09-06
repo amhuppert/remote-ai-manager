@@ -1,8 +1,9 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { resolveConfigDir as defaultResolveConfigDir } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
+import { atomicWriteFile } from "@/lib/shared/atomic-write-json";
 
 const logger = createLogger("graph-workflow-shared-document-store");
 
@@ -74,9 +75,7 @@ export function createSharedDocumentStore(
     resolveConfigDir: overrides.resolveConfigDir ?? defaultResolveConfigDir,
     readFile:
       overrides.readFile ?? ((absolutePath) => readFile(absolutePath, "utf-8")),
-    writeFile:
-      overrides.writeFile ??
-      ((absolutePath, contents) => writeFile(absolutePath, contents, "utf-8")),
+    writeFile: overrides.writeFile ?? atomicWriteFile,
     ensureDir:
       overrides.ensureDir ??
       (async (absolutePath) => {

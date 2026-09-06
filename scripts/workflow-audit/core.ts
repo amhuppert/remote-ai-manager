@@ -115,25 +115,43 @@ const auditTaskStateSchema = z.object({
     .default([]),
 });
 
-const auditLaneStateSchema = z.object({
-  lane: z.string().default("unknown"),
-  engine: z.string().default("unknown"),
-  sessionRef: z
-    .object({ conversationId: z.string().optional() })
-    .nullish()
-    .default(null),
-  workflowConversationId: z.string().nullish().default(null),
-  lastContextTokens: z.number().nullish().default(null),
-  lastContextWindowMax: z.number().nullish().default(null),
-  lastTurnUsage: z
-    .object({
-      inputTokens: z.number().default(0),
-      cachedInputTokens: z.number().default(0),
-      outputTokens: z.number().default(0),
-    })
-    .nullish()
-    .default(null),
-});
+const auditLaneStateSchema = z
+  .object({
+    lane: z.string().default("unknown"),
+    engine: z.string().default("unknown"),
+    backend: z.string().optional(),
+    metrics: z
+      .object({
+        contextTokens: z.number().nullish(),
+        contextWindowMax: z.number().nullish(),
+      })
+      .optional(),
+    sessionRef: z
+      .object({ conversationId: z.string().optional() })
+      .nullish()
+      .default(null),
+    workflowConversationId: z.string().nullish().default(null),
+    lastContextTokens: z.number().nullish().default(null),
+    lastContextWindowMax: z.number().nullish().default(null),
+    lastTurnUsage: z
+      .object({
+        inputTokens: z.number().default(0),
+        cachedInputTokens: z.number().default(0),
+        outputTokens: z.number().default(0),
+      })
+      .nullish()
+      .default(null),
+  })
+  .transform((lane) => ({
+    ...lane,
+    engine: lane.backend ?? lane.engine,
+    lastContextTokens: lane.metrics
+      ? (lane.metrics.contextTokens ?? null)
+      : lane.lastContextTokens,
+    lastContextWindowMax: lane.metrics
+      ? (lane.metrics.contextWindowMax ?? null)
+      : lane.lastContextWindowMax,
+  }));
 
 const auditJoinStateSchema = z.object({
   kind: z.string().default(""),
@@ -490,6 +508,7 @@ export interface AuditReport {
 // ============================================================
 
 const INFRA_HALT_TYPES = new Set([
+  "infrastructure_blocked",
   "recovery_error",
   "script_validator_missing_command",
   "validator_infra_error",
@@ -574,6 +593,20 @@ export interface TranscriptScan {
 const TOP_TOOL_COUNTS_LIMIT = 5;
 const TOP_RE_READS_LIMIT = 3;
 
+function literalShellReadPath(command: unknown): string | null {
+  if (typeof command !== "string") return null;
+  // Only standalone reads of a literal path are attributable without a shell
+  // interpreter. Pipelines, redirects and expansions remain uncounted.
+  if (/[\n\r;$`<>|&*?\\]/.test(command)) return null;
+  const match = command
+    .trim()
+    .match(
+      /^(?:cat\s+|sed\s+-n\s+(?:'[\d,$]+p'|"[\d,$]+p"|[\d,$]+p)\s+)(?:--\s+)?(?:'([^']+)'|"([^"]+)"|([^\s'"]+))$/,
+    );
+  const filePath = match?.[1] ?? match?.[2] ?? match?.[3];
+  return filePath && !filePath.startsWith("-") ? filePath : null;
+}
+
 export function scanTranscriptText(jsonlText: string): TranscriptScan {
   const lineageFinalCost = new Map<string, number>();
   let committedLineageCost = 0;
@@ -653,16 +686,18 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
       }
     }
 
-    if (entry.type === "tool_result" && raw !== null) {
-      const message = asRecord(raw.message);
-      const content = message?.content;
+    if (entry.type === "tool_result") {
+      const message = asRecord(raw?.message);
+      const content = Array.isArray(entry.content)
+        ? entry.content
+        : message?.content;
       if (Array.isArray(content)) {
         for (const rawBlock of content) {
           const block = asRecord(rawBlock);
           if (
             block !== null &&
             block.type === "tool_result" &&
-            block.is_error === true
+            (block.is_error === true || block.isError === true)
           ) {
             toolErrorCount += 1;
           }
@@ -676,12 +711,15 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
         if (block === null || block.type !== "tool_use") continue;
         const name = typeof block.name === "string" ? block.name : "unknown";
         toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
-        if (name === "Read") {
-          const input = asRecord(block.input);
-          const filePath = input?.file_path;
-          if (typeof filePath === "string" && filePath.length > 0) {
-            readCounts.set(filePath, (readCounts.get(filePath) ?? 0) + 1);
-          }
+        const input = asRecord(block.input);
+        const filePath =
+          name === "Read"
+            ? input?.file_path
+            : name === "Bash"
+              ? literalShellReadPath(input?.command)
+              : null;
+        if (typeof filePath === "string" && filePath.length > 0) {
+          readCounts.set(filePath, (readCounts.get(filePath) ?? 0) + 1);
         }
       }
     }
@@ -1131,7 +1169,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     } else if (
       (record.event === "implementer.rotation" ||
         record.event === "validator.rotation") &&
-      fieldStr(record.fields, "reason") !== "context_changed"
+      fieldStr(record.fields, "reason") === "rotation_scheduled"
     ) {
       rotationApplied.set(contextId, (rotationApplied.get(contextId) ?? 0) + 1);
     }
@@ -1344,6 +1382,12 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       contextWindowMax ??= laneState.lastContextWindowMax;
     }
     const peakOccupancyPct =
+      !laneStates.some((laneState) => laneState.engine === "codex") &&
+      !logs.iterations.some(
+        (record) =>
+          fieldStr(record.fields, "engine") === "codex" ||
+          fieldStr(record.fields, "backend") === "codex",
+      ) &&
       peakContextTokens !== null &&
       contextWindowMax !== null &&
       contextWindowMax > 0
@@ -1865,7 +1909,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     // limit produces arithmetically invalid "overruns".
     if (
       context.rotationLimitTokens !== null &&
-      context.contextWindowMax !== null
+      context.peakOccupancyPct !== null
     ) {
       let worst: IterationReport | null = null;
       for (const iteration of context.iterations) {
@@ -2023,7 +2067,9 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   if (
     execution.status === "completed" &&
     execution.haltReason === null &&
-    execution.secondaryHaltReasons.length === 0
+    execution.secondaryHaltReasons.length === 0 &&
+    execution.pendingHaltReason === null &&
+    haltRecoveries.length === 0
   ) {
     positives.push({
       kind: "completed_clean",
@@ -2149,7 +2195,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   const confidence: ConfidenceNote[] = [];
   const occupancyUnmeasurable = contexts.filter(
     (context) =>
-      context.peakContextTokens !== null && context.contextWindowMax === null,
+      context.peakContextTokens !== null && context.peakOccupancyPct === null,
   );
   if (occupancyUnmeasurable.length > 0) {
     confidence.push({
@@ -2158,7 +2204,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
         .map((c) => c.contextId)
         .join(
           ", ",
-        )}: token counters exist but no window max was recorded (codex reports cumulative processed tokens, not occupancy) — treat occupancy and rotation-overrun conclusions for these contexts as inconclusive`,
+        )}: token counters lack a comparable occupancy measurement (Codex reports cumulative processed tokens, even when a window capacity is known) — treat occupancy and rotation-overrun conclusions for these contexts as inconclusive`,
     });
   }
   const validatorUnpriced = validators?.unpricedEventCount ?? 0;
@@ -2423,7 +2469,7 @@ export function renderMarkdown(report: AuditReport): string {
     );
     if (context.peakContextTokens !== null) {
       lines.push(
-        `- Peak context: ${context.peakContextTokens} tokens${context.peakOccupancyPct !== null ? ` (${context.peakOccupancyPct}% of window)` : ""}${context.rotationLimitTokens !== null ? ` · rotation limit ${context.rotationLimitTokens}` : ""}`,
+        `- Peak token counter: ${context.peakContextTokens} tokens${context.peakOccupancyPct !== null ? ` (${context.peakOccupancyPct}% of window)` : " (occupancy unknown)"}${context.rotationLimitTokens !== null ? ` · configured occupancy limit ${context.rotationLimitTokens}` : ""}`,
       );
     }
     if (context.iterations.length > 0) {

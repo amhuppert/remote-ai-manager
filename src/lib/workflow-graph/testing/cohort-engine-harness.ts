@@ -39,6 +39,7 @@ import {
 import {
   createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowIterationResult,
+  type GraphWorkflowIterationOrchestratorDeps,
   type IterationOrchestratorValidationRoundService,
 } from "@/lib/workflow-graph/iteration-orchestrator";
 
@@ -424,6 +425,7 @@ export interface Harness {
 }
 
 export function createHarness(params: {
+  outputCaptureService?: GraphWorkflowIterationOrchestratorDeps["outputCaptureService"];
   execution: GraphWorkflowExecution;
   runContextValidator: (
     input: GraphWorkflowContextValidatorInput,
@@ -536,6 +538,7 @@ export function createHarness(params: {
   );
 
   const orchestrator = createGraphWorkflowIterationOrchestrator({
+    outputCaptureService: params.outputCaptureService,
     executionRepository: repository,
     ...(params.advisoryResponse
       ? { advisoryResponseService: { runAdvisoryResponse } }

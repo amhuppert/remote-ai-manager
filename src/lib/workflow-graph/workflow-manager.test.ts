@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
+import { defaultGitClient } from "@/lib/git/client";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
@@ -49,7 +50,7 @@ import {
   SESSION_LANE_NAME,
 } from "@/lib/workflow-graph/lane-identity";
 import {
-  createGraphWorkflowManager,
+  createGraphWorkflowManager as createProductionGraphWorkflowManager,
   interruptedDefinitionDecision,
   WorkflowDefinitionNotFoundError,
   WorkflowPrerequisitesUnmetError,
@@ -90,6 +91,21 @@ import {
   type GraphExecutionContract,
 } from "./execution-contract-port";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
+import {
+  completeContext,
+  executionFor,
+  P1_JUDGE,
+  P1_WORKER,
+  runPass,
+  workerJudgeDefinition,
+} from "./loop-test-fixtures";
+
+function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
+  return createProductionGraphWorkflowManager({
+    assertSessionBranchReady: async () => {},
+    ...deps,
+  });
+}
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -5661,6 +5677,83 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it.each([
+    "unchanged",
+    "template-only",
+    "secondary",
+    "raised-cap",
+    "satisfied-predicate",
+  ])(
+    "requires a different loop decision before resuming an exhausted loop: %s",
+    async (repair) => {
+      let execution = executionFor(workerJudgeDefinition({}, { maxPasses: 1 }));
+      completeContext(execution, "seed");
+      execution = runPass(execution).execution;
+      completeContext(execution, P1_WORKER);
+      completeContext(execution, P1_JUDGE, { verdict: "fail" });
+      const exhausted = runPass(execution);
+      expect(exhausted.halt?.type).toBe("loop_limit_reached");
+      execution = exhausted.execution;
+      execution.status = "halted";
+      execution.haltReason = exhausted.halt;
+      if (repair === "secondary") {
+        execution.secondaryHaltReasons = [execution.haltReason!];
+        execution.haltReason = {
+          type: "infrastructure_blocked",
+          contextId: "seed",
+          commandName: "ready",
+          attempts: 3,
+          message: "Dependency unavailable",
+        };
+      }
+      const group = execution.workingDefinition.loopGroups?.[0];
+      const loop = execution.loopStates.refine;
+      if (!group || !loop) throw new Error("missing test loop");
+      if (repair === "template-only") group.templateVersion += 1;
+      if (repair === "raised-cap") group.maxPasses = 2;
+      if (repair === "satisfied-predicate") {
+        group.until = {
+          schema: {
+            properties: { verdict: { const: "fail" } },
+            required: ["verdict"],
+          },
+        };
+      }
+      if (repair !== "unchanged" && repair !== "secondary")
+        loop.loopControlRevision += 1;
+      const before = structuredClone(execution);
+      const repository = createRepository(execution);
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+      });
+      if (
+        repair === "unchanged" ||
+        repair === "template-only" ||
+        repair === "secondary"
+      ) {
+        await expect(
+          manager.resume("/repo", "session-1").then((result) => result.status),
+        ).rejects.toThrow(/loop.*refine.*exhausted/i);
+        expect(repository.read()).toEqual(before);
+        return;
+      }
+      const resumed = await manager.resume("/repo", "session-1");
+      expect(resumed.status).toBe("running");
+      expect(resumed.loopStates.refine?.passCount).toBe(1);
+      expect(resumed.contextOutputs[P1_JUDGE]).toEqual(
+        before.contextOutputs[P1_JUDGE],
+      );
+      const settled = runPass(resumed);
+      expect(settled.halt).toBeNull();
+      expect(settled.execution.loopStates.refine?.activation).toBe(
+        repair === "raised-cap" ? "running" : "concluded",
+      );
+    },
+  );
+
   it("bumps loopEpoch on every resume so a prior loop generation is fenced out", async () => {
     const repository = createRepository(
       createWorkflowExecution({
@@ -11008,6 +11101,52 @@ describe("graph workflow manager", () => {
   });
 
   describe("start (shared start path)", () => {
+    it("refuses a missing committed session branch before reserving an execution", async () => {
+      const worktreePath = await mkdtemp(
+        nodePath.join(process.cwd(), ".cc-branch-preflight-"),
+      );
+      try {
+        await defaultGitClient.git(["init", "--quiet"], worktreePath);
+        const repository = createRepository();
+        const manager = createProductionGraphWorkflowManager({
+          executionRepository: repository,
+          loadDefinition: async () => createWorkflowDefinitionRecord(),
+          getSession: async () =>
+            makeStartSession({ worktreePath, branchName: "csm/missing" }),
+          readSessionWorktreeDirtyPaths: async () => [],
+        });
+        await expect(manager.start(startInput())).rejects.toMatchObject({
+          guard: "session_branch_unavailable",
+          message: expect.stringContaining("csm/missing"),
+        });
+        expect(repository.createCalls).toHaveLength(0);
+        expect(await repository.getActive("/repo", "session-1")).toBeNull();
+        await defaultGitClient.git(
+          ["symbolic-ref", "HEAD", "refs/heads/csm/missing"],
+          worktreePath,
+        );
+        await defaultGitClient.git(
+          [
+            "-c",
+            "user.name=Preflight Test",
+            "-c",
+            "user.email=preflight@example.test",
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "Seed branch",
+          ],
+          worktreePath,
+        );
+        const launched = await manager.start(startInput());
+        expect(launched.execution.status).toBe("running");
+        expect(repository.createCalls).toHaveLength(1);
+      } finally {
+        await rm(worktreePath, { recursive: true, force: true });
+      }
+    });
+
     function makeStartSession(
       overrides: Partial<SessionState> = {},
     ): SessionState {

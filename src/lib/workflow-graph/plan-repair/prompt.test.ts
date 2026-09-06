@@ -69,6 +69,19 @@ function makeInput(
   };
 }
 
+it("directs repair toward an appended correction when the halted context has frozen tasks", () => {
+  const input = makeInput();
+  const task = input.execution.taskStates["task-implement-1"];
+  const context = input.execution.contextStates["context-implement"];
+  if (!task || !context) throw new Error("missing repair fixture");
+  task.status = "completed";
+  context.status = "halted";
+  const prompt = buildPlanRepairPrompt(input);
+  expect(prompt).toContain("task-implement-1: frozen");
+  expect(prompt).toContain("context-implement: editable");
+  expect(prompt).toContain("Append a correction with add-task");
+});
+
 /** Two blocking seats refusing the contract, as the engine records the halt. */
 function planDefectHalt(): GraphWorkflowHaltReason {
   return {

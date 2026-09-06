@@ -496,10 +496,12 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         issues: issueSummary,
       });
+      const diagnosis = `${verdict.diagnosis} — repair operations rejected: ${issueSummary}`;
       await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         planningDefect: true,
-        diagnosis: `${verdict.diagnosis} — repair operations rejected: ${issueSummary}`,
+        diagnosis,
+        operationCount: verdict.operations.length,
         conversationId: agentResult.conversationId,
       });
       await populateHaltSummary(
@@ -515,7 +517,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         outcome: "failed",
         planningDefect: true,
-        diagnosis: verdict.diagnosis,
+        diagnosis,
         operationCount: verdict.operations.length,
         resumed: false,
         conversationId: agentResult.conversationId,
@@ -582,10 +584,12 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         issues: issueSummary,
       });
+      const diagnosis = `${verdict.diagnosis} — repair operations no longer match the current plan: ${issueSummary}`;
       await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         planningDefect: true,
-        diagnosis: `${verdict.diagnosis} — repair operations no longer match the current plan: ${issueSummary}`,
+        diagnosis,
+        operationCount: validated.operations.length,
         conversationId: agentResult.conversationId,
       });
       await populateHaltSummary(
@@ -601,7 +605,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         outcome: "failed",
         planningDefect: true,
-        diagnosis: verdict.diagnosis,
+        diagnosis,
         operationCount: validated.operations.length,
         resumed: false,
         conversationId: agentResult.conversationId,
@@ -655,10 +659,12 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         failure,
       });
+      const diagnosis = `${verdict.diagnosis} — apply rejected: ${failure}`;
       await settleRound(input, executionId, round.seq, {
         outcome: "failed",
         planningDefect: true,
-        diagnosis: `${verdict.diagnosis} — apply rejected: ${failure}`,
+        diagnosis,
+        operationCount: validated.operations.length,
         conversationId: agentResult.conversationId,
       });
       await populateHaltSummary(
@@ -674,7 +680,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         attempt,
         outcome: "failed",
         planningDefect: true,
-        diagnosis: verdict.diagnosis,
+        diagnosis,
         operationCount: validated.operations.length,
         resumed: false,
         conversationId: agentResult.conversationId,

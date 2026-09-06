@@ -1,4 +1,5 @@
 import { Codex } from "@openai/codex-sdk";
+import { isAdvisoryCodexDiagnostic } from "./stream-diagnostics";
 import type { CodexOptions, ThreadOptions } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import {
@@ -283,7 +284,12 @@ async function runCodexTurn(
     }
 
     if (event.type === "error") {
-      error = eventMessage(event) ?? "Codex stream failed";
+      const message = eventMessage(event) ?? "Codex stream failed";
+      if (isAdvisoryCodexDiagnostic(message)) {
+        logger.warn("codex-task.stream_advisory", { detail: message });
+        continue;
+      }
+      error = message;
       break;
     }
   }

@@ -2502,6 +2502,34 @@ describe("rotation decision reconciliation", () => {
     return { decisions, unregister: () => unregisterExecutionLogger("exec-1") };
   }
 
+  it("does not emit occupancy rotation for cumulative Codex token usage", async () => {
+    const { decisions, unregister } = captureDecisions();
+    try {
+      const result = await record(
+        makeHarness(),
+        makeExecution({
+          laneStates: laneStatesByContext(
+            makeCodexSessionState({
+              lane: "implementer",
+              threadId: "thread-1",
+            }),
+          ),
+        }),
+        "implementer",
+        { backend: "codex", contextTokens: 750000, contextLimitTokens: 250000 },
+      );
+      expect(result.laneStates["ctx-1"]?.implementer).toBeDefined();
+      expect(
+        result.laneStates["ctx-1"]?.implementer?.metrics.rotateBeforeNextTurn,
+      ).not.toBe(true);
+      expect(
+        decisions.filter((entry) => entry.event === "rotation.scheduled"),
+      ).toHaveLength(0);
+    } finally {
+      unregister();
+    }
+  });
+
   it("suppresses duplicate rotation.scheduled while a rotation is already pending", async () => {
     const { decisions, unregister } = captureDecisions();
     try {

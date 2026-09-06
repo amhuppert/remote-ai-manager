@@ -152,7 +152,16 @@ export function isRouteSourceLanded(
   execution: GraphWorkflowExecution,
   contextId: string,
 ): boolean {
-  const state = execution.contextStates[contextId];
+  const group = execution.workingDefinition.loopGroups?.find(
+    (candidate) => candidate.exitContextId === contextId,
+  );
+  const loop = group ? execution.loopStates[group.id] : undefined;
+  if (loop?.activation === "skipped") return true;
+  const effectiveContextId =
+    loop?.activation === "concluded" ? loop.concludingExitContextId : contextId;
+  const state = effectiveContextId
+    ? execution.contextStates[effectiveContextId]
+    : undefined;
   if (!state) return false;
   if (state.status === "skipped") return true;
   const intent = state.landingIntent;

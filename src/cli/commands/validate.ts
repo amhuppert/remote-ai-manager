@@ -850,40 +850,17 @@ async function runValidateRun(
     );
   }
   const leaseFilePath = validationLeaseFilePath(parsed.data.runId, env, host);
-  if (!host.writePrivateTextFile) {
-    await cancelOwnedRun(
-      resolved.context,
-      parsed.data.runId,
-      parsed.data.lease.token,
-      host,
-    );
-    return validationFailure({
-      exitCode: EXIT_OPERATION_FAILED,
-      message: "cctl cannot persist the private validation lease",
-      detail: "The accepted validation run was cancelled before it started.",
-      code: "validation_lease_store_failed",
-      json: flags.json,
-    });
-  }
   try {
+    if (!host.writePrivateTextFile)
+      throw new Error("private lease storage unavailable");
     await host.writePrivateTextFile(
       leaseFilePath,
       `${parsed.data.lease.token}\n`,
     );
   } catch {
-    await cancelOwnedRun(
-      resolved.context,
-      parsed.data.runId,
-      parsed.data.lease.token,
-      host,
+    host.writeStdout?.(
+      `validation ${parsed.data.runId}: lease held by this command; interrupt it to cancel\n`,
     );
-    return validationFailure({
-      exitCode: EXIT_OPERATION_FAILED,
-      message: "cctl could not persist the private validation lease",
-      detail: "The accepted validation run was cancelled before it started.",
-      code: "validation_lease_store_failed",
-      json: flags.json,
-    });
   }
   try {
     return await pollToTerminal({

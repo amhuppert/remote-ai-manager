@@ -242,6 +242,17 @@ export function validateWorkflowDefinition(
   const ordersByContext = new Map<string, Set<number>>();
 
   for (const context of definition.executionContexts) {
+    if (
+      context.scriptValidator?.purpose === "infrastructure" &&
+      context.placement?.mode !== "full"
+    ) {
+      errors.push({
+        code: "infrastructure-check-requires-full-placement",
+        contextId: context.id,
+        field: "scriptValidator.purpose",
+        message: `Infrastructure readiness context "${context.id}" requires full placement so its commands run before downstream admission`,
+      });
+    }
     if (seenContextIds.has(context.id)) {
       errors.push({
         code: "duplicate-context-id",

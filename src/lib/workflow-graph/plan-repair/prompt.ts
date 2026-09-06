@@ -9,6 +9,11 @@ import { resolveLogicalAuthoredContextId } from "../charter/invariant-scope";
 import { renderCharterPromptSection } from "../charter/render";
 import { acceptanceCriteriaRecordListText } from "../criteria/criterion-records";
 import type { GraphWorkflowValidationIssue } from "../definition-schemas";
+import {
+  classifyContextLifecycle,
+  classifyExecutionEditability,
+  isLiveTaskLocked,
+} from "../lifecycle-classifier";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -205,7 +210,7 @@ function loopOperationVocabulary(loop: PlanRepairLoopContext): string[] {
     "",
     ...(loop.scope === "execution"
       ? [
-          "The budget that refused is the per-execution pass **backstop**, not this loop's own cap. The backstop is a hard constant no operator or repair can raise, so raising `maxPasses` is not available here: the only remedy is to let the running loops conclude, by amending the exit predicate or the body template.",
+          "The budget that refused is the per-execution pass **backstop**, not this loop's own cap. The backstop cannot be raised. Only a justified predicate amendment that lets an existing captured exit conclude can permit resume; otherwise decline repair and abandon the execution. A template edit requires another pass and cannot clear this halt.",
           "",
         ]
       : []),
@@ -214,6 +219,7 @@ function loopOperationVocabulary(loop: PlanRepairLoopContext): string[] {
     "- Template edits address the BODY TEMPLATE's own context and task ids (the ids in the body template below), never a materialized pass instance like `<loop>__p2__<context>`. They reach the NEXT pass through the normal clone; passes that already ran are never edited.",
     "- The body template's MEMBERSHIP — which contexts form the body, which is the entry, which is the exit, and the edges between them — is frozen and has no operation. So is every structural change to the graph. Do not attempt one.",
     "- Raising the cap alone re-runs the same body against the same predicate. If the loop is not converging, say so and decline rather than buying more identical passes.",
+    "- A template edit alone cannot clear an exhausted loop cap. Pair it with an affordable cap raise, or amend an incorrect predicate so the existing captured exit satisfies it. Resume refuses an unchanged loop-limit decision.",
   ];
 }
 
@@ -353,6 +359,30 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
     });
     sections.push(["## Tasks in the tripped context", ...taskLines].join("\n"));
   }
+
+  const editability = classifyExecutionEditability(execution);
+  sections.push(
+    [
+      "## Live-edit targets",
+      ...execution.workingDefinition.executionContexts.map((entry) => {
+        const lifecycle = classifyContextLifecycle(execution, entry.id);
+        const editable =
+          editability.kind === "editable" &&
+          lifecycle !== "frozen" &&
+          (lifecycle === "unstarted" || editability.quiescent);
+        return [
+          `- ${entry.id}: ${editable ? "editable" : "frozen"} (${lifecycle})`,
+          ...execution.workingDefinition.tasks
+            .filter((task) => task.contextId === entry.id)
+            .map(
+              (task) =>
+                `    - ${task.id}: ${!editable || isLiveTaskLocked(execution, task.id) ? "frozen" : "editable"}`,
+            ),
+        ].join("\n");
+      }),
+      "Completed and running tasks cannot be updated, removed, or reordered. Append a correction with add-task to an editable context, omitting order to preserve its completed prefix. A completed context cannot accept tasks. Ensure the context has remaining iteration budget; raise an exhausted context iterationPolicy.maxIterations only with a justified repair. If no admitted operation can make progress, decline repair.",
+    ].join("\n"),
+  );
 
   // Ahead of the round history on purpose: a plan-defect halt arrives already
   // classified — a blocking seat named the contract and said why no task can

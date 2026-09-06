@@ -1339,6 +1339,31 @@ describe("CodexConversationRuntime", () => {
       ).toBe(true);
     });
 
+    it.each([false, true])(
+      "treats a skill-budget warning as advisory while preserving a later failure=%s",
+      async (fails) => {
+        setupThread([
+          threadStarted(),
+          {
+            type: "error",
+            message:
+              "Skill descriptions were shortened to fit the skills context budget.",
+          } satisfies ThreadEvent,
+          agentMessageCompleted("done"),
+          fails ? turnFailed("Model overloaded") : turnCompleted(),
+        ]);
+        const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+        const result = await runtime.sendTurn(makeTurnInput());
+        if (fails)
+          expect(result.failure?.message).toContain("Model overloaded");
+        else expect(result.failure).toBeNull();
+        expect(result.contentBlocks).toContainEqual({
+          type: "text",
+          text: "done",
+        });
+      },
+    );
+
     it("handles top-level error event", async () => {
       setupThread([
         threadStarted(),

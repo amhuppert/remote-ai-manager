@@ -425,7 +425,13 @@ describe("Loop-Until-Done — exhaustion halt and cap-raise resume (R15.3)", () 
       // What makes the cap raise below load-bearing: resuming is not what
       // releases the loop, and an exhausted budget is re-derived from durable
       // state rather than consumed by the halt that reported it.
-      const unrepaired = await run.resume();
+      await expect(run.resume()).rejects.toThrow("resume would halt again");
+      const unrepaired = await run.manager.getActive(
+        run.projectPath,
+        run.sessionName,
+      );
+      expect(unrepaired).not.toBeNull();
+      if (unrepaired === null) return null;
       expect(unrepaired.status).toBe("halted");
       expect(unrepaired.haltReason).toMatchObject({
         type: "loop_limit_reached",

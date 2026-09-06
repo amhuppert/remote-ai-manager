@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
+import { atomicWriteFile } from "@/lib/shared/atomic-write-json";
 import { renderCharterMarkdown } from "./charter/render";
 import type { SharedDocumentStore } from "./shared-document-store";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -50,9 +51,7 @@ export function createWorkflowDocumentMaterializer(
 ): WorkflowDocumentMaterializer {
   const deps: WorkflowDocumentMaterializerDeps = {
     store: depsInput.store,
-    writeFile:
-      depsInput.writeFile ??
-      ((absolutePath, contents) => writeFile(absolutePath, contents, "utf-8")),
+    writeFile: depsInput.writeFile ?? atomicWriteFile,
     ensureDir:
       depsInput.ensureDir ??
       (async (absolutePath) => {

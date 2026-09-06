@@ -475,9 +475,8 @@ export interface RunPassOptions {
 }
 
 /**
- * One scheduling pass: routes settle, then loops settle. Materializations are
- * staged outside the "lock" and installed, exactly as the execution loop drives
- * them.
+ * One scheduling pass settles routes and loops to a fixpoint. Materializations
+ * are staged outside the "lock" and installed before dependent routes settle.
  */
 export function runPass(
   execution: GraphWorkflowExecution,
@@ -523,7 +522,18 @@ export function runPass(
     current = graphWorkflowExecutionSchema.parse(installed.execution);
     materialized.push(request);
   }
-  return { execution: current, materialized, halt: outcome.halt };
+  if (outcome.halt)
+    return { execution: current, materialized, halt: outcome.halt };
+  if (
+    outcome.activatedLoopGroupIds.length > 0 ||
+    outcome.skippedLoopGroupIds.length > 0 ||
+    outcome.concludedLoopGroupIds.length > 0 ||
+    materialized.length > 0
+  ) {
+    const next = runPass(current, options);
+    return { ...next, materialized: [...materialized, ...next.materialized] };
+  }
+  return { execution: current, materialized, halt: null };
 }
 
 export const P1_WORKER = loopInstanceId("refine", 1, "worker");

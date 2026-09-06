@@ -91,6 +91,14 @@ export function isTerminalStatus(status: GraphWorkflowStatus): boolean {
 
 export type ContextLifecycle = "frozen" | "unstarted" | "started";
 
+export function isLiveTaskLocked(
+  execution: GraphWorkflowExecution,
+  taskId: string,
+): boolean {
+  const status = execution.taskStates[taskId]?.status;
+  return status === "completed" || status === "running";
+}
+
 export type ExecutionEditability =
   | { kind: "editable"; quiescent: boolean }
   | {
@@ -194,6 +202,7 @@ export function evaluateGraphWorkflowSessionDelivery(
  * non-resumable today.
  */
 const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
+  infrastructure_blocked: true,
   delivery_gate_failed: true,
   circuit_breaker: true,
   max_iterations: true,

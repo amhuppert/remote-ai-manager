@@ -165,6 +165,7 @@ export async function dispatchTaskRun(
       : {}),
   };
 
+  const startedAt = performance.now();
   let runResult: AgentTaskResult;
   try {
     runResult = await deps.runner.run(taskRequest);
@@ -206,10 +207,19 @@ export async function dispatchTaskRun(
   const usage = buildUsageMetrics(runResult);
 
   if (runResult.timedOut) {
+    const durationMs = Math.round(performance.now() - startedAt);
+    const message =
+      runResult.failure?.message ??
+      runResult.error ??
+      (taskRequest.timeoutMs > 0
+        ? `task timed out after ${taskRequest.timeoutMs}ms`
+        : "task timed out without a configured deadline");
     log.warn("agent_call.task.timed_out", {
       ...baseLogFields,
       outcome: "failed",
       timeoutMs: taskRequest.timeoutMs,
+      durationMs,
+      message,
     });
     return buildFailureResult({
       backend,
@@ -217,8 +227,8 @@ export async function dispatchTaskRun(
       backendRef: runResult.backendRef ?? null,
       artifacts: deps.artifacts,
       failureKind: "timeout",
-      message: `task timed out after ${taskRequest.timeoutMs}ms`,
-      usage,
+      message,
+      usage: { ...usage, durationMs },
       continuationDisposition: runResult.continuationDisposition,
       ...(runResult.transcript !== undefined
         ? { transcript: runResult.transcript }

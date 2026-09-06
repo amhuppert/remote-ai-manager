@@ -45,6 +45,22 @@ function withPlanOutputSchema(
 }
 
 describe("workflow-graph validation", () => {
+  it("refuses readiness checks that would be deferred by a non-full placement", () => {
+    const definition = createWorkflowDefinition();
+    const context = definition.executionContexts[0]!;
+    context.placement = { lane: "session", mode: "readOnly" };
+    context.scriptValidator = {
+      commands: ["figma-ready"],
+      purpose: "infrastructure",
+    };
+    expect(validateWorkflowDefinition(definition).errors).toContainEqual(
+      expect.objectContaining({
+        code: "infrastructure-check-requires-full-placement",
+        contextId: context.id,
+      }),
+    );
+  });
+
   it("accepts a valid execution-context DAG", () => {
     const definition = createWorkflowDefinition();
     const result = validateWorkflowDefinition(definition);

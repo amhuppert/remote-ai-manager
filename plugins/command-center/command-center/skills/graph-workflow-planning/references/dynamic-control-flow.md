@@ -6,7 +6,7 @@ Beyond the static DAG, three primitives let one plan express a shape it could no
 
 All three are deterministic and engine-evaluated. Agents supply judgment ONLY as typed structured output — a captured `outputSchema` payload — and the engine decides. There is no agent-evaluated condition, no agent-declared loop, and no free-form routing instruction. Every routing, expansion, and loop decision is recorded durably and is readable afterwards.
 
-Reach for them in this order: a static DAG when the shape is known; conditional edges when the shape is known but which parts run is not; a loop when the same work may need repeating an unknown number of times; expansion only when the NUMBER of parallel branches is genuinely unknowable until a context runs.
+Reach for them in this order: a static DAG when the shape is known; conditional edges when the shape is known but which parts run is not; a loop for refinement of one artifact; expansion only when the NUMBER of parallel branches is genuinely unknowable until a context runs.
 
 ## Conditional Edges: Guards, Cardinality, and `else`
 
@@ -114,6 +114,7 @@ Shape rules, all refused by `cctl workflow validate`:
 | `loop-entry-not-in-body` / `loop-exit-not-in-body` | `entryContextId` and `exitContextId` must both be members of `bodyContextIds` |
 | `duplicate-loop-group-id` | two groups share an `id` |
 | `reserved-loop-instance-id` / `reserved-loop-group-id` | no authored id may contain `__p<K>__` |
+| `infrastructure-check-in-loop` | move the readiness context before the loop so infrastructure retries spend no refinement passes |
 | `loop-max-passes-exceeds-backstop` | `maxPasses` is mandatory and may not exceed the 25-pass backstop |
 
 Two budgets bound a loop, and exhausting either raises a resumable `loop_limit_reached` halt — there is no "give up and carry on" mode, by decision:
@@ -121,7 +122,11 @@ Two budgets bound a loop, and exhausting either raises a resumable `loop_limit_r
 - the group's own `maxPasses`, which an audited plan-repair round may amend upward;
 - a per-execution **25-pass backstop** across every loop, which nobody — operator or repair agent — can raise.
 
+Budget the whole composition: implementer retries, each specialist's infrastructure attempts and cost, context iterations, and outer loop passes. Put warning-aware discovery/readiness checks before the loop using the [infrastructure script gate](validation-and-staffing.md#infrastructure-readiness). Keep independent review and fail-closed exhaustion; remove repeated infrastructure work before widening semantic budgets.
+
 Because a pass instance is a fresh context, per-context iteration and circuit-breaker budgets reset each pass, and validators and approval gates run on every pass exactly as they would on an ordinary context.
+
+Adjacent loops retain the logical upstream exit → downstream entry dependency. Downstream pass 1 stays blocked until the upstream loop concludes. Verify the deployed resolver before relying on this on an older server; an ordinary immutable-handoff barrier between loops preserves the boundary there. That barrier was verified at resolver level in the Rare Earth audit, not by a counterfactual production launch.
 
 ### Worker + judge bodies
 
@@ -140,7 +145,9 @@ Nothing an agent "remembers" survives a pass boundary: pass K+1 is new contexts 
 - **The exit's `outputSchema`** — the payload `until` is evaluated against.
 - **The Loop History section** — pass K+1's ENTRY prompt (only the entry) receives the prior passes' per-context captured outputs with each pass's verdict and outcome. It is bounded: the most recent 3 passes, 2 KB per context capture, 16 KB per section.
 
-So anything the next pass must know has to be IN a body context's captured output. The convention is an explicit **handoff field**: one string property carrying the narrative, alongside the machine-checkable fields.
+Put the next pass's actionable contract in captured output: stable issue IDs, the reviewed artifact revision (commit or content digest), and complete findings or an immutable findings artifact reference. A read-only judge returns findings for the engine to persist; an artifact-writing producer needs explicit write ownership. The engine captures first, validates that exact payload with the configured cohort, and publishes it with the reviewed candidate identity. A passing task summary cannot compensate for missing capture content.
+
+Use a **handoff field** for a concise index and next action. Large findings belong in a durable artifact; keep its path, revision, and issue IDs in the payload. Before remediation, compare the referenced revision with the current input and retire findings that no longer apply.
 
 Worked example — the `refine` loop above, both body contexts:
 
@@ -178,7 +185,7 @@ Worked example — the `refine` loop above, both body contexts:
     "handoff": {
       "type": "string",
       "maxLength": 1200,
-      "description": "For changes-requested: exactly what must change, specific enough to act on without re-reviewing"
+      "description": "Index of complete findings, issue IDs, reviewed revision, and next action; use an immutable artifact reference when detail exceeds this field"
     }
   },
   "required": ["verdict", "handoff"],
@@ -191,7 +198,7 @@ With `until: { "schema": { "properties": { "verdict": { "const": "approved" } },
 Rules of thumb:
 
 - Put a handoff field on every body context whose work the next pass builds on — for worker+judge, on both: the worker says what it tried, the judge says what must change.
-- Keep the narrative in ONE prose field. Scattering it across several free-form fields truncates unpredictably when a capture exceeds the per-context bound; one field truncates predictably.
+- Keep the handoff within the history budget. A length limit is a capacity constraint: if complete findings cannot fit, carry an immutable artifact reference and issue IDs; never rely on a cut-off instruction.
 - Never put the verdict in the handoff field. The verdict is what `until` reads and belongs in its own machine-checkable property.
 - Keep payloads small and bound them (`maxLength`). A body context producing a large artifact should write it to the worktree or register it with `cctl workflow shared-doc upsert`, and carry only its path in the handoff.
 
@@ -246,6 +253,7 @@ A pure fan-out with no convergence point is not a plan, it is a leak. Author **G
 - Declare the convergence context (the filter, the judge, the integrator) yourself, in `executionContexts`, unstarted and downstream of the generator. A generated context may only rejoin a context the planner already declared and that has not started.
 - Write the generator's task instructions to carry the exact payload shape, including BOTH edges per generated context: `generator → candidate` so it becomes eligible, and `candidate → filter` so the fan-out converges. The engine refuses a candidate nothing in the batch reaches (`expansion-context-unreachable`), but it does NOT require the onward edge — a candidate with no edge into the filter runs and is then simply never read. The instruction has to carry that half.
 - Write the filter's acceptance criteria against a set whose size is unknown — "considers every candidate that ran and names one winner", never "compares the three candidates".
+- Place the generator outside active loop bodies. Declare each generated unit's write ownership and connect every unit to the static integration consumer; treat parallel speedup as a proposal until measured.
 - One expansion is one proposition. Instruct the generator to fan out in a single batch, not to append candidates as it thinks of them.
 
 The generated children inherit the invoker's PROTECTED config — context validator, agent-validation command access, human approval gate, ask-user-questions, collaboration, plan repair, and mutability — and cannot override any of it, so an expansion can never weaken a child's gates. They may tune `implementer`, `iterationPolicy`, `circuitBreaker`, and `scriptValidator`, optionally seeded from an existing context via `configFromContextId`. An `implementer` override is a complete profile-bearing assignment, and a script override may add command names but may not remove any inherited command. Expansion authority itself always resolves OFF on a generated child: the fan-out is one level deep by construction. Scoped charter invariants carry over by logical identity: a generated child inherits the invariants scoped to its adding context.

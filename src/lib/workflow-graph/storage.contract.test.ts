@@ -161,7 +161,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           },
         ],
       },
-      scriptValidator: { commands: ["typecheck", "test"] },
+      scriptValidator: {
+        commands: ["typecheck", "test"],
+        purpose: "infrastructure",
+      },
       iterationPolicy: {
         maxIterations: 9,
         continuity: { enabled: false, contextLimitTokens: 80_000 },
@@ -354,7 +357,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
             },
           ],
         },
-        scriptValidator: { commands: ["typecheck"] },
+        scriptValidator: { commands: ["typecheck"], purpose: "infrastructure" },
         mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
         circuitBreaker: { consecutiveFailureThreshold: 5 },
         iterationPolicy: {

@@ -33,6 +33,9 @@ A lane is one git worktree on one branch, and several contexts may share it. Tha
 
 `readOnly` requires `outputSchema`: a reader produces no commit and no join, so captured structured output is the only thing it can deliver (`placement-readonly-missing-output-schema`).
 
+Read-only placement grants write authority, not snapshot isolation. Structured handoff readers reserve their lane against engine-managed writers while active; their validation identity covers the whole input tree. External processes can still change files, so use immutable revisioned artifacts when they participate. Order producer → reader explicitly when the reader must assess that producer's result.
+
+
 ## Lane visibility and fork points
 
 Lane visibility follows committed branch ancestry, not dependency arrows alone:

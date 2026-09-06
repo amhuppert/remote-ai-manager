@@ -180,6 +180,14 @@ export function formatGraphWorkflowHaltReason(
   options: FormatHaltReasonOptions = {},
 ): FormattedHaltReason {
   switch (reason.type) {
+    case "infrastructure_blocked":
+      return {
+        headline: `Infrastructure check ${reason.commandName} blocked after ${reason.attempts} attempts`,
+        detail: <p>{reason.message}</p>,
+        action:
+          "Restore the dependency or correct the readiness command, then resume to check readiness again.",
+        tone: "attention",
+      };
     case "delivery_gate_failed": {
       const actionHref =
         reason.spec !== undefined

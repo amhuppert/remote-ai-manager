@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
+import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { assertLoopFence } from "./loop-fence";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -82,6 +83,7 @@ import { candidateScopeForPlacement } from "@/lib/workflow-graph/validation-diff
 import type { CandidateScope } from "@/lib/git/diff";
 import type {
   GraphWorkflowAdvisoryResponsePhase,
+  GraphWorkflowContextOutput,
   GraphWorkflowExecutionContextState,
   GraphWorkflowValidationAdvisory,
   GraphWorkflowValidationCandidate,
@@ -1416,6 +1418,30 @@ export function createGraphWorkflowIterationOrchestrator(
     const failureClass = gate.details?.failureClass;
 
     if (outcome.kind === "infra_error") {
+      if (outcome.readinessBlock) {
+        const haltReason: GraphWorkflowHaltReason = {
+          type: "infrastructure_blocked",
+          contextId: input.contextId,
+          ...outcome.readinessBlock,
+          message: outcome.message,
+        };
+        journal.leaveOpen = true;
+        execLogger?.validation(
+          input.contextId,
+          "script_validation.infrastructure_blocked",
+          { ...outcome.readinessBlock, message: outcome.message },
+        );
+        logger.warn("graph-workflow.script_validation.infrastructure_blocked", {
+          executionId: execution.id,
+          contextId: input.contextId,
+          ...outcome.readinessBlock,
+          detail: outcome.message,
+        });
+        await onHalt(haltReason);
+        throw new IterationHaltedError(haltReason, undefined, {
+          failureAlreadyCounted: true,
+        });
+      }
       if (outcome.reason === "unknown_command") {
         execLogger?.validation(
           input.contextId,
@@ -1647,6 +1673,7 @@ export function createGraphWorkflowIterationOrchestrator(
   async function observeCandidate(
     input: GraphWorkflowIterationInput,
     execution: GraphWorkflowExecution,
+    outputCandidate?: GraphWorkflowContextOutput,
   ): Promise<
     | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
     | { kind: "unavailable"; reason: string }
@@ -1669,7 +1696,9 @@ export function createGraphWorkflowIterationOrchestrator(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         contextId: input.contextId,
-        candidateScope: candidateScopeForPlacement(context.placement),
+        candidateScope: candidateScopeForPlacement(context.placement, {
+          stableRead: context.outputSchema !== undefined,
+        }),
         ...(input.executionTarget
           ? { executionTarget: input.executionTarget }
           : {}),
@@ -1686,6 +1715,13 @@ export function createGraphWorkflowIterationOrchestrator(
         tree,
         taskStates: execution.taskStates,
         contextId: input.contextId,
+        outputSchema: context.outputSchema,
+        outputValue: (
+          outputCandidate ??
+          execution.contextStates[input.contextId]?.validationRound
+            ?.outputCandidate ??
+          execution.contextOutputs[input.contextId]
+        )?.value,
       }),
     };
   }
@@ -1714,7 +1750,9 @@ export function createGraphWorkflowIterationOrchestrator(
     );
     if (context === undefined) return { kind: "whole_tree" };
     if (!context.humanApprovalGate.enabled) return { kind: "whole_tree" };
-    const scope = candidateScopeForPlacement(context.placement);
+    const scope = candidateScopeForPlacement(context.placement, {
+      stableRead: context.outputSchema !== undefined,
+    });
     if (scope.mode !== "owned") return { kind: "whole_tree" };
 
     // Past this point the context IS enveloped, so every remaining path fails
@@ -1761,13 +1799,18 @@ export function createGraphWorkflowIterationOrchestrator(
   async function observeCandidateForFreeze(
     input: GraphWorkflowIterationInput,
     execution: GraphWorkflowExecution,
+    outputCandidate?: GraphWorkflowContextOutput,
   ): Promise<
     | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
     | { kind: "unavailable"; reason: string; attempts: number }
   > {
     let last = "";
     for (let attempt = 1; attempt <= CANDIDATE_RESOLVE_ATTEMPTS; attempt += 1) {
-      const observed = await observeCandidate(input, execution);
+      const observed = await observeCandidate(
+        input,
+        execution,
+        outputCandidate,
+      );
       if (observed.kind === "resolved") return observed;
       last = observed.reason;
     }
@@ -2562,12 +2605,34 @@ export function createGraphWorkflowIterationOrchestrator(
     });
   }
 
+  function contextReviewPlan(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ) {
+    const context = getContextDefinition(execution, contextId);
+    const recertification =
+      execution.contextStates[contextId]?.advisoryResponse?.phase ===
+      "recertifying";
+    const runnable = selectRunnableCohortAssignments(context.contextValidator);
+    const cohortAssignments = recertification
+      ? selectRecertificationAssignments(runnable)
+      : runnable;
+    return {
+      recertification,
+      cohortAssignments,
+      roundApplies:
+        context.scriptValidator.commands.length > 0 ||
+        cohortAssignments.length > 0,
+    };
+  }
+
   async function processContextCompletionValidation(params: {
     input: GraphWorkflowIterationInput;
     execLogger: ReturnType<typeof getExecutionLogger>;
     /** Bookkeeping id for an iteration result this stage may short-circuit. */
     conversationId: string;
     onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
+    outputCandidate?: GraphWorkflowContextOutput;
   }): Promise<GraphWorkflowIterationResult | null> {
     const { input, execLogger, conversationId, onHalt } = params;
     const preContextValidationExecution = await loadCurrentExecution(
@@ -2598,34 +2663,22 @@ export function createGraphWorkflowIterationOrchestrator(
     if (advisoryPhase?.phase === "awaiting_response") {
       return null;
     }
-    const recertification = advisoryPhase?.phase === "recertifying";
-
-    const contextDefinition = getContextDefinition(
-      preContextValidationExecution,
-      input.contextId,
-    );
     // A re-certification asks only whether the changed candidate is still
     // certified, so it runs the script gate and the blocking lanes; the advisory
     // lanes are filtered out of the cohort BEFORE the roster is frozen, which is
     // what makes them structurally absent from the round rather than merely
     // ignored inside it (R8.2).
-    const cohortAssignments = recertification
-      ? selectRecertificationAssignments(
-          selectRunnableCohortAssignments(contextDefinition.contextValidator),
-        )
-      : selectRunnableCohortAssignments(contextDefinition.contextValidator);
-    // A round exists to freeze what someone will review. With no script
-    // validator and an empty cohort there is nothing to review with, so the
-    // context takes the unchanged "validation is not enabled" path.
-    const roundApplies =
-      contextDefinition.scriptValidator.commands.length > 0 ||
-      cohortAssignments.length > 0;
+    const { recertification, cohortAssignments, roundApplies } =
+      contextReviewPlan(preContextValidationExecution, input.contextId);
 
     if (!roundApplies) {
       // Nothing can re-certify an advisory-only cohort with no script gate, so
       // the phase is retired here rather than left standing over a context that
       // is about to finish.
-      if (recertification) await writeAdvisoryResponsePhase(input, null);
+      if (recertification) {
+        await writeAdvisoryResponsePhase(input, null);
+        return null;
+      }
       return runContextValidationStages({
         input,
         execLogger,
@@ -2634,6 +2687,7 @@ export function createGraphWorkflowIterationOrchestrator(
         preContextValidationExecution,
         round: null,
         journal: { outcome: null },
+        recertification,
       });
     }
 
@@ -2643,6 +2697,7 @@ export function createGraphWorkflowIterationOrchestrator(
     const frozenTree = await observeCandidateForFreeze(
       input,
       preContextValidationExecution,
+      params.outputCandidate,
     );
     if (frozenTree.kind === "unavailable") {
       const message = `Could not read the candidate tree for execution context "${input.contextId}" after ${frozenTree.attempts} attempts: ${frozenTree.reason}`;
@@ -2714,6 +2769,7 @@ export function createGraphWorkflowIterationOrchestrator(
           candidate: frozenTree.candidate,
           assignments: cohortAssignments,
           startedAt: getNow(deps),
+          outputCandidate: params.outputCandidate,
         });
     const retained = resumable
       ? carriedForwardCohortLanes(
@@ -3099,7 +3155,9 @@ export function createGraphWorkflowIterationOrchestrator(
         roundSeq: round?.seq ?? null,
       };
       await onHalt(haltReason);
-      throw new IterationHaltedError(haltReason);
+      throw new IterationHaltedError(haltReason, undefined, {
+        failureAlreadyCounted: true,
+      });
     }
 
     // At least one validator lane ended its turn with a pending question and no
@@ -3384,6 +3442,8 @@ export function createGraphWorkflowIterationOrchestrator(
         });
       }
 
+      journal.outcome = "failed";
+      logRoundConcluded(input, execLogger, round, "failed");
       const contextDef =
         executionWithValidationEvent.workingDefinition.executionContexts.find(
           (entry) => entry.id === input.contextId,
@@ -3406,10 +3466,11 @@ export function createGraphWorkflowIterationOrchestrator(
           summary: null,
         };
         await onHalt(haltReason);
-        throw new IterationHaltedError(haltReason);
+        throw new IterationHaltedError(haltReason, undefined, {
+          failureAlreadyCounted: true,
+        });
       }
-      journal.outcome = "failed";
-      logRoundConcluded(input, execLogger, round, "failed");
+
       return null;
     }
 
@@ -3448,12 +3509,9 @@ export function createGraphWorkflowIterationOrchestrator(
           });
           return { execution: latest, ...delivery };
         }
-        // A schema-declaring context is NOT done when its validator passes — it
-        // still owes its declared output, and the validator re-runs ahead of
-        // every capture retry. Clearing the counter here would wipe each
-        // capture failure before the breaker could see it, so a context that
-        // can never satisfy its own contract would read 1,1,1… forever instead
-        // of tripping at the threshold (R3, D4).
+        // A structured handoff clears failure accounting only when its reviewed
+        // candidate is published. Capture acceptance alone grants no credit
+        // toward semantic convergence (R3, D4).
         if (!contextOwesOutput(reset, input.contextId)) {
           contextState.consecutiveFailureCount = 0;
         }
@@ -3834,8 +3892,8 @@ export function createGraphWorkflowIterationOrchestrator(
    * dispatches one format turn on the context's lane conversation and lets the
    * canonical structured-output gate decide:
    *
-   *  - accepted → persist into `contextOutputs` and return null, so the caller
-   *    falls through to the normal finalize path and the context completes;
+   *  - accepted → stage a candidate for semantic review; the exit evaluator
+   *    publishes exactly that candidate after all configured checks pass;
    *  - refused  → record an `output_schema` validation failure, increment the
    *    SAME consecutive-failure accounting the agent validator feeds, consume an
    *    iteration slot, and either trip the breaker or return a keep-going result
@@ -3908,7 +3966,11 @@ export function createGraphWorkflowIterationOrchestrator(
     /** Sampled by the caller before this iteration's validator turn. */
     previousRejection: GraphWorkflowOutputCaptureRejection | undefined;
     onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
-  }): Promise<GraphWorkflowIterationResult | null> {
+  }): Promise<
+    | GraphWorkflowIterationResult
+    | { outputCandidate: GraphWorkflowContextOutput }
+    | null
+  > {
     const {
       input,
       execLogger,
@@ -3936,10 +3998,17 @@ export function createGraphWorkflowIterationOrchestrator(
     if (contextDef === undefined || outputSchema === undefined) {
       return null;
     }
-    // Exactly one output per context: a captured payload is never re-derived,
-    // so a re-entered validation-only iteration cannot spend another turn.
     if (execution.contextOutputs[input.contextId] !== undefined) {
       return null;
+    }
+    const state = execution.contextStates[input.contextId];
+    const previousRound = state?.validationRound;
+    if (
+      previousRound?.outputCandidate &&
+      (isValidationRoundOpen(previousRound) ||
+        state?.advisoryResponse?.phase === "awaiting_response")
+    ) {
+      return { outputCandidate: previousRound.outputCandidate };
     }
     if (getIncompleteTasks(execution, input.contextId).length > 0) {
       return null;
@@ -3972,38 +4041,12 @@ export function createGraphWorkflowIterationOrchestrator(
 
     if (outcome.kind === "captured") {
       const capturedAt = getNow(deps);
-      await deps.executionRepository.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (latest) => {
-          const next = cloneExecution(latest);
-          const contextState = next.contextStates[input.contextId];
-          if (!contextState) {
-            throw new Error(
-              `Execution context "${input.contextId}" does not exist in runtime state`,
-            );
-          }
-          // An accepted capture ends the failure streak. The context-validator
-          // pass could not clear it (the context still owed this output), so
-          // without this a context that recovered from a rejection would carry
-          // those failures into any later work — a rejected human approval
-          // reopens the context, and it would restart part-way to a trip.
-          contextState.consecutiveFailureCount = 0;
-          next.contextOutputs = {
-            ...next.contextOutputs,
-            [input.contextId]: {
-              value: outcome.value,
-              capturedAt,
-              // A capture always happens inside an iteration; the floor keeps
-              // the persisted record valid for a context whose first turn was
-              // a re-entered validation-only pass (no seed increment).
-              iteration: Math.max(1, contextState.iterationCount),
-              parse: outcome.parse,
-            },
-          };
-          return next;
-        },
-      );
+      const outputCandidate: GraphWorkflowContextOutput = {
+        value: outcome.value,
+        capturedAt,
+        iteration: Math.max(1, state?.iterationCount ?? 0),
+        parse: outcome.parse,
+      };
       execLogger?.iteration(input.contextId, "output_capture.captured", {
         conversationId: captureConversationId,
         source: outcome.parse.source,
@@ -4014,7 +4057,7 @@ export function createGraphWorkflowIterationOrchestrator(
         contextId: input.contextId,
         source: outcome.parse.source,
       });
-      return null;
+      return { outputCandidate };
     }
 
     execLogger?.validation(input.contextId, "output_capture.rejected", {
@@ -4115,6 +4158,87 @@ export function createGraphWorkflowIterationOrchestrator(
       // evaluator and retries the capture.
       shouldContinueInContext: true,
     };
+  }
+
+  async function processContextExit(
+    params: Parameters<typeof processContextOutputCapture>[0],
+  ): Promise<GraphWorkflowIterationResult | null> {
+    const capture = await processContextOutputCapture(params);
+    if (capture !== null && !("outputCandidate" in capture)) return capture;
+    const outputCandidate = capture?.outputCandidate;
+    const beforeReview = await loadCurrentExecution(
+      params.input.projectPath,
+      params.input.sessionName,
+    );
+    const reviewRequired = contextReviewPlan(
+      beforeReview,
+      params.input.contextId,
+    ).roundApplies;
+    const validation = await processContextCompletionValidation({
+      ...params,
+      outputCandidate,
+    });
+    if (validation !== null) return validation;
+    const advisory = await processAdvisoryResponse(params);
+    if (advisory !== null) return advisory;
+    if (outputCandidate === undefined) return null;
+
+    const { input, execLogger } = params;
+    let promoted = false;
+    const execution = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        if (
+          latest.status !== "running" ||
+          latest.pendingHaltReason !== null ||
+          getIncompleteTasks(latest, input.contextId).length > 0
+        )
+          return latest;
+        const context = getContextDefinition(latest, input.contextId);
+        const state = latest.contextStates[input.contextId];
+        if (!state || state.advisoryResponse) return latest;
+        const round = reviewRequired ? state.validationRound : null;
+        if (reviewRequired && !round) return latest;
+        if (
+          round &&
+          (round.phase !== "concluded" || round.outcome !== "passed")
+        )
+          return latest;
+        if (round) {
+          const observed = freezeValidationCandidate({
+            tree: round.candidate,
+            taskStates: latest.taskStates,
+            contextId: input.contextId,
+            outputSchema: context.outputSchema,
+            outputValue: outputCandidate.value,
+          });
+          if (!candidateIdentityMatches(round.candidate, observed))
+            return latest;
+        }
+        const next = cloneExecution(latest);
+        next.contextOutputs[input.contextId] = {
+          ...outputCandidate,
+          ...(round ? { reviewedCandidate: round.candidate } : {}),
+        };
+        next.contextStates[input.contextId]!.consecutiveFailureCount = 0;
+        promoted = true;
+        return next;
+      },
+    );
+    if (promoted) {
+      const reviewedCandidate =
+        execution.contextOutputs[input.contextId]?.reviewedCandidate;
+      execLogger?.iteration(input.contextId, "output_capture.published", {
+        reviewedCandidate,
+      });
+      logger.info("graph-workflow.output_capture.published", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        reviewedCandidate,
+      });
+    }
+    return null;
   }
 
   async function finalizeIterationResult(params: {
@@ -4476,35 +4600,14 @@ export function createGraphWorkflowIterationOrchestrator(
         initialExecution,
         input.contextId,
       );
-      parkedResult = await processContextCompletionValidation({
+      parkedResult = await processContextExit({
         input,
         execLogger,
         conversationId,
+        laneConversationId: undefined,
+        previousRejection,
         onHalt: signalHaltOnly,
       });
-      if (parkedResult === null) {
-        // Between validation and capture: the phase decides whether this
-        // context is certified at all, and a context that still owes a
-        // re-certification must not be asked for its declared output.
-        parkedResult = await processAdvisoryResponse({
-          input,
-          execLogger,
-          conversationId,
-          laneConversationId: undefined,
-        });
-      }
-      if (parkedResult === null) {
-        parkedResult = await processContextOutputCapture({
-          input,
-          execLogger,
-          conversationId,
-          // The validation-only path never resolved an implementer lane, so it
-          // has no lane conversation to offer — capture resolves its own.
-          laneConversationId: undefined,
-          previousRejection,
-          onHalt: signalHaltOnly,
-        });
-      }
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {
         throw error;
@@ -5291,10 +5394,14 @@ export function createGraphWorkflowIterationOrchestrator(
         turnNumber: 0,
         contextTokens: agentResult.contextTokens,
         contextWindowMax: agentResult.contextWindowMax,
-        // Without a window max, contextTokens is a backend-specific counter
-        // (codex: cumulative processed tokens) and MUST NOT be read as window
-        // occupancy downstream.
-        occupancyMeasurable: agentResult.contextWindowMax !== null,
+        // A configured window size does not make cumulative processed tokens
+        // an occupancy measurement; the backend declares measurement semantics.
+        occupancyMeasurable:
+          getBackendDescriptor(context.implementer.agent.backend).conversation
+            ?.capabilities.contextWindowMetrics === true &&
+          agentResult.contextTokens !== null &&
+          agentResult.contextWindowMax !== null,
+        backend: context.implementer.agent.backend,
         cumulativeCostUsd: initialTurnBilling.cumulativeCostUsd,
         costUsdDelta: initialTurnBilling.costUsdDelta,
       });
@@ -5449,7 +5556,12 @@ export function createGraphWorkflowIterationOrchestrator(
             turnNumber: attempt,
             contextTokens: agentResult.contextTokens,
             contextWindowMax: agentResult.contextWindowMax,
-            occupancyMeasurable: agentResult.contextWindowMax !== null,
+            occupancyMeasurable:
+              getBackendDescriptor(context.implementer.agent.backend)
+                .conversation?.capabilities.contextWindowMetrics === true &&
+              agentResult.contextTokens !== null &&
+              agentResult.contextWindowMax !== null,
+            backend: context.implementer.agent.backend,
             cumulativeCostUsd: followUpTurnBilling.cumulativeCostUsd,
             costUsdDelta: followUpTurnBilling.costUsdDelta,
           },
@@ -5479,31 +5591,7 @@ export function createGraphWorkflowIterationOrchestrator(
       }
 
       if (!stoppedForCollaboration && parkedResult === null) {
-        // The validator can also park (it asked a question); its parked result
-        // flows through the same short-circuit as the implementer park below.
-        parkedResult = await processContextCompletionValidation({
-          input,
-          execLogger,
-          conversationId: conversation.id,
-          onHalt: haltIteration,
-        });
-      }
-
-      if (!stoppedForCollaboration && parkedResult === null) {
-        // See the validation-only path: the advisory-response phase stands
-        // between a passing round and the context being finished with.
-        parkedResult = await processAdvisoryResponse({
-          input,
-          execLogger,
-          conversationId: conversation.id,
-          laneConversationId: conversation.id,
-        });
-      }
-
-      if (!stoppedForCollaboration && parkedResult === null) {
-        // Last exit gate: a schema-declaring context whose tasks and validators
-        // are done still needs its validated output before it may complete.
-        parkedResult = await processContextOutputCapture({
+        parkedResult = await processContextExit({
           input,
           execLogger,
           conversationId: conversation.id,

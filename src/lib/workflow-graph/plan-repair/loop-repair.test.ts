@@ -112,7 +112,7 @@ describe("the loop_limit_reached trigger (R12.1)", () => {
     expect(verdict.policy.maxAttemptsPerContext).toBe(2);
   });
 
-  it("fires on a backstop halt too — a predicate or template amendment is still a remedy", () => {
+  it("fires on a backstop halt where a justified predicate amendment can conclude", () => {
     const verdict = evaluatePlanRepairTrigger(
       haltedLoopExecution(loopHalt({ scope: "execution", totalPassCount: 25 })),
     );
@@ -266,7 +266,7 @@ describe("the loop-control op allowlist (R12.1)", () => {
     if (result.ok) return;
     expect(result.issues[0]?.message).toMatch(/backstop/i);
 
-    // The other two remain the remedy for a backstop halt.
+    // Predicate amendments remain admitted on a backstop halt.
     expect(
       validatePlanRepairOperations(
         [

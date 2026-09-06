@@ -1,0 +1,308 @@
+{
+  "provenance": {
+    "definitionId": "092bf523-7342-4c59-8e40-41bdbfb68776",
+    "revision": 5,
+    "executionId": "c19a6c01-2d5f-46f3-9dee-254a55a90b5f"
+  },
+  "executionContexts": [
+    {
+      "id": "explore-design",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "mode": {
+            "enum": ["normal", "screen-deck"],
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": ["mode", "slug", "handoff"],
+        "type": "object"
+      },
+      "routing": {
+        "cardinality": "exactlyOne"
+      }
+    },
+    {
+      "id": "screen-deck-report",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "recommendation": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "screenCount": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": ["screenCount", "recommendation"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "decompose-design",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "unitCandidates": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": ["unitCandidates", "handoff"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "review-decomposition",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "verdict": {
+            "enum": ["approved", "changes-requested"],
+            "type": "string"
+          }
+        },
+        "required": ["verdict", "handoff"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "anchor-worklist",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "unitCount": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": ["unitCount", "handoff"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "review-worklist",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "verdict": {
+            "enum": ["approved", "changes-requested"],
+            "type": "string"
+          }
+        },
+        "required": ["verdict", "handoff"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "implement-unit",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "status": {
+            "enum": ["verified", "blocked"],
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 120,
+            "type": "string"
+          }
+        },
+        "required": ["unit", "status", "handoff"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "review-unit",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handoff": {
+            "maxLength": 1200,
+            "type": "string"
+          },
+          "hasCodeConnectCandidates": {
+            "type": "boolean"
+          },
+          "verdict": {
+            "enum": [
+              "changes-requested",
+              "unit-approved-continue",
+              "all-units-approved"
+            ],
+            "type": "string"
+          }
+        },
+        "required": ["verdict", "hasCodeConnectCandidates", "handoff"],
+        "type": "object"
+      }
+    },
+    {
+      "id": "author-code-connect"
+    },
+    {
+      "id": "final-verification"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-explore-to-decompose",
+      "sourceContextId": "explore-design",
+      "targetContextId": "decompose-design",
+      "when": {
+        "schema": {
+          "properties": {
+            "mode": {
+              "const": "normal"
+            }
+          },
+          "required": ["mode"]
+        }
+      }
+    },
+    {
+      "id": "edge-explore-to-deck-report",
+      "sourceContextId": "explore-design",
+      "targetContextId": "screen-deck-report",
+      "when": {
+        "else": true
+      }
+    },
+    {
+      "id": "edge-decompose-to-judge",
+      "sourceContextId": "decompose-design",
+      "targetContextId": "review-decomposition"
+    },
+    {
+      "id": "edge-decomposition-to-anchor",
+      "sourceContextId": "review-decomposition",
+      "targetContextId": "anchor-worklist"
+    },
+    {
+      "id": "edge-anchor-to-judge",
+      "sourceContextId": "anchor-worklist",
+      "targetContextId": "review-worklist"
+    },
+    {
+      "id": "edge-worklist-to-implement",
+      "sourceContextId": "review-worklist",
+      "targetContextId": "implement-unit"
+    },
+    {
+      "id": "edge-implement-to-judge",
+      "sourceContextId": "implement-unit",
+      "targetContextId": "review-unit"
+    },
+    {
+      "id": "edge-units-to-code-connect",
+      "sourceContextId": "review-unit",
+      "targetContextId": "author-code-connect",
+      "when": {
+        "schema": {
+          "properties": {
+            "hasCodeConnectCandidates": {
+              "const": true
+            }
+          },
+          "required": ["hasCodeConnectCandidates"]
+        }
+      }
+    },
+    {
+      "id": "edge-units-to-final",
+      "sourceContextId": "review-unit",
+      "targetContextId": "final-verification"
+    },
+    {
+      "id": "edge-code-connect-to-final",
+      "sourceContextId": "author-code-connect",
+      "targetContextId": "final-verification"
+    }
+  ],
+  "loopGroups": [
+    {
+      "id": "decomposition-loop",
+      "title": "Decompose until the judge approves",
+      "bodyContextIds": ["decompose-design", "review-decomposition"],
+      "entryContextId": "decompose-design",
+      "exitContextId": "review-decomposition",
+      "until": {
+        "schema": {
+          "properties": {
+            "verdict": {
+              "const": "approved"
+            }
+          },
+          "required": ["verdict"]
+        }
+      },
+      "maxPasses": 3
+    },
+    {
+      "id": "anchor-loop",
+      "title": "Anchor until the judge approves the worklist",
+      "bodyContextIds": ["anchor-worklist", "review-worklist"],
+      "entryContextId": "anchor-worklist",
+      "exitContextId": "review-worklist",
+      "until": {
+        "schema": {
+          "properties": {
+            "verdict": {
+              "const": "approved"
+            }
+          },
+          "required": ["verdict"]
+        }
+      },
+      "maxPasses": 3
+    },
+    {
+      "id": "unit-loop",
+      "title": "Implement and verify units until the judge records all-units-approved",
+      "bodyContextIds": ["implement-unit", "review-unit"],
+      "entryContextId": "implement-unit",
+      "exitContextId": "review-unit",
+      "until": {
+        "schema": {
+          "properties": {
+            "verdict": {
+              "const": "all-units-approved"
+            }
+          },
+          "required": ["verdict"]
+        }
+      },
+      "maxPasses": 15
+    }
+  ]
+}

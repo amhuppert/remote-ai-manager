@@ -312,6 +312,27 @@ describe("dispatchTaskRun", () => {
     expect(capturedInput.value?.executionProfile).toBe("isolated-one-shot");
   });
 
+  it("preserves an inactivity timeout diagnosis when the configured deadline is disabled", async () => {
+    const { runner } = makeStubRunner("codex", {
+      result: {
+        error: "Codex stalled with no activity for 1486000ms",
+        timedOut: true,
+        text: null,
+      },
+    });
+    const result = await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "go", timeoutMs: 0 },
+      { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.error.message).toBe(
+        "Codex stalled with no activity for 1486000ms",
+      );
+      expect(result.outcome.error.failureKind).toBe("timeout");
+    }
+  });
+
   it("normalizes a timeout result to the timeout failure kind", async () => {
     const { runner } = makeStubRunner("codex", {
       result: { error: null, timedOut: true, text: null },

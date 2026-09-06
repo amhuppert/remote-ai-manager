@@ -419,6 +419,14 @@ function haltReasonsEqual(
   }
 
   switch (previous.type) {
+    case "infrastructure_blocked":
+      return (
+        next.type === "infrastructure_blocked" &&
+        previous.contextId === next.contextId &&
+        previous.commandName === next.commandName &&
+        previous.attempts === next.attempts &&
+        previous.message === next.message
+      );
     case "delivery_gate_failed":
       // Compare the full presentation projection: halt surfaces render
       // refusalCode and the spec block (name/project deep link), so equality
@@ -1243,6 +1251,8 @@ export function createGraphWorkflowExecutionEventPublisher(
         previousExecution?.routeSettlements[sourceContextId];
       if (
         previousSettlement &&
+        previousSettlement.effectiveSourceContextId ===
+          settlement.effectiveSourceContextId &&
         previousSettlement.captureIteration === settlement.captureIteration &&
         previousSettlement.routeControlRevision ===
           settlement.routeControlRevision
@@ -1255,6 +1265,8 @@ export function createGraphWorkflowExecutionEventPublisher(
         sessionName: input.sessionName,
         executionId: nextExecution.id,
         sourceContextId,
+        effectiveSourceContextId: settlement.effectiveSourceContextId,
+        edgeEvaluations: settlement.edgeEvaluations,
         captureIteration: settlement.captureIteration,
         routeControlRevision: settlement.routeControlRevision,
         activatedEdgeIds: [...settlement.activatedEdgeIds],
@@ -1615,6 +1627,12 @@ export function createGraphWorkflowExecutionEventPublisher(
   function publishValidationResult(
     input: PublishValidationResultInput,
   ): GraphWorkflowEventDelivery {
+    const currentRound =
+      input.execution.contextStates[input.contextId]?.validationRound;
+    const reviewedRound =
+      input.round && currentRound?.seq === input.round.seq
+        ? currentRound
+        : undefined;
     const event: GraphWorkflowValidationResultEvent = {
       type: "graph-workflow-validation-result",
       projectName: getProjectName(input.projectPath),
@@ -1640,6 +1658,16 @@ export function createGraphWorkflowExecutionEventPublisher(
         ? {
             roundSeq: input.round.seq,
             specialists: [...input.round.specialists],
+            ...(reviewedRound
+              ? { reviewedCandidate: structuredClone(reviewedRound.candidate) }
+              : {}),
+            ...(reviewedRound?.outputCandidate
+              ? {
+                  reviewedOutput: structuredClone(
+                    reviewedRound.outputCandidate.value,
+                  ),
+                }
+              : {}),
           }
         : {}),
     };

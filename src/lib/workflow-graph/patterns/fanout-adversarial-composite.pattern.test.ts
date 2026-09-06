@@ -307,6 +307,7 @@ interface SeatObservation {
   artifactContent: string | null;
   /** Had the synthesizer's structured output been banked when this seat looked? */
   outputBanked: boolean;
+  stagedOutput: Record<string, unknown> | undefined;
 }
 
 interface OrderingRecord {
@@ -324,9 +325,8 @@ interface OrderingRecord {
  *
  * This is the proof the pattern actually needs. The in-turn capture stand-in
  * banks output BEFORE validation — the reverse of production — so a proof built
- * on it would stay green under exactly the regressions that matter: capture
- * reordered ahead of validation, or provenance banked before a blocking seat
- * rejects. Wiring `outputCapture` makes the engine decide when capture happens,
+ * on it would stay green if provenance were published before a blocking seat
+ * could reject it. Wiring `outputCapture` makes the engine decide when capture happens,
  * so both become observable.
  *
  * The scenario opts into a real temporary lane target. `onAgentTurn` writes the
@@ -381,6 +381,9 @@ async function runThroughCaptureGate<T>(
               artifactContent,
               outputBanked:
                 seat.execution.contextOutputs[SYNTHESIZE] !== undefined,
+              stagedOutput:
+                seat.execution.contextStates[SYNTHESIZE]?.validationRound
+                  ?.outputCandidate?.value,
             });
           }
           return script(seat);
@@ -437,10 +440,6 @@ describe("the composite's validation boundary, through the production capture ga
       async (run, { timeline, seats }) => {
         expect(run.settled.status).toBe("completed");
 
-        // All four seats reviewed, and each saw the SAME two facts: the
-        // artifact was on disk, and the structured output did not exist yet.
-        // That pair is the pattern's entire justification — it is why the plan
-        // has to write a file rather than deliver through captured output.
         expect(seats.map((seat) => seat.assignmentId).sort()).toEqual(
           COHORT_SEATS.map((seat) => seat.id).sort(),
         );
@@ -450,22 +449,21 @@ describe("the composite's validation boundary, through the production capture ga
             `seat "${seat.assignmentId}" reviewed before the artifact existed`,
           ).toBe(true);
           expect(seat.artifactContent).toContain("Reviewed synthesis");
+          expect(seat.stagedOutput).toEqual(synthesisOutput());
           expect(
             seat.outputBanked,
             `seat "${seat.assignmentId}" saw output banked before it reviewed`,
           ).toBe(false);
         }
 
-        // The engine's own order: the synthesizer's capture came after the last
-        // seat's review, not before any of them.
         const captureAt = timeline.indexOf(`capture:${SYNTHESIZE}`);
-        const lastValidateAt = timeline.findLastIndex((entry) =>
+        const firstValidateAt = timeline.findIndex((entry) =>
           entry.startsWith("validate:"),
         );
         expect(captureAt, `no capture ran for "${SYNTHESIZE}"`).toBeGreaterThan(
           -1,
         );
-        expect(captureAt).toBeGreaterThan(lastValidateAt);
+        expect(captureAt).toBeLessThan(firstValidateAt);
 
         // The gate is the only writer: it never found an output already banked.
         const synthesisCaptures = run.captureCalls.filter(
@@ -501,15 +499,10 @@ describe("the composite's validation boundary, through the production capture ga
         const rejectedRound = seats.filter((seat) => seat.attempt === 1);
         expect(rejectedRound.length).toBeGreaterThan(0);
 
-        // The load-bearing claim: capture ran ONCE, after the reopened work was
-        // re-reviewed. A gate that banked provenance on the first round would
-        // have published a synthesis the panel had just rejected — and, because
-        // the gate declines a context it already captured, the corrected
-        // artifact's provenance would never have been banked at all.
         const synthesisCaptures = run.captureCalls.filter(
           (call) => call.contextId === SYNTHESIZE,
         );
-        expect(synthesisCaptures).toHaveLength(1);
+        expect(synthesisCaptures).toHaveLength(2);
 
         const captureAt = timeline.indexOf(`capture:${SYNTHESIZE}`);
         const firstRejectionAt = timeline.indexOf("validate:acceptance:1");
@@ -519,7 +512,10 @@ describe("the composite's validation boundary, through the production capture ga
           secondRoundAt,
           "the blocking seat never re-reviewed the reopened work",
         ).toBeGreaterThan(firstRejectionAt);
-        expect(captureAt).toBeGreaterThan(secondRoundAt);
+        const recaptureAt = timeline.lastIndexOf(`capture:${SYNTHESIZE}`);
+        expect(captureAt).toBeLessThan(firstRejectionAt);
+        expect(recaptureAt).toBeGreaterThan(firstRejectionAt);
+        expect(recaptureAt).toBeLessThan(secondRoundAt);
 
         const secondRoundSeats = seats.filter((seat) => seat.attempt === 2);
         expect(
@@ -528,7 +524,10 @@ describe("the composite's validation boundary, through the production capture ga
         for (const seat of secondRoundSeats) {
           expect(seat.artifactContent).toBe(synthesisArtifact(2));
         }
-        expect(capturedArtifactContents).toEqual([synthesisArtifact(2)]);
+        expect(capturedArtifactContents).toEqual([
+          synthesisArtifact(1),
+          synthesisArtifact(2),
+        ]);
 
         // Every seat, on every round, still reviewed an unbanked candidate.
         for (const seat of seats) {

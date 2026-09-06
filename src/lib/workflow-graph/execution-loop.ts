@@ -970,8 +970,7 @@ export function createGraphWorkflowExecutionLoop(
     }
 
     /**
-     * Settle every route the graph can currently decide, once per scheduling
-     * pass (D4 R2/R3/R4).
+     * Settle every route the graph can currently decide (D4 R2/R3/R4).
      *
      * Runs BEFORE scheduling and before the joins, because everything after it
      * reads the results: a target the routing declined must be `skipped` before
@@ -1009,23 +1008,36 @@ export function createGraphWorkflowExecutionLoop(
       if (!outcome) return "settled";
 
       for (const contextId of outcome.skippedContextIds) {
+        const edgeEvaluations =
+          execution.contextStates[contextId]?.skipReason?.edgeEvaluations ?? [];
         logger.info("graph-workflow.route.context_skipped", {
           executionId: execution.id,
           contextId,
+          edgeEvaluations,
         });
-        execLogger?.lifecycle("route.context_skipped", { contextId });
+        execLogger?.lifecycle("route.context_skipped", {
+          contextId,
+          edgeEvaluations,
+        });
       }
       for (const sourceContextId of outcome.settledSourceContextIds) {
         const record = execution.routeSettlements[sourceContextId];
         logger.info("graph-workflow.route.resolved", {
           executionId: execution.id,
           sourceContextId,
+          effectiveSourceContextId: record?.effectiveSourceContextId ?? null,
+          captureIteration: record?.captureIteration ?? null,
+          edgeEvaluations: record?.edgeEvaluations ?? [],
           activatedEdgeIds: record?.activatedEdgeIds ?? [],
           inactiveEdgeIds: record?.inactiveEdgeIds ?? [],
           routeControlRevision: record?.routeControlRevision ?? 0,
         });
         execLogger?.lifecycle("route.resolved", {
           contextId: sourceContextId,
+          effectiveSourceContextId: record?.effectiveSourceContextId ?? null,
+          captureIteration: record?.captureIteration ?? null,
+          routeControlRevision: record?.routeControlRevision ?? 0,
+          edgeEvaluations: record?.edgeEvaluations ?? [],
           activatedEdgeIds: record?.activatedEdgeIds ?? [],
           inactiveEdgeIds: record?.inactiveEdgeIds ?? [],
         });
@@ -1073,8 +1085,9 @@ export function createGraphWorkflowExecutionLoop(
      * NORMAL state, not a crash.
      */
     async function repairUnlandedCommitsForPass(): Promise<
-      "settled" | "halted"
+      "settled" | "changed" | "halted"
     > {
+      let repaired = false;
       for (const repair of collectLandingCommitRepairs(execution)) {
         if (inFlight.has(repair.contextId)) continue;
 
@@ -1104,13 +1117,13 @@ export function createGraphWorkflowExecutionLoop(
         // without handing the snapshot back.
         await refreshExecution();
         if (execution.pendingHaltReason !== null) return "halted";
+        repaired = true;
       }
-      return "settled";
+      return repaired ? "changed" : "settled";
     }
 
     /**
-     * Settle every loop the graph can currently decide, once per scheduling
-     * pass (D4 R9/R16).
+     * Settle every loop the graph can currently decide (D4 R9/R16).
      *
      * Runs immediately AFTER route settlement and before scheduling: activation
      * reads the routes and the skips that pass just applied, and everything
@@ -1123,7 +1136,9 @@ export function createGraphWorkflowExecutionLoop(
      * because unrolling is whole-execution validation work that cannot run
      * inside the write queue.
      */
-    async function settleLoopsForPass(): Promise<"settled" | "halted"> {
+    async function settleLoopsForPass(): Promise<
+      "settled" | "changed" | "halted"
+    > {
       const settlement: { value: LoopSettlementOutcome | null } = {
         value: null,
       };
@@ -1168,6 +1183,7 @@ export function createGraphWorkflowExecutionLoop(
       // backstop refusing a LATER loop — leaves the grants it already admitted
       // durable (R10.3). Their unrolls have to install, or the ledger would hold
       // a reservation for a pass that no resume ever creates.
+      const liveRevisionBeforeMaterialization = execution.liveRevision;
       for (const request of outcome.materializations) {
         await materializeLoopPass(request);
       }
@@ -1187,7 +1203,27 @@ export function createGraphWorkflowExecutionLoop(
         return "halted";
       }
 
-      return "settled";
+      return outcome.activatedLoopGroupIds.length > 0 ||
+        outcome.skippedLoopGroupIds.length > 0 ||
+        outcome.concludedLoopGroupIds.length > 0 ||
+        execution.liveRevision !== liveRevisionBeforeMaterialization
+        ? "changed"
+        : "settled";
+    }
+
+    async function settleSchedulingInputs(): Promise<"settled" | "halted"> {
+      while (
+        execution.status === "running" &&
+        execution.pendingHaltReason === null
+      ) {
+        if ((await settleRoutesForPass()) === "halted") return "halted";
+        const repairs = await repairUnlandedCommitsForPass();
+        if (repairs === "halted") return "halted";
+        if (repairs === "changed") continue;
+        const loops = await settleLoopsForPass();
+        if (loops !== "changed") return loops;
+      }
+      return execution.pendingHaltReason === null ? "settled" : "halted";
     }
 
     /**
@@ -3866,11 +3902,7 @@ export function createGraphWorkflowExecutionLoop(
         // Route settlement precedes every scheduling decision this pass makes:
         // the scheduler, the joins and the completion invariant all read the
         // skips and settlements it writes.
-        if (
-          (await settleRoutesForPass()) === "halted" ||
-          (await repairUnlandedCommitsForPass()) === "halted" ||
-          (await settleLoopsForPass()) === "halted"
-        ) {
+        if ((await settleSchedulingInputs()) === "halted") {
           if (inFlight.size > 0) {
             await Promise.race(inFlight.values());
             continue;

@@ -362,6 +362,61 @@ describe("the advisory-response phase outlives the turn that owes it", () => {
 });
 
 describe("an advisory-only cohort's re-certification", () => {
+  it("publishes the recaptured handoff after an advisory response with no remaining certification gate", async () => {
+    let tree = TREE_A;
+    let captures = 0;
+    const execution = createCohortExecution({
+      assignments: [
+        makeSeededValidatorAssignment({
+          id: "security",
+          authority: "advisory",
+        }),
+      ],
+    });
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    )!;
+    context.scriptValidator = { commands: [] };
+    context.outputSchema = {
+      type: "object",
+      properties: { revision: { type: "integer" } },
+      required: ["revision"],
+    };
+    const harness = createHarness({
+      execution,
+      resolveCandidateTree: () => tree,
+      outputCaptureService: {
+        captureContextOutput: async () => ({
+          kind: "captured",
+          value: { revision: ++captures },
+          parse: { source: "native" },
+        }),
+      },
+      runContextValidator: async (input) => ({
+        result: passResult("security", [advisoryItem()]),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+      advisoryResponse: async (input) => {
+        tree = TREE_B;
+        return {
+          dispositions: input.advisories.map((advisory) => ({
+            identity: advisory.identity,
+            disposition: "addressed" as const,
+            reason: null,
+          })),
+        };
+      },
+    });
+    await harness.run();
+    await harness.run();
+    expect(
+      harness.repository.read().contextOutputs["context-plan"]?.value,
+    ).toEqual({ revision: 2 });
+    expect(harness.contextState()?.status).toBe("completed");
+    expect(harness.runContextValidator).toHaveBeenCalledTimes(1);
+  });
+
   it("is the script gate alone, with no lane of any authority dispatched", async () => {
     let tree: ValidationCandidateTreeResolution = TREE_A;
     const records = { scriptRuns: 0, validatorDispatches: [] as string[] };

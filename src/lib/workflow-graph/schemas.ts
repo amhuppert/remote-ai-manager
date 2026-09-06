@@ -91,6 +91,13 @@ export type GraphWorkflowValidationIncidentStage = z.infer<
 export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
   deliveryGateHaltReasonSchema,
   z.object({
+    type: z.literal("infrastructure_blocked"),
+    contextId: z.string().trim().min(1),
+    commandName: z.string().trim().min(1),
+    attempts: z.number().int().min(1).max(3),
+    message: z.string().trim().min(1),
+  }),
+  z.object({
     type: z.literal("circuit_breaker"),
     contextId: z.string().trim().min(1),
     condition: graphWorkflowCircuitBreakerConditionSchema,
@@ -1000,6 +1007,10 @@ export const graphWorkflowValidationCandidateSchema = z
     headSha: z.string().trim().min(1),
     candidateTreeHash: z.string().trim().min(1),
     taskStateHash: z.string().trim().min(1),
+    outputHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     identityScope: z.enum(["wholeTree", "owned"]).default("wholeTree"),
   })
   .strict();
@@ -1160,6 +1171,28 @@ export type GraphWorkflowValidationSpecialist = z.infer<
 >;
 
 /**
+ * One execution context's captured structured output (D2/D5).
+ *
+ * Held in the validation round after the structured-output gate accepts it and
+ * published once the configured semantic checks certify that same payload. `value` is the accepted
+ * payload — always a JSON object, because the authoring-time subset walker
+ * refuses any declaration whose root does not describe one — and `parse` records
+ * where the gate found it, in the shared extraction vocabulary. Candidates from
+ * a failed validation remain on their round; only certified outputs enter
+ * the downstream contextOutputs map.
+ */
+export const graphWorkflowContextOutputSchema = z.object({
+  value: contextOutputSchemaSchema,
+  capturedAt: z.string(),
+  iteration: z.number().int().min(1),
+  parse: agentCallStructuredOutputParseSchema,
+  reviewedCandidate: graphWorkflowValidationCandidateSchema.optional(),
+});
+export type GraphWorkflowContextOutput = z.infer<
+  typeof graphWorkflowContextOutputSchema
+>;
+
+/**
  * The context's latest validation round: what is being reviewed, by whom, and
  * how far the round has got. The cohort owns the candidate — and the implementer
  * is locked out — exactly while `phase` is not `concluded`.
@@ -1174,6 +1207,7 @@ export const graphWorkflowValidationRoundSchema = z
   .object({
     seq: z.number().int().positive(),
     candidate: graphWorkflowValidationCandidateSchema,
+    outputCandidate: graphWorkflowContextOutputSchema.optional(),
     roster: z.array(graphWorkflowValidationRosterEntrySchema),
     specialists: z.record(z.string(), graphWorkflowValidationSpecialistSchema),
     phase: z.enum(["script", "specialists", "concluded"]),
@@ -1352,6 +1386,7 @@ export type GraphWorkflowLandingIntent = z.infer<
  */
 export const graphWorkflowCanonicalOwnershipSchema = z.object({
   mode: z.enum(["full", "owned", "readOnly"]),
+  stableRead: z.literal(true).optional(),
   canonicalPrefixes: z.array(z.string().min(1)).default([]),
 });
 export type GraphWorkflowCanonicalOwnership = z.infer<
@@ -1708,37 +1743,18 @@ export const loopControlAmendmentSchema = z.object({
 export type LoopControlAmendment = z.infer<typeof loopControlAmendmentSchema>;
 
 /**
- * One execution context's captured structured output (D2/D5).
- *
- * Written once, when a context carrying an authored `outputSchema` finishes and
- * its final payload clears the structured-output gate. `value` is the accepted
- * payload — always a JSON object, because the authoring-time subset walker
- * refuses any declaration whose root does not describe one — and `parse` records
- * where the gate found it, in the shared extraction vocabulary. Candidates from
- * a FAILED validation never land here; they stay in the validation-failure
- * records.
- */
-export const graphWorkflowContextOutputSchema = z.object({
-  value: contextOutputSchemaSchema,
-  capturedAt: z.string(),
-  iteration: z.number().int().min(1),
-  parse: agentCallStructuredOutputParseSchema,
-});
-export type GraphWorkflowContextOutput = z.infer<
-  typeof graphWorkflowContextOutputSchema
->;
-
-/**
  * The CURRENT route decision of one source context (D4 decision D4).
  *
  * Bounded on purpose: at most one entry per source, replaced whenever the
- * dedup key `(sourceContextId, captureIteration, routeControlRevision)` moves.
+ * dedup key `(sourceContextId, effectiveSourceContextId, captureIteration, routeControlRevision)` moves.
  * The full ledger — every resolution, including a pass re-decided under an
  * amended control revision — lives in the append-only events table, which is
  * where unbounded history belongs.
  */
 export const graphWorkflowRouteSettlementSchema = z.object({
   sourceContextId: z.string().trim().min(1),
+  effectiveSourceContextId: z.string().trim().min(1).nullable().default(null),
+  edgeEvaluations: z.array(graphWorkflowRouteEdgeEvaluationSchema).default([]),
   /**
    * The iteration of the capture the guards were evaluated against; null for a
    * source that captured nothing (unconditional edges, or a skipped source).

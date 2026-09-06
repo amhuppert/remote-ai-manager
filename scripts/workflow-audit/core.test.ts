@@ -560,6 +560,23 @@ describe("buildAuditReport", () => {
     expect(extra?.lane).toBe("context_validator");
   });
 
+  it("does not describe a recovered execution as having no halts", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("10:30:00"), "execution.halted", {
+        haltReason: { type: "loop_limit_reached", contextId: "impl" },
+      }),
+      rec(T("10:40:00"), "execution.resumed", {}),
+    ];
+    const report = buildAuditReport(input);
+    expect(
+      report.positives.some((finding) => finding.kind === "completed_clean"),
+    ).toBe(false);
+    expect(
+      report.friction.some((finding) => finding.kind === "recovered_halt"),
+    ).toBe(true);
+  });
+
   it("records positives: clean completion, first-try GO, clean merges", () => {
     const report = buildAuditReport(baseInput());
     const kinds = report.positives.map((p) => p.kind);
@@ -869,6 +886,39 @@ function assistantToolUse(
 }
 
 describe("scanTranscriptText", () => {
+  it("counts Codex isError results and conservative Bash file rereads", () => {
+    const scan = scanTranscriptText(
+      [
+        assistantToolUse([
+          { name: "Bash", input: { command: "cat src/review.md" } },
+          { name: "Bash", input: { command: "sed -n '1,80p' src/review.md" } },
+          { name: "Bash", input: { command: "printf 'cat src/fake.md'" } },
+          {
+            name: "Bash",
+            input: { command: "cat > src/output.md <<'EOF'\ntext\nEOF" },
+          },
+        ]),
+        transcriptLine({
+          type: "tool_result",
+          role: "user",
+          content: [{ type: "tool_result", isError: true, content: "failed" }],
+        }),
+        transcriptLine({
+          type: "tool_result",
+          role: "user",
+          content: [{ type: "tool_result", isError: false, content: "ok" }],
+        }),
+      ].join("\n"),
+    );
+    expect(scan.toolErrorCount).toBe(1);
+    expect(scan.reads).toEqual({
+      uniqueFiles: 1,
+      totalReads: 2,
+      repeatReads: 1,
+    });
+    expect(scan.topReReads).toEqual([{ path: "src/review.md", count: 2 }]);
+  });
+
   it("sums the final cumulative cost per session lineage, never every result", () => {
     // Mirrors the real double-count case: lineage A 42.37→64.85, lineage B
     // 43.73→50.79. True cost = 64.85 + 50.79, NOT the sum of all four.
@@ -1507,55 +1557,84 @@ describe("script validation visibility", () => {
 });
 
 describe("occupancy confidence", () => {
-  it("suppresses rotation_overrun and reports inconclusive occupancy when no window max exists", () => {
-    const raw = baseExecutionRaw();
-    (
-      raw.workingDefinition as { executionContexts: unknown[] }
-    ).executionContexts = [
-      {
-        id: "impl",
-        title: "Implement",
-        iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
-      },
-      { id: "validate", title: "Validate" },
-    ];
-    (raw.laneStates as Record<string, Record<string, unknown>>).impl = {
-      implementer: {
-        lane: "implementer",
-        engine: "codex",
-        sessionRef: { conversationId: "conv-impl" },
-        lastContextTokens: 750000,
-        lastContextWindowMax: null,
-      },
-    };
-    const input: AuditInput = {
-      ...baseInput(),
-      execution: mustParseExecution(raw),
-    };
-    // Strip window max from turn records: a codex lane never reports one.
-    input.contextLogs.impl = {
-      ...input.contextLogs.impl!,
-      iterations: input.contextLogs.impl!.iterations.map((record) =>
-        record.event === "iteration.agent_turn_completed"
-          ? {
-              ...record,
-              fields: { ...record.fields, contextWindowMax: null },
-            }
-          : record,
-      ),
-    };
-    const report = buildAuditReport(input);
-    const impl = report.contexts.find((c) => c.contextId === "impl");
-    expect(impl?.peakOccupancyPct).toBeNull();
-    expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
-      false,
-    );
-    const note = report.confidence.find(
-      (c) => c.kind === "occupancy_unmeasurable",
-    );
-    expect(note).toBeDefined();
-    expect(note?.summary).toContain("impl");
-  });
+  it.each(["codex", "claude"])(
+    "reads backend-neutral lane counters without inventing %s occupancy",
+    (backend) => {
+      const input = baseInput();
+      input.execution = mustParseExecution({
+        ...baseExecutionRaw(),
+        laneStates: {
+          impl: {
+            implementer: {
+              lane: "implementer",
+              backend,
+              workflowConversationId: "conv-impl",
+              metrics: { contextTokens: 850000, contextWindowMax: 1000000 },
+            },
+          },
+        },
+      });
+      input.contextLogs = {};
+      const context = buildAuditReport(input).contexts.find(
+        (entry) => entry.contextId === "impl",
+      );
+      expect(context?.peakContextTokens).toBe(850000);
+      expect(context?.peakOccupancyPct).toBe(backend === "codex" ? null : 85);
+    },
+  );
+
+  it.each([null, 272000])(
+    "does not interpret Codex cumulative usage as occupancy with window max %s",
+    (windowMax) => {
+      const raw = baseExecutionRaw();
+      (
+        raw.workingDefinition as { executionContexts: unknown[] }
+      ).executionContexts = [
+        {
+          id: "impl",
+          title: "Implement",
+          iterationPolicy: { continuity: { contextLimitTokens: 250000 } },
+        },
+        { id: "validate", title: "Validate" },
+      ];
+      (raw.laneStates as Record<string, Record<string, unknown>>).impl = {
+        implementer: {
+          lane: "implementer",
+          engine: "codex",
+          sessionRef: { conversationId: "conv-impl" },
+          lastContextTokens: 750000,
+          lastContextWindowMax: windowMax,
+        },
+      };
+      const input: AuditInput = {
+        ...baseInput(),
+        execution: mustParseExecution(raw),
+      };
+      // Strip window max from turn records: a codex lane never reports one.
+      input.contextLogs.impl = {
+        ...input.contextLogs.impl!,
+        iterations: input.contextLogs.impl!.iterations.map((record) =>
+          record.event === "iteration.agent_turn_completed"
+            ? {
+                ...record,
+                fields: { ...record.fields, contextWindowMax: windowMax },
+              }
+            : record,
+        ),
+      };
+      const report = buildAuditReport(input);
+      const impl = report.contexts.find((c) => c.contextId === "impl");
+      expect(impl?.peakOccupancyPct).toBeNull();
+      expect(report.friction.some((f) => f.kind === "rotation_overrun")).toBe(
+        false,
+      );
+      const note = report.confidence.find(
+        (c) => c.kind === "occupancy_unmeasurable",
+      );
+      expect(note).toBeDefined();
+      expect(note?.summary).toContain("impl");
+    },
+  );
 
   it("still flags rotation_overrun when the window max is known", () => {
     const raw = baseExecutionRaw();
@@ -1620,6 +1699,20 @@ describe("cost gaps", () => {
 });
 
 describe("rotation reconciliation", () => {
+  it("does not count initial lane creation as an applied rotation", () => {
+    const input = baseInput();
+    input.decisions = [
+      rec(T("10:00:00"), "validator.rotation", {
+        contextId: "impl",
+        reason: "no_prior_lane",
+      }),
+    ];
+    expect(
+      buildAuditReport(input).contexts.find((c) => c.contextId === "impl")
+        ?.rotationAppliedCount,
+    ).toBe(0);
+  });
+
   it("flags scheduled rotations that were never applied", () => {
     const input = baseInput();
     input.decisions = [

@@ -21,6 +21,10 @@ import {
   type GraphWorkflowEventDelivery,
 } from "./execution-events";
 import { createGraphWorkflowResultDeliveryService } from "./result-delivery-service";
+import {
+  freezeValidationCandidate,
+  openValidationRound,
+} from "./validation-round";
 
 describe("closed workflow boundary vocabulary", () => {
   it("derives every durable needs-attention and terminal boundary exactly once", () => {
@@ -826,6 +830,55 @@ describe("graph workflow execution event publisher", () => {
         reopenTaskIds: ["task-plan-1"],
       }),
     );
+  });
+
+  it("preserves the reviewed payload and revision with findings after a later round replaces runtime state", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher();
+    const execution = createWorkflowExecution({ status: "running" });
+    const outputCandidate = {
+      value: { issueIds: ["issue-1"], instructions: "Incomplete" },
+      capturedAt: "2026-09-05T10:00:00.000Z",
+      iteration: 1,
+      parse: { source: "native" as const },
+    };
+    const candidate = freezeValidationCandidate({
+      tree: {
+        identityScope: "wholeTree",
+        headSha: "head-1",
+        candidateTreeHash: "tree-1",
+      },
+      contextId: "context-plan",
+      taskStates: execution.taskStates,
+      outputSchema: { type: "object" },
+      outputValue: outputCandidate.value,
+    });
+    const round = openValidationRound({
+      previousRound: null,
+      candidate,
+      assignments: [],
+      startedAt: outputCandidate.capturedAt,
+      outputCandidate,
+    });
+    execution.contextStates["context-plan"]!.validationRound = round;
+    const delivery = publisher.publishValidationResult({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      validatorType: "context",
+      pass: false,
+      summary: "issue-1 is incomplete",
+      round: { seq: round.seq, specialists: [] },
+    });
+    execution.contextStates["context-plan"]!.validationRound = null;
+
+    const recorded = graphWorkflowExecutionEventSchema.parse(
+      delivery.events[0],
+    );
+    expect(recorded.event).toMatchObject({
+      reviewedCandidate: candidate,
+      reviewedOutput: outputCandidate.value,
+    });
   });
 
   it("publishes the validator's semantic lane reference unchanged", () => {
@@ -3120,6 +3173,11 @@ describe("context-skipped events (D4 R4.3)", () => {
 describe("route-resolved events (D4 decision D4)", () => {
   const SETTLEMENT: GraphWorkflowRouteSettlement = {
     sourceContextId: "context-plan",
+    effectiveSourceContextId: "context-plan",
+    edgeEvaluations: [
+      { edgeId: "edge-plan-implement", verdict: "active" },
+      { edgeId: "edge-plan-verify", verdict: "inactive" },
+    ],
     captureIteration: 1,
     routeControlRevision: 0,
     activatedEdgeIds: ["edge-plan-implement"],

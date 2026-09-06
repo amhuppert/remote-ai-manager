@@ -543,6 +543,13 @@ describe("halt resumability and the lease it decides", () => {
     GraphWorkflowHaltReason["type"],
     GraphWorkflowHaltReason
   > = {
+    infrastructure_blocked: {
+      type: "infrastructure_blocked",
+      contextId: "ctx-1",
+      commandName: "readiness",
+      attempts: 3,
+      message: "Service unavailable",
+    },
     delivery_gate_failed: {
       type: "delivery_gate_failed",
       unmet: [

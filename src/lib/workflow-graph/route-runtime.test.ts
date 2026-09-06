@@ -669,6 +669,11 @@ describe("settleRoutes — route settlements (decision D4)", () => {
     expect(first.settledSourceContextIds).toEqual(["classify"]);
     expect(execution.routeSettlements.classify).toEqual({
       sourceContextId: "classify",
+      effectiveSourceContextId: "classify",
+      edgeEvaluations: [
+        { edgeId: "classify__fix", verdict: "active" },
+        { edgeId: "classify__ship", verdict: "inactive" },
+      ],
       captureIteration: 1,
       routeControlRevision: 0,
       activatedEdgeIds: ["classify__fix"],

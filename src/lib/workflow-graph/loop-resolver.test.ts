@@ -144,6 +144,32 @@ function codes(definition: WorkflowSemanticDefinition): string[] {
 }
 
 describe("loop terminal-contract validation (R9.5)", () => {
+  it("keeps infrastructure retries outside loop passes", () => {
+    const definition = loopDefinition();
+    definition.executionContexts.find(
+      (entry) => entry.id === "worker",
+    )!.scriptValidator = {
+      commands: ["figma-ready"],
+      purpose: "infrastructure",
+    };
+    expect(validateAuthoredDefinition(definition).errors).toContainEqual(
+      expect.objectContaining({
+        code: "infrastructure-check-in-loop",
+        contextId: "worker",
+      }),
+    );
+    definition.executionContexts.find(
+      (entry) => entry.id === "worker",
+    )!.scriptValidator = { commands: [] };
+    definition.executionContexts.find(
+      (entry) => entry.id === "seed",
+    )!.scriptValidator = {
+      commands: ["figma-ready"],
+      purpose: "infrastructure",
+    };
+    expect(validateAuthoredDefinition(definition).errors).toEqual([]);
+  });
+
   it("accepts a well-formed loop group", () => {
     expect(validateAuthoredDefinition(loopDefinition()).errors).toEqual([]);
   });

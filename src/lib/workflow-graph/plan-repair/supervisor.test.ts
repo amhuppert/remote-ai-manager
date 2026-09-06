@@ -641,6 +641,47 @@ describe("plan-repair supervisor", () => {
     expect(harness.resumeCalls()).toBe(0);
   });
 
+  it("persists rejected repair operations and publishes the same terminal diagnosis and count", async () => {
+    const harness = makeHarness({
+      initial: haltedExecution(),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: true,
+            diagnosis: "Repair the acceptance contract",
+            operations: REPAIR_OPS,
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+      applyOutcomes: [
+        {
+          ok: false,
+          kind: "rejected",
+          failure: {
+            status: 409,
+            code: "invalid_edit",
+            error: "target is frozen",
+          },
+        },
+      ],
+    });
+    const result = await createPlanRepairSupervisor(
+      harness.deps,
+    ).maybeRunPlanRepair(RUN_INPUT);
+    expect(result).toMatchObject({ ran: true, outcome: "failed" });
+    const round = harness.current()?.planRepairRounds.at(-1);
+    expect(round?.operationCount).toBe(REPAIR_OPS.length);
+    expect(round?.diagnosis).toContain("target is frozen");
+    expect(harness.published.at(-1)).toMatchObject({
+      outcome: round?.outcome,
+      operationCount: round?.operationCount,
+      diagnosis: round?.diagnosis,
+    });
+    expect(harness.resumeCalls()).toBe(0);
+  });
+
   it("retries exactly once on a revision conflict with the re-read revision", async () => {
     const conflicted = haltedExecution();
     const harness = makeHarness({

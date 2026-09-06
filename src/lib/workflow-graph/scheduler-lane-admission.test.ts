@@ -315,6 +315,136 @@ function makeManager(input: {
 }
 
 describe("scheduleEligibleContexts lane admission", () => {
+  it.each([false, true])(
+    "excludes writers while a reader produces a structured handoff (reader first=%s)",
+    async (readerFirst) => {
+      const projectPath = makeProjectRoot();
+      mkdirSync(path.join(laneWorktreePath(projectPath, "impl"), "src"), {
+        recursive: true,
+      });
+      const { execution } = makeFixture({
+        projectPath,
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src"],
+        },
+        verifyPlacement: { lane: "impl", mode: "readOnly" },
+        existingLaneIds: ["impl"],
+      });
+      const review = execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-verify",
+      );
+      if (!review) throw new Error("missing reviewer");
+      review.outputSchema = {
+        type: "object",
+        properties: { approved: { type: "boolean" } },
+        required: ["approved"],
+      };
+      if (readerFirst) execution.workingDefinition.executionContexts.reverse();
+      const { manager, repository } = makeManager({
+        projectPath,
+        execution,
+        worktrees: createWorktreesStub(projectPath),
+      });
+      await manager.scheduleEligibleContexts({
+        projectPath,
+        sessionName: SESSION_NAME,
+      });
+      const running = Object.values(repository.read().contextStates).filter(
+        (state) => state.status === "running",
+      );
+      expect(running).toHaveLength(1);
+      expect(running[0]?.contextId).toBe(
+        readerFirst ? "context-verify" : "context-implement",
+      );
+      await manager.scheduleEligibleContexts({
+        projectPath,
+        sessionName: SESSION_NAME,
+      });
+      expect(
+        Object.values(repository.read().contextStates).filter(
+          (state) => state.status === "running",
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([false, true])(
+    "holds a completed writer's lane until landing finishes (intent persisted=%s)",
+    async (hasIntent) => {
+      const projectPath = makeProjectRoot();
+      mkdirSync(path.join(laneWorktreePath(projectPath, "impl"), "src"), {
+        recursive: true,
+      });
+      const { execution } = makeFixture({
+        projectPath,
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src"],
+        },
+        verifyPlacement: { lane: "impl", mode: "readOnly" },
+        existingLaneIds: ["impl"],
+      });
+      execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-verify",
+      )!.outputSchema = { type: "object" };
+      const writer = execution.contextStates["context-implement"]!;
+      writer.status = "completed";
+      writer.laneId = "impl";
+      writer.reservedOwnership = {
+        mode: "owned",
+        canonicalPrefixes: [
+          path.join(laneWorktreePath(projectPath, "impl"), "src"),
+        ],
+      };
+      if (hasIntent)
+        writer.landingIntent = {
+          mode: "lane_commit",
+          attempt: 1,
+          token: "landing",
+          laneId: "impl",
+          worktreePath: laneWorktreePath(projectPath, "impl"),
+          baselineSha: null,
+          headSha: null,
+          joinId: null,
+          state: "pending",
+          evidence: null,
+          recordedAt: "2026-09-05T10:00:00Z",
+          settledAt: null,
+        };
+      const { manager, repository } = makeManager({
+        projectPath,
+        execution,
+        worktrees: createWorktreesStub(projectPath),
+      });
+      await manager.scheduleEligibleContexts({
+        projectPath,
+        sessionName: SESSION_NAME,
+      });
+      expect(
+        repository.read().contextStates["context-verify"]?.status,
+      ).not.toBe("running");
+      await repository.mutateActive(projectPath, SESSION_NAME, (current) => {
+        current.executionLanes.impl!.includedContextIds.push(writer.contextId);
+        const intent = current.contextStates[writer.contextId]!.landingIntent;
+        if (intent) {
+          intent.state = "landed";
+          intent.settledAt = "2026-09-05T10:01:00Z";
+        }
+        return current;
+      });
+      await manager.scheduleEligibleContexts({
+        projectPath,
+        sessionName: SESSION_NAME,
+      });
+      expect(repository.read().contextStates["context-verify"]?.status).toBe(
+        "running",
+      );
+    },
+  );
+
   it("does not re-admit a context the execution loop already owns", async () => {
     const projectPath = makeProjectRoot();
     const implWorktree = laneWorktreePath(projectPath, "impl");

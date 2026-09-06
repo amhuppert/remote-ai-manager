@@ -202,15 +202,14 @@ export interface CompatibilityScenario {
    * ordering between a cohort round and its context's structured output becomes
    * observable — `capture` is not banked during the agent turn, and this hook
    * runs from `processContextOutputCapture`, exactly where production runs it.
-   * That ordering is the whole subject of the composite pattern, and the in-turn
-   * stand-in cannot express it: it banks before validation, which is the reverse
-   * of what the engine does.
+   * The in-turn stand-in banks immediately; this hook stages the payload for
+   * review and lets the engine publish it only after validation passes.
    *
    * Returning null refuses the payload, which is how a rejection is scripted.
    */
   outputCapture?(input: {
     contextId: string;
-    /** The execution as the capture gate sees it, after the round settled. */
+    /** The execution as the capture gate sees it, before semantic review. */
     execution: GraphWorkflowExecution;
     /** The same production execution target the implementer and validators saw. */
     worktreePath?: string;

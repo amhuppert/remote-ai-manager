@@ -770,6 +770,48 @@ describe("CodexTaskRunner", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "continues past a skill-budget advisory and preserves later failure=%s",
+    async (fails) => {
+      async function* events() {
+        yield {
+          type: "error",
+          message:
+            "Skill descriptions were shortened to fit the skills context budget.",
+        };
+        yield {
+          type: "item.completed",
+          item: { type: "agent_message", text: "done" },
+        };
+        if (fails)
+          yield { type: "turn.failed", error: { message: "Model overloaded" } };
+        else
+          yield {
+            type: "turn.completed",
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cached_input_tokens: 0,
+            },
+          };
+      }
+      runStreamedMock.mockResolvedValue({ events: events() });
+      startThreadMock.mockReturnValue({
+        id: "thread-abc",
+        run: runMock,
+        runStreamed: runStreamedMock,
+      });
+      const result = await runner.run(makeRequest());
+      expect(result.error).toBe(fails ? "Model overloaded" : null);
+      expect(result.transcript).toContainEqual(
+        expect.objectContaining({
+          type: "agent_message",
+          raw: { type: "agent_message", text: "done" },
+        }),
+      );
+    },
+  );
+
   it("captures streamed items before a failed Codex turn", async () => {
     const items = [
       { type: "reasoning", text: "checking the repo" },

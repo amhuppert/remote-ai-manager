@@ -8090,66 +8090,75 @@ describe("per-turn billing on agent_turn_completed", () => {
     expect(turnEvents[0]?.data).toMatchObject({ occupancyMeasurable: false });
   });
 
-  it("marks occupancy measurable when the backend reports a context window max", async () => {
-    const repository = createRepository(
-      createExecutionWithPlanTasks({
-        "task-plan-1": "pending",
-        "task-plan-2": "pending",
-      }),
-    );
-    const { logger, iterationCalls } =
-      createCapturingExecutionLogger("execution-1");
-    registerExecutionLogger(logger);
+  it.each(["claude", "codex"] as const)(
+    "uses %s measurement semantics even when a window size is supplied",
+    async (backend) => {
+      const repository = createRepository(
+        createExecutionWithPlanTasks({
+          "task-plan-1": "pending",
+          "task-plan-2": "pending",
+        }),
+      );
+      await repository.mutateActive("/repo", "session-1", (execution) => {
+        execution.workingDefinition.executionContexts.find(
+          (entry) => entry.id === "context-plan",
+        )!.implementer.agent.backend = backend;
+        return execution;
+      });
+      const { logger, iterationCalls } =
+        createCapturingExecutionLogger("execution-1");
+      registerExecutionLogger(logger);
 
-    const runAgentIteration = vi.fn(async () => {
-      const current = structuredClone(repository.read());
-      for (const taskId of ["task-plan-1", "task-plan-2"]) {
-        current.taskStates[taskId] = {
-          ...current.taskStates[taskId]!,
-          status: "completed",
-          summary: "Done",
-          completedAt: "2026-03-27T16:02:00.000Z",
+      const runAgentIteration = vi.fn(async () => {
+        const current = structuredClone(repository.read());
+        for (const taskId of ["task-plan-1", "task-plan-2"]) {
+          current.taskStates[taskId] = {
+            ...current.taskStates[taskId]!,
+            status: "completed",
+            summary: "Done",
+            completedAt: "2026-03-27T16:02:00.000Z",
+          };
+        }
+        current.contextStates["context-plan"] = {
+          ...current.contextStates["context-plan"]!,
+          completedTaskCount: 2,
         };
-      }
-      current.contextStates["context-plan"] = {
-        ...current.contextStates["context-plan"]!,
-        completedTaskCount: 2,
-      };
-      await repository.mutateActive("/repo", "session-1", () => current);
-      return {
-        conversationId: "conversation-1",
+        await repository.mutateActive("/repo", "session-1", () => current);
+        return {
+          conversationId: "conversation-1",
+          contextTokens: 120000,
+          contextWindowMax: 200000,
+          compacted: false,
+        };
+      });
+
+      const orchestrator = createGraphWorkflowIterationOrchestrator({
+        executionRepository: repository,
+        findLatestContextValidationEvent:
+          repository.findLatestContextValidationEvent,
+        createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+        createToolServer: vi.fn(() => ({ server: {} })),
+        runAgentIteration,
+        now: () => "2026-03-27T16:00:00.000Z",
+      });
+
+      await orchestrator.runIteration({
+        projectPath: "/repo",
+        projectName: "repo",
+        sessionName: "session-1",
+        contextId: "context-plan",
+      });
+
+      const turnEvents = iterationCalls.filter(
+        (c) => c.event === "iteration.agent_turn_completed",
+      );
+      expect(turnEvents[0]?.data).toMatchObject({
         contextTokens: 120000,
         contextWindowMax: 200000,
-        compacted: false,
-      };
-    });
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      findLatestContextValidationEvent:
-        repository.findLatestContextValidationEvent,
-      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
-      runAgentIteration,
-      now: () => "2026-03-27T16:00:00.000Z",
-    });
-
-    await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
-
-    const turnEvents = iterationCalls.filter(
-      (c) => c.event === "iteration.agent_turn_completed",
-    );
-    expect(turnEvents[0]?.data).toMatchObject({
-      contextTokens: 120000,
-      contextWindowMax: 200000,
-      occupancyMeasurable: true,
-    });
-  });
+        occupancyMeasurable: backend === "claude",
+      });
+    },
+  );
 });
 
 describe("context output capture (D2)", () => {
@@ -8521,11 +8530,10 @@ describe("context output capture (D2)", () => {
     expect(result.shouldContinueInContext).toBe(false);
   });
 
-  it("accumulates capture failures to the DEFAULT breaker threshold even though the context validator passes on every retry (R3.1)", async () => {
+  it("accumulates capture failures to the DEFAULT breaker threshold before spending semantic reviews (R3.1)", async () => {
     // No threshold override: the fixture's `circuitBreaker: {}` resolves to
-    // DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD (3). A passing context validator
-    // runs ahead of every capture retry, and if its pass cleared the counter
-    // the run would read 1,1,1 forever and never trip.
+    // DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD (3). Schema rejection retains the
+    // failure streak and admits no semantic review of an invalid payload.
     const repository = createRepository(createExecutionWithOutputSchema());
     const captureContextOutput = vi.fn(async () => rejectedCapture());
     const signalHalt = haltRecordingSignalHalt(repository);
@@ -8557,8 +8565,7 @@ describe("context output capture (D2)", () => {
     ).toBe(1);
 
     await orchestrator.runIteration(input);
-    // The validator passed again between the two captures; the counter must
-    // still carry the first failure forward.
+    // The counter carries the first capture failure into the retry.
     expect(
       repository.read().contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(2);
@@ -8567,7 +8574,7 @@ describe("context output capture (D2)", () => {
     await orchestrator.runIteration(input);
 
     expect(validationService.validateContextCompletion).toHaveBeenCalledTimes(
-      3,
+      0,
     );
     expect(signalHalt).toHaveBeenCalledTimes(1);
     expect(signalHalt).toHaveBeenCalledWith(

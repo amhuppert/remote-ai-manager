@@ -97,7 +97,9 @@ export function validationRoundTokenMatches(
     returned.candidate.headSha === expected.candidate.headSha &&
     returned.candidate.candidateTreeHash ===
       expected.candidate.candidateTreeHash &&
-    returned.candidate.taskStateHash === expected.candidate.taskStateHash
+    returned.candidate.taskStateHash === expected.candidate.taskStateHash &&
+    returned.candidate.outputHash === expected.candidate.outputHash &&
+    returned.candidate.identityScope === expected.candidate.identityScope
   );
 }
 
