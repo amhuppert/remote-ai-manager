@@ -116,20 +116,20 @@ describe("codexReasoningEffortSchema", () => {
 });
 
 describe("getCodexReasoningLevelsForModel (GPT-6 Astra)", () => {
-  it("surfaces Astra's supported reasoning range", () => {
+  it("surfaces Astra's supported reasoning range including ultra", () => {
     expect(getCodexReasoningLevelsForModel("gpt-6-astra")).toEqual([
       "low",
       "medium",
       "high",
       "xhigh",
       "max",
+      "ultra",
     ]);
   });
 
-  it("withholds unsupported minimal and ultra levels from Astra", () => {
+  it("withholds the unsupported minimal level from Astra", () => {
     const levels = getCodexReasoningLevelsForModel("gpt-6-astra");
     expect(levels).not.toContain("minimal");
-    expect(levels).not.toContain("ultra");
   });
 });
 

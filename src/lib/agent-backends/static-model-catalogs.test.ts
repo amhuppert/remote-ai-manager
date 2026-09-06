@@ -69,6 +69,12 @@ describe("static backend model catalogs", () => {
         modelId: "gpt-6-astra",
         parameters: { reasoning: "ultra", fast: "false" },
       }).valid,
+    ).toBe(true);
+    expect(
+      validateModelSelection(catalog, {
+        modelId: "gpt-6-astra",
+        parameters: { reasoning: "minimal", fast: "false" },
+      }).valid,
     ).toBe(false);
   });
 
