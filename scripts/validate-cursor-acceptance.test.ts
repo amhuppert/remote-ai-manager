@@ -10,9 +10,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { repoValidationConfigSchema } from "../src/lib/validation/schemas";
 import vitestConfig from "../vitest.config";
+import type { UserConfig } from "vitest/config";
 import {
   CURSOR_ACCEPTANCE_BLOCKED_EXIT_CODE,
   formatCursorAcceptanceVerdict,
@@ -133,13 +134,21 @@ describe("cursor acceptance credential gate", () => {
   });
 });
 
+// The shipped config is a function (it loads the Storybook plugin only when
+// that project is enabled), so it is resolved once the way Vite would.
+let resolvedConfig: UserConfig;
+
+beforeAll(async () => {
+  resolvedConfig = await vitestConfig({ command: "serve", mode: "test" });
+});
+
 /**
  * Reads one project's `include` list out of the shipped Vitest config. Narrowed
  * at runtime rather than cast: the config is authored as a literal, and a cast
  * would keep asserting a shape a refactor had already changed.
  */
 function includeFor(projectName: string): readonly string[] {
-  const projects: unknown = vitestConfig.test?.projects;
+  const projects: unknown = resolvedConfig.test?.projects;
   if (!Array.isArray(projects)) {
     throw new Error("vitest.config.ts no longer declares test.projects");
   }
@@ -167,7 +176,7 @@ describe("cursor acceptance test corpus", () => {
   });
 
   it("keeps acceptance files out of every unit project, which must not spend a credential", () => {
-    for (const project of ["unit", "unit-node", "unit-jsdom"]) {
+    for (const project of ["unit-node", "unit-jsdom"]) {
       expect(
         includeFor(project).filter((file) =>
           file.endsWith(".acceptance.test.ts"),

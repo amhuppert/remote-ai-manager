@@ -1,9 +1,8 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, type ConfigEnv } from "vitest/config";
 import { readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
 import { resolveWorkerBudget } from "./scripts/validate/worker-budget.mjs";
 
 const dirname =
@@ -82,146 +81,140 @@ function getReporters(): string[] {
   return ["default"];
 }
 
-export default defineConfig({
-  resolve: {
-    alias: {
-      "@": path.resolve(dirname, "./src"),
-      // Storybook 10 moved @storybook/test to storybook/test. Story files
-      // import from @storybook/test so we alias it for the unit workspace.
-      "@storybook/test": "storybook/test",
-    },
-  },
-  esbuild: {
-    jsx: "automatic",
-  },
-  test: {
-    reporters: getReporters(),
-    globals: true,
-    exclude: [
-      "**/node_modules/**",
-      "**/.design-sync/**",
-      "**/.ds-sync/**",
-      "**/ds-bundle/**",
-      "**/claude-design/**",
-      "**/.worktrees/**",
-      "**/dist/**",
-    ],
-
-    pool: "forks",
-    poolOptions: {
-      forks: {
-        maxForks,
-        minForks: 1,
-        // Cap each worker's heap so a single runaway file OOM-kills its own
-        // fork (bounded) instead of growing unbounded across the machine. Kept
-        // in sync with the RAM budget used to derive `maxForks` above.
-        execArgv: [`--max-old-space-size=${WORKER_HEAP_MB}`],
+// Storybook tests — runs *.stories.* in a headless browser. Requires a
+// browser and port binding; disabled in sandboxed/AI/CI environments. Enable
+// with VITEST_STORYBOOK=1. The plugin is imported only then: loading it costs
+// over half a second on every Vitest start, including single-file runs.
+async function resolveStorybookProjects() {
+  if (process.env.VITEST_STORYBOOK !== "1") return [];
+  const { storybookTest } =
+    await import("@storybook/addon-vitest/vitest-plugin");
+  return [
+    {
+      extends: true as const,
+      plugins: [
+        storybookTest({
+          configDir: path.join(dirname, ".storybook"),
+        }),
+      ],
+      test: {
+        name: "storybook",
+        browser: {
+          enabled: true,
+          headless: true,
+          provider: "playwright" as const,
+          instances: [{ browser: "chromium" }],
+        },
+        setupFiles: [".storybook/vitest.setup.ts"],
       },
     },
+  ];
+}
 
-    // AI-specific noise reduction: stop early, suppress console output,
-    // filter node_modules from stack traces, and truncate large diffs.
-    ...(isAI && {
-      bail: 3,
-      onConsoleLog() {
-        return false;
+export default async function resolveConfig(_env: ConfigEnv) {
+  const storybookProjects = await resolveStorybookProjects();
+  return defineConfig({
+    resolve: {
+      alias: {
+        "@": path.resolve(dirname, "./src"),
+        // Storybook 10 moved @storybook/test to storybook/test. Story files
+        // import from @storybook/test so we alias it for the unit workspace.
+        "@storybook/test": "storybook/test",
       },
-      onStackTrace(_error, { file }) {
-        if (file.includes("node_modules")) return false;
-      },
-      diff: {
-        truncateThreshold: 2000,
-        truncateAnnotation: "... diff truncated",
-        expand: false,
-      },
-    }),
+    },
+    esbuild: {
+      jsx: "automatic",
+    },
+    test: {
+      reporters: getReporters(),
+      globals: true,
+      exclude: [
+        "**/node_modules/**",
+        "**/.design-sync/**",
+        "**/.ds-sync/**",
+        "**/ds-bundle/**",
+        "**/claude-design/**",
+        "**/.worktrees/**",
+        "**/dist/**",
+      ],
 
-    projects: [
-      // Compatibility alias for callers that still filter `--project unit`.
-      // The explicit node/jsdom shards remain the primary validation entrypoints.
-      {
-        extends: true,
-        test: {
-          name: "unit",
-          environment: "node",
-          include: unitTestFiles,
-          setupFiles: ["vitest.jsdom.setup.ts"],
-          testTimeout: 15000,
-          env: {
-            CC_LOG_SILENT: "1",
-          },
+      pool: "forks",
+      poolOptions: {
+        forks: {
+          maxForks,
+          minForks: 1,
+          // Cap each worker's heap so a single runaway file OOM-kills its own
+          // fork (bounded) instead of growing unbounded across the machine. Kept
+          // in sync with the RAM budget used to derive `maxForks` above.
+          execArgv: [`--max-old-space-size=${WORKER_HEAP_MB}`],
         },
       },
-      {
-        extends: true,
-        test: {
-          name: "unit-node",
-          environment: "node",
-          include: nodeTestFiles,
-          setupFiles: ["vitest.node.setup.ts"],
-          testTimeout: 15000,
-          env: {
-            CC_LOG_SILENT: "1",
-          },
+
+      // AI-specific noise reduction: stop early, suppress console output,
+      // filter node_modules from stack traces, and truncate large diffs.
+      ...(isAI && {
+        bail: 3,
+        onConsoleLog() {
+          return false;
         },
-      },
-      {
-        extends: true,
-        test: {
-          name: "unit-jsdom",
-          environment: "jsdom",
-          include: jsdomTestFiles,
-          setupFiles: ["vitest.jsdom.setup.ts"],
-          testTimeout: 15000,
-          env: {
-            CC_LOG_SILENT: "1",
-          },
+        onStackTrace(_error, { file }) {
+          if (file.includes("node_modules")) return false;
         },
-      },
-      // The authenticated Cursor acceptance suite. Reached only through the
-      // registered `cursor-acceptance` command, which gates on CURSOR_API_KEY
-      // before Vitest starts; nothing selects this project by default.
-      //
-      // Logging is deliberately NOT silenced here: the suite reads its own log
-      // files back and scans them for credential material, which a silenced
-      // logger would turn into a vacuously clean scan. Timeouts are minutes,
-      // not seconds, because every case is a live model turn.
-      {
-        extends: true,
-        test: {
-          name: "cursor-acceptance",
-          environment: "node",
-          include: acceptanceTestFiles,
-          setupFiles: ["vitest.node.setup.ts"],
-          testTimeout: 300_000,
-          hookTimeout: 300_000,
+        diff: {
+          truncateThreshold: 2000,
+          truncateAnnotation: "... diff truncated",
+          expand: false,
         },
-      },
-      // Storybook tests — runs *.stories.* in a headless browser.
-      // Requires a browser and port binding; disabled in sandboxed/AI/CI
-      // environments. Enable with VITEST_STORYBOOK=1.
-      ...(process.env.VITEST_STORYBOOK === "1"
-        ? [
-            {
-              extends: true as const,
-              plugins: [
-                storybookTest({
-                  configDir: path.join(dirname, ".storybook"),
-                }),
-              ],
-              test: {
-                name: "storybook",
-                browser: {
-                  enabled: true,
-                  headless: true,
-                  provider: "playwright" as const,
-                  instances: [{ browser: "chromium" }],
-                },
-                setupFiles: [".storybook/vitest.setup.ts"],
-              },
+      }),
+
+      projects: [
+        {
+          extends: true,
+          test: {
+            name: "unit-node",
+            environment: "node",
+            include: nodeTestFiles,
+            setupFiles: ["vitest.node.setup.ts"],
+            testTimeout: 15000,
+            env: {
+              CC_LOG_SILENT: "1",
             },
-          ]
-        : []),
-    ],
-  },
-});
+          },
+        },
+        {
+          extends: true,
+          test: {
+            name: "unit-jsdom",
+            environment: "jsdom",
+            include: jsdomTestFiles,
+            setupFiles: ["vitest.jsdom.setup.ts"],
+            testTimeout: 15000,
+            env: {
+              CC_LOG_SILENT: "1",
+            },
+          },
+        },
+        // The authenticated Cursor acceptance suite. Reached only through the
+        // registered `cursor-acceptance` command, which gates on CURSOR_API_KEY
+        // before Vitest starts; nothing selects this project by default.
+        //
+        // Logging is deliberately NOT silenced here: the suite reads its own log
+        // files back and scans them for credential material, which a silenced
+        // logger would turn into a vacuously clean scan. Timeouts are minutes,
+        // not seconds, because every case is a live model turn.
+        {
+          extends: true,
+          test: {
+            name: "cursor-acceptance",
+            environment: "node",
+            include: acceptanceTestFiles,
+            setupFiles: ["vitest.node.setup.ts"],
+            testTimeout: 300_000,
+            hookTimeout: 300_000,
+          },
+        },
+        ...storybookProjects,
+      ],
+    },
+  });
+}

@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectSameBytes } from "@/lib/shared/testing/same-bytes";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -1297,7 +1298,7 @@ describe("0035 generalized model selection cutover", () => {
       transcript: readFileSync(world.transcriptPath, "utf8"),
       workflow: readFileSync(world.workflowPath, "utf8"),
     }).toEqual(filesBefore);
-    expect(world.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(world.db.serialize(), databaseBefore, "databaseBefore");
     expect(
       existsSync(
         schemaCompatibilityBarrierPath(
@@ -1753,7 +1754,11 @@ describe("0035 generalized model selection cutover", () => {
         configDir: world.configDir,
       }),
     ).resolves.toMatchObject({ workflowCount: 13 });
-    expect(world.db.serialize()).toEqual(databaseBeforePreflight);
+    expectSameBytes(
+      world.db.serialize(),
+      databaseBeforePreflight,
+      "databaseBeforePreflight",
+    );
     expect(
       existsSync(
         schemaCompatibilityBarrierPath(
@@ -2178,7 +2183,7 @@ describe("0035 generalized model selection cutover", () => {
       holder: `sessions.rowid=${sessionRow.rowid}.workflow_envelopes.paused-invalid.featureSnapshot.agentModelSettings.claude`,
       reasonCode: "unknown_model",
     });
-    expect(world.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(world.db.serialize(), databaseBefore, "databaseBefore");
     expect(
       existsSync(
         schemaCompatibilityBarrierPath(
@@ -2226,14 +2231,14 @@ describe("0035 generalized model selection cutover", () => {
         "spec_delivery_plan_snapshots.id=snapshot-proposed.content_json.document.launch.definition.executionContexts[0].implementer",
       reasonCode: "unknown_model",
     });
-    expect(world.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(world.db.serialize(), databaseBefore, "databaseBefore");
 
     await expect(runMigration(world)).rejects.toMatchObject({
       holder:
         "spec_delivery_plan_snapshots.id=snapshot-proposed.content_json.document.launch.definition.executionContexts[0].implementer",
       reasonCode: "unknown_model",
     });
-    expect(world.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(world.db.serialize(), databaseBefore, "databaseBefore");
     expect(
       readFileSync(path.join(world.configDir, "config.json"), "utf8"),
     ).toBe(configBefore);
