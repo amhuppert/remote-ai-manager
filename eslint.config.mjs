@@ -101,6 +101,9 @@ const MIGRATED_UTILITY_FIRST = [
   // session/prompt/**. CreateSessionModal/MobileActionMenu are intentionally
   // omitted (still part-legacy / deferred Family B). The dev-server inline-rgba
   // gaps + the toast/autocomplete gaps are tokenized in tokens.css.
+  // Memory library surfaces: authored utility-first from the start.
+  "src/components/memory/**/*.{ts,tsx}",
+  "src/features/memory/**/*.{ts,tsx}",
   "src/features/session/conversation/ConversationLinkChip.tsx",
   "src/components/CollapsibleText.tsx",
   "src/components/MergeToast.tsx",

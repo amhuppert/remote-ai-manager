@@ -1,9 +1,7 @@
+import { workflowDefinitionMutationSchema } from "@/lib/workflow-graph/definition-schemas";
+import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
+import { type SeededWorkflowDocument } from "@/lib/workflow-graph/spec-bridge";
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
-import type { SeededWorkflowDocument } from "@/lib/workflow-graph/seeded-documents";
-import {
-  workflowDefinitionMutationSchema,
-  type WorkflowDefinitionMutation,
-} from "@/lib/workflow-graph/definition-schemas";
 
 import {
   NATIVE_SDD_CLAIMS_SOURCE_ID,

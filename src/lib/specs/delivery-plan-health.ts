@@ -1,4 +1,4 @@
-import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { type WorkflowSemanticDefinition } from "@/lib/workflow-graph/spec-bridge";
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
 import type { ManagedDefinitionPreflightSummary } from "@/lib/workflows/managed-definition-preflight-contract";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";

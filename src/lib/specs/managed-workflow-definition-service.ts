@@ -1,6 +1,6 @@
-import { createLogger } from "@/lib/logging";
-import type { SeededWorkflowDocument } from "@/lib/workflow-graph/seeded-documents";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/definition-schemas";
+import { type SeededWorkflowDocument } from "@/lib/workflow-graph/spec-bridge";
+import { createLogger } from "@/lib/logging";
 import { workflowDefinitionHash } from "./delivery-plan-hash";
 import {
   finalizeDeliveryPlanLaunch,

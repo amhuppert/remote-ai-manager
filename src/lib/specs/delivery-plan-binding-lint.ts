@@ -1,9 +1,11 @@
+import {
+  collectStableAccountabilityContextIds,
+  criterionRecordsOf,
+  type AuthoredAccountabilityCoverageGroup,
+  type WorkflowSemanticDefinition,
+} from "@/lib/workflow-graph/spec-bridge";
 import type { AuthoredWorkflowLaunchAdmissionResult } from "@/lib/workflow-graph/authored-launch-admission";
-import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/spec-bridge";
 
-import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
-import { collectStableAccountabilityContextIds } from "@/lib/workflow-graph/authored-accountability";
-import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import type { DeliveryPlanBinding, DeliveryPlanClaim } from "./delivery-plan";
 import type { SpecRevisionSnapshot } from "./schemas";
 

@@ -6,12 +6,11 @@ import { repoValidationConfigSchema } from "../src/lib/validation/schemas";
 
 /**
  * command-center#68 split the production build and the seam ratchet out of the
- * in-loop `typecheck` command into dedicated `build` and `seams` commands, and
- * deliberately excludes `build` from every merge gate (the `preMerge` and
- * `laneMerge` lists and the `pre-merge` composite) — the build runs at
- * checkpoints on explicit request instead. This ratchet pins that composition
- * so a later edit cannot fold the heavy phases back into the implementation
- * loop or silently drop the seam ratchet from a merge gate.
+ * in-loop `typecheck` command into dedicated commands, and 37cb2166 then
+ * removed the `build` registration altogether (the build script remains for
+ * explicit checkpoint use). This ratchet pins that composition so a later edit
+ * cannot fold the heavy phases back into the implementation loop, register the
+ * build into a merge gate, or silently drop the seam ratchet from one.
  */
 
 const REPO_ROOT = path.resolve(
@@ -29,10 +28,11 @@ const registration = repoValidationConfigSchema.parse(
 );
 
 describe("validation gate composition", () => {
-  it("registers dedicated typecheck, seams, and build commands", () => {
+  it("registers dedicated typecheck and seams commands and no build command", () => {
     expect(Object.keys(registration.commands)).toEqual(
-      expect.arrayContaining(["typecheck", "seams", "build"]),
+      expect.arrayContaining(["typecheck", "seams"]),
     );
+    expect(Object.keys(registration.commands)).not.toContain("build");
   });
 
   it("keeps the in-loop typecheck free of the build and the seam ratchet", () => {

@@ -14,8 +14,8 @@ export NODE_OPTIONS="--max-old-space-size=${TYPECHECK_HEAP_MB}"
 # build:info generates the module tsc expects to find on disk. It is generated
 # only when absent: every generation stamps a fresh buildTime into the module,
 # which invalidates it and its dependents in the incremental state on every
-# check. A diagnostic typecheck does not need a new build identity; real builds
-# keep generating one through `bun run build`.
+# check. A diagnostic typecheck does not need a new build identity; the
+# production build script keeps generating one.
 # Resolved against the checkout under validation ($PWD), not this script's
 # location: the validation service runs the registered checkout's wrappers
 # with the session worktree as the working directory.

@@ -1,6 +1,8 @@
+import {
+  criterionRecordsOf,
+  type GraphWorkflowExecution,
+} from "@/lib/workflow-graph/spec-bridge";
 import { createLogger } from "@/lib/logging";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";

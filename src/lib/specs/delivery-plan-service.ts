@@ -1,7 +1,14 @@
+import type {
+  WorkflowDefinitionDraft,
+  WorkflowDefinitionMutation,
+} from "@/lib/workflow-graph/definition-schemas";
+import {
+  criterionRecordsOf,
+  type AuthoredAccountabilityCoverageGroup,
+} from "@/lib/workflow-graph/spec-bridge";
 import type { PlanReviewLookup } from "@/lib/workflows/plan-review/service";
 import { canonicalPlanDefinitionHash } from "@/lib/workflows/plan-review/schemas";
 import type { PlanReviewAdvisory } from "@/lib/workflows/plan-review/status-schemas";
-import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import { buildPinnedSpecDocument, buildContextSpecDocument } from "./export";
 import { buildSpecExecutionClaimsDocument } from "./execution-claims-document";
 import { buildSpecOwnershipProjection } from "./spec-ownership-projection";
@@ -16,12 +23,7 @@ import type {
   AuthoredWorkflowLaunchAdmissionResult,
   AuthoredWorkflowModelSelectionAdmissionResult,
 } from "@/lib/workflow-graph/authored-launch-admission";
-import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/spec-bridge";
 import type { ManagedDefinitionPreflightResult } from "@/lib/workflows/managed-definition-preflight-contract";
-import {
-  type WorkflowDefinitionDraft,
-  type WorkflowDefinitionMutation,
-} from "@/lib/workflow-graph/definition-schemas";
 
 import {
   canonicalDeliveryPlanEnvelopeBytes,

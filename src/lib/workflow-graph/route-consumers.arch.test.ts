@@ -44,6 +44,8 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
   "src/lib/workflow-graph/expansion-service.ts":
     "'downstream of the invoker' is a claim about the graph the PLANNER drew, and an expansion's rejoin targets are unstarted by construction — nothing has resolved for the projection to answer with",
   "src/lib/workflow-graph/builder-draft.ts": "the authoring draft",
+  "src/features/workflows-builder/components/WorkflowBuilderCanvas.tsx":
+    "the dependency dialog toggles the drawn edge between two contexts in the authoring draft; there is no execution to resolve against and the authored edge set is the only statement of what the author connected",
   "src/lib/workflow-graph/prompt-composer.ts":
     "the validator-deferral cohort is a claim about the graph the PLANNER drew — which authored contexts sit downstream of this one — so the authored edge set is exactly the right input; a resolved projection would narrow the cohort to routes already decided and hide the sibling ownership the section exists to show",
   "src/lib/workflow-graph/loop-resolver.ts":
