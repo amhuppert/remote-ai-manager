@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { ComponentPropsWithoutRef, ComponentPropsWithRef } from "react";
+import { renderToString } from "react-dom/server";
 import {
   cleanup,
   fireEvent,
@@ -64,6 +65,23 @@ afterEach(() => {
 });
 
 describe("canonical Markdown public API", () => {
+  it("renders remounted message rows without a placeholder once the renderer has loaded", async () => {
+    const first = render(<MessageMarkdown content="First **row**" />);
+    await waitFor(() =>
+      expect(markdownRoot(first.container, "message")).not.toBeNull(),
+    );
+    first.unmount();
+
+    const remounted = render(<MessageMarkdown content="Remounted **row**" />);
+    expect(
+      remounted.container.querySelector("[data-markdown-fallback]"),
+    ).toBeNull();
+    expect(markdownRoot(remounted.container, "message")).not.toBeNull();
+    expect(
+      renderToString(<MessageMarkdown content="Server **row**" />),
+    ).toContain("data-markdown-fallback");
+  });
+
   it("exports only the fixed product-intent adapters", () => {
     expect(Object.keys(MarkdownApi).sort()).toEqual([
       "CompactMarkdown",
@@ -493,9 +511,6 @@ describe("deferred Markdown", () => {
     for (const marker of Object.values(markers)) {
       expect(screen.getAllByText(marker)).toHaveLength(1);
     }
-    expect(container.querySelectorAll("[data-markdown-fallback]")).toHaveLength(
-      2,
-    );
 
     await waitFor(() => {
       expect(

@@ -1,7 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { expect, fireEvent, userEvent, waitFor, within } from "storybook/test";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import ConversationTranscript, {
+  type TranscriptNav,
+} from "./ConversationTranscript";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import ConversationVirtuosoList, {
+  ConversationVirtuosoItem,
   type VirtuosoHandle,
 } from "@/components/conversation/ConversationVirtuosoList";
 import {
@@ -132,7 +139,15 @@ function StoryFrame({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   return (
     <div className="prompt-panel" style={{ height: "100vh" }}>
-      <div className="panel-body">
+      <div
+        className="panel-body"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
         <div className="conversation" data-backend="claude">
           {rows.length === 0 ? (
             <div
@@ -269,4 +284,188 @@ export const SingleTurnWithHundredsOfBlocks: Story = {
   render: () => (
     <StoryFrame rows={buildConversationRows(hugeTurn, undefined)} />
   ),
+};
+
+export const RowMeasurement: Story = {
+  render: () => (
+    <div>
+      <ConversationVirtuosoItem data-testid="margin-row">
+        <div>
+          <div style={{ marginTop: 12, marginBottom: 18, height: 40 }}>
+            Content
+          </div>
+        </div>
+      </ConversationVirtuosoItem>
+      <ConversationVirtuosoItem data-testid="empty-row" />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(
+      canvas.getByTestId("margin-row").getBoundingClientRect().height,
+    ).toBe(70);
+    await expect(
+      canvas.getByTestId("empty-row").getBoundingClientRect().height,
+    ).toBeGreaterThan(0);
+  },
+};
+
+const regressionScope = {
+  kind: "project",
+  projectName: "virtualization-story",
+  conversationId: "virtualization-regression",
+} as const;
+const regressionKey = projectConversationKeys.messages(
+  regressionScope.projectName,
+  regressionScope.conversationId,
+);
+
+function streamingMessage(step: number): TranscriptMessage {
+  return {
+    role: "assistant",
+    timestamp: "2026-09-07T00:00:00Z",
+    content: Array.from({ length: step }, (_, index) => [
+      {
+        type: "thinking" as const,
+        text: `Reasoning ${index}: ${"Variable height reasoning. ".repeat((index % 4) + 1)}`,
+        redacted: false,
+      },
+      { type: "text" as const, text: " \n" },
+      { type: "tool_result" as const, tool_use_id: `earlier-${index}` },
+      {
+        type: "text" as const,
+        text: `Step ${index}\n\n${"A paragraph with measured spacing. ".repeat((index % 5) + 1)}`,
+      },
+    ]).flat(),
+  };
+}
+
+function StreamingRegressionFrame() {
+  const [client] = useState(() => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    queryClient.setQueryData(regressionKey, [streamingMessage(120)]);
+    return queryClient;
+  });
+  const step = useRef(120);
+  const [running, setRunning] = useState(false);
+  const [nav, setNav] = useState<TranscriptNav>();
+  return (
+    <QueryClientProvider client={client}>
+      <div
+        style={{ display: "flex", flexDirection: "column", height: "100vh" }}
+      >
+        <div>
+          <button onClick={() => nav?.handleFirstMessage()}>First</button>
+          <button onClick={() => nav?.handleLastMessage()}>Last</button>
+          <button
+            onClick={() => {
+              step.current += 1;
+              client.setQueryData(regressionKey, [
+                streamingMessage(step.current),
+              ]);
+            }}
+          >
+            Append
+          </button>
+          <button
+            onClick={() =>
+              client.setQueryData<TranscriptMessage[]>(
+                regressionKey,
+                (messages) =>
+                  messages?.map((message) => ({
+                    ...message,
+                    content: message.content.map((block, index) =>
+                      index === message.content.length - 1 &&
+                      block.type === "text"
+                        ? {
+                            ...block,
+                            text: block.text + "\n\nStreaming tail growth.",
+                          }
+                        : block,
+                    ),
+                  })),
+              )
+            }
+          >
+            Grow tail
+          </button>
+          <button onClick={() => setRunning((value) => !value)}>
+            Toggle working
+          </button>
+          <span data-testid="follow-state">
+            {nav?.followBottom ? "Following" : "Reading"}
+          </span>
+        </div>
+        <ConversationTranscript
+          scope={regressionScope}
+          backend="claude"
+          status={running ? "running" : "awaiting"}
+          onNavChange={setNav}
+        />
+      </div>
+    </QueryClientProvider>
+  );
+}
+
+export const StreamingRegression: Story = {
+  render: () => <StreamingRegressionFrame />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() => {
+      const rows = canvasElement.querySelectorAll(
+        ".conversation-virtuoso-item",
+      );
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(80);
+      for (const row of rows)
+        expect(row.getBoundingClientRect().height).toBeGreaterThan(0);
+    });
+    const scroller = canvasElement.querySelector<HTMLElement>(
+      "[data-virtuoso-scroller]",
+    );
+    if (!scroller) throw new Error("Transcript scroller did not mount");
+    const expectBottom = () =>
+      waitFor(
+        () => {
+          expect(
+            scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+          ).toBeLessThanOrEqual(4);
+          expect(canvas.getByTestId("follow-state")).toHaveTextContent(
+            "Following",
+          );
+        },
+        { timeout: 5000 },
+      );
+    await expectBottom();
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Toggle working" }),
+    );
+    for (let i = 0; i < 6; i++)
+      await userEvent.click(canvas.getByRole("button", { name: "Append" }));
+    await expectBottom();
+    for (let i = 0; i < 6; i++)
+      await userEvent.click(canvas.getByRole("button", { name: "Grow tail" }));
+    await expectBottom();
+
+    fireEvent.pointerDown(scroller);
+    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) / 2;
+    await waitFor(() =>
+      expect(canvas.getByTestId("follow-state")).toHaveTextContent("Reading"),
+    );
+    fireEvent.pointerUp(window);
+    // Let newly mounted rows report their sizes before sampling resting scroll.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const restingTop = scroller.scrollTop;
+    await userEvent.click(canvas.getByRole("button", { name: "Append" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Grow tail" }));
+    for (let i = 0; i < 30; i++) {
+      await new Promise(requestAnimationFrame);
+      expect(Math.abs(scroller.scrollTop - restingTop)).toBeLessThanOrEqual(1);
+    }
+    await userEvent.click(canvas.getByRole("button", { name: "Last" }));
+    await expectBottom();
+    canvasElement.dataset.virtualizationChecks = "passed";
+  },
 };

@@ -4,14 +4,16 @@ import {
   forwardRef,
   lazy,
   Suspense,
-  useEffect,
-  useState,
+  useSyncExternalStore,
   type ForwardRefExoticComponent,
   type ReactNode,
   type RefAttributes,
 } from "react";
 
 import { buildMarkdownDiffSource } from "./markdown-diff";
+import { createClientLogger } from "@/lib/logging/client-logger";
+
+const logger = createClientLogger("markdown");
 
 export type MarkdownProps = Readonly<{
   content: string;
@@ -50,13 +52,33 @@ const FALLBACK_CLASSES: Record<MarkdownIntent, string> = {
 };
 
 let rendererModulePromise: Promise<RendererModule> | null = null;
+let rendererLoaded = false;
 
 function loadRendererModule(): Promise<RendererModule> {
   rendererModulePromise ??= import("./MarkdownRenderer").then(
-    ({ default: renderer }) => ({ default: renderer as Renderer }),
+    ({ default: renderer }) => {
+      rendererLoaded = true;
+      logger.debug("markdown.renderer.loaded");
+      return { default: renderer as Renderer };
+    },
   );
   return rendererModulePromise;
 }
+
+function subscribeToRenderer(onChange: () => void): () => void {
+  let active = true;
+  void loadRendererModule().then(() => {
+    if (active) onChange();
+  });
+  return () => {
+    active = false;
+  };
+}
+
+const getRendererSnapshot = () => rendererLoaded;
+// Hydration must start with the server's placeholder even if another client
+// row has already loaded the renderer. Virtualized remounts use the cache.
+const getServerRendererSnapshot = () => false;
 
 const LazyMarkdownRenderer = lazy(loadRendererModule);
 
@@ -80,29 +102,25 @@ function DeferredMarkdown({
   intent,
   diff = false,
 }: MarkdownProps & { intent: "message" | "compact"; diff?: boolean }) {
-  const [LoadedRenderer, setLoadedRenderer] = useState<Renderer | null>(null);
+  const isLoaded = useSyncExternalStore(
+    subscribeToRenderer,
+    getRendererSnapshot,
+    getServerRendererSnapshot,
+  );
 
-  useEffect(() => {
-    let active = true;
-    void loadRendererModule().then(({ default: renderer }) => {
-      if (active) setLoadedRenderer(() => renderer);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  if (!LoadedRenderer) {
+  if (!isLoaded) {
     return <MarkdownFallback content={content} intent={intent} />;
   }
 
   return (
-    <LoadedRenderer
-      content={content}
-      intent={intent}
-      sourceMapped={false}
-      diff={diff}
-    />
+    <Suspense fallback={<MarkdownFallback content={content} intent={intent} />}>
+      <LazyMarkdownRenderer
+        content={content}
+        intent={intent}
+        sourceMapped={false}
+        diff={diff}
+      />
+    </Suspense>
   );
 }
 

@@ -26,6 +26,45 @@ function message(
 }
 
 describe("conversation rows", () => {
+  it("does not allocate virtual rows for standalone results or blank text", () => {
+    const msg: TranscriptMessage = {
+      role: "assistant",
+      timestamp: null,
+      content: [
+        { type: "text", text: "Before" },
+        { type: "tool_result", tool_use_id: "earlier-tool" },
+        { type: "text", text: " \n\t" },
+        { type: "text", text: "After" },
+      ],
+    };
+
+    const rows = buildConversationRows([msg], undefined);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.kind === "message" && row.part)).toEqual([
+      { index: 0, count: 2, start: 0, end: 1 },
+      { index: 1, count: 2, start: 1, end: 2 },
+    ]);
+    expect(rows.every((row) => row.kind === "message" && row.msg === msg)).toBe(
+      true,
+    );
+  });
+
+  it("keeps message chrome when every block is non-rendering", () => {
+    const msg: TranscriptMessage = {
+      role: "assistant",
+      timestamp: null,
+      content: [
+        { type: "tool_result", tool_use_id: "earlier-tool" },
+        { type: "text", text: "" },
+      ],
+    };
+
+    expect(buildConversationRows([msg], undefined)).toMatchObject([
+      { kind: "message", msg, part: { index: 0, count: 1, start: 0, end: 0 } },
+    ]);
+  });
+
   it("builds an empty row list for empty messages without collab", () => {
     expect(buildConversationRows([], undefined)).toEqual([]);
   });

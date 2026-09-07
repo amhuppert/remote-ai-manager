@@ -45,14 +45,6 @@ export function groupContentBlocks(
         blocks: pending,
         startIndex: pendingStart,
       });
-    } else {
-      for (let j = 0; j < pending.length; j++) {
-        result.push({
-          kind: "block",
-          block: pending[j]!,
-          index: pendingStart + j,
-        });
-      }
     }
     pending = [];
   }
@@ -90,7 +82,11 @@ export function groupContentBlocks(
     } else {
       flushPending();
       flushThinking();
-      result.push({ kind: "block", block, index: i });
+      // Standalone results and blank text have no visible body. They stay in
+      // the source blocks for metadata lookups, but cannot own virtual rows.
+      if (block.type !== "text" || block.text.trim().length > 0) {
+        result.push({ kind: "block", block, index: i });
+      }
     }
   }
   flushPending();
