@@ -1,3 +1,4 @@
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import { describe, it, expect, vi } from "vitest";
 import {
   createConflictResolver,
@@ -5,10 +6,8 @@ import {
   DEFAULT_RESOLUTION_TIMEOUT_MS,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 
 // ============================================================
@@ -130,9 +129,11 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
     expect(result.status).toBe("resolved");
     expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.projectPath).toBe(PROJECT_PATH);
-    expect(input.sessionName).toBe(SESSION_NAME);
-    expect(input.conversationId).toBe(CONVERSATION_ID);
+    expect(input.binding.address.projectPath).toBe(PROJECT_PATH);
+    expect(
+      conversationTargetStoreSessionName(input.binding.address.target),
+    ).toBe(SESSION_NAME);
+    expect(input.binding.address.target.conversationId).toBe(CONVERSATION_ID);
     expect(input.kind).toBe("task_run");
     expect(typeof input.prompt).toBe("string");
     expect(input.prompt).toContain("Resolve all merge conflicts");
@@ -171,7 +172,9 @@ describe("resolveConflicts (executeWorkflowTaskRun)", () => {
     });
 
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.worktreePath).toBe("/projects/repo/.worktrees/lane-feature");
+    expect(input.binding.worktreePath).toBe(
+      "/projects/repo/.worktrees/lane-feature",
+    );
   });
 
   it("returns resolved status with conflicts when executeWorkflowTaskRun returns structured output", async () => {
@@ -964,7 +967,9 @@ describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
     });
 
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.worktreePath).toBe("/projects/repo/.worktrees/lane-feature");
+    expect(input.binding.worktreePath).toBe(
+      "/projects/repo/.worktrees/lane-feature",
+    );
   });
 
   it("appends the incoming-changes section to the analysis prompt when targetBranch is provided", async () => {

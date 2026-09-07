@@ -110,7 +110,7 @@ function makeRecordingClaudeFactory(
         status: "alive",
         modelSelection: input.modelSelection,
         outputFormat: input.outputFormat,
-        alignmentVersion: input.alignmentVersion ?? null,
+
         applyPortableMcpConfig: async () => ({
           disposition: "applied_now",
           droppedServerIds: [],
@@ -166,7 +166,7 @@ describe("createCollaborationProductionCallAgent", () => {
           status: "alive",
           modelSelection: input.modelSelection,
           outputFormat: undefined,
-          alignmentVersion: null,
+
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -256,7 +256,7 @@ describe("createCollaborationProductionCallAgent", () => {
           status: "alive",
           modelSelection: input.modelSelection,
           outputFormat: undefined,
-          alignmentVersion: null,
+
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -352,7 +352,7 @@ describe("createCollaborationProductionCallAgent", () => {
           status: "alive",
           modelSelection: input.modelSelection,
           outputFormat: input.outputFormat,
-          alignmentVersion: input.alignmentVersion ?? null,
+
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -604,7 +604,7 @@ describe("createCollaborationProductionCallAgent", () => {
           status: "alive",
           modelSelection: input.modelSelection,
           outputFormat: undefined,
-          alignmentVersion: null,
+
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -1032,7 +1032,7 @@ describe("createCollaborationProductionCallAgent", () => {
             status: "alive",
             modelSelection: input.modelSelection,
             outputFormat: undefined,
-            alignmentVersion: null,
+
             async sendTurn(
               input: ConversationBackendTurnInput,
             ): Promise<ConversationBackendTurnResult> {
@@ -1466,7 +1466,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
           status: "alive",
           modelSelection: input.modelSelection,
           outputFormat: input.outputFormat,
-          alignmentVersion: input.alignmentVersion ?? null,
+
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -1644,7 +1644,7 @@ describe("createCollaborationProductionCallAgent session-context transport", () 
     await callAgent(governedRequest(workflowId));
 
     for (const created of recorder.createRuntimeInputs) {
-      expect(created.alignmentVersion).toBeUndefined();
+      expect("alignmentVersion" in created).toBe(false);
     }
   });
 

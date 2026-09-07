@@ -1,3 +1,4 @@
+import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { describe, it, expect } from "vitest";
 import {
   createProjectPromptExecutor,
@@ -7,14 +8,13 @@ import {
 import {
   BackendMismatchError,
   ModelSelectionValidationError,
-  type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 function makeConv(
@@ -48,7 +48,7 @@ interface ExecCall {
   options:
     | {
         executionTarget?: ExecutionTarget;
-        actorInput?: EnsureActorInputData;
+        binding?: ConversationBinding;
         backend?: unknown;
       }
     | undefined;
@@ -276,7 +276,7 @@ describe("executeProjectPromptStream", () => {
     );
     expect(call.session.worktreePath).toBe("/repo");
     expect(call.options?.executionTarget?.worktreePath).toBe("/repo");
-    expect(call.options?.actorInput?.sessionWorktreePath).toBe("/repo");
+    expect(call.options?.binding?.worktreePath).toBe("/repo");
     // No backend change requested ⇒ entry never serializes/blocks on the dirty
     // main worktree (there is no clean check); the turn simply proceeds.
   });
@@ -292,10 +292,8 @@ describe("executeProjectPromptStream", () => {
       emit: () => {},
     });
 
-    expect(h.calls[0]?.options?.actorInput?.conversationScope).toBe("project");
-    expect(h.calls[0]?.options?.actorInput?.conversation.agentBackend).toBe(
-      "codex",
-    );
+    expect(h.calls[0]?.options?.binding?.address.target.scope).toBe("project");
+    expect(h.store.get("c1")?.agentBackend).toBe("codex");
     expect(h.calls[0]?.options).not.toHaveProperty("backend");
   });
 
@@ -336,7 +334,7 @@ describe("executeProjectPromptStream", () => {
     expect(h.calls).toHaveLength(0); // never reached execution
   });
 
-  it("adopts a backend before the first turn and threads it into actorInput", async () => {
+  it("adopts a backend in the durable row before dispatching the first turn", async () => {
     const h = harness({
       seed: [makeConv({ id: "c1", promptCount: 0, agentBackend: "claude" })],
     });
@@ -348,9 +346,7 @@ describe("executeProjectPromptStream", () => {
       emit: () => {},
     });
     expect(h.adopted).toEqual([{ id: "c1", backend: "codex" }]);
-    expect(h.calls[0]?.options?.actorInput?.conversation.agentBackend).toBe(
-      "codex",
-    );
+    expect(h.store.get("c1")?.agentBackend).toBe("codex");
   });
 
   it("propagates a ModelSelectionValidationError raised by executePromptStream", async () => {

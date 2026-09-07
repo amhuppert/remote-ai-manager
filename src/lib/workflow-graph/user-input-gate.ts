@@ -7,7 +7,6 @@ import type {
   AskQuestionAnswer,
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
-import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 import type { GraphWorkflowEventDelivery } from "@/lib/workflow-graph/execution-events";
 import type {
   GraphWorkflowExecution,
@@ -186,16 +185,16 @@ export interface UserInputGateServiceDeps {
    */
   deliver(delivery: GraphWorkflowEventDelivery): void;
   /**
-   * Dispatch a conversation-machine event to a lane conversation (used only to
-   * send `CLEAR_PENDING_QUESTION` on withdraw). Returns false when the actor is
+   * Withdraw the matching question batch after graph state commits.
+   * Returns false when the actor is
    * not live — a refusal is fine (the conversation self-heals on next touch).
    */
-  sendConversationEvent(
+  clearConversationQuestion(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    event: ConversationEvent,
-  ): boolean;
+    question: { questionId: string },
+  ): Promise<boolean>;
   now(): string;
 }
 
@@ -734,18 +733,18 @@ export function createUserInputGateService(
    * Post-commit by construction — the caller has already removed the records,
    * so a client can never see a question withdrawn that the store still holds.
    */
-  function deliverWithdrawals(
+  async function deliverWithdrawals(
     input: WithdrawAllInput,
     execution: GraphWorkflowExecution,
     withdrawn: readonly WithdrawnQuestion[],
-  ): void {
+  ): Promise<void> {
     const resolvedAt = deps.now();
     for (const entry of withdrawn) {
-      deps.sendConversationEvent(
+      await deps.clearConversationQuestion(
         input.projectPath,
         input.sessionName,
         entry.conversationId,
-        { type: "CLEAR_PENDING_QUESTION" },
+        { questionId: entry.questionBatchId },
       );
       deps.deliver(
         deps.publishUserInputResolved({
@@ -793,7 +792,7 @@ export function createUserInputGateService(
       },
     );
 
-    deliverWithdrawals(input, execution, withdrawn);
+    await deliverWithdrawals(input, execution, withdrawn);
 
     logger.info("gate.withdrew", {
       executionId: input.executionId,
@@ -849,7 +848,7 @@ export function createUserInputGateService(
       },
     );
 
-    deliverWithdrawals(input, execution, withdrawn);
+    await deliverWithdrawals(input, execution, withdrawn);
 
     logger.info("gate.withdrew_round_questions", {
       executionId: input.executionId,

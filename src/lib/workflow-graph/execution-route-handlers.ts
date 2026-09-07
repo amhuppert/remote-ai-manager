@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { getProjectDisplayName as getConversationProjectName } from "@/lib/projects/resolver";
 import { NextResponse } from "next/server";
 import {
   notFound,
@@ -13,9 +15,8 @@ import {
   createConversation,
   getConversation,
 } from "@/lib/conversations/service";
-import { abortConversation as abortConversationRegistry } from "@/lib/conversations/abort-registry";
 import {
-  sendConversationEvent,
+  requestConversationStop,
   stopConversationActor,
 } from "@/lib/workflows/conversation/manager";
 import { createLogger, withTracing } from "@/lib/logging";
@@ -298,19 +299,24 @@ const workflowManager = createGraphWorkflowManager({
   preflightService: createPreflightPrerequisiteService(),
   readGlobalConfig: readConfig,
   abortConversation: ({ projectPath, sessionName, conversationId }) => {
-    abortConversationRegistry(conversationId);
-    const accepted = sendConversationEvent(
-      projectPath,
-      sessionName,
-      conversationId,
-      { type: "ABORT_TURN", reason: "user" },
+    const stop = requestConversationStop(
+      {
+        projectPath,
+        target: targetFromStoreSessionName(
+          getConversationProjectName(projectPath),
+          sessionName,
+          conversationId,
+        ),
+      },
+      "user",
     );
-    if (!accepted) {
-      logger.warn("workflow.abort_event_rejected", {
+    void stop.settled.catch((error) => {
+      logger.warn("workflow.abort_settlement_failed", {
         conversationId,
         sessionName,
+        error: getErrorMessage(error),
       });
-    }
+    });
   },
   abortExecutionLoop,
 });

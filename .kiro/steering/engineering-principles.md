@@ -29,8 +29,8 @@ Mocking internal modules tests wiring between fakes, not behavior. Use DI.
 | Pattern | When | Reference |
 |---|---|---|
 | Factory `createX(deps)` | Small surface, clear constructor moment | `src/lib/prompt/sdk-driver.ts` |
-| XState `.provide()` | Workflow actors/actions | `src/lib/workflows/conversation/actor-implementations.ts` |
-| Setter `setXxxDeps()` + `_resetDepsForTesting()` | Module-scoped singletons, many call sites | `src/lib/dev-server/liveness.ts`, `src/lib/workflows/conversation/actor-implementations.ts` |
+| XState `.provide()` | Workflow actors/actions | `src/lib/workflows/conversation/actor-host.ts` |
+| Setter `setXxxDeps()` + `_resetDepsForTesting()` | Module-scoped singletons, many call sites | `src/lib/dev-server/liveness.ts`, `src/lib/workflows/conversation/persistence.ts` |
 | Fetch fixture + injectable QueryClient | Component/hook tests over React Query | `src/test/fetch-fixture.ts`, `src/test/component-mocks.tsx` (`renderWithQuery`/`createTestQueryClient`) |
 
 `vi.mock()` is acceptable **only** for module-load-time infrastructure (`@/lib/logging`'s `createLogger()`, `@/lib/sdk-env`). Anywhere else = wrong dependency boundary; extract a pure function.

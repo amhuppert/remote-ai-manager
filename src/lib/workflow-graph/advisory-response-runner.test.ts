@@ -16,7 +16,7 @@ import {
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { composeImplementerLaneWriteEnvelope } from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
 const USAGE = {
   costUsd: null,
@@ -103,7 +103,9 @@ describe("advisory-response turn", () => {
       type: "json_schema",
       schema: buildAdvisoryDispositionsOutputSchema(ADVISORIES),
     });
-    expect(dispatched.conversationId).toBe("conversation-impl");
+    expect(dispatched.binding.address.target.conversationId).toBe(
+      "conversation-impl",
+    );
     expect(dispatched.modelSelection).toEqual({
       modelId: "opus",
       parameters: { effort: "high" },

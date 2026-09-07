@@ -1,7 +1,5 @@
-import {
-  runAdmittedTask,
-  assertBackendExecution,
-} from "@/lib/agent-backends/task-execution";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import { toTaskRunResult } from "./turn-result";
 /**
  * One-shot agent turn with the `TaskRunResult` contract of
  * {@link executeWorkflowTaskRun}, but no conversation.
@@ -25,8 +23,8 @@ import type {
   AgentTaskRequest,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
-import type { StructuredOutputFormat } from "./types";
-import type { TaskRunResult, TaskRunUsage } from "./execute-workflow-task-run";
+import type { StructuredOutputFormat } from "./turn-spec";
+import type { TaskRunResult } from "./turn-result";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
 const logger = createLogger("conversation.execute-fresh-task-run");
@@ -79,13 +77,6 @@ export interface ExecuteFreshTaskRunDeps {
   }): Promise<FreshTurnAgentIdentity>;
 }
 
-async function defaultRunTask(
-  backend: AgentBackendId,
-  request: AgentTaskRequest,
-): Promise<AgentTaskResult> {
-  return runAdmittedTask(backend, request);
-}
-
 async function defaultResolveIdentity(input: {
   projectPath: string;
   sessionName: string;
@@ -113,64 +104,11 @@ async function defaultResolveIdentity(input: {
   };
 }
 
-function toTaskRunResult(
-  result: AgentTaskResult,
-  timeoutMs: number,
-  externallyAborted: boolean,
-): TaskRunResult {
-  const usage: TaskRunUsage = {
-    costUsd: result.usage?.costUsd ?? null,
-    durationMs: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    inputTokens: result.usage?.inputTokens ?? null,
-    outputTokens: result.usage?.outputTokens ?? null,
-    cachedInputTokens: result.usage?.cachedInputTokens ?? null,
-  };
-  const base = {
-    usage,
-    backendRef: result.backendRef ?? null,
-    continuationDisposition: result.continuationDisposition,
-  };
-  if (result.timedOut) {
-    // The task layer reports an external abort through the same timedOut
-    // teardown path a real timeout uses; the signal tells them apart.
-    return {
-      kind: "error",
-      error: externallyAborted
-        ? "Fresh task run was aborted"
-        : `Fresh task run timed out after ${timeoutMs}ms`,
-      aborted: externallyAborted,
-      ...(result.failure !== null ? { failure: result.failure } : {}),
-      ...base,
-    };
-  }
-  if (result.error !== null) {
-    return {
-      kind: "error",
-      error: result.error,
-      aborted: false,
-      ...(result.failure !== null ? { failure: result.failure } : {}),
-      ...base,
-    };
-  }
-  if (result.structuredOutput !== undefined) {
-    return {
-      kind: "structured",
-      structuredOutput: result.structuredOutput,
-      text: result.text ?? "",
-      ...base,
-    };
-  }
-  return { kind: "text", text: result.text ?? "", ...base };
-}
-
 export async function executeFreshTaskRun(
   input: ExecuteFreshTaskRunInput,
   deps: ExecuteFreshTaskRunDeps = {},
 ): Promise<TaskRunResult> {
   const resolveIdentity = deps.resolveIdentity ?? defaultResolveIdentity;
-  const runTask = deps.runTask ?? defaultRunTask;
   const timeoutMs = input.timeoutMs ?? DEFAULT_FRESH_TASK_TIMEOUT_MS;
 
   const identity = await resolveIdentity({
@@ -191,35 +129,49 @@ export async function executeFreshTaskRun(
     timeoutMs,
   });
 
-  await assertBackendExecution(identity.backend, {
-    facet: "tasks",
-    operation: "fresh-task-run",
-    executionClass: "governed-execution",
-    executionProfile: "standard",
-    requiresPrivilegedInstructions: true,
+  const result = await executeAgentCall(
+    {
+      kind: "task_run",
+      backend: identity.backend,
+      executionClass: "governed-execution",
+      executionProfile: "standard",
+      requiresPrivilegedInstructions: true,
+      prompt: input.prompt,
+      modelSelection: identity.modelSelection,
+      ...(input.systemInstructions !== undefined
+        ? { systemInstructions: input.systemInstructions }
+        : {}),
+      ...(input.outputFormat !== undefined
+        ? { outputSchema: input.outputFormat.schema }
+        : {}),
+      timeoutMs,
+    },
+    {
+      taskExecution: {
+        workingDirectory: input.worktreePath,
+        autonomous: true,
+        sandboxMode: "danger-full-access",
+        approvalPolicy: "never",
+        skipGitRepoCheck: true,
+        networkAccessEnabled: true,
+        webSearchMode: "disabled",
+        signal: input.signal,
+      },
+      ...(deps.runTask
+        ? {
+            getTaskRunner: (backend: AgentBackendId) => ({
+              backend,
+              run: (request: AgentTaskRequest) =>
+                deps.runTask!(backend, request),
+            }),
+          }
+        : {}),
+    },
+  );
+  logger.info("fresh_task_run.completed", {
+    backend: identity.backend,
+    kind: result.outcome.kind,
+    costUsd: result.usage.costUsd ?? null,
   });
-  const result = await runTask(identity.backend, {
-    executionClass: "governed-execution",
-    executionProfile: "standard",
-    requiresPrivilegedInstructions: true,
-    workingDirectory: input.worktreePath,
-    prompt: input.prompt,
-    ...(input.systemInstructions !== undefined
-      ? { systemInstructions: [input.systemInstructions] }
-      : {}),
-    modelSelection: identity.modelSelection,
-    ...(input.outputFormat !== undefined
-      ? { outputSchema: input.outputFormat.schema }
-      : {}),
-    timeoutMs,
-    ...(input.signal !== undefined ? { signal: input.signal } : {}),
-    autonomous: true,
-    sandboxMode: "danger-full-access",
-    approvalPolicy: "never",
-    skipGitRepoCheck: true,
-    networkAccessEnabled: true,
-    webSearchMode: "disabled",
-  });
-
-  return toTaskRunResult(result, timeoutMs, input.signal?.aborted === true);
+  return toTaskRunResult({ kind: "call_result", result }, input.outputFormat);
 }

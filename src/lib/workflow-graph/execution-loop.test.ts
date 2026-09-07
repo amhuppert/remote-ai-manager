@@ -1626,7 +1626,9 @@ describe("execution loop", () => {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           iterationCallCount += 1;
           if (iterationCallCount === 1) {
-            throw new Error("SDK error: MCP error -32000: Stream closed");
+            throw transportTurnError(
+              "SDK error: MCP error -32000: Stream closed",
+            );
           }
 
           const next = structuredClone(harness.getCurrent());
@@ -2185,7 +2187,7 @@ describe("execution loop", () => {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           iterationCallCount += 1;
           if (iterationCallCount === 1) {
-            throw new Error(
+            throw transportTurnError(
               "SDK error: QuerySession died before prompt delivery",
             );
           }
@@ -2218,6 +2220,132 @@ describe("execution loop", () => {
 
     expect(iterationCallCount).toBe(2);
     expect(recoverRetryableIterationError).toHaveBeenCalledOnce();
+    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "complete",
+    });
+    expect(result.status).toBe("completed");
+  });
+
+  it("keeps transport and SDK recovery budgets distinct when error wording changes", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
+          pendingApproval: null,
+          pendingUserInputs: {},
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 1,
+          consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+      laneStates: {
+        "ctx-1": {
+          implementer: {
+            backend: "claude",
+            refKind: "conversation",
+            lane: "implementer",
+            contextId: "ctx-1",
+            workflowConversationId: "conv-1",
+            sessionRef: { backend: "claude", ref: "conv-1" },
+            metrics: { rotateBeforeNextTurn: false },
+            limitEvaluation: "disabled",
+            lastUsedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    });
+    let iterationCallCount = 0;
+
+    const recoverRetryableIterationError = vi.fn(
+      async (_projectPath: string, _sessionName: string, errInput) => {
+        expect(errInput.contextId).toBe("ctx-1");
+        const next = structuredClone(harness.getCurrent());
+        next.contextStates["ctx-1"]!.status = "ready";
+        const lane = next.laneStates["ctx-1"]?.["implementer"];
+        if (lane?.backend === "claude") {
+          lane.metrics.rotateBeforeNextTurn = true;
+        }
+        harness.setCurrent(next);
+        return next;
+      },
+    );
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      recoverRetryableIterationError,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          if (iterationCallCount === 1) {
+            throw new AgentTurnFailedError("Provider channel unavailable", {
+              contextId: "ctx-1",
+              engine: "claude",
+              cause: "sdk_error",
+              originalMessage: "Provider channel unavailable",
+              failure: {
+                kind: "session_died",
+                message: "Provider channel unavailable",
+                retryable: true,
+              },
+            });
+          }
+
+          if (iterationCallCount === 2)
+            throw new AgentTurnFailedError("Unclassified SDK failure", {
+              contextId: "ctx-1",
+              engine: "claude",
+              cause: "sdk_error",
+              originalMessage: "Unclassified SDK failure",
+              failure: {
+                kind: "backend_error",
+                message: "Unclassified SDK failure",
+                retryable: false,
+              },
+            });
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 2;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.taskStates["task-1"]!.status = "completed";
+          next.taskStates["task-1"]!.completedAt = "2026-03-27T12:03:00.000Z";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(3);
+    expect(recoverRetryableIterationError).toHaveBeenCalledTimes(2);
     expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
       type: "complete",
     });
@@ -2299,7 +2427,7 @@ describe("execution loop", () => {
           async runIteration(): Promise<GraphWorkflowIterationResult> {
             iterationCallCount += 1;
             if (iterationCallCount === 1) {
-              throw new Error(`SDK error: ${sdkErrorMessage}`);
+              throw transportTurnError(`SDK error: ${sdkErrorMessage}`);
             }
 
             const next = structuredClone(harness.getCurrent());
@@ -2379,7 +2507,9 @@ describe("execution loop", () => {
       recoverRetryableIterationError,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
-          throw new Error("SDK error: MCP error -32000: Stream closed");
+          throw transportTurnError(
+            "SDK error: MCP error -32000: Stream closed",
+          );
         },
       },
     });
@@ -2397,7 +2527,8 @@ describe("execution loop", () => {
       projectPath: "/repo",
       sessionName: "session-1",
       reason: {
-        type: "execution_loop_failed",
+        type: "agent_turn_failed",
+        engine: "claude",
         contextId: "ctx-1",
         message: "SDK error: MCP error -32000: Stream closed",
         cause: "sdk_error",
@@ -2453,11 +2584,13 @@ describe("execution loop", () => {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           iterationCallCount += 1;
           if (iterationCallCount === 1) {
-            throw new Error("SDK error: MCP error -32000: Stream closed");
+            throw transportTurnError(
+              "SDK error: MCP error -32000: Stream closed",
+            );
           }
           if (iterationCallCount === 2) {
             throw new IterationFailureWithProgressError(
-              new Error("SDK error: QuerySession is dead"),
+              transportTurnError("SDK error: QuerySession is dead"),
               2,
             );
           }
@@ -7454,12 +7587,12 @@ describe("execution loop", () => {
     function buildRealGate(
       harness: LoopHarness,
       overrides: {
-        sendConversationEvent?: (
+        clearConversationQuestion?: (
           projectPath: string,
           sessionName: string,
           conversationId: string,
-          event: { type: string },
-        ) => boolean;
+          question: { questionId: string },
+        ) => Promise<boolean>;
         broadcast?: (event: unknown) => void;
         /**
          * Reject writes whose ambient loop fence no longer matches the
@@ -7515,7 +7648,8 @@ describe("execution loop", () => {
             overrides.broadcast?.(row.event);
           }
         },
-        sendConversationEvent: overrides.sendConversationEvent ?? (() => true),
+        clearConversationQuestion:
+          overrides.clearConversationQuestion ?? (async () => true),
         now: () => "2026-03-27T12:03:00.000Z",
       });
     }
@@ -8912,3 +9046,13 @@ describe("the settlement pass reads landing evidence off the branch (D4 R2.5, de
     expect(result.haltReason?.type).toBe("merge_failure");
   });
 });
+
+function transportTurnError(message: string): AgentTurnFailedError {
+  return new AgentTurnFailedError(message, {
+    contextId: "ctx-1",
+    engine: "claude",
+    cause: "sdk_error",
+    originalMessage: message,
+    failure: { kind: "session_died", message, retryable: true },
+  });
+}

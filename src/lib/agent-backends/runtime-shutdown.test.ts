@@ -1,13 +1,11 @@
+import { createHostedBackendFixture } from "@/lib/workflows/conversation/testing/hosted-backend-fixture";
+let fixture: ReturnType<typeof createHostedBackendFixture>;
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   installRuntimeShutdownHook,
   type ShutdownSignalSource,
 } from "./runtime-shutdown";
-import {
-  registerRuntime,
-  getRuntime,
-  _resetForTesting,
-} from "./runtime-registry";
+import { getRuntime, _resetForTesting } from "./runtime-registry";
 import type { ConversationBackendRuntime } from "./conversation";
 
 function makeRuntime(close: () => Promise<void>): ConversationBackendRuntime {
@@ -16,7 +14,7 @@ function makeRuntime(close: () => Promise<void>): ConversationBackendRuntime {
     status: "alive",
     modelSelection: { modelId: "composer-2.5", parameters: { fast: "true" } },
     outputFormat: undefined,
-    alignmentVersion: null,
+
     sendTurn: () => {
       throw new Error("this fixture never dispatches a turn");
     },
@@ -56,6 +54,8 @@ async function settleMicrotasks(): Promise<void> {
 }
 
 beforeEach(() => {
+  fixture?.dispose();
+  fixture = createHostedBackendFixture();
   _resetForTesting();
 });
 
@@ -63,7 +63,10 @@ describe("installRuntimeShutdownHook", () => {
   it("registers for both terminating signals", () => {
     const source = fakeSignalSource();
 
-    installRuntimeShutdownHook(source);
+    installRuntimeShutdownHook(
+      fixture.manager.stopAllConversationActors,
+      source,
+    );
 
     expect(source.registered()).toEqual(["SIGINT", "SIGTERM"]);
   });
@@ -72,20 +75,23 @@ describe("installRuntimeShutdownHook", () => {
     "closes every registered runtime and empties the registry on %s",
     async (signal) => {
       const closed: string[] = [];
-      registerRuntime(
+      await fixture.install(
         "conv-1",
         makeRuntime(async () => {
           closed.push("conv-1");
         }),
       );
-      registerRuntime(
+      await fixture.install(
         "conv-2",
         makeRuntime(async () => {
           closed.push("conv-2");
         }),
       );
       const source = fakeSignalSource();
-      installRuntimeShutdownHook(source);
+      installRuntimeShutdownHook(
+        fixture.manager.stopAllConversationActors,
+        source,
+      );
 
       await source.fire(signal);
 
@@ -97,23 +103,26 @@ describe("installRuntimeShutdownHook", () => {
 
   it("still closes the other runtimes when one teardown rejects", async () => {
     const closed: string[] = [];
-    registerRuntime(
+    await fixture.install(
       "conv-broken",
       makeRuntime(() => Promise.reject(new Error("teardown refused"))),
     );
-    registerRuntime(
+    await fixture.install(
       "conv-ok",
       makeRuntime(async () => {
         closed.push("conv-ok");
       }),
     );
     const source = fakeSignalSource();
-    installRuntimeShutdownHook(source);
+    installRuntimeShutdownHook(
+      fixture.manager.stopAllConversationActors,
+      source,
+    );
 
     await source.fire("SIGTERM");
 
     expect(closed).toEqual(["conv-ok"]);
-    expect(getRuntime("conv-broken")).toBeUndefined();
+    expect(getRuntime("conv-broken")).toBeDefined();
   });
 
   /**
@@ -125,7 +134,7 @@ describe("installRuntimeShutdownHook", () => {
   it("does not settle until every runtime's close has resolved", async () => {
     const release = Promise.withResolvers<void>();
     let closed = false;
-    registerRuntime(
+    await fixture.install(
       "conv-slow",
       makeRuntime(async () => {
         await release.promise;
@@ -133,7 +142,10 @@ describe("installRuntimeShutdownHook", () => {
       }),
     );
     const source = fakeSignalSource();
-    installRuntimeShutdownHook(source);
+    installRuntimeShutdownHook(
+      fixture.manager.stopAllConversationActors,
+      source,
+    );
 
     let handlerSettled = false;
     const firing = source.fire("SIGTERM").then(() => {
@@ -155,12 +167,15 @@ describe("installRuntimeShutdownHook", () => {
       throw new Error("the shutdown hook must not exit the process");
     });
     try {
-      registerRuntime(
+      await fixture.install(
         "conv-1",
         makeRuntime(async () => {}),
       );
       const source = fakeSignalSource();
-      installRuntimeShutdownHook(source);
+      installRuntimeShutdownHook(
+        fixture.manager.stopAllConversationActors,
+        source,
+      );
 
       await source.fire("SIGTERM");
 

@@ -1,13 +1,4 @@
-/**
- * Pre-turn step: abort-controller and safety-net-timeout wiring.
- *
- * Hides three lifecycle decisions: a controller left aborted by a previous
- * turn is refreshed (an AbortController is single-use); the timeout handle
- * lives on the shared runtime state so out-of-band cleanup (manager stop,
- * runtime-state cleanup) can cancel it; and on timeout the controller aborts
- * BEFORE the runtime closes so the backend's `signal.aborted` check
- * classifies the failure as `aborted` rather than a generic error.
- */
+/** Arms timeout and inactivity cancellation on the admitted controller. */
 
 import { createLogger } from "@/lib/logging";
 import {
@@ -19,17 +10,6 @@ import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-t
 
 const logger = createLogger("conversation-actor");
 
-export interface AbortWiringDeps {
-  registerAbortController(
-    conversationId: string,
-    controller: AbortController,
-  ): void;
-  unregisterAbortController(
-    conversationId: string,
-    controller: AbortController,
-  ): void;
-}
-
 export interface TurnAbortWiring {
   abortController: AbortController;
   /** True once the safety-net timeout fired (read on abort exit paths). */
@@ -38,43 +18,29 @@ export interface TurnAbortWiring {
   stallFired(): boolean;
   /** Record backend activity: resets the inactivity deadline. */
   notifyActivity(): void;
-  /** Clear the timeout and unregister the controller (turn `finally`). */
+  /** Clear the turn timeout and inactivity watchdog. */
   cleanup(): void;
 }
 
-export function wireTurnAbort(
-  deps: AbortWiringDeps,
-  input: {
-    runtimeState: Pick<
-      ConversationRuntimeState,
-      "abortController" | "timeoutHandle"
-    >;
-    conversationId: string;
-    sessionName: string;
-    backend: string;
-    timeoutMs: number;
-    /**
-     * Per-turn inactivity bound (0 disables). Fed by `notifyActivity()` from
-     * the turn's backend-event stream; a turn with no events for this long is
-     * presumed hung and torn down like a timeout, but reported as `stalled`.
-     */
-    stallTimeoutMs?: number;
-    /** Closes the live backend runtime when the safety-net timeout fires. */
-    closeRuntime(): void;
-  },
-): TurnAbortWiring {
+export function wireTurnAbort(input: {
+  runtimeState: Pick<
+    ConversationRuntimeState,
+    "abortController" | "timeoutHandle"
+  >;
+  conversationId: string;
+  sessionName: string;
+  backend: string;
+  timeoutMs: number;
+  /**
+   * Per-turn inactivity bound (0 disables). Fed by `notifyActivity()` from
+   * the turn's backend-event stream; a turn with no events for this long is
+   * presumed hung and torn down like a timeout, but reported as `stalled`.
+   */
+  stallTimeoutMs?: number;
+}): TurnAbortWiring {
   const { runtimeState } = input;
 
-  if (runtimeState.abortController.signal.aborted) {
-    logger.info("prompt.abort_controller_refreshed", {
-      ...scopeRefFromStoreSessionName(input.sessionName),
-      backend: input.backend,
-      conversationId: input.conversationId,
-    });
-    runtimeState.abortController = new AbortController();
-  }
   const abortController = runtimeState.abortController;
-  deps.registerAbortController(input.conversationId, abortController);
 
   let timeoutFired = false;
   logger.debug("prompt.timeout.resolved", {
@@ -90,8 +56,7 @@ export function wireTurnAbort(
         ...scopeRefFromStoreSessionName(input.sessionName),
         timeoutMs: input.timeoutMs,
       });
-      abortController.abort();
-      input.closeRuntime();
+      abortController.abort("timeout");
     }, input.timeoutMs);
   }
 
@@ -105,8 +70,7 @@ export function wireTurnAbort(
         conversationId: input.conversationId,
         stallTimeoutMs,
       });
-      abortController.abort();
-      input.closeRuntime();
+      abortController.abort("stalled");
     },
   });
 
@@ -121,7 +85,6 @@ export function wireTurnAbort(
         runtimeState.timeoutHandle = undefined;
       }
       stallWatchdog.cancel();
-      deps.unregisterAbortController(input.conversationId, abortController);
     },
   };
 }

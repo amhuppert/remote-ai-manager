@@ -1,3 +1,5 @@
+import { normalizeTurn } from "./turn-spec";
+import { conversationTotals } from "./actor-input-loader";
 /**
  * Conversation XState v5 state machine.
  *
@@ -25,7 +27,7 @@
  *  in context.debugMode)             executePrompt or runTaskRun;
  *  │                                 ASK_QUESTION is internal)
  *  │ SUBMIT_PROMPT /                            │
- *  │ DEBUG_COMMAND (retry_turn)  PROMPT_COMPLETED / PROMPT_FAILED / ABORT_TURN
+ *  │ DEBUG_COMMAND (retry_turn)  invoke completion / ABORT_TURN
  *  v                                            │
  * acquiringResources                            v
  *                                         finalizingTurn
@@ -54,7 +56,7 @@ import type {
 } from "./types";
 import {
   prepareTurnActor,
-  finalizeQueuedDeliveryActor,
+  settleTurnActor,
   executePromptActor,
   runTaskRunActor,
 } from "./actors";
@@ -63,12 +65,7 @@ import {
   clearDebugTurnFailure,
 } from "@/lib/workflows/debug/commands";
 import { resolveDebugFinalization } from "@/lib/workflows/debug/finalization";
-import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import { getDefaultDebugAdapter } from "./debug-adapter";
-import {
-  conversationRuntimeKey,
-  getConversationRuntime,
-} from "./runtime-state";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("conversation-machine");
@@ -110,28 +107,15 @@ function conversationTurnFromEvent(
   context: ConversationContext,
   event: Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }>,
 ): ConversationTurnActive {
+  const { type: _type, streamId, executionAttemptId, ...request } = event;
   return {
-    kind: "conversation_turn",
-    promptText: event.promptText,
-    images: event.images ?? [],
-    backend: event.backend ?? context.agentBackend,
-    modelSelection: event.modelSelection ?? null,
-    autonomous: event.autonomous ?? false,
+    ...normalizeTurn(
+      { ...request, kind: "conversation_turn" },
+      context.agentBackend,
+    ),
     startedAt: new Date().toISOString(),
-    streamId: event.streamId,
-    outputFormat: event.outputFormat,
-    ...(event.waitForBackgroundTasks ? { waitForBackgroundTasks: true } : {}),
-    ...(event.queuedDelivery ? { queuedDelivery: event.queuedDelivery } : {}),
-    ...(event.documentFeedback
-      ? { documentFeedback: event.documentFeedback }
-      : {}),
-    ...(event.notepadFeedback?.length
-      ? { notepadFeedback: event.notepadFeedback }
-      : {}),
-    ...(event.askUserQuestionsEnabled ? { askUserQuestionsEnabled: true } : {}),
-    ...(event.fsWritePolicy !== undefined
-      ? { fsWritePolicy: event.fsWritePolicy }
-      : {}),
+    streamId,
+    executionAttemptId: executionAttemptId ?? randomUUID(),
   };
 }
 
@@ -140,30 +124,11 @@ function taskRunFromEvent(
   context: ConversationContext,
   event: Extract<ConversationEvent, { type: "SUBMIT_TASK_RUN" }>,
 ): TaskRunActive {
+  const { type: _type, executionAttemptId, ...request } = event;
   return {
-    kind: "task_run",
-    executionClass: event.executionClass,
-    executionProfile: event.executionProfile,
-    requiresPrivilegedInstructions: event.requiresPrivilegedInstructions,
-    promptText: event.promptText,
-    backend: event.backend ?? context.agentBackend,
-    modelSelection: event.modelSelection ?? null,
+    ...normalizeTurn({ ...request, kind: "task_run" }, context.agentBackend),
     startedAt: new Date().toISOString(),
-    ...(event.outputFormat !== undefined
-      ? { outputFormat: event.outputFormat }
-      : {}),
-    ...(event.systemInstructions !== undefined
-      ? { systemInstructions: event.systemInstructions }
-      : {}),
-    ...(event.tooling !== undefined ? { tooling: event.tooling } : {}),
-    ...(event.timeoutMs !== undefined ? { timeoutMs: event.timeoutMs } : {}),
-    ...(event.fsWritePolicy !== undefined
-      ? { fsWritePolicy: event.fsWritePolicy }
-      : {}),
-    ...(event.structuredOutputTextField !== undefined
-      ? { structuredOutputTextField: event.structuredOutputTextField }
-      : {}),
-    ...(event.origin !== undefined ? { origin: event.origin } : {}),
+    executionAttemptId: executionAttemptId ?? randomUUID(),
   };
 }
 
@@ -193,7 +158,7 @@ function createModelSelectionResolutionReporter(
 /**
  * Resolve the context `backendRef` after a completed turn — the single owner
  * of continuation disposition for every completed-turn path (executePrompt /
- * runTaskRun onDone, PROMPT_COMPLETED, EXTERNAL_TURN_COMPLETED). The result's
+ * runTaskRun onDone, EXTERNAL_TURN_COMPLETED). The result's
  * `continuationDisposition` is backend continuation policy decided where the
  * turn executed, never by backend identity here. "clear" unconditionally
  * drops the ref: the backend declared the continuation unusable, so the next
@@ -244,7 +209,7 @@ export const conversationMachine = setup({
 
   actors: {
     prepareTurn: prepareTurnActor,
-    finalizeQueuedDelivery: finalizeQueuedDeliveryActor,
+    settleTurn: settleTurnActor,
     executePrompt: executePromptActor,
     runTaskRun: runTaskRunActor,
   },
@@ -255,13 +220,15 @@ export const conversationMachine = setup({
   },
 
   actions: {
-    // Stubs overridden via .provide() in manager
+    // Runtime effects are supplied by the actor host.
     persistSnapshot: () => {},
     syncDerivedFields: () => {},
     broadcastConversationStatus: () => {},
     broadcastAskQuestion: () => {},
     broadcastDebugModeStatus: () => {},
     releaseResources: () => {},
+    completeTurn: () => {},
+    cancelTurn: () => {},
     dispatchPushNotification: () => {},
     markUnreadOnFinish: () => {},
     markReadOnUserTurnStart: () => {},
@@ -270,7 +237,7 @@ export const conversationMachine = setup({
     rejectInactiveModelSelectionResolution: ({ context, event }) => {
       if (event.type !== "MODEL_SELECTION_RESOLVED") return;
       logger.warn("conversation.model_selection_resolution_stale", {
-        conversationId: context.conversationId,
+        conversationId: context.target.conversationId,
         modelId: event.modelSelection.modelId,
         currentExecutionAttemptId:
           context.activeTurn?.executionAttemptId ?? null,
@@ -282,17 +249,7 @@ export const conversationMachine = setup({
         ),
       );
     },
-    cancelDebugCleanupVerification: ({ context }) => {
-      const runtime = getConversationRuntime(
-        conversationRuntimeKey(
-          context.projectPath,
-          context.sessionName,
-          context.conversationId,
-        ),
-      );
-      runtime?.debugCleanupVerification?.controller.abort();
-      if (runtime) runtime.debugCleanupVerification = undefined;
-    },
+    cancelDebugCleanupVerification: () => {},
     persistRestoredDebugGeneration: enqueueActions(({ context, enqueue }) => {
       if (!context.debugGenerationNeedsPersistence) return;
       enqueue.assign({ debugGenerationNeedsPersistence: false });
@@ -359,10 +316,26 @@ export const conversationMachine = setup({
       enqueue("persistSnapshot");
     }),
 
+    accountTurn: assign(({ context }) => ({
+      promptCount:
+        context.activeTurn != null || context.lastResult != null
+          ? context.promptCount + 1
+          : context.promptCount,
+      totals: context.lastResult
+        ? accumulateTotals(context.totals, context.lastResult)
+        : context.totals,
+      lastActivityAt: new Date().toISOString(),
+    })),
+    finishTurn: enqueueActions(({ enqueue }) => {
+      enqueue("syncDerivedFields");
+      enqueue("completeTurn");
+      enqueue("broadcastConversationStatus");
+    }),
+
     /** Settle a turn that finalized while debug mode is active. The debug
      *  workflow decides what the outcome means (`resolveDebugFinalization`);
-     *  this action applies shared turn accounting, maps the decision kind
-     *  onto side effects (user notification only on a phase advance), and
+     *  this action maps the decision kind onto side effects (user notification
+     *  only on a phase advance), and
      *  starts async cleanup verification when the cleanup turn produced a
      *  structured report. `activeTurn` is preserved on `verify_cleanup` and
      *  `turn_failed` so a retry can re-run the same prompt. */
@@ -380,21 +353,14 @@ export const conversationMachine = setup({
       const preserveActiveTurn =
         decision.kind === "verify_cleanup" || decision.kind === "turn_failed";
       enqueue.assign({
-        promptCount: context.promptCount + 1,
-        totals: result
-          ? accumulateTotals(context.totals, result)
-          : context.totals,
         status: "awaiting" as const,
-        lastActivityAt: new Date().toISOString(),
         debugMode: decision.debugMode,
         ...(preserveActiveTurn ? {} : { activeTurn: null }),
         ...(decision.kind === "turn_failed"
           ? { lastError: decision.lastError }
           : {}),
       });
-      enqueue("syncDerivedFields");
-      enqueue("releaseResources");
-      enqueue("broadcastConversationStatus");
+      enqueue("finishTurn");
       if (decision.kind === "advance") {
         enqueue("dispatchPushNotification");
         enqueue("markUnreadOnFinish");
@@ -405,59 +371,21 @@ export const conversationMachine = setup({
       }
     }),
 
-    /** Fire-and-forget cleanup verification. The default implementation is
-     *  production-real (the debug workflow module owns the verify logic);
-     *  tests override it via `.provide()` to inject a fake verifier. The
-     *  outcome re-enters the machine as a DEBUG_COMMAND stamped with this
-     *  attempt, so the reducer drops it if a newer cleanup attempt has
-     *  superseded it by the time it resolves. This action runs after
-     *  finalizeDebugTurn's assign, so `debugMode` already carries the
-     *  attempt the verify_cleanup decision stamped for this turn. */
-    startDebugCleanupVerification: ({ context, self }) => {
-      const debugSessionId = context.debugMode?.debugSessionId;
-      if (!debugSessionId) return;
-
-      const key = conversationRuntimeKey(
-        context.projectPath,
-        context.sessionName,
-        context.conversationId,
-      );
-      const runtime = getConversationRuntime(key);
-      runtime?.debugCleanupVerification?.controller.abort();
-      const controller = new AbortController();
-      if (runtime) {
-        runtime.debugCleanupVerification = { debugSessionId, controller };
-      }
-
-      void runDebugCleanupVerification({
-        worktreePath: context.worktreePath,
-        conversationId: context.conversationId,
-        structuredOutput: context.lastResult?.structuredOutput,
-        debugSessionId,
-        attempt: context.debugMode?.cleanupVerificationAttempt ?? 0,
-        signal: controller.signal,
-      }).then((command) => {
-        if (controller.signal.aborted || command == null) return;
-        const current = getConversationRuntime(key)?.debugCleanupVerification;
-        if (current && current.controller !== controller) return;
-        if (runtime) runtime.debugCleanupVerification = undefined;
-        self.send({ type: "DEBUG_COMMAND", command });
-      });
-    },
+    startDebugCleanupVerification: () => {},
   },
 }).createMachine({
   id: "conversation",
 
   context: ({ input }): ConversationContext => ({
     _schemaVersion: 1,
-    conversationScope: input.conversationScope ?? "session",
+    target: input.target,
+
     projectPath: input.projectPath,
-    projectName: input.projectName,
-    sessionName: input.sessionName,
+
     worktreePath: input.worktreePath,
-    conversationId: input.conversationId,
+
     createdAt: input.createdAt,
-    lastActivityAt: input.createdAt,
+    lastActivityAt: input.lastActivityAt,
     status: input.promptCount === 0 ? "new" : "awaiting",
     promptCount: input.promptCount,
     transcriptPath: input.transcriptPath,
@@ -484,20 +412,14 @@ export const conversationMachine = setup({
             lastTurnFailed: input.debugMode.lastTurnFailed,
             debugSessionId:
               input.debugMode.debugSessionId ??
-              mintMissingDebugSessionId(input.conversationId),
+              mintMissingDebugSessionId(input.target.conversationId),
             cleanupVerificationAttempt:
               input.debugMode.cleanupVerificationAttempt,
           }
         : null,
     debugGenerationNeedsPersistence:
       input.debugMode?.active === true && !input.debugMode.debugSessionId,
-    totals: {
-      totalCostUsd: null,
-      totalDurationMs: null,
-      totalTurns: null,
-      contextTokens: null,
-      contextWindowMax: null,
-    },
+    totals: conversationTotals(input),
     lastResult: null,
     lastError: null,
   }),
@@ -592,11 +514,17 @@ export const conversationMachine = setup({
         // "running" conversation. Stop is the user's only exit, so it settles
         // the turn here exactly as it does in `executing`.
         ABORT_TURN: {
+          guard: ({ context, event }) =>
+            event.executionAttemptId === undefined ||
+            event.executionAttemptId === context.activeTurn?.executionAttemptId,
           target: "#conversation.finalizingTurn",
-          actions: assign({
-            lastError: ({ event }) => `Aborted: ${event.reason}`,
-            pendingQuestion: null,
-          }),
+          actions: [
+            "cancelTurn",
+            assign({
+              lastError: ({ event }) => `Aborted: ${event.reason}`,
+              pendingQuestion: null,
+            }),
+          ],
         },
       },
     },
@@ -609,26 +537,29 @@ export const conversationMachine = setup({
         assign({
           status: "running" as const,
           lastActivityAt: () => new Date().toISOString(),
-          activeTurn: ({ context }) =>
-            context.activeTurn === null
-              ? null
-              : {
-                  ...context.activeTurn,
-                  executionAttemptId: randomUUID(),
-                },
         }),
         "syncDerivedFields",
         "broadcastConversationStatus",
         "markReadOnUserTurnStart",
         "triggerAutoNaming",
       ],
+      on: {
+        ABORT_TURN: {
+          guard: ({ context, event }) =>
+            event.executionAttemptId === undefined ||
+            event.executionAttemptId === context.activeTurn?.executionAttemptId,
+          target: "finalizingTurn",
+          actions: "cancelTurn",
+        },
+      },
       invoke: {
         src: "prepareTurn",
         input: ({ context }): PrepareTurnInput => ({
+          executionAttemptId: context.activeTurn?.executionAttemptId,
           persistence: context.transient ? "ephemeral" : "durable",
           projectPath: context.projectPath,
-          sessionName: context.sessionName,
-          conversationId: context.conversationId,
+          target: context.target,
+
           worktreePath: context.worktreePath,
           transcriptPath: context.transcriptPath,
         }),
@@ -674,6 +605,9 @@ export const conversationMachine = setup({
         // mid-turn before the ref is durable, the next turn cannot `resume:`
         // and the agent silently loses all prior context.
         BACKEND_INIT: {
+          guard: ({ context, event }) =>
+            event.executionAttemptId === undefined ||
+            event.executionAttemptId === context.activeTurn?.executionAttemptId,
           actions: [
             assign({
               backendRef: ({ event }) => event.backendRef,
@@ -682,32 +616,25 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
-        PROMPT_COMPLETED: {
-          target: "#conversation.finalizingTurn",
-          actions: assign({
-            lastResult: ({ event }) => event.result,
-            backendRef: ({ context, event }) =>
-              resolveCompletedTurnBackendRef(context, event.result),
-          }),
-        },
-        PROMPT_FAILED: {
-          target: "#conversation.finalizingTurn",
-          actions: assign({
-            lastError: ({ event }) => event.error,
-          }),
-        },
         ABORT_TURN: {
+          guard: ({ context, event }) =>
+            event.executionAttemptId === undefined ||
+            event.executionAttemptId === context.activeTurn?.executionAttemptId,
           target: "#conversation.finalizingTurn",
-          actions: assign({
-            lastError: ({ event }) => `Aborted: ${event.reason}`,
-            pendingQuestion: null,
-          }),
+          actions: [
+            "cancelTurn",
+            assign({
+              lastError: ({ event }) => `Aborted: ${event.reason}`,
+              pendingQuestion: null,
+            }),
+          ],
         },
         // The pending question was consumed (answered) mid-turn; the turn keeps
         // running and finalizingTurn will settle to idle instead of
         // waitingForInput.
         CLEAR_PENDING_QUESTION: {
-          guard: ({ context }) => context.pendingQuestion != null,
+          guard: ({ context, event }) =>
+            context.pendingQuestion?.questionId === event.questionId,
           actions: [
             assign({
               status: "running" as const,
@@ -806,49 +733,28 @@ export const conversationMachine = setup({
                 );
 
               return {
+                turn: { ...activeTurn, outputFormat },
+                executionAttemptId: activeTurn.executionAttemptId,
                 persistence: context.transient ? "ephemeral" : "durable",
-                conversationScope: context.conversationScope,
+                target: context.target,
+
                 projectPath: context.projectPath,
-                projectName: context.projectName,
-                sessionName: context.sessionName,
+
                 worktreePath: context.worktreePath,
-                conversationId: context.conversationId,
+
                 transcriptPath: context.transcriptPath!,
                 agentBackend: context.agentBackend,
                 backendRef: context.backendRef,
                 promptCount: context.promptCount,
                 forkedFrom: context.forkedFrom,
                 role: context.role,
-                promptText: activeTurn.promptText,
-                images: activeTurn.images,
                 streamId: activeTurn.streamId,
-                modelSelection: activeTurn.modelSelection,
                 onModelSelectionResolved:
                   createModelSelectionResolutionReporter(
                     (event) => self.send(event),
                     activeTurn.executionAttemptId,
                   ),
-                autonomous: activeTurn.autonomous,
                 debugMode: context.debugMode,
-                outputFormat,
-                ...(activeTurn.waitForBackgroundTasks
-                  ? { waitForBackgroundTasks: true }
-                  : {}),
-                ...(activeTurn.queuedDelivery
-                  ? { queuedDelivery: activeTurn.queuedDelivery }
-                  : {}),
-                ...(activeTurn.documentFeedback
-                  ? { documentFeedback: activeTurn.documentFeedback }
-                  : {}),
-                ...(activeTurn.notepadFeedback?.length
-                  ? { notepadFeedback: activeTurn.notepadFeedback }
-                  : {}),
-                ...(activeTurn.askUserQuestionsEnabled
-                  ? { askUserQuestionsEnabled: true }
-                  : {}),
-                ...(activeTurn.fsWritePolicy !== undefined
-                  ? { fsWritePolicy: activeTurn.fsWritePolicy }
-                  : {}),
               };
             },
             onDone: {
@@ -882,49 +788,21 @@ export const conversationMachine = setup({
                 );
               }
               return {
+                turn: activeTurn,
+                executionAttemptId: activeTurn.executionAttemptId,
                 persistence: context.transient ? "ephemeral" : "durable",
                 projectPath: context.projectPath,
-                projectName: context.projectName,
-                sessionName: context.sessionName,
+                target: context.target,
+
                 worktreePath: context.worktreePath,
-                conversationId: context.conversationId,
+
                 agentBackend: activeTurn.backend,
-                executionClass: activeTurn.executionClass,
-                executionProfile: activeTurn.executionProfile,
-                requiresPrivilegedInstructions:
-                  activeTurn.requiresPrivilegedInstructions,
                 backendRef: context.backendRef,
-                promptText: activeTurn.promptText,
-                modelSelection: activeTurn.modelSelection,
                 onModelSelectionResolved:
                   createModelSelectionResolutionReporter(
                     (event) => self.send(event),
                     activeTurn.executionAttemptId,
                   ),
-                ...(activeTurn.outputFormat !== undefined
-                  ? { outputFormat: activeTurn.outputFormat }
-                  : {}),
-                ...(activeTurn.systemInstructions !== undefined
-                  ? { systemInstructions: activeTurn.systemInstructions }
-                  : {}),
-                ...(activeTurn.tooling !== undefined
-                  ? { tooling: activeTurn.tooling }
-                  : {}),
-                ...(activeTurn.timeoutMs !== undefined
-                  ? { timeoutMs: activeTurn.timeoutMs }
-                  : {}),
-                ...(activeTurn.fsWritePolicy !== undefined
-                  ? { fsWritePolicy: activeTurn.fsWritePolicy }
-                  : {}),
-                ...(activeTurn.structuredOutputTextField !== undefined
-                  ? {
-                      structuredOutputTextField:
-                        activeTurn.structuredOutputTextField,
-                    }
-                  : {}),
-                ...(activeTurn.origin !== undefined
-                  ? { origin: activeTurn.origin }
-                  : {}),
               };
             },
             onDone: {
@@ -949,36 +827,36 @@ export const conversationMachine = setup({
     // ========================================================
     // FINALIZING TURN — update metadata, release resources
     // ========================================================
-    finalizingTurn: {
-      always: [
-        {
-          guard: ({ context }) =>
-            context.activeTurn?.kind === "conversation_turn" &&
-            context.activeTurn.queuedDelivery !== undefined,
-          target: "settlingQueuedDelivery",
-        },
-        { target: "applyingTurnResult" },
-      ],
-    },
+    finalizingTurn: { always: "settlingQueuedDelivery" },
     settlingQueuedDelivery: {
       invoke: {
-        src: "finalizeQueuedDelivery",
-        input: ({ context }) => {
-          const queuedDelivery =
+        src: "settleTurn",
+        input: ({ context }) => ({
+          projectPath: context.projectPath,
+          target: context.target,
+          persistence: context.transient
+            ? ("ephemeral" as const)
+            : ("durable" as const),
+          executionAttemptId: context.activeTurn?.executionAttemptId,
+          queuedDelivery:
             context.activeTurn?.kind === "conversation_turn"
               ? context.activeTurn.queuedDelivery
-              : undefined;
-          if (!queuedDelivery)
-            throw new Error("Queue settlement requires a delivery attempt");
-          return {
-            projectPath: context.projectPath,
-            sessionName: context.sessionName,
-            conversationId: context.conversationId,
-            persistence: context.transient ? "ephemeral" : "durable",
-            queuedDelivery,
-          };
+              : undefined,
+        }),
+        onDone: {
+          target: "applyingTurnResult",
+          actions: assign(({ context, event }) =>
+            event.output
+              ? {
+                  lastResult: event.output,
+                  backendRef: resolveCompletedTurnBackendRef(
+                    context,
+                    event.output,
+                  ),
+                }
+              : {},
+          ),
         },
-        onDone: "applyingTurnResult",
         onError: {
           target: "applyingTurnResult",
           actions: assign({
@@ -988,6 +866,7 @@ export const conversationMachine = setup({
       },
     },
     applyingTurnResult: {
+      entry: ["accountTurn", "releaseResources"],
       always: [
         // Debug mode: the attached debug workflow interprets the turn
         // outcome (advance / follow-up / verify-cleanup / failed) and the
@@ -1007,24 +886,8 @@ export const conversationMachine = setup({
           guard: ({ context }) => context.pendingQuestion != null,
           target: "waitingForInput",
           actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount:
-                  context.activeTurn != null || result != null
-                    ? context.promptCount + 1
-                    : context.promptCount,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "waiting_for_input" as const,
-                lastActivityAt: new Date().toISOString(),
-              };
-            }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
+            assign({ activeTurn: null, status: "waiting_for_input" }),
+            "finishTurn",
             "markUnreadOnFinish",
             "persistSnapshot",
           ],
@@ -1033,25 +896,12 @@ export const conversationMachine = setup({
         {
           target: "idle",
           actions: [
-            assign(({ context }) => {
-              const result = context.lastResult;
-              return {
-                promptCount:
-                  context.activeTurn != null || result != null
-                    ? context.promptCount + 1
-                    : context.promptCount,
-                totals: result
-                  ? accumulateTotals(context.totals, result)
-                  : context.totals,
-                activeTurn: null,
-                status: "awaiting" as const,
-                lastActivityAt: new Date().toISOString(),
-                pendingQuestion: null,
-              };
+            assign({
+              activeTurn: null,
+              status: "awaiting",
+              pendingQuestion: null,
             }),
-            "syncDerivedFields",
-            "releaseResources",
-            "broadcastConversationStatus",
+            "finishTurn",
             "dispatchPushNotification",
             "markUnreadOnFinish",
             "persistSnapshot",
@@ -1100,6 +950,8 @@ export const conversationMachine = setup({
         // turn. The answer route clears the marker directly, settling the
         // conversation to idle.
         CLEAR_PENDING_QUESTION: {
+          guard: ({ context, event }) =>
+            context.pendingQuestion?.questionId === event.questionId,
           target: "idle",
           actions: [
             assign({
@@ -1148,6 +1000,10 @@ export const conversationMachine = setup({
               context.activeTurn != null,
             target: "acquiringResources",
             actions: assign({
+              activeTurn: ({ context }) =>
+                context.activeTurn
+                  ? { ...context.activeTurn, executionAttemptId: randomUUID() }
+                  : null,
               debugMode: ({ context }) =>
                 clearDebugTurnFailure(context.debugMode),
               lastResult: null,

@@ -117,7 +117,7 @@ function makeConversationRuntime(
     status: "alive",
     modelSelection: selectionForBackend(backend),
     outputFormat: undefined,
-    alignmentVersion: null,
+
     async sendTurn(input) {
       if (opts.capture) opts.capture.value = input;
       return { ...baseResult, ...(opts.result ?? {}) };
@@ -1579,7 +1579,7 @@ describe("executeAgentCall — structured-output repair", () => {
       status: "alive",
       modelSelection: CLAUDE_SELECTION,
       outputFormat: undefined,
-      alignmentVersion: null,
+
       async sendTurn(input) {
         turnInputs.push(input);
         const text =

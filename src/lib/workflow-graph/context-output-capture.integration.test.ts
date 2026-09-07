@@ -1,3 +1,7 @@
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+
+import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
+
 /**
  * R2.1 end-to-end: engine → production capture runner → canonical AgentCall
  * gate → FAKE AGENT BACKEND.
@@ -10,15 +14,9 @@
  * `validateJsonSchemaSubset`), the real capture runner translates the verdict,
  * and the real orchestrator decides whether the context may complete.
  *
- * The turn projection is the REAL one too: `runTaskRunTurnForMachine` (the
- * actor implementation the conversation machine invokes) followed by
- * `mapToTaskRunResult`. Those two functions decide whether a gate verdict
- * reaches the engine as a payload, as a schema rejection, or as an
- * infrastructure failure, so re-implementing them in the test would prove
- * nothing about production. Only two things are substituted: the backend
- * runner, and the actor's inert dependency set (no store, no filesystem).
- * `ensureConversationActor` — the XState wrapper whose single task-run action
- * delegates straight to `runTaskRunTurnForMachine` — is the one hop skipped.
+ * The production host and admitted completion handle carry the original AgentCall
+ * result through the task facade. Only provider execution and external
+ * infrastructure are substituted; persistence uses an isolated SQLite fixture.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,17 +27,10 @@ import type {
 } from "@/lib/agent-backends/task";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 import { DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS } from "@/lib/workflows/primitives/agent-call-facade";
-import {
-  mapToTaskRunResult,
-  type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import {
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "@/lib/workflows/conversation/actor-implementations";
-import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+
+import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "./test-fixtures";
@@ -97,7 +88,7 @@ function fakeBackend(
 /**
  * The production task-run path, with only the backend faked: the real actor
  * implementation (which runs the real `executeAgentCall` gate) followed by the
- * real `PromptActorResult` → `TaskRunResult` projection. Every branch the
+ * real hosted task facade and outcome projection. Every branch the
  * engine depends on — accepted payload with its provenance, schema rejection
  * with per-issue errors and the refused text, infrastructure failure — is
  * decided by production code here, not by this test.
@@ -105,43 +96,28 @@ function fakeBackend(
 function productionTaskRun(
   runner: AgentTaskRunner,
 ): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  setActorDeps(
-    createActorImplementationDepsFixture({
-      getTaskRunner: vi.fn(() => runner),
-    }),
-  );
+  const actorDependencies = createActorDependenciesFixture({
+    getTaskRunner: vi.fn(() => runner),
+  });
 
   return async (input) => {
-    const actorResult = await runTaskRunTurnForMachine({
-      executionClass: input.executionClass,
-      executionProfile: input.executionProfile,
-      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
-      persistence: "ephemeral",
-      projectPath: input.projectPath,
-      projectName: "repo",
-      sessionName: input.sessionName,
-      worktreePath: input.worktreePath ?? "/repo",
-      conversationId: input.conversationId,
-      agentBackend: "claude",
-      backendRef: RESUMED_BACKEND_REF,
-      promptText: input.prompt,
-      modelSelection: input.modelSelection ?? null,
-      onModelSelectionResolved: async () => {},
-      ...(input.outputFormat !== undefined
-        ? { outputFormat: input.outputFormat }
-        : {}),
-      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
-      ...(input.origin !== undefined ? { origin: input.origin } : {}),
-      ...(input.fsWritePolicy !== undefined
-        ? { fsWritePolicy: input.fsWritePolicy }
-        : {}),
+    const fixture = await createLifecycleFixture({
+      binding: input.binding,
+      conversation: { agentBackend: "claude", backendRef: RESUMED_BACKEND_REF },
+      actorDeps: actorDependencies,
     });
-
-    return mapToTaskRunResult(
-      actorResult,
-      actorResult.error,
-      input.outputFormat,
-    );
+    try {
+      return await fixture.executeWorkflowTaskRun({
+        ...input,
+        binding: {
+          ...input.binding,
+          worktreePath: input.binding.worktreePath ?? "/repo",
+        },
+        resumeRef: input.resumeRef ?? RESUMED_BACKEND_REF,
+      });
+    } finally {
+      await fixture.close();
+    }
   };
 }
 
@@ -295,12 +271,7 @@ const ITERATION_INPUT = {
 };
 
 describe("context output capture against a fake agent backend (R2.1)", () => {
-  beforeEach(() => {
-    _resetActorDepsForTesting();
-  });
-  afterEach(() => {
-    _resetActorDepsForTesting();
-  });
+  beforeEach(() => {});
 
   it("drives a schema-declaring context to completed and persists a payload that parses against the declared schema", async () => {
     const repository = createRepository(executionWithSchema());
@@ -485,3 +456,5 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
     expect(capture.requests.length).toBeGreaterThan(1);
   });
 });
+
+afterEach(() => resetTaskRuntime());

@@ -1,10 +1,22 @@
+import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
+import { ManagedConversationRuntime } from "../runtime-binding";
+import type { ConversationActorDependencies } from "../actor-dependencies";
+import {
+  createConversationActorImplementations,
+  type ConversationActorImplementations,
+} from "../actor-implementations";
+import { ephemeralConversationEffects } from "../effects";
+import { createConversationPolicyState } from "../policy-state";
+import {
+  getConversationRuntime,
+  conversationRuntimeKey,
+} from "../runtime-state";
+import type { Logger } from "@/lib/logging";
 /**
  * Actor dependency fixture for tests that drive the REAL conversation actor
  * implementations (`runTaskRunTurnForMachine`, `executePromptForMachine`).
  *
- * Those functions reach their collaborators through a module-level singleton
- * (`setActorDeps`), so a test can only exercise the production turn projection
- * — outcome → `PromptActorResult` — by supplying a full dependency set. Every
+ * Each fixture constructs the production execution core with explicit dependencies. Every
  * seam here is inert (no filesystem, no store, no network); `executeAgentCall`
  * defaults to the REAL facade so the structured-output gate, its candidate
  * extraction fall-through, and its bounded repair all run for real, with only
@@ -16,7 +28,7 @@
 import { vi } from "vitest";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { ActorImplementationDeps } from "@/lib/workflows/conversation/actor-implementations";
+
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 
 export function createMockBackendRuntime(
@@ -32,29 +44,16 @@ export function createMockBackendRuntime(
       parameters: { effort: "high" },
     },
     outputFormat: undefined,
-    capabilities: {
-      queueWhileRunning: false,
-      askUserQuestion: true,
-      preciseFork: false,
-      portableMcpAtStart: false,
-      portableMcpBetweenTurns: false,
-      contextWindowMetrics: true,
-    },
+
     sendTurn: vi.fn(),
     close: vi.fn(async () => {}),
     ...overrides,
-  } as unknown as ConversationBackendRuntime;
+  } satisfies ConversationBackendRuntime;
 }
 
-/**
- * A full, inert `ActorImplementationDeps`. The single cast is the reason this
- * lives in one module rather than being re-declared per test file: the type is
- * a wide composition of runtime seams, and duplicating the escape hatch in
- * every consumer is how the sets drift apart.
- */
-export function createActorImplementationDepsFixture(
-  overrides: Partial<ActorImplementationDeps> = {},
-): ActorImplementationDeps {
+export function createActorDependenciesFixture(
+  overrides: Partial<ActorFixtureDependencies> = {},
+): ActorFixtureDependencies {
   const backendRuntime = createMockBackendRuntime();
   const factory = {
     backend: "claude" as const,
@@ -142,7 +141,10 @@ export function createActorImplementationDepsFixture(
     // Defaults to the unprovisioned-server outcome, so a test that cares about
     // launch authority has to opt in and say which identity it expects.
     mintConversationCapability: vi.fn(() => null),
-    buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
+    buildChildEnv: vi.fn(() => ({
+      HOME: "/home/test",
+      NODE_ENV: "test" as const,
+    })),
     resolvePluginPaths: vi.fn(async () => []),
     getCodexToolPromptHint: vi.fn(() => ""),
     mutateConversation: vi.fn(async () => {}),
@@ -169,8 +171,6 @@ export function createActorImplementationDepsFixture(
     getReferenceDocuments: vi.fn(async () => []),
     readConversationMessages: vi.fn(async () => []),
     fileExists: vi.fn(() => false),
-    registerAbortController: vi.fn(),
-    unregisterAbortController: vi.fn(),
     applyMcpAtTurnStart: vi.fn(
       async (_input: {
         projectPath: string;
@@ -188,28 +188,168 @@ export function createActorImplementationDepsFixture(
     applyCapabilityWhenIdle: vi.fn(async () => ({})),
     composeCapabilityConfigForConversation: vi.fn(async () => undefined),
     composeCapabilityConfigForProjectConversation: vi.fn(async () => undefined),
-    composePortableMcpForConversation: vi.fn(
-      async (args: {
-        projectName: string;
-        sessionName: string;
-        transientPortableMcp?: { servers: Array<Record<string, unknown>> };
-      }) => ({
-        servers: [
-          {
-            id: "gateway-alpha",
-            transport: "streamable-http" as const,
-            url: `http://localhost:3000/api/projects/${args.projectName}/sessions/${args.sessionName}/mcp`,
-          },
-          ...(args.transientPortableMcp?.servers ?? []),
-        ],
-      }),
-    ),
+    composePortableMcpForConversation: vi.fn<
+      ActorFixtureDependencies["composePortableMcpForConversation"]
+    >(async (args) => ({
+      servers: [
+        {
+          id: "gateway-alpha",
+          transport: "streamable-http" as const,
+          url: `http://localhost:3000/api/projects/${args.projectName}/sessions/${args.sessionName}/mcp`,
+        },
+        ...(args.transientPortableMcp?.servers ?? []),
+      ],
+    })),
     executeAgentCall: defaultExecuteAgentCall,
+    getTaskRunner: () => ({
+      backend: "claude",
+      async run() {
+        throw new Error("Fixture task runner is not configured");
+      },
+    }),
     markQueuedDelivered: vi.fn(async () => {}),
     markQueuedPending: vi.fn(async () => {}),
     markQueuedFailed: vi.fn(async () => {}),
     markQueuedUncertain: vi.fn(async () => {}),
     log: createCapturingLogger(),
     ...overrides,
-  } as ActorImplementationDeps;
+  } satisfies ActorFixtureDependencies;
+}
+
+export type ActorFixtureDependencies = Omit<
+  ConversationActorDependencies["execution"],
+  "getRuntime"
+> &
+  Omit<ConversationActorDependencies["effects"], "getRuntime"> &
+  Omit<ConversationActorDependencies["context"], "getRuntime"> &
+  Omit<ConversationActorDependencies["transcript"], "getRuntime"> &
+  Omit<ConversationActorDependencies["policy"], "state"> &
+  Omit<ConversationActorDependencies["debug"], "getRuntime"> & { log: Logger };
+
+export function groupActorFixtureDependencies(
+  deps: ActorFixtureDependencies,
+): ConversationActorDependencies {
+  return {
+    execution: {
+      acquireConversationLock: deps.acquireConversationLock,
+      acquireQuerySlot: deps.acquireQuerySlot,
+      readConfig: deps.readConfig,
+      getProjectDisplayName: deps.getProjectDisplayName,
+      getConversationBackendFactory: deps.getConversationBackendFactory,
+      admitConfiguredModelSelection: deps.admitConfiguredModelSelection,
+      getConversationCapabilities: deps.getConversationCapabilities,
+      registerBackendRuntime: deps.registerBackendRuntime,
+      unregisterBackendRuntime: deps.unregisterBackendRuntime,
+      mintConversationCapability: deps.mintConversationCapability,
+      buildChildEnv: deps.buildChildEnv,
+      resolvePluginPaths: deps.resolvePluginPaths,
+      getCodexToolPromptHint: deps.getCodexToolPromptHint,
+      getConversation: deps.getConversation,
+      getSessionState: deps.getSessionState,
+      fileExists: deps.fileExists,
+      executeAgentCall: deps.executeAgentCall,
+      getTaskRunner: deps.getTaskRunner,
+      getRuntime: getConversationRuntime,
+    },
+    effects: {
+      mutateConversation: deps.mutateConversation,
+      recordMemoryIndexDeliveries: deps.recordMemoryIndexDeliveries,
+      resetMemoryIndexDelivery: deps.resetMemoryIndexDelivery,
+      recordNotepadDeliveries: deps.recordNotepadDeliveries,
+      settleNotepadChangeNotice: deps.settleNotepadChangeNotice,
+      claimWorkflowResults: deps.claimWorkflowResults,
+      settleWorkflowResults: deps.settleWorkflowResults,
+      releaseWorkflowResults: deps.releaseWorkflowResults,
+      createReferenceDocument: deps.createReferenceDocument,
+      markQueuedUncertain: deps.markQueuedUncertain,
+      markQueuedDelivered: deps.markQueuedDelivered,
+      markQueuedPending: deps.markQueuedPending,
+      markQueuedFailed: deps.markQueuedFailed,
+    },
+    context: {
+      getActiveAlignmentInjection: deps.getActiveAlignmentInjection,
+      getActiveAlignmentVersion: deps.getActiveAlignmentVersion,
+      getLiveTicketBlock: deps.getLiveTicketBlock,
+      getMemoryIndexBlock: deps.getMemoryIndexBlock,
+      readNotepadForInjection: deps.readNotepadForInjection,
+      prepareNotepadChangeNotice: deps.prepareNotepadChangeNotice,
+      getReferenceDocuments: deps.getReferenceDocuments,
+    },
+    transcript: {
+      getTranscriptPath: deps.getTranscriptPath,
+      appendTranscriptEntryOnce: deps.appendTranscriptEntryOnce,
+      safeAppendTranscriptEntry: deps.safeAppendTranscriptEntry,
+      safeAppendTranscriptEntryOnce: deps.safeAppendTranscriptEntryOnce,
+      saveTranscriptImage: deps.saveTranscriptImage,
+      getNextImageIndex: deps.getNextImageIndex,
+      readConversationMessages: deps.readConversationMessages,
+    },
+    policy: {
+      state: createConversationPolicyState({
+        persistence: "durable",
+        managed: new ManagedConversationRuntime("fixture"),
+        effects: deps,
+        getConversation: deps.getConversation,
+      }),
+      composePortableMcpForConversation: deps.composePortableMcpForConversation,
+      applyMcpAtTurnStart: deps.applyMcpAtTurnStart,
+      applyCapabilityAtTurnStart: deps.applyCapabilityAtTurnStart,
+      applyCapabilityWhenIdle: deps.applyCapabilityWhenIdle,
+      composeCapabilityConfigForConversation:
+        deps.composeCapabilityConfigForConversation,
+      composeCapabilityConfigForProjectConversation:
+        deps.composeCapabilityConfigForProjectConversation,
+    },
+    debug: {
+      getDebugLogUrl: deps.getDebugLogUrl,
+    },
+    log: deps.log,
+  };
+}
+
+export function createTestActorImplementations(
+  deps: ActorFixtureDependencies,
+): ConversationActorImplementations {
+  const groups = groupActorFixtureDependencies(deps);
+  function forInput(input: {
+    persistence: "durable" | "ephemeral";
+    projectPath: string;
+    target: import("@/lib/conversations/conversation-target").ConversationTarget;
+  }) {
+    const identity = conversationStoreIdentity(input);
+    const managed =
+      getConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          identity.sessionName,
+          identity.conversationId,
+        ),
+      )?.managed ?? new ManagedConversationRuntime(identity.conversationId);
+    return createConversationActorImplementations({
+      ...groups,
+      policy: {
+        ...groups.policy,
+        state: createConversationPolicyState({
+          persistence: input.persistence,
+          managed,
+          effects: groups.effects,
+          getConversation: deps.getConversation,
+        }),
+      },
+      effects:
+        input.persistence === "ephemeral"
+          ? ephemeralConversationEffects
+          : groups.effects,
+    });
+  }
+  return {
+    prepareTurnForMachine: (input, signal) =>
+      forInput(input).prepareTurnForMachine(input, signal),
+    executePromptForMachine: (input, signal) =>
+      forInput(input).executePromptForMachine(input, signal),
+    runTaskRunTurnForMachine: (input, signal) =>
+      forInput(input).runTaskRunTurnForMachine(input, signal),
+    finalizeQueuedDeliveryForMachine: (input) =>
+      forInput(input).finalizeQueuedDeliveryForMachine(input),
+  };
 }

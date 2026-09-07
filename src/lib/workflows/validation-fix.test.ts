@@ -1,12 +1,11 @@
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import { describe, it, expect, vi } from "vitest";
 import {
   createValidationFixer,
   type ValidationFixDeps,
 } from "./validation-fix";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
 const PROJECT_PATH = "/projects/repo";
 const SESSION_NAME = "feature-branch";
@@ -77,7 +76,9 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     });
 
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.worktreePath).toBe("/projects/repo/.worktrees/lane-feature");
+    expect(input.binding.worktreePath).toBe(
+      "/projects/repo/.worktrees/lane-feature",
+    );
   });
 
   it("routes via executeWorkflowTaskRun with projectPath/sessionName/conversationId and kind=task_run", async () => {
@@ -99,9 +100,11 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     expect(result.status).toBe("fixed");
     expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
-    expect(input.projectPath).toBe(PROJECT_PATH);
-    expect(input.sessionName).toBe(SESSION_NAME);
-    expect(input.conversationId).toBe(CONVERSATION_ID);
+    expect(input.binding.address.projectPath).toBe(PROJECT_PATH);
+    expect(
+      conversationTargetStoreSessionName(input.binding.address.target),
+    ).toBe(SESSION_NAME);
+    expect(input.binding.address.target.conversationId).toBe(CONVERSATION_ID);
     expect(input.kind).toBe("task_run");
     expect(input.outputFormat).toBeUndefined();
     expect(typeof input.systemInstructions).toBe("string");

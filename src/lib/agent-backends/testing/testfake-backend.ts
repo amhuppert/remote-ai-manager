@@ -252,7 +252,6 @@ export function createTestFakeBackend(
       },
       modelSelection: input.modelSelection,
       outputFormat: input.outputFormat,
-      alignmentVersion: null,
 
       async sendTurn(
         turnInput: ConversationBackendTurnInput,

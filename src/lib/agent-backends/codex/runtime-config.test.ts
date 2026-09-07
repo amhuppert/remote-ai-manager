@@ -112,7 +112,7 @@ function fakeRuntime(input: {
       parameters: { reasoning: "high", fast: "false" },
     },
     outputFormat: undefined,
-    alignmentVersion: null,
+
     appliedConfigs,
     async sendTurn() {
       throw new Error("not used in this test");

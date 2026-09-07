@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { abortHandle } from "@/lib/shared/abort-registry";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  abortConversation,
   registerAbortController,
   unregisterAbortController,
 } from "./abort-registry";
@@ -20,7 +20,7 @@ describe("abort-registry", () => {
 
     unregisterAbortController("conv-basic", controller);
 
-    expect(abortConversation("conv-basic")).toBe(false);
+    expect(abortHandle("conversation:conv-basic")).toBe(false);
     expect(controller.signal.aborted).toBe(false);
   });
 
@@ -36,27 +36,27 @@ describe("abort-registry", () => {
 
     unregisterAbortController("conv-race", controllerA);
 
-    expect(abortConversation("conv-race")).toBe(true);
+    expect(abortHandle("conversation:conv-race")).toBe(true);
     expect(controllerB.signal.aborted).toBe(true);
     expect(controllerA.signal.aborted).toBe(false);
   });
 
-  it("abortConversation aborts and removes the registered controller", async () => {
+  it("the domain index is visible to the shared signal registry", async () => {
     const controller = new AbortController();
     registerAbortController("conv-abort", controller);
 
-    expect(abortConversation("conv-abort")).toBe(true);
+    expect(abortHandle("conversation:conv-abort")).toBe(true);
     expect(controller.signal.aborted).toBe(true);
     // Already removed: a second abort finds nothing.
-    expect(abortConversation("conv-abort")).toBe(false);
+    expect(abortHandle("conversation:conv-abort")).toBe(false);
   });
 
-  it("still signals the abort when the runtime teardown rejects", async () => {
-    // Abort is synchronous and reports whether a turn was signalled; runtime
-    // teardown resolves later. A rejected teardown must not surface as an
-    // unhandled rejection (which fails the run) or change the abort verdict.
+  it("signals the indexed controller while leaving runtime closure to its owner", async () => {
     const controller = new AbortController();
     registerAbortController("conv-close-rejects", controller);
+    const close = vi.fn(async () => {
+      throw new Error("teardown failed");
+    });
     registerRuntime("conv-close-rejects", {
       backend: "claude",
       status: "alive",
@@ -65,17 +65,16 @@ describe("abort-registry", () => {
         parameters: { effort: "high" },
       },
       outputFormat: undefined,
-      alignmentVersion: null,
+
       sendTurn: async () => {
         throw new Error("sendTurn is not exercised by abort");
       },
-      close: () => Promise.reject(new Error("teardown failed")),
+      close,
     });
 
-    expect(abortConversation("conv-close-rejects")).toBe(true);
+    expect(abortHandle("conversation:conv-close-rejects")).toBe(true);
     expect(controller.signal.aborted).toBe(true);
 
-    // Let the rejected teardown settle so an unhandled rejection would surface.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(close).not.toHaveBeenCalled();
   });
 });

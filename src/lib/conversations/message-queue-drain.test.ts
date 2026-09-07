@@ -1,3 +1,6 @@
+import { conversationStoreIdentity } from "./conversation-target";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Tests for the conversation message-queue drain engine.
  */
@@ -7,7 +10,6 @@ import {
   drainConversationQueue,
   queuedBatchToSubmitPrompt,
   type ConversationQueueDeps,
-  type DrainSelf,
 } from "./message-queue-drain";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
@@ -38,6 +40,7 @@ vi.mock("@/lib/logging", () => ({
  * legacy conversation would — no profile, no lock, no write.
  */
 beforeEach(() => {
+  submitTurn.mockClear();
   setConversationProfileAdmissionDeps({
     mutateConversation: async (_p, _s, _c, _label, mutate) =>
       mutate({
@@ -53,15 +56,40 @@ afterEach(() => {
 
 const DRAIN_CONTEXT = {
   projectPath: "/test/project",
-  projectName: "test-project",
-  sessionName: "test-session",
-  conversationId: "conv-drain",
+  target: targetFromStoreSessionName(
+    "test-project",
+    "test-session",
+    "conv-drain",
+  ),
 };
+
+function acceptedSubmission(): Awaited<
+  ReturnType<ConversationQueueDeps["submitTurn"]>
+> {
+  const completed = Promise.resolve({
+    attemptId: "queue-test",
+    outcome: {
+      kind: "not_started" as const,
+      reason: "configuration" as const,
+      message: "Queue test boundary",
+    },
+    status: "awaiting" as const,
+    pendingQuestion: null,
+  });
+  return {
+    kind: "accepted",
+    turn: { attemptId: "queue-test", completed, cancel: () => completed },
+  };
+}
+const submitTurn = vi.fn<ConversationQueueDeps["submitTurn"]>(async () =>
+  acceptedSubmission(),
+);
 
 function makeQueueDeps(
   overrides: Partial<ConversationQueueDeps> = {},
 ): ConversationQueueDeps {
   return {
+    submitTurn,
     claimNextTurnBatch: vi.fn(async () => null),
     markPending: vi.fn(async () => {}),
     markDelivered: vi.fn(async () => {}),
@@ -76,13 +104,14 @@ function makeQueueDeps(
   };
 }
 
-function makeDrainSelf(canAccept: boolean) {
-  const send = vi.fn<DrainSelf["send"]>();
-  const self: DrainSelf = {
-    getSnapshot: () => ({ can: () => canAccept }),
-    send,
-  };
-  return { self, send };
+function makeDrainAdmission(canAccept: boolean) {
+  if (!canAccept)
+    submitTurn.mockResolvedValueOnce({
+      kind: "refused",
+      code: "busy",
+      message: "Not accepting",
+    });
+  return { send: submitTurn };
 }
 
 describe("queuedBatchToSubmitPrompt", () => {
@@ -282,13 +311,9 @@ describe("drainConversationQueue", () => {
   it("skips claiming entirely for a transient conversation context", async () => {
     const claimNextTurnBatch = vi.fn(async () => BATCH);
     const deps = makeQueueDeps({ claimNextTurnBatch });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(
-      self,
-      { ...DRAIN_CONTEXT, transient: true },
-      deps,
-    );
+    await drainConversationQueue({ ...DRAIN_CONTEXT, transient: true }, deps);
 
     expect(claimNextTurnBatch).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
@@ -298,19 +323,18 @@ describe("drainConversationQueue", () => {
   it("dispatches exactly one SUBMIT_PROMPT carrying the claimed delivery metadata", async () => {
     const claimNextTurnBatch = vi.fn(async () => BATCH);
     const deps = makeQueueDeps({ claimNextTurnBatch });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(claimNextTurnBatch).toHaveBeenCalledWith({
       projectPath: DRAIN_CONTEXT.projectPath,
-      sessionName: DRAIN_CONTEXT.sessionName,
-      conversationId: DRAIN_CONTEXT.conversationId,
+      sessionName: conversationTargetStoreSessionName(DRAIN_CONTEXT.target),
+      conversationId: DRAIN_CONTEXT.target.conversationId,
     });
     expect(send).toHaveBeenCalledTimes(1);
-    const event = send.mock.calls[0]?.[0] as ConversationEvent;
-    expect(event.type).toBe("SUBMIT_PROMPT");
-    if (event.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+    const event = send.mock.calls[0]?.[0].turn;
+    if (!event || event.kind === "task_run") throw new Error("wrong event");
     expect(event.promptText).toBe("hello");
     expect(event.queuedDelivery).toEqual({
       messageIds: ["m1", "m2"],
@@ -329,13 +353,12 @@ describe("drainConversationQueue", () => {
       modelSelection,
     }));
     const deps = makeQueueDeps({ claimNextTurnBatch });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
-    const event = send.mock.calls[0]?.[0];
-    expect(event?.type).toBe("SUBMIT_PROMPT");
-    if (event?.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+    const event = send.mock.calls[0]?.[0].turn;
+    if (!event || event.kind === "task_run") throw new Error("wrong event");
     expect(event.modelSelection).toEqual(modelSelection);
   });
 
@@ -358,13 +381,13 @@ describe("drainConversationQueue", () => {
     };
     const claimNextTurnBatch = vi.fn(async () => feedbackBatch);
     const deps = makeQueueDeps({ claimNextTurnBatch });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(send).toHaveBeenCalledTimes(1);
-    const event = send.mock.calls[0]?.[0] as ConversationEvent;
-    if (event.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+    const event = send.mock.calls[0]?.[0].turn;
+    if (!event || event.kind === "task_run") throw new Error("wrong event");
     expect(event.documentFeedback).toEqual({ items });
   });
 
@@ -390,13 +413,13 @@ describe("drainConversationQueue", () => {
     };
     const claimNextTurnBatch = vi.fn(async () => mixedBatch);
     const deps = makeQueueDeps({ claimNextTurnBatch });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(send).toHaveBeenCalledTimes(1);
-    const event = send.mock.calls[0]?.[0] as ConversationEvent;
-    if (event.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+    const event = send.mock.calls[0]?.[0].turn;
+    if (!event || event.kind === "task_run") throw new Error("wrong event");
     expect(event.promptText).toBe("also handle the empty-state case");
     expect(event.documentFeedback).toEqual({ items });
   });
@@ -405,11 +428,11 @@ describe("drainConversationQueue", () => {
     const claimNextTurnBatch = vi.fn(async () => BATCH);
     const markPending = vi.fn(async () => {});
     const deps = makeQueueDeps({ claimNextTurnBatch, markPending });
-    const { self, send } = makeDrainSelf(false);
+    const { send } = makeDrainAdmission(false);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
     expect(markPending).toHaveBeenCalledTimes(1);
     expect(markPending).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -423,9 +446,9 @@ describe("drainConversationQueue", () => {
     const claimNextTurnBatch = vi.fn(async () => null);
     const markPending = vi.fn(async () => {});
     const deps = makeQueueDeps({ claimNextTurnBatch, markPending });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(send).not.toHaveBeenCalled();
     expect(markPending).not.toHaveBeenCalled();
@@ -437,16 +460,13 @@ describe("drainConversationQueue", () => {
     const claimNextTurnBatch = vi.fn(async () => BATCH);
     const markPending = vi.fn(async () => {});
     const deps = makeQueueDeps({ claimNextTurnBatch, markPending });
-    const send = vi.fn<DrainSelf["send"]>(() => {
+    const send = vi.fn<ConversationQueueDeps["submitTurn"]>(async () => {
       throw new Error("send boom");
     });
-    const self: DrainSelf = {
-      getSnapshot: () => ({ can: () => true }),
-      send,
-    };
+    deps.submitTurn = send;
 
     await expect(
-      drainConversationQueue(self, DRAIN_CONTEXT, deps),
+      drainConversationQueue(DRAIN_CONTEXT, deps),
     ).resolves.toBeUndefined();
 
     expect(markPending).toHaveBeenCalledWith(
@@ -474,17 +494,17 @@ describe("drainConversationQueue command routing", () => {
     const deps = makeQueueDeps({
       claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
     });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(send).not.toHaveBeenCalled();
     expect(deps.runConversationCommand).toHaveBeenCalledTimes(1);
     expect(deps.runConversationCommand).toHaveBeenCalledWith({
       projectPath: DRAIN_CONTEXT.projectPath,
-      projectName: DRAIN_CONTEXT.projectName,
-      sessionName: DRAIN_CONTEXT.sessionName,
-      conversationId: DRAIN_CONTEXT.conversationId,
+      projectName: DRAIN_CONTEXT.target.projectName,
+      sessionName: conversationTargetStoreSessionName(DRAIN_CONTEXT.target),
+      conversationId: DRAIN_CONTEXT.target.conversationId,
       parsed: { command: "commit", hint: "focus on the API" },
       rawText: "/commit focus on the API",
       modelSelection: {
@@ -521,9 +541,8 @@ describe("drainConversationQueue command routing", () => {
       runConversationCommand,
       markDelivered,
     });
-    const { self } = makeDrainSelf(true);
 
-    const drain = drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    const drain = drainConversationQueue(DRAIN_CONTEXT, deps);
     // Let the drain reach the awaited run before resolving it.
     await vi.waitFor(() => expect(runConversationCommand).toHaveBeenCalled());
     expect(markDelivered).not.toHaveBeenCalled();
@@ -534,8 +553,8 @@ describe("drainConversationQueue command routing", () => {
     expect(order).toEqual(["run-start", "delivered"]);
     expect(markDelivered).toHaveBeenCalledWith({
       projectPath: DRAIN_CONTEXT.projectPath,
-      sessionName: DRAIN_CONTEXT.sessionName,
-      conversationId: DRAIN_CONTEXT.conversationId,
+      sessionName: conversationTargetStoreSessionName(DRAIN_CONTEXT.target),
+      conversationId: DRAIN_CONTEXT.target.conversationId,
       ids: ["c1"],
       deliveryAttemptId: "att-cmd",
     });
@@ -545,13 +564,15 @@ describe("drainConversationQueue command routing", () => {
     const deps = makeQueueDeps({
       claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
     });
-    const { self } = makeDrainSelf(true);
 
     await drainConversationQueue(
-      self,
       {
         ...DRAIN_CONTEXT,
-        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        target: targetFromStoreSessionName(
+          DRAIN_CONTEXT.target.projectName,
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+          DRAIN_CONTEXT.target.conversationId,
+        ),
       },
       deps,
     );
@@ -574,10 +595,10 @@ describe("drainConversationQueue command routing", () => {
         throw new Error("command run boom");
       }),
     });
-    const { self, send } = makeDrainSelf(true);
+    const { send } = makeDrainAdmission(true);
 
     await expect(
-      drainConversationQueue(self, DRAIN_CONTEXT, deps),
+      drainConversationQueue(DRAIN_CONTEXT, deps),
     ).resolves.toBeUndefined();
 
     expect(send).not.toHaveBeenCalled();
@@ -585,8 +606,8 @@ describe("drainConversationQueue command routing", () => {
     expect(deps.markPending).not.toHaveBeenCalled();
     expect(deps.markFailed).toHaveBeenCalledWith({
       projectPath: DRAIN_CONTEXT.projectPath,
-      sessionName: DRAIN_CONTEXT.sessionName,
-      conversationId: DRAIN_CONTEXT.conversationId,
+      sessionName: conversationTargetStoreSessionName(DRAIN_CONTEXT.target),
+      conversationId: DRAIN_CONTEXT.target.conversationId,
       ids: ["c1"],
       deliveryAttemptId: "att-cmd",
       error: "command run boom",
@@ -606,15 +627,14 @@ describe("drainConversationQueue command routing", () => {
         confirmationPersisted: false,
       })),
     });
-    const { self } = makeDrainSelf(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(deps.markDelivered).not.toHaveBeenCalled();
     expect(deps.markFailed).toHaveBeenCalledWith({
       projectPath: DRAIN_CONTEXT.projectPath,
-      sessionName: DRAIN_CONTEXT.sessionName,
-      conversationId: DRAIN_CONTEXT.conversationId,
+      sessionName: conversationTargetStoreSessionName(DRAIN_CONTEXT.target),
+      conversationId: DRAIN_CONTEXT.target.conversationId,
       ids: ["c1"],
       deliveryAttemptId: "att-cmd",
       error:
@@ -636,17 +656,16 @@ describe("drainConversationQueue command routing", () => {
       })),
       runConversationCommand,
     });
-    const { self } = makeDrainSelf(true);
 
-    await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+    await drainConversationQueue(DRAIN_CONTEXT, deps);
 
     expect(runConversationCommand).toHaveBeenCalledTimes(1);
     expect(deps.markDelivered).not.toHaveBeenCalled();
     expect(deps.markPending).not.toHaveBeenCalled();
     expect(deps.markFailed).toHaveBeenCalledWith({
       projectPath: DRAIN_CONTEXT.projectPath,
-      sessionName: DRAIN_CONTEXT.sessionName,
-      conversationId: DRAIN_CONTEXT.conversationId,
+      sessionName: conversationTargetStoreSessionName(DRAIN_CONTEXT.target),
+      conversationId: DRAIN_CONTEXT.target.conversationId,
       ids: ["c1"],
       deliveryAttemptId: "att-cmd",
       error:
@@ -704,6 +723,16 @@ describe("drain integration over the real-store queue (text → command → text
       const runInputs: unknown[] = [];
       const commandRowStatusDuringRun: string[] = [];
       const deps: ConversationQueueDeps = {
+        submitTurn: async (input) => {
+          if (input.turn.kind === "task_run")
+            throw new Error("Expected queued conversation turn");
+          sent.push({
+            ...input.turn,
+            type: "SUBMIT_PROMPT",
+            streamId: input.transport?.streamId ?? null,
+          });
+          return acceptedSubmission();
+        },
         claimNextTurnBatch: (input) => queueService.claimNextTurnBatch(input),
         markPending: (input) => queueService.markPending(input),
         markDelivered: (input) => queueService.markDelivered(input),
@@ -731,21 +760,14 @@ describe("drain integration over the real-store queue (text → command → text
       };
 
       const sent: ConversationEvent[] = [];
-      const self: DrainSelf = {
-        getSnapshot: () => ({ can: () => true }),
-        send: (event) => {
-          sent.push(event);
-        },
-      };
+
       const context = {
         projectPath,
-        projectName: "proj",
-        sessionName,
-        conversationId,
+        target: targetFromStoreSessionName("proj", sessionName, conversationId),
       };
 
       // Drain 1: the plain prefix before the command becomes one turn.
-      await drainConversationQueue(self, context, deps);
+      await drainConversationQueue(context, deps);
       expect(sent).toHaveLength(1);
       const firstEvent = sent[0];
       if (firstEvent?.type !== "SUBMIT_PROMPT") {
@@ -761,7 +783,7 @@ describe("drain integration over the real-store queue (text → command → text
       });
 
       // Drain 2: the command at the head runs through the command service.
-      await drainConversationQueue(self, context, deps);
+      await drainConversationQueue(context, deps);
       expect(sent).toHaveLength(1);
       expect(runInputs).toEqual([
         {
@@ -789,7 +811,7 @@ describe("drain integration over the real-store queue (text → command → text
       ).toBe("pending");
 
       // Drain 3: the trailing text drains as a normal turn.
-      await drainConversationQueue(self, context, deps);
+      await drainConversationQueue(context, deps);
       expect(sent).toHaveLength(2);
       const lastEvent = sent[1];
       if (lastEvent?.type !== "SUBMIT_PROMPT") {
@@ -803,10 +825,11 @@ describe("drain integration over the real-store queue (text → command → text
   });
 });
 
-it("retains the queued message when a direct prompt wins during profile admission", async () => {
+it("retains the queued message when lifecycle admission refuses the claimed batch", async () => {
   const fixture = createPersistenceFixture();
   try {
-    const { projectPath, sessionName, conversationId } = DRAIN_CONTEXT;
+    const { projectPath, sessionName, conversationId } =
+      conversationStoreIdentity(DRAIN_CONTEXT);
     fixture.seedProject(projectPath);
     fixture.seedSession(projectPath, sessionName);
     await fixture.seedConversation(
@@ -830,39 +853,21 @@ it("retains the queued message when a direct prompt wins during profile admissio
       newId: () => crypto.randomUUID(),
     });
     await queue.enqueue({
-      ...DRAIN_CONTEXT,
+      ...conversationStoreIdentity(DRAIN_CONTEXT),
       content: [{ type: "text", text: "retain me" }],
     });
-    let accepts = true;
-    setConversationProfileAdmissionDeps({
-      async mutateConversation(p, s, c, label, mutate) {
-        const result = await fixture.deps.mutateConversation(
-          p,
-          s,
-          c,
-          label,
-          mutate,
-        );
-        accepts = false;
-        return result;
+    const sent: ConversationEvent[] = [];
+    await drainConversationQueue(DRAIN_CONTEXT, {
+      ...queue,
+      submitTurn: async () => ({
+        kind: "refused",
+        code: "busy",
+        message: "Another turn was admitted",
+      }),
+      runConversationCommand: async () => {
+        throw new Error("not a command");
       },
     });
-    const sent: ConversationEvent[] = [];
-    await drainConversationQueue(
-      {
-        getSnapshot: () => ({ can: () => accepts }),
-        send: (event) => {
-          sent.push(event);
-        },
-      },
-      DRAIN_CONTEXT,
-      {
-        ...queue,
-        runConversationCommand: async () => {
-          throw new Error("not a command");
-        },
-      },
-    );
     expect(sent).toEqual([]);
     const reloaded = await fixture
       .recreateStore()

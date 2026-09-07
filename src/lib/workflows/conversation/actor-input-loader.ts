@@ -11,15 +11,74 @@
  * runtime failure rather than a type error.
  */
 
-import type { AgentSessionRef, AgentBackendId } from "@/lib/shared/schemas";
 import type {
   ConversationScope,
   ConversationState,
 } from "@/lib/conversations/schemas";
-import type { ForkedFrom, ConversationRole } from "@/lib/conversations/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
-import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { ConversationPersistenceMode } from "./types";
+
+export class ConversationBindingNotFoundError extends Error {
+  override readonly name = "ConversationBindingNotFoundError";
+}
+
+export type ConversationDurableSeed = Pick<
+  ConversationState,
+  | "createdAt"
+  | "lastActivityAt"
+  | "forkedFrom"
+  | "role"
+  | "transcriptPath"
+  | "agentBackend"
+  | "backendRef"
+  | "promptCount"
+  | "debugMode"
+  | "totalCostUsd"
+  | "totalDurationMs"
+  | "totalTurns"
+  | "contextTokens"
+  | "contextWindowMax"
+>;
+
+export const conversationAggregateFields = [
+  "totalCostUsd",
+  "totalDurationMs",
+  "totalTurns",
+  "contextTokens",
+  "contextWindowMax",
+] as const satisfies readonly (keyof ConversationDurableSeed)[];
+
+export function conversationTotals(
+  seed: Pick<
+    ConversationDurableSeed,
+    (typeof conversationAggregateFields)[number]
+  >,
+) {
+  return {
+    totalCostUsd: seed.totalCostUsd,
+    totalDurationMs: seed.totalDurationMs,
+    totalTurns: seed.totalTurns,
+    contextTokens: seed.contextTokens,
+    contextWindowMax: seed.contextWindowMax,
+  };
+}
+
+export function toConversationDurableSeed(
+  conversation: ConversationState,
+): ConversationDurableSeed {
+  return {
+    createdAt: conversation.createdAt,
+    lastActivityAt: conversation.lastActivityAt,
+    forkedFrom: conversation.forkedFrom ?? null,
+    role: conversation.role ?? null,
+    transcriptPath: conversation.transcriptPath ?? null,
+    agentBackend: conversation.agentBackend ?? "claude",
+    backendRef: conversation.backendRef ?? null,
+    promptCount: conversation.promptCount ?? 0,
+    debugMode: conversation.debugMode?.active ? conversation.debugMode : null,
+    ...conversationTotals(conversation),
+  };
+}
 
 export interface EnsureActorInputData {
   /**
@@ -38,16 +97,7 @@ export interface EnsureActorInputData {
    * lane whose conversation exists in the state store passes `durable`.
    */
   persistence: ConversationPersistenceMode;
-  conversation: {
-    createdAt: string;
-    forkedFrom: ForkedFrom;
-    role: ConversationRole;
-    transcriptPath: string | null;
-    agentBackend: AgentBackendId;
-    backendRef: AgentSessionRef | null;
-    promptCount: number;
-    debugMode: DebugModeState | null;
-  };
+  conversation: ConversationDurableSeed;
 }
 
 /**
@@ -82,16 +132,7 @@ function actorInputFor(
     sessionWorktreePath: worktreePath,
     // Loaded from the state store, so a real ConversationState record exists.
     persistence: "durable",
-    conversation: {
-      createdAt: conversation.createdAt,
-      forkedFrom: conversation.forkedFrom ?? null,
-      role: conversation.role ?? null,
-      transcriptPath: conversation.transcriptPath ?? null,
-      agentBackend: conversation.agentBackend ?? "claude",
-      backendRef: conversation.backendRef ?? null,
-      promptCount: conversation.promptCount ?? 0,
-      debugMode: conversation.debugMode?.active ? conversation.debugMode : null,
-    },
+    conversation: toConversationDurableSeed(conversation),
   };
 }
 
@@ -107,7 +148,9 @@ export async function loadActorInput(
       conversationId,
     );
     if (!conversation) {
-      throw new Error(`Conversation not found: ${conversationId}`);
+      throw new ConversationBindingNotFoundError(
+        `Conversation not found: ${conversationId}`,
+      );
     }
     // A project conversation has no session worktree: it executes directly in
     // the project root, which is the same target the project prompt entry binds
@@ -123,14 +166,18 @@ export async function loadActorInput(
 
   const session = await deps.getSession(projectPath, storeSessionName);
   if (!session) {
-    throw new Error(`Session not found: ${storeSessionName}`);
+    throw new ConversationBindingNotFoundError(
+      `Session not found: ${storeSessionName}`,
+    );
   }
 
   const conversation = session.conversations.find(
     (c) => c.id === conversationId,
   );
   if (!conversation) {
-    throw new Error(`Conversation not found: ${conversationId}`);
+    throw new ConversationBindingNotFoundError(
+      `Conversation not found: ${conversationId}`,
+    );
   }
 
   return actorInputFor(

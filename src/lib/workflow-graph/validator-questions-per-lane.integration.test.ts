@@ -218,7 +218,11 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
       publishUserInputPending: publisher.publishUserInputPending,
       publishUserInputResolved: publisher.publishUserInputResolved,
       deliver: publisher.deliver,
-      sendConversationEvent: (_projectPath, _sessionName, conversationId) => {
+      clearConversationQuestion: async (
+        _projectPath,
+        _sessionName,
+        conversationId,
+      ) => {
         cleared.push(conversationId);
         return true;
       },

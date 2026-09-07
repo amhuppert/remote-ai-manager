@@ -12,6 +12,7 @@ import {
 import {
   shouldBuildRuntimeSyntheticSeed,
   resolveSyntheticForkSeed,
+  acknowledgeSyntheticForkSeed,
 } from "./fork-seed";
 
 vi.mock("@/lib/logging", () => ({
@@ -277,3 +278,22 @@ it.each(["claude", "codex", "cursor"] as const)(
     ).toBe("anchored history");
   },
 );
+
+it("retains a failed required fork acceptance receipt", async () => {
+  await expect(
+    acknowledgeSyntheticForkSeed(
+      {
+        mutateConversation: async () => {
+          throw new Error("fork receipt unavailable");
+        },
+      },
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        conversationId: "c",
+        seed: "history",
+        backendRef: { backend: "codex", ref: "accepted-ref" },
+      },
+    ),
+  ).rejects.toThrow("fork receipt unavailable");
+});

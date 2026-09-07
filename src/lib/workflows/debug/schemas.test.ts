@@ -23,7 +23,7 @@ import {
   debugEvidenceAnalysisOutputSchema,
   debugEvidenceAnalysisSchema,
   debugHypothesisOutputSchema,
-} from "./debug-schemas";
+} from "@/lib/workflows/debug/schemas";
 import {
   runStructuredOutputGate,
   validateJsonSchemaSubset,
@@ -45,10 +45,6 @@ const validCleanupResult = {
   acknowledgesManifestDeletionContract: true,
   notes: "All probes removed.",
 };
-
-function asSchema(s: unknown): Record<string, unknown> {
-  return s as unknown as Record<string, unknown>;
-}
 
 /**
  * Mirrors the relevant slice of `parseStructuredOutputText` from
@@ -86,7 +82,7 @@ describe("Anthropic tool input_schema contract", () => {
     ["debugEvidenceAnalysisOutputSchema", debugEvidenceAnalysisOutputSchema],
     ["debugCleanupResultSchema", debugCleanupResultSchema],
   ])("%s declares type:object at root", (_name, schema) => {
-    expect((schema as { type?: string }).type).toBe("object");
+    expect(schema.type).toBe("object");
   });
 
   // Anthropic also rejects `oneOf`/`allOf`/`anyOf` at the top level of a
@@ -101,7 +97,7 @@ describe("Anthropic tool input_schema contract", () => {
     ["debugEvidenceAnalysisOutputSchema", debugEvidenceAnalysisOutputSchema],
     ["debugCleanupResultSchema", debugCleanupResultSchema],
   ])("%s does not use oneOf/allOf/anyOf at the root", (_name, schema) => {
-    const root = schema as Record<string, unknown>;
+    const root: Record<string, unknown> = schema;
     expect(root["oneOf"]).toBeUndefined();
     expect(root["allOf"]).toBeUndefined();
     expect(root["anyOf"]).toBeUndefined();
@@ -112,7 +108,7 @@ describe("debug schemas through structured-output gate", () => {
   describe("round-trip on valid payloads", () => {
     it("hypothesis schema accepts a well-formed payload", () => {
       const gate = runStructuredOutputGate(
-        asSchema(debugHypothesisOutputSchema),
+        debugHypothesisOutputSchema,
         validHypothesis,
         validateJsonSchemaSubset,
       );
@@ -121,7 +117,7 @@ describe("debug schemas through structured-output gate", () => {
 
     it("cleanup-result schema accepts a well-formed payload", () => {
       const gate = runStructuredOutputGate(
-        asSchema(debugCleanupResultSchema),
+        debugCleanupResultSchema,
         validCleanupResult,
         validateJsonSchemaSubset,
       );
@@ -132,7 +128,7 @@ describe("debug schemas through structured-output gate", () => {
   describe("schema mismatch surfaces consistently", () => {
     it("hypothesis schema rejects too few hypotheses", () => {
       const gate = runStructuredOutputGate(
-        asSchema(debugHypothesisOutputSchema),
+        debugHypothesisOutputSchema,
         {
           ...validHypothesis,
           hypotheses: validHypothesis.hypotheses.slice(0, 2),
@@ -149,7 +145,7 @@ describe("debug schemas through structured-output gate", () => {
 
     it("hypothesis schema rejects an out-of-pattern id", () => {
       const gate = runStructuredOutputGate(
-        asSchema(debugHypothesisOutputSchema),
+        debugHypothesisOutputSchema,
         {
           ...validHypothesis,
           hypotheses: [
@@ -166,7 +162,7 @@ describe("debug schemas through structured-output gate", () => {
       const incomplete = { ...validCleanupResult } as Record<string, unknown>;
       delete incomplete["grepVerificationPassed"];
       const gate = runStructuredOutputGate(
-        asSchema(debugCleanupResultSchema),
+        debugCleanupResultSchema,
         incomplete,
         validateJsonSchemaSubset,
       );
@@ -187,7 +183,7 @@ describe("debug schemas through structured-output gate", () => {
       expect(parsed.found).toBe(true);
       if (!parsed.found) return;
       const gate = runStructuredOutputGate(
-        asSchema(debugHypothesisOutputSchema),
+        debugHypothesisOutputSchema,
         parsed.value,
         validateJsonSchemaSubset,
       );
@@ -200,7 +196,7 @@ describe("debug schemas through structured-output gate", () => {
       expect(parsed.found).toBe(true);
       if (!parsed.found) return;
       const gate = runStructuredOutputGate(
-        asSchema(debugCleanupResultSchema),
+        debugCleanupResultSchema,
         parsed.value,
         validateJsonSchemaSubset,
       );
@@ -221,7 +217,7 @@ describe("debug schemas through structured-output gate", () => {
       expect(parsed.found).toBe(true);
       if (!parsed.found) return;
       const gate = runStructuredOutputGate(
-        asSchema(debugEvidenceAnalysisOutputSchema),
+        debugEvidenceAnalysisOutputSchema,
         parsed.value,
         validateJsonSchemaSubset,
       );

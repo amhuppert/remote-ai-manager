@@ -122,9 +122,16 @@ describe("default planner runner — executeWorkflowTaskRun routing", () => {
     expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input).toMatchObject({
-      projectPath: "/projects/remote-ai-manager",
-      sessionName: "__planner__",
-      conversationId: "planner-conv-1",
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: "/projects/remote-ai-manager",
+          target: {
+            sessionName: "__planner__",
+            conversationId: "planner-conv-1",
+          },
+        },
+      },
       kind: "task_run",
     });
     expect(input.outputFormat).toBeUndefined();

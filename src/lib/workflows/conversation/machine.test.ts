@@ -1,6 +1,9 @@
+import { type VerifyCleanupOutput } from "@/lib/workflows/debug/cleanup-verification";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createConversationMachineFixture } from "@/lib/workflows/conversation/testing/machine-fixture";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createActor, fromPromise, type AnyActorRef } from "xstate";
-import { conversationMachine } from "./machine";
+
 import { runDebugCleanupVerification } from "@/lib/workflows/debug/cleanup-verification";
 import type {
   ConversationContext,
@@ -10,7 +13,6 @@ import type {
   ExecutePromptInput,
   PromptActorResult,
   RunTaskRunInput,
-  VerifyCleanupOutput,
 } from "./types";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 
@@ -32,11 +34,17 @@ afterEach(() => {
 });
 
 const defaultInput: ConversationInput = {
+  lastActivityAt: "2024-01-01T00:00:00Z",
+  totalCostUsd: null,
+  totalDurationMs: null,
+  totalTurns: null,
+  contextTokens: null,
+  contextWindowMax: null,
   projectPath: "/repo",
-  projectName: "my-project",
-  sessionName: "sess-1",
+  target: targetFromStoreSessionName("my-project", "sess-1", "conv-123"),
+
   worktreePath: "/repo/.worktrees/sess-1",
-  conversationId: "conv-123",
+
   createdAt: "2024-01-01T00:00:00Z",
   forkedFrom: null,
   role: null,
@@ -123,7 +131,7 @@ function makeTestMachine(overrides?: {
       missingFiles: [],
       remediationPrompt: null,
     }));
-  return conversationMachine.provide({
+  return createConversationMachineFixture().provide({
     actors: {
       prepareTurn: overrides?.prepareTurn ?? makeMockPrepareTurn(),
       executePrompt: overrides?.executePrompt ?? makeMockExecutePrompt(),
@@ -142,7 +150,7 @@ function makeTestMachine(overrides?: {
         void runDebugCleanupVerification(
           {
             worktreePath: context.worktreePath,
-            conversationId: context.conversationId,
+            conversationId: context.target.conversationId,
             structuredOutput: context.lastResult?.structuredOutput,
             debugSessionId:
               context.debugMode?.debugSessionId ?? "debug-session-test",
@@ -212,7 +220,7 @@ describe("conversationMachine", () => {
 
       const snap = actor.getSnapshot();
       expect(snap.value).toBe("idle");
-      expect(snap.context.conversationId).toBe("conv-123");
+      expect(snap.context.target.conversationId).toBe("conv-123");
       expect(snap.context.status).toBe("new");
       expect(snap.context.promptCount).toBe(0);
       expect(snap.context.activeTurn).toBeNull();
@@ -305,7 +313,7 @@ describe("conversationMachine", () => {
   });
 
   describe("external turn lifecycle", () => {
-    it("settles to idle and re-accepts SUBMIT_PROMPT after EXTERNAL_TURN_COMPLETED carries an error", () => {
+    it("settles to idle and re-accepts SUBMIT_PROMPT after EXTERNAL_TURN_COMPLETED carries an error", async () => {
       const machine = makeTestMachine();
       const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
@@ -327,6 +335,7 @@ describe("conversationMachine", () => {
         }),
       });
 
+      await vi.waitFor(() => expect(actor.getSnapshot().value).toBe("idle"));
       const snap = actor.getSnapshot();
       expect(snap.value).toBe("idle");
       expect(snap.context.status).toBe("awaiting");
@@ -539,44 +548,6 @@ describe("conversationMachine", () => {
       });
     });
 
-    it("clears the prior ref when PROMPT_COMPLETED carries a 'clear' disposition", async () => {
-      // Direct completion event (manager-sent) must route through the same
-      // disposition resolver as the invoke onDone path.
-      const machine = makeTestMachine({
-        executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
-          () => new Promise(() => {}),
-        ),
-      });
-      const actor = createActor(machine, {
-        input: {
-          ...defaultInput,
-          agentBackend: "codex" as const,
-          backendRef: { backend: "codex" as const, ref: "thread-stale" },
-        },
-      });
-      activeActors.push(actor);
-      actor.start();
-
-      actor.send({
-        type: "SUBMIT_PROMPT",
-        promptText: "Hello",
-        streamId: "s1",
-      });
-      await waitForState(actor, "conversationTurn");
-
-      actor.send({
-        type: "PROMPT_COMPLETED",
-        result: successResult({
-          error: "resume failed",
-          backendRef: null,
-          continuationDisposition: "clear",
-        }),
-      });
-      await waitForState(actor, "idle");
-
-      expect(actor.getSnapshot().context.backendRef).toBeNull();
-    });
-
     it("clears the prior ref when EXTERNAL_TURN_COMPLETED carries a 'clear' disposition", async () => {
       const machine = makeTestMachine();
       const actor = createActor(machine, {
@@ -630,6 +601,7 @@ describe("conversationMachine", () => {
       actor.start();
 
       actor.send({
+        kind: "task_run",
         executionClass: "nongoverned-task" as const,
         type: "SUBMIT_TASK_RUN",
         promptText: "run task",
@@ -689,7 +661,7 @@ describe("conversationMachine", () => {
         syncDerivedFields: vi.fn(),
       };
       let resolveTurn: ((result: PromptActorResult) => void) | null = null;
-      const machine = conversationMachine.provide({
+      const machine = createConversationMachineFixture().provide({
         actors: {
           prepareTurn: makeMockPrepareTurn(),
           executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
@@ -895,6 +867,7 @@ describe("conversationMachine", () => {
       const { actor } = await driveToWaitingForInput({ runTaskRun });
 
       actor.send({
+        kind: "task_run",
         executionClass: "nongoverned-task" as const,
         type: "SUBMIT_TASK_RUN",
         promptText: "workflow task",
@@ -925,7 +898,7 @@ describe("conversationMachine", () => {
 
       // Answer consumed while the asking turn is still running: the route
       // clears the machine's pending question so the finalize guard sees null.
-      actor.send({ type: "CLEAR_PENDING_QUESTION" });
+      actor.send({ type: "CLEAR_PENDING_QUESTION", questionId: "q1" });
       const mid = actor.getSnapshot();
       expect(mid.context.pendingQuestion).toBeNull();
       expect(mid.context.status).toBe("running");
@@ -950,9 +923,11 @@ describe("conversationMachine", () => {
       await waitForState(actor, "executing");
       await new Promise((r) => setTimeout(r, 10));
 
-      expect(actor.getSnapshot().can({ type: "CLEAR_PENDING_QUESTION" })).toBe(
-        false,
-      );
+      expect(
+        actor
+          .getSnapshot()
+          .can({ type: "CLEAR_PENDING_QUESTION", questionId: "q1" }),
+      ).toBe(false);
 
       deferred.resolve(successResult());
       await waitForState(actor, "idle");
@@ -1004,7 +979,7 @@ describe("conversationMachine", () => {
       const { actor } = await driveToWaitingForInput();
       expect(actor.getSnapshot().value).toBe("waitingForInput");
 
-      actor.send({ type: "CLEAR_PENDING_QUESTION" });
+      actor.send({ type: "CLEAR_PENDING_QUESTION", questionId: "q1" });
 
       const snap = actor.getSnapshot();
       expect(snap.value).toBe("idle");
@@ -1237,7 +1212,7 @@ describe("conversationMachine", () => {
       const executedPrompts: string[] = [];
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
         async ({ input }) => {
-          executedPrompts.push(input.promptText);
+          executedPrompts.push(input.turn.promptText);
           await new Promise((r) => setTimeout(r, 0));
           return successResult(
             executedPrompts.length === 1
@@ -1434,6 +1409,7 @@ describe("conversationMachine", () => {
       enterDebug(actor);
 
       actor.send({
+        kind: "task_run",
         executionClass: "nongoverned-task" as const,
         type: "SUBMIT_TASK_RUN",
         promptText: "run task",
@@ -1496,7 +1472,7 @@ describe("conversationMachine", () => {
     it("re-syncs derived fields on ABORT_TURN while idle so Stop clears a phantom running row", () => {
       const syncDerivedFields = vi.fn();
       const broadcastConversationStatus = vi.fn();
-      const machine = conversationMachine.provide({
+      const machine = createConversationMachineFixture().provide({
         actors: {
           prepareTurn: makeMockPrepareTurn(),
           executePrompt: makeMockExecutePrompt(),
@@ -1568,7 +1544,7 @@ describe("conversationMachine", () => {
 
     it("fires broadcastConversationStatus on EXTERNAL_TURN_STARTED", () => {
       const broadcastConversationStatus = vi.fn();
-      const machine = conversationMachine.provide({
+      const machine = createConversationMachineFixture().provide({
         actors: {
           prepareTurn: makeMockPrepareTurn(),
           executePrompt: makeMockExecutePrompt(),
@@ -1595,7 +1571,7 @@ describe("conversationMachine", () => {
 
     it("fires dispatchPushNotification when external turn completes", async () => {
       const dispatchPushNotification = vi.fn();
-      const machine = conversationMachine.provide({
+      const machine = createConversationMachineFixture().provide({
         actors: {
           prepareTurn: makeMockPrepareTurn(),
           executePrompt: makeMockExecutePrompt(),
@@ -1741,7 +1717,7 @@ describe("conversationMachine", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(capturedInput).not.toBeNull();
-      expect(capturedInput!.modelSelection).toEqual({
+      expect(capturedInput!.turn.modelSelection).toEqual({
         modelId: "gpt-5.4",
         parameters: { fast: "false", reasoning: "high" },
       });
@@ -1837,6 +1813,7 @@ describe("conversationMachine", () => {
       actor.start();
 
       actor.send({
+        kind: "task_run",
         executionClass: "nongoverned-task" as const,
         type: "SUBMIT_TASK_RUN",
         promptText: "Run with the configured default",
@@ -2033,13 +2010,13 @@ describe("conversationMachine", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       expect(capturedInput).not.toBeNull();
-      expect(capturedInput!.queuedDelivery).toEqual({
+      expect(capturedInput!.turn.queuedDelivery).toEqual({
         messageIds: ["m1", "m2"],
         deliveryAttemptId: "att-7",
       });
     });
 
-    it("leaves executePrompt input.queuedDelivery undefined for a normal turn", async () => {
+    it("leaves executePrompt input.turn.queuedDelivery undefined for a normal turn", async () => {
       let capturedInput: ExecutePromptInput | null = null;
       const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
         async ({ input }) => {
@@ -2064,7 +2041,7 @@ describe("conversationMachine", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       expect(capturedInput).not.toBeNull();
-      expect(capturedInput!.queuedDelivery).toBeUndefined();
+      expect(capturedInput!.turn.queuedDelivery).toBeUndefined();
     });
   });
 });

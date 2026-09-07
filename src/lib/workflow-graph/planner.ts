@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { getProjectDisplayName as getConversationProjectName } from "@/lib/projects/resolver";
 import path from "node:path";
 import type {
   WorkflowDefinitionRecord,
@@ -20,10 +22,8 @@ import {
   deletePlannerDraft as defaultDeletePlannerDraft,
 } from "@/lib/workflows/workflow-draft/registry";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { generateWorkflowLayout } from "./layout";
 import { createWorkflowStorageService } from "./storage";
 import { validateWorkflowDefinition } from "./validation";
@@ -172,9 +172,17 @@ export function createDefaultPlannerRunner(
       // registered draft is — so SDK structured output would constrain the
       // wrong channel.
       const taskRunInput: ExecuteWorkflowTaskRunInput = {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: input.projectPath,
+            target: targetFromStoreSessionName(
+              getConversationProjectName(input.projectPath),
+              input.sessionName,
+              input.conversationId,
+            ),
+          },
+        },
         kind: "task_run",
         executionClass: "governed-execution",
         executionProfile: "standard",

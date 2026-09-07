@@ -161,7 +161,12 @@ const defaultConversationsDeps: ConversationsDeps = {
   ) => {
     const { stopConversationActor } =
       await import("@/lib/workflows/conversation/manager");
-    stopConversationActor(projectPath, sessionName, conversationId, reason);
+    await stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      reason,
+    );
   },
   removeTranscript: async (transcriptPath) => {
     await rm(transcriptPath, { force: true });

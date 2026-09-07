@@ -1,3 +1,4 @@
+import { type VerifyCleanupInput } from "@/lib/workflows/debug/cleanup-verification";
 /**
  * Tests for the async debug cleanup-verification runner: payload parsing
  * (including the schema-failure fallback), outcome → DebugCommand mapping,
@@ -6,7 +7,6 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { runDebugCleanupVerification } from "./cleanup-verification";
-import type { VerifyCleanupInput } from "@/lib/workflows/conversation/types";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -154,4 +154,64 @@ describe("runDebugCleanupVerification", () => {
     expect(command).toBeNull();
     expect(deps.verifyCleanup).not.toHaveBeenCalled();
   });
+});
+
+it("retains the real manifest on refusal or cancellation and deletes it only after verified cleanup", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { getDebugManifestPath, verifyCleanupAgainstManifest, deleteManifest } =
+    await import("@/lib/debug-log/service");
+  const { verifyDebugCleanup } = await import("./cleanup-verification");
+  const worktreePath = await fs.mkdtemp(
+    path.join(process.cwd(), ".cc/temp/debug-cleanup-"),
+  );
+  const manifestPath = getDebugManifestPath(worktreePath, "owned-cleanup");
+  await fs.mkdir(path.dirname(manifestPath), { recursive: true });
+  const manifest = JSON.stringify({
+    conversationId: "owned-cleanup",
+    createdAt: new Date(0).toISOString(),
+    probes: [
+      { id: "H1:probe", file: "src/a.ts", description: "Decision input" },
+    ],
+  });
+  await fs.writeFile(manifestPath, manifest);
+  const input = {
+    worktreePath,
+    conversationId: "owned-cleanup",
+    cleanup: CLEANUP_PAYLOAD,
+  };
+  try {
+    expect(
+      await verifyDebugCleanup({
+        ...input,
+        cleanup: { ...CLEANUP_PAYLOAD, filesModified: [] },
+      }),
+    ).toMatchObject({ ok: false, missingFiles: ["src/a.ts"] });
+    expect(await fs.readFile(manifestPath, "utf8")).toBe(manifest);
+    let release!: () => void;
+    const read = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reading = false;
+    const controller = new AbortController();
+    const verification = verifyDebugCleanup(input, controller.signal, {
+      async verifyCleanupAgainstManifest(...args) {
+        reading = true;
+        await read;
+        return verifyCleanupAgainstManifest(...args);
+      },
+      deleteManifest,
+    });
+    await vi.waitFor(() => expect(reading).toBe(true));
+    controller.abort();
+    release();
+    await expect(verification).rejects.toThrow("Cleanup verification aborted");
+    expect(await fs.readFile(manifestPath, "utf8")).toBe(manifest);
+    expect(await verifyDebugCleanup(input)).toMatchObject({ ok: true });
+    await expect(fs.access(manifestPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    await fs.rm(worktreePath, { recursive: true, force: true });
+  }
 });

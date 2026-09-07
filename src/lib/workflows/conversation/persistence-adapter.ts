@@ -1,3 +1,6 @@
+import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
+import { conversationTotals } from "./actor-input-loader";
 /**
  * Conversation persistence facet.
  *
@@ -8,8 +11,8 @@
  *   - `durable` — today's behavior. Owns every durable side effect of the
  *     conversation lifecycle: derived-field sync, resume-token snapshot
  *     persistence, automatic naming, the mark-read / mark-unread transitions, the
- *     project-conversation status notification, and the gating of the invoked
- *     child actors' own durable write seams (`gateActorDurableWrites`).
+ *     project-conversation status notification. Actor-owned writes use the
+ *     separately injected ConversationDurableEffects.
  *   - `ephemeral` — inert. Every method is a no-op, so a runtime with no backing
  *     `ConversationState` record (compaction lanes, workflow-graph validator
  *     lanes) performs zero state-store writes for its entire life. Before this
@@ -41,8 +44,12 @@ import type {
   ActiveTurnSource,
   ConversationUnreadEvent,
 } from "@/lib/conversations/schemas";
-import { persistSnapshotAfterTransition } from "./persistence";
-import type { ActorDurableWriteSeams } from "./actor-implementations";
+import {
+  persistSnapshotAfterTransition,
+  flushConversationSnapshot,
+  reconcileConversationSnapshot,
+  forgetConversationSnapshot,
+} from "./persistence";
 
 // Shares the `conversation-manager` log-module key so an adapter warning groups
 // with the actor's lifecycle events under one module filter.
@@ -83,12 +90,9 @@ export function applySyncDerivedFields(
   c.agentBackend = context.agentBackend;
   c.backendRef = context.backendRef;
   c.transcriptPath = context.transcriptPath;
-  c.totalCostUsd = context.totals.totalCostUsd;
-  c.totalDurationMs = context.totals.totalDurationMs;
-  c.totalTurns = context.totals.totalTurns;
-  c.contextTokens = context.totals.contextTokens;
-  c.contextWindowMax = context.totals.contextWindowMax;
+  Object.assign(c, conversationTotals(context.totals));
   c.promptCount = context.promptCount;
+  c.lastActivityAt = context.lastActivityAt;
   if (context.debugMode) {
     c.debugMode = {
       active: context.debugMode.active,
@@ -133,6 +137,12 @@ export interface ConversationSnapshotSource {
  * exact `__project__`-sentinel gap this method closes.
  */
 export interface ConversationPersistenceAdapter {
+  whenDurable(context: ConversationContext): Promise<void>;
+  reconcile(context: ConversationContext): Promise<void>;
+  afterCommit(
+    context: ConversationContext,
+    publish: () => void | Promise<void>,
+  ): Promise<void>;
   /** Sync the machine's derived context fields onto the ConversationState row. */
   syncDerivedFields(context: ConversationContext): void;
   /** Persist the resume-token machine snapshot (debounced, off the hot row). */
@@ -152,23 +162,6 @@ export interface ConversationPersistenceAdapter {
    * Ephemeral no-ops — a synthetic project-compaction lane never notifies.
    */
   notifyProjectStatus(context: ConversationContext): void;
-  /**
-   * Gate the invoked/child actors' durable state-store WRITE seams on this
-   * runtime's persistence choice — the invoked-actor half of "every durable
-   * side effect". `durable` returns the actor deps untouched; `ephemeral`
-   * replaces every durable write seam with an inert no-op so an invoked actor
-   * cannot write durably behind an ephemeral label. The gated set is not just
-   * the direct `mutateConversation` / `createReferenceDocument` /
-   * `markQueued*` delivery-state writes but the apply services too —
-   * `applyMcpAtTurnStart` persists through `stateManager.mutateConversation`
-   * and `applyCapabilityAtTurnStart` / `applyCapabilityWhenIdle` persist
-   * through `writeRuntimeState`, so a facet that left them live would let an
-   * ephemeral `ExecutePrompt` turn still hit the store. Reads and transcript /
-   * image file writes (the transcript is the system of record) pass through.
-   * Generic so the actor hands in its full deps and gets its full deps back
-   * with only the durable write seams gated.
-   */
-  gateActorDurableWrites<T extends ActorDurableWriteSeams>(deps: T): T;
 }
 
 // ============================================================
@@ -235,63 +228,189 @@ export function setConversationPersistenceAdapterDeps(
 
 export function _resetConversationPersistenceAdapterDepsForTesting(): void {
   _deps = null;
+  conversationWrites.clear();
 }
 
 // ============================================================
 // Durable adapter
 // ============================================================
 
+interface WriteReceipt {
+  key: string;
+  run(): Promise<void>;
+  promise: Promise<void>;
+  failed: boolean;
+  error?: unknown;
+}
+interface ConversationWrites {
+  receipts: WriteReceipt[];
+  latest: Map<string, () => Promise<void>>;
+}
+const conversationWrites = new Map<string, ConversationWrites>();
+export function forgetConversationPersistence(
+  identity: Parameters<typeof forgetConversationSnapshot>[0],
+): void {
+  const key = `${identity.projectPath}::${identity.sessionName}::${identity.conversationId}`;
+  if (conversationWrites.get(key)?.receipts.length)
+    throw new Error("Cannot discard unsettled conversation writes");
+  forgetConversationSnapshot(identity);
+  conversationWrites.delete(key);
+}
+function writesFor(context: ConversationContext): ConversationWrites {
+  const key = `${context.projectPath}::${conversationTargetStoreSessionName(context.target)}::${context.target.conversationId}`;
+  let writes = conversationWrites.get(key);
+  if (!writes) {
+    writes = { receipts: [], latest: new Map() };
+    conversationWrites.set(key, writes);
+  }
+  return writes;
+}
+
+export class ConversationDurabilityError extends Error {
+  readonly code = "conversation_durability_failed";
+  constructor(
+    readonly conversationId: string,
+    readonly failures: unknown[],
+  ) {
+    super(`Conversation finalization failed: ${getErrorMessage(failures[0])}`);
+    this.name = "ConversationDurabilityError";
+  }
+}
+
+/** Enrol before lazy dependency loading so a same-tick barrier owns the write. */
+function enrolWrite(
+  context: ConversationContext,
+  key: string,
+  run: () => Promise<void>,
+): void {
+  const writes = writesFor(context);
+  const receipt: WriteReceipt = {
+    key,
+    run,
+    promise: Promise.resolve(),
+    failed: false,
+  };
+  writes.receipts.push(receipt);
+  writes.latest.set(key, run);
+  receipt.promise = Promise.resolve()
+    .then(run)
+    .catch((error: unknown) => {
+      receipt.failed = true;
+      receipt.error = error;
+      logger.error("conversation.persistence_failed", {
+        conversationId: context.target.conversationId,
+        operation: key,
+        error: getErrorMessage(error),
+      });
+      throw error;
+    });
+  void receipt.promise.catch(() => {});
+}
+
+async function awaitReceipts(
+  context: ConversationContext,
+  receipts: WriteReceipt[],
+): Promise<void> {
+  await Promise.allSettled(receipts.map((receipt) => receipt.promise));
+  const failures = receipts
+    .filter((receipt) => receipt.failed)
+    .map((receipt) => receipt.error);
+  if (failures.length)
+    throw new ConversationDurabilityError(
+      context.target.conversationId,
+      failures,
+    );
+}
+
 export const durableConversationPersistence: ConversationPersistenceAdapter = {
-  syncDerivedFields(context) {
-    void (async () => {
-      try {
-        const { mutateConversation } = await resolveDeps();
-        await mutateConversation(
-          context.projectPath,
-          context.sessionName,
-          context.conversationId,
-          "conversation-manager.syncDerived",
-          (c) => applySyncDerivedFields(context, c),
-        );
-      } catch (err) {
-        logger.warn("conversation-manager.sync_derived_failed", {
-          conversationId: context.conversationId,
-          error: getErrorMessage(err),
+  async whenDurable(context) {
+    const writes = writesFor(context);
+    const receipts = [...writes.receipts];
+    const results = await Promise.allSettled([
+      awaitReceipts(context, receipts),
+      flushConversationSnapshot(conversationStoreIdentity(context)),
+    ]);
+    const failures = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length)
+      throw new ConversationDurabilityError(
+        context.target.conversationId,
+        failures,
+      );
+    const committed = new Set(receipts);
+    writes.receipts = writes.receipts.filter(
+      (receipt) => !committed.has(receipt),
+    );
+    if (!writes.receipts.length) writes.latest.clear();
+  },
+  async reconcile(context) {
+    const writes = writesFor(context);
+    await Promise.allSettled(writes.receipts.map((receipt) => receipt.promise));
+    const failedKeys = new Set(
+      writes.receipts
+        .filter((receipt) => receipt.failed)
+        .map((receipt) => receipt.key),
+    );
+    for (const key of failedKeys) {
+      // A newer projection supersedes an earlier failed projection of the same fields.
+      const run = writes.latest.get(key)!;
+      await run();
+      for (const receipt of writes.receipts)
+        if (receipt.key === key) {
+          receipt.failed = false;
+          receipt.error = undefined;
+          receipt.promise = Promise.resolve();
+        }
+    }
+    await reconcileConversationSnapshot(conversationStoreIdentity(context));
+    await this.whenDurable(context);
+  },
+  afterCommit(context, publish) {
+    const receipts = [...writesFor(context).receipts];
+    return awaitReceipts(context, receipts)
+      .then(publish)
+      .catch((error: unknown) => {
+        logger.warn("conversation.publication_skipped", {
+          conversationId: context.target.conversationId,
+          error: getErrorMessage(error),
         });
-      }
-    })();
+      });
+  },
+  syncDerivedFields(context) {
+    enrolWrite(context, "projection", async () => {
+      const { mutateConversation } = await resolveDeps();
+      await mutateConversation(
+        context.projectPath,
+        conversationTargetStoreSessionName(context.target),
+        context.target.conversationId,
+        "conversation-manager.syncDerived",
+        (c) => applySyncDerivedFields(context, c),
+      );
+    });
   },
 
   persistSnapshot(context, actor) {
-    persistSnapshotAfterTransition(context, actor);
+    persistSnapshotAfterTransition(conversationStoreIdentity(context), actor);
   },
 
   markReadOnUserTurnStart(context) {
-    void (async () => {
-      try {
-        const deps = await resolveDeps();
-        const { markReadOnUserTurnStart } =
-          await import("@/lib/conversations/mark-unread");
-        await markReadOnUserTurnStart(
-          {
-            projectPath: context.projectPath,
-            projectName: context.projectName,
-            sessionName: context.sessionName,
-            conversationId: context.conversationId,
-            role: context.role,
-          },
-          {
-            mutateConversation: deps.mutateConversation,
-            publishSessionStatus: deps.publishSessionStatus,
-          },
-        );
-      } catch (err) {
-        logger.warn("conversation-manager.mark_read_failed", {
-          conversationId: context.conversationId,
-          error: getErrorMessage(err),
-        });
-      }
-    })();
+    enrolWrite(context, "mark_read", async () => {
+      const deps = await resolveDeps();
+      const { markReadOnUserTurnStart } =
+        await import("@/lib/conversations/mark-unread");
+      await markReadOnUserTurnStart(
+        {
+          ...context,
+          ...conversationStoreIdentity(context),
+          projectName: context.target.projectName,
+        },
+        {
+          mutateConversation: deps.mutateConversation,
+          publishSessionStatus: deps.publishSessionStatus,
+        },
+      );
+    });
   },
 
   triggerAutoNaming(context) {
@@ -306,39 +425,30 @@ export const durableConversationPersistence: ConversationPersistenceAdapter = {
     const queueAutoName = _deps?.queueAutoName ?? productionQueueAutoName;
     queueAutoName({
       projectPath: context.projectPath,
-      projectName: context.projectName,
-      sessionName: context.sessionName,
-      conversationId: context.conversationId,
+      projectName: context.target.projectName,
+      sessionName: conversationTargetStoreSessionName(context.target),
+      conversationId: context.target.conversationId,
       content: activeTurn.promptText.slice(0, 4_000),
     });
   },
 
   markUnreadOnFinish(context) {
-    void (async () => {
-      try {
-        const deps = await resolveDeps();
-        const { markUnreadOnFinish } =
-          await import("@/lib/conversations/mark-unread");
-        await markUnreadOnFinish(
-          {
-            projectPath: context.projectPath,
-            projectName: context.projectName,
-            sessionName: context.sessionName,
-            conversationId: context.conversationId,
-            role: context.role,
-          },
-          {
-            mutateConversation: deps.mutateConversation,
-            publishSessionStatus: deps.publishSessionStatus,
-          },
-        );
-      } catch (err) {
-        logger.warn("conversation-manager.mark_unread_failed", {
-          conversationId: context.conversationId,
-          error: getErrorMessage(err),
-        });
-      }
-    })();
+    enrolWrite(context, "mark_unread", async () => {
+      const deps = await resolveDeps();
+      const { markUnreadOnFinish } =
+        await import("@/lib/conversations/mark-unread");
+      await markUnreadOnFinish(
+        {
+          ...context,
+          ...conversationStoreIdentity(context),
+          projectName: context.target.projectName,
+        },
+        {
+          mutateConversation: deps.mutateConversation,
+          publishSessionStatus: deps.publishSessionStatus,
+        },
+      );
+    });
   },
 
   notifyProjectStatus(context) {
@@ -346,7 +456,8 @@ export const durableConversationPersistence: ConversationPersistenceAdapter = {
     // re-checks, but gating here keeps the durable write off the hot path for
     // every ordinary session conversation. Fire-and-forget with the same log
     // event the machine emitted before this moved behind the adapter.
-    if (!isProjectSentinel(context.sessionName)) return;
+    if (!isProjectSentinel(conversationTargetStoreSessionName(context.target)))
+      return;
     void (async () => {
       const { notifyProjectConversationStatusFromContext } =
         await import("@/lib/project-conversations/status-notifications");
@@ -354,15 +465,11 @@ export const durableConversationPersistence: ConversationPersistenceAdapter = {
     })().catch((err) => {
       logger.warn("conversation-manager.project_notification_failed", {
         projectPath: context.projectPath,
-        conversationId: context.conversationId,
+        conversationId: context.target.conversationId,
         status: context.status,
         error: getErrorMessage(err),
       });
     });
-  },
-
-  gateActorDurableWrites<T extends ActorDurableWriteSeams>(deps: T): T {
-    return deps;
   },
 };
 
@@ -371,56 +478,23 @@ export const durableConversationPersistence: ConversationPersistenceAdapter = {
 // ============================================================
 
 /**
- * The inert replacements for the invoked actors' durable write seams. Each
- * returns the shape its caller expects while touching nothing: the MCP apply
- * reports `no_active_runtime` (an ephemeral lane has no persisted runtime to
- * apply, and the actor only fails a turn on `rejected`), the capability applies
- * return `undefined` (their results are discarded), delivery-state operations
- * return empty outcomes, and the direct writes are void no-ops. Annotated so
- * each method is checked against the real seam signature and drift is a compile
- * error.
- */
-const inertActorWriteSeams: ActorDurableWriteSeams = {
-  mutateConversation: async () => {},
-  createReferenceDocument: async () => ({}),
-  markQueuedDelivered: async () => {},
-  markQueuedPending: async () => {},
-  markQueuedFailed: async () => {},
-  markQueuedUncertain: async () => {},
-  recordNotepadDeliveries: async () => {},
-  recordMemoryIndexDeliveries: async () => {},
-  settleNotepadChangeNotice: async () => {},
-  claimWorkflowResults: async () => [],
-  settleWorkflowResults: async () => 0,
-  releaseWorkflowResults: async () => 0,
-  applyMcpAtTurnStart: async (input) => ({
-    conversationId: input.conversationId,
-    backend: input.backend,
-    disposition: "no_active_runtime",
-    effectiveConfigHash: "",
-  }),
-  applyCapabilityAtTurnStart: async () => undefined,
-  applyCapabilityWhenIdle: async () => undefined,
-};
-
-/**
  * No-op adapter for runtimes with no persisted ConversationState record. Every
  * durable side effect is skipped, so the runtime's entire life produces zero
  * state-store writes.
  */
 export const ephemeralConversationPersistence: ConversationPersistenceAdapter =
   {
+    async whenDurable() {},
+    async reconcile() {},
+    async afterCommit(_context, publish) {
+      await publish();
+    },
     syncDerivedFields() {},
     persistSnapshot() {},
     markReadOnUserTurnStart() {},
     triggerAutoNaming() {},
     markUnreadOnFinish() {},
     notifyProjectStatus() {},
-    gateActorDurableWrites<T extends ActorDurableWriteSeams>(deps: T): T {
-      // Overlay the inert write seams onto a copy of the actor's deps; reads,
-      // transcript/file I/O, backend call, and lock/slot seams pass through.
-      return Object.assign({}, deps, inertActorWriteSeams);
-    },
   };
 
 /** Resolve the construction-time persistence choice to its adapter. */

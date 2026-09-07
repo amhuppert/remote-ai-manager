@@ -123,7 +123,7 @@ function makeAcceptingClaudeRuntime(): {
       parameters: { effort: "high" },
     },
     outputFormat: undefined,
-    alignmentVersion: null,
+
     sendTurn: vi.fn(async () => {
       throw new Error("sendTurn must not run in the live in-turn path");
     }),

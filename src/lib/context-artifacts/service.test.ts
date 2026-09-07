@@ -38,10 +38,8 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import type { SSEEvent } from "@/lib/api/sse-events";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import type {
   TranscriptEntriesResult,
   TranscriptEntryWithSeq,
@@ -341,14 +339,16 @@ describe("createCompactionService — full run", () => {
 
     expect(captured).toHaveLength(1);
     const call = captured[0];
-    expect(call?.conversationId).not.toBe("convo-1");
-    expect(call?.actorInput).toBeDefined();
+    expect(call?.binding.address.target.conversationId).not.toBe("convo-1");
+    expect(call?.binding.kind).toBe("ephemeral");
+    if (call?.binding.kind !== "ephemeral")
+      throw new Error("Expected ephemeral binding");
     // Constructed ephemeral so the injected persistence adapter makes every
     // durable side effect inert for the synthetic lane (no ConversationState
     // record exists for it).
-    expect(call?.actorInput?.persistence).toBe("ephemeral");
-    expect(call?.actorInput?.conversation.agentBackend).toBe("claude");
-    expect(call?.actorInput?.conversation.transcriptPath).toBeNull();
+    expect(call?.binding.kind).toBe("ephemeral");
+    expect(call?.binding.backend).toBe("claude");
+    expect(call?.binding.transcriptPath).toBeNull();
     expect(call?.outputFormat?.type).toBe("json_schema");
     expect(call?.modelSelection).toEqual({
       modelId: "sonnet",

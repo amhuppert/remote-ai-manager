@@ -6811,7 +6811,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      sendConversationEvent: () => false,
+      clearConversationQuestion: async () => false,
       now: () => NOW,
     });
   }
@@ -7486,7 +7486,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      sendConversationEvent: () => false,
+      clearConversationQuestion: async () => false,
       now: () => NOW,
     });
   }

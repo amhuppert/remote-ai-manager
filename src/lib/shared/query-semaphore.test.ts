@@ -3,16 +3,20 @@ import { deleteGlobalValue } from "./global-singleton";
 
 const GLOBAL_KEY = "__cc_query_semaphore";
 
-// Mock readConfig to control the concurrency limit
-vi.mock("../config/loader", () => ({
-  readConfig: vi.fn().mockResolvedValue({ maxConcurrentQueries: 2 }),
-}));
+import {
+  setQuerySemaphoreDeps,
+  resetQuerySemaphoreDeps,
+} from "./query-semaphore";
 
 beforeEach(() => {
+  setQuerySemaphoreDeps({
+    readConfig: async () => ({ maxConcurrentQueries: 2 }),
+  });
   deleteGlobalValue(GLOBAL_KEY);
 });
 
 afterEach(() => {
+  resetQuerySemaphoreDeps();
   deleteGlobalValue(GLOBAL_KEY);
   vi.useRealTimers();
 });
@@ -26,6 +30,58 @@ async function flushMicrotasks(): Promise<void> {
 
 describe("query-semaphore", () => {
   describe("acquireQuerySlot", () => {
+    it("removes a cancelled waiter without dispatching it when capacity opens", async () => {
+      const { acquireQuerySlot, getQuerySemaphoreStatus } =
+        await import("./query-semaphore");
+      const releaseA = await acquireQuerySlot("incumbent:A");
+      const releaseB = await acquireQuerySlot("incumbent:B");
+      const controller = new AbortController();
+      let dispatched = false;
+      const waiting = acquireQuerySlot("cancelled", {
+        signal: controller.signal,
+      }).then(
+        (release) => {
+          dispatched = true;
+          release();
+          return null;
+        },
+        (error: unknown) => error,
+      );
+      await flushMicrotasks();
+      expect(getQuerySemaphoreStatus().waiting).toBe(1);
+      controller.abort();
+      await flushMicrotasks();
+      const statusAfterAbort = getQuerySemaphoreStatus();
+      releaseA();
+      releaseB();
+      const result = await waiting;
+      expect(statusAfterAbort.waiting).toBe(0);
+      expect(dispatched).toBe(false);
+      expect(result).toMatchObject({ name: "AbortError" });
+      expect(getQuerySemaphoreStatus().active).toBe(0);
+    });
+
+    it("does not take capacity for an already cancelled request", async () => {
+      const { acquireQuerySlot, getQuerySemaphoreStatus } =
+        await import("./query-semaphore");
+      const controller = new AbortController();
+      controller.abort();
+      const result = await acquireQuerySlot("cancelled", {
+        signal: controller.signal,
+      }).then(
+        (release) => {
+          release();
+          return null;
+        },
+        (error: unknown) => error,
+      );
+      expect(result).toMatchObject({ name: "AbortError" });
+      expect(getQuerySemaphoreStatus()).toMatchObject({
+        active: 0,
+        waiting: 0,
+      });
+    });
+
     it("acquires a slot and returns a release function", async () => {
       const { acquireQuerySlot } = await import("./query-semaphore");
       const release = await acquireQuerySlot("test:1");
@@ -135,11 +191,8 @@ describe("query-semaphore", () => {
     it("rejects admission timeouts with a typed error a caller can classify", async () => {
       vi.useFakeTimers();
 
-      const {
-        acquireQuerySlot,
-        QuerySlotAdmissionTimeoutError,
-        isQuerySlotAdmissionTimeout,
-      } = await import("./query-semaphore");
+      const { acquireQuerySlot, QuerySlotAdmissionTimeoutError } =
+        await import("./query-semaphore");
 
       await acquireQuerySlot("test:1");
       await acquireQuerySlot("test:2");
@@ -155,41 +208,6 @@ describe("query-semaphore", () => {
       // Never admitted, so nothing about the callee failed: the caller has to be
       // able to tell queue pressure apart from a run that started and broke.
       expect(error).toBeInstanceOf(QuerySlotAdmissionTimeoutError);
-      expect(isQuerySlotAdmissionTimeout(error)).toBe(true);
-    });
-
-    it("carries the classification in the message, for callers that only see text", async () => {
-      vi.useFakeTimers();
-
-      const { acquireQuerySlot, isQuerySlotAdmissionTimeout } =
-        await import("./query-semaphore");
-
-      await acquireQuerySlot("test:1");
-      await acquireQuerySlot("test:2");
-
-      let message = "";
-      const thirdPromise = acquireQuerySlot("test:3").catch((e: Error) => {
-        message = e.message;
-      });
-
-      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
-      await thirdPromise;
-
-      // The error crosses boundaries that keep only the text — a task run
-      // surfaces its failure as a string — so the marker has to survive there
-      // too or the classification is lost exactly where it is needed.
-      expect(isQuerySlotAdmissionTimeout(message)).toBe(true);
-    });
-
-    it("does not classify an unrelated failure as queue pressure", async () => {
-      const { isQuerySlotAdmissionTimeout } = await import("./query-semaphore");
-
-      expect(isQuerySlotAdmissionTimeout(new Error("provider 500"))).toBe(
-        false,
-      );
-      expect(isQuerySlotAdmissionTimeout("model overloaded")).toBe(false);
-      expect(isQuerySlotAdmissionTimeout(null)).toBe(false);
-      expect(isQuerySlotAdmissionTimeout(undefined)).toBe(false);
     });
 
     it("idempotent release — double release is safe", async () => {
@@ -255,4 +273,60 @@ describe("query-semaphore", () => {
       expect(getQuerySemaphoreStatus().active).toBe(0);
     });
   });
+});
+
+it("does not grant capacity after cancellation during configuration refresh", async () => {
+  const { acquireQuerySlot, getQuerySemaphoreStatus } =
+    await import("./query-semaphore");
+  let finish!: (config: { maxConcurrentQueries: number }) => void;
+  setQuerySemaphoreDeps({
+    readConfig: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  });
+  const controller = new AbortController();
+  const pending = acquireQuerySlot("config-cancel", {
+    signal: controller.signal,
+  }).then(
+    (release) => {
+      release();
+      return null;
+    },
+    (error: unknown) => error,
+  );
+  controller.abort();
+  finish({ maxConcurrentQueries: 1 });
+  expect(await pending).toMatchObject({ name: "AbortError" });
+  expect(getQuerySemaphoreStatus()).toMatchObject({ active: 0, waiting: 0 });
+});
+
+it("returns a simultaneously cancelled grant and advances the next FIFO waiter once", async () => {
+  const { acquireQuerySlot, getQuerySemaphoreStatus } =
+    await import("./query-semaphore");
+  setQuerySemaphoreDeps({
+    readConfig: async () => ({ maxConcurrentQueries: 1 }),
+  });
+  const release = await acquireQuerySlot("incumbent");
+  const controller = new AbortController();
+  const cancelled = acquireQuerySlot("cancel-at-grant", {
+    signal: controller.signal,
+  }).then(
+    (releaseSlot) => {
+      releaseSlot();
+      return null;
+    },
+    (error: unknown) => error,
+  );
+  const next = acquireQuerySlot("next");
+  await flushMicrotasks();
+  expect(getQuerySemaphoreStatus().waiting).toBe(2);
+  release();
+  controller.abort();
+  expect(await cancelled).toMatchObject({ name: "AbortError" });
+  const releaseNext = await next;
+  expect(getQuerySemaphoreStatus()).toMatchObject({ active: 1, waiting: 0 });
+  releaseNext();
+  releaseNext();
+  expect(getQuerySemaphoreStatus().active).toBe(0);
 });

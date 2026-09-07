@@ -1,3 +1,4 @@
+import { stopAllConversationActors } from "./lib/workflows/conversation/manager";
 import { listSessionConversationListItems } from "./lib/state-store";
 import { getStateDb } from "./lib/state-store/store";
 import { getDb } from "./lib/state-store/state-db";
@@ -146,7 +147,7 @@ const defaultStartupDeps: StartupDeps = {
   },
   startEventLoopStallSentinel,
   installRuntimeShutdownHook: () => {
-    installRuntimeShutdownHook();
+    installRuntimeShutdownHook(stopAllConversationActors);
   },
   verifyServerBaseUrl: () => {
     void verifyRecordedServerBaseUrl();

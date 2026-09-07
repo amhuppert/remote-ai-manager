@@ -184,9 +184,7 @@ export function withRuntimeReplacementRetry(
     get outputFormat() {
       return live().outputFormat;
     },
-    get alignmentVersion() {
-      return live().alignmentVersion;
-    },
+
     sendTurn: sendTurnWithRetry,
     notifyTurnStarting: () => live().notifyTurnStarting?.(),
     prepareForTurnStart: async () =>

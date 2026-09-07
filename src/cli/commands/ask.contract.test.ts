@@ -60,7 +60,7 @@ function makeHost(
   conversation: ConversationState,
   files: Record<string, string> = {},
 ): CliHost & { send: ReturnType<typeof vi.fn> } {
-  const send = vi.fn(() => true);
+  const send = vi.fn(async () => true);
   const deps: AskRouteDeps = {
     auth: createAgentAuth({ configDir: dir }),
     async resolveProjectPath(name) {
@@ -71,7 +71,7 @@ function makeHost(
         ? { conversations: [conversation] }
         : null;
     },
-    sendConversationEvent: send,
+    registerConversationQuestion: send,
     async resolveLaneAskPermission() {
       return { allowed: false };
     },
@@ -141,7 +141,6 @@ describe("cctl ask against the real ask handlers", () => {
       SESSION,
       CONVERSATION_ID,
       expect.objectContaining({
-        type: "ASK_QUESTION",
         questionId: "q_contract1",
         questions: [
           expect.objectContaining({

@@ -1,3 +1,7 @@
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+
+import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
+
 /**
  * R10.2 — the adversarial prompt-authority suite, live half.
  *
@@ -62,21 +66,14 @@ import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
-import {
-  mapToTaskRunResult,
-  type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import {
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "@/lib/workflows/conversation/actor-implementations";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+
 import {
   _resetServerBaseUrlForTesting,
   recordServerBaseUrl,
 } from "@/lib/agent-gateway/server-url";
-import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   createValidatorRunner,
   type ValidatorRunResult,
@@ -268,45 +265,25 @@ function liveTaskRun(
   backend: AgentBackendId,
   worktreePath: string,
 ): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  setActorDeps(
-    createActorImplementationDepsFixture({
-      getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
-    }),
-  );
+  const actorDependencies = createActorDependenciesFixture({
+    getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
+  });
 
   return async (input) => {
-    const actorResult = await runTaskRunTurnForMachine({
-      executionClass: input.executionClass,
-      executionProfile: input.executionProfile,
-      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
-      persistence: "ephemeral",
-      projectPath: input.projectPath,
-      projectName: "repo",
-      sessionName: input.sessionName,
-      worktreePath,
-      conversationId: input.conversationId,
-      agentBackend: backend,
-      backendRef: null,
-      promptText: input.prompt,
-      modelSelection: input.modelSelection ?? null,
-      onModelSelectionResolved: async () => {},
-      ...(input.outputFormat !== undefined
-        ? { outputFormat: input.outputFormat }
-        : {}),
-      ...(input.systemInstructions !== undefined
-        ? { systemInstructions: input.systemInstructions }
-        : {}),
-      ...(input.fsWritePolicy !== undefined
-        ? { fsWritePolicy: input.fsWritePolicy }
-        : {}),
-      timeoutMs: RUN_TIMEOUT_MS,
+    const fixture = await createLifecycleFixture({
+      binding: input.binding,
+      conversation: { agentBackend: backend, backendRef: null },
+      actorDeps: actorDependencies,
     });
-
-    return mapToTaskRunResult(
-      actorResult,
-      actorResult.error,
-      input.outputFormat,
-    );
+    try {
+      return await fixture.executeWorkflowTaskRun({
+        ...input,
+        binding: { ...input.binding, worktreePath: worktreePath },
+        resumeRef: input.resumeRef ?? null,
+      });
+    } finally {
+      await fixture.close();
+    }
   };
 }
 
@@ -367,7 +344,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  _resetActorDepsForTesting();
   _resetServerBaseUrlForTesting();
 });
 
@@ -424,3 +400,5 @@ describe.skipIf(!LIVE).each(["claude", "codex"] as const)(
     );
   },
 );
+
+afterEach(() => resetTaskRuntime());

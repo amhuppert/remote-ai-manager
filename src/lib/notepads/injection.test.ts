@@ -43,6 +43,7 @@ function source(
 ): NotepadInjectionSource {
   return {
     name: `Notepad ${overrides.id}`,
+    openComments: { count: 0, latestCreatedAt: null },
     revision: 1,
     writeMode: "full-edit",
     content: "",
@@ -319,6 +320,7 @@ describe("expandNotepadRefsForAgent", () => {
 describe("createNotepadInjectionReader (against the real service)", () => {
   let fixture: PersistenceFixture;
   let service: NotepadService;
+  let comments: ReturnType<typeof createNotepadCommentsRepo>;
   let contentBase: string;
 
   beforeEach(() => {
@@ -333,9 +335,10 @@ describe("createNotepadInjectionReader (against the real service)", () => {
     });
     let clock = 0;
     let idSeq = 0;
+    comments = createNotepadCommentsRepo(fixture.db, writeQueue);
     service = createNotepadService({
       repo,
-      comments: createNotepadCommentsRepo(fixture.db, writeQueue),
+      comments,
       publish: () => ({ delivered: true }),
       deleteNotepadContent: (notepadId) =>
         contentStore.deleteNotepad(notepadId),
@@ -369,7 +372,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
 
   it("expands a live notepad's stored content through the service", async () => {
     const id = await createNotepad("# Stored\n\n[Image: img-a]");
-    const reader = createNotepadInjectionReader(service);
+    const reader = createNotepadInjectionReader(service, comments);
 
     const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id, name: "Stale Display Name" }),
@@ -401,7 +404,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
 
     const { text: expanded } = await expandNotepadRefsForAgent(
       notepadRefXml({ id, name: "Stale Display Name" }),
-      createNotepadInjectionReader(service),
+      createNotepadInjectionReader(service, comments),
     );
 
     expect(expanded).toContain("name: Renamed Notepad");
@@ -417,7 +420,7 @@ describe("createNotepadInjectionReader (against the real service)", () => {
 
     const { text: expanded } = await expandNotepadRefsForAgent(
       `Check ${notepadRefXml({ id, name: "Gone" })}.`,
-      createNotepadInjectionReader(service),
+      createNotepadInjectionReader(service, comments),
     );
 
     expect(expanded).toContain(`id: ${id}`);

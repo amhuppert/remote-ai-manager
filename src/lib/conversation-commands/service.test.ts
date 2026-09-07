@@ -11,7 +11,7 @@ vi.mock("@/lib/logging", () => ({
 
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { createSessionAlignmentRepo } from "@/lib/session-alignment/repo";
@@ -525,9 +525,18 @@ describe("createConversationCommandService eligible path", () => {
     const taskRunInput = vi.mocked(deps.executeWorkflowTaskRun).mock
       .calls[0]?.[0];
     expect(taskRunInput).toMatchObject({
-      projectPath: "/tmp/projects/demo",
-      sessionName: "my-session",
-      conversationId: "conv-1",
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: "/tmp/projects/demo",
+          target: {
+            scope: "session",
+            projectName: "demo",
+            sessionName: "my-session",
+            conversationId: "conv-1",
+          },
+        },
+      },
       kind: "task_run",
       structuredOutputTextField: "message",
       outputFormat: {

@@ -37,7 +37,6 @@ import type {
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { createLogger } from "@/lib/logging";
-import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
   McpApplyDisposition,
   McpRuntimeApplicationState,
@@ -135,7 +134,7 @@ export interface ResolvedPortableForConversation {
 }
 
 export interface McpRuntimeApplyDeps {
-  stateManager: StateManager;
+  applicationState: McpRuntimeApplicationStore;
   getRuntime(conversationId: string): ConversationBackendRuntime | undefined;
   resolvePortableForConversation(input: {
     projectPath: string;
@@ -180,10 +179,12 @@ export interface McpRuntimeApplyService {
 // Factory
 // ===========================================================================
 
+const applyChain = new Map<string, Promise<unknown>>();
+
 export function createMcpRuntimeApplyService(
   deps: McpRuntimeApplyDeps,
 ): McpRuntimeApplyService {
-  const { stateManager } = deps;
+  const { applicationState } = deps;
 
   // Per-conversation apply serializer. `resolvePortableForConversation` is file
   // I/O that must NOT hold the global state-store write queue
@@ -201,7 +202,6 @@ export function createMcpRuntimeApplyService(
   // loop, and the short durable writes still go through the global queue via
   // `mutateConversation`. Durable pending state is the cross-restart source of
   // truth, reconciled fresh at turn start, so the chain can reset on restart.
-  const applyChain = new Map<string, Promise<unknown>>();
 
   function runSerialized<T>(
     conversationId: string,
@@ -248,12 +248,8 @@ export function createMcpRuntimeApplyService(
     // per-conversation `runSerialized` chain wrapping this whole body — no two
     // apply ops for one conversation overlap, so a stale resolve can never clobber
     // a newer one.
-    const existing = await stateManager.getConversation(
-      input.projectPath,
-      input.sessionName,
-      input.conversationId,
-    );
-    if (!existing) {
+    const existing = await applicationState.read(input);
+    if (!existing.found) {
       throw new Error(
         `Conversation "${input.conversationId}" not found in session "${input.sessionName}" during mcp.applyAfterOverrideChange.resolve`,
       );
@@ -283,7 +279,7 @@ export function createMcpRuntimeApplyService(
     // lastAppliedConfigHash. A short synchronous critical section — the resolve
     // above already ran outside the lock.
     await writeConversationRuntime(
-      stateManager,
+      applicationState,
       input,
       "mcp.applyAfterOverrideChange",
       (existing) => ({
@@ -338,7 +334,7 @@ export function createMcpRuntimeApplyService(
       // preserve lastAppliedConfigHash. No supersession check needed — the
       // serializer guarantees the next op has not started yet.
       await recordFailureAfterOverride(
-        stateManager,
+        applicationState,
         input,
         phase1.hash,
         sanitized,
@@ -358,7 +354,7 @@ export function createMcpRuntimeApplyService(
     ) {
       const sanitized = formatApplyResultError(applyResult);
       await recordFailureAfterOverride(
-        stateManager,
+        applicationState,
         input,
         phase1.hash,
         sanitized,
@@ -376,7 +372,7 @@ export function createMcpRuntimeApplyService(
     // apply returns `applied_now`; a staging backend returns
     // `deferred_to_next_turn`.
     await recordFinalDispositionAfterOverride(
-      stateManager,
+      applicationState,
       input,
       applyResult.disposition,
     );
@@ -413,18 +409,14 @@ export function createMcpRuntimeApplyService(
     // resolving means a missing conversation throws before any I/O, and keeps
     // the concurrency model intact: a newer PATCH landing after this resolve is
     // anticipated below by the pending-hash reconciliation on success.
-    const existing = await stateManager.getConversation(
-      input.projectPath,
-      input.sessionName,
-      input.conversationId,
-    );
-    if (!existing) {
+    const existing = await applicationState.read(input);
+    if (!existing.found) {
       throw new Error(
         `Conversation "${input.conversationId}" not found in session "${input.sessionName}" during mcp.applyAtTurnStart.resolve`,
       );
     }
-    const previous: McpRuntimeApplicationState | undefined = existing.mcpRuntime
-      ? { ...existing.mcpRuntime }
+    const previous: McpRuntimeApplicationState | undefined = existing.state
+      ? { ...existing.state }
       : undefined;
     const resolved = await deps.resolvePortableForConversation({
       projectPath: input.projectPath,
@@ -461,7 +453,7 @@ export function createMcpRuntimeApplyService(
       // No active runtime. Record pending and bail. lastAppliedConfigHash
       // untouched.
       await writeConversationRuntime(
-        stateManager,
+        applicationState,
         input,
         "mcp.applyAtTurnStart.no-runtime",
         (existing) => ({
@@ -488,7 +480,7 @@ export function createMcpRuntimeApplyService(
         backend: input.backend,
       });
       await writeConversationRuntime(
-        stateManager,
+        applicationState,
         input,
         "mcp.applyAtTurnStart.failure",
         (existing) => ({
@@ -513,7 +505,7 @@ export function createMcpRuntimeApplyService(
     ) {
       const sanitized = formatApplyResultError(applyResult);
       await writeConversationRuntime(
-        stateManager,
+        applicationState,
         input,
         "mcp.applyAtTurnStart.rejected",
         (existing) => ({
@@ -536,7 +528,7 @@ export function createMcpRuntimeApplyService(
     // otherwise a newer PATCH landed after our resolve and its pending hash
     // must survive to drive the subsequent turn.
     await writeConversationRuntime(
-      stateManager,
+      applicationState,
       input,
       "mcp.applyAtTurnStart.success",
       (existing) => {
@@ -610,27 +602,64 @@ function decideApplyDisposition(input: {
 // State write helpers (Task 10.3)
 // ===========================================================================
 
+export interface McpRuntimeIdentity {
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+}
+export interface McpRuntimeApplicationStore {
+  read(
+    identity: McpRuntimeIdentity,
+  ): Promise<
+    { found: false } | { found: true; state?: McpRuntimeApplicationState }
+  >;
+  update(
+    identity: McpRuntimeIdentity,
+    label: string,
+    updater: (
+      state: McpRuntimeApplicationState | undefined,
+    ) => McpRuntimeApplicationState,
+  ): Promise<void>;
+}
+
+export function createMcpRuntimeApplicationStore(
+  store: Pick<StateManager, "getConversation" | "mutateConversation">,
+): McpRuntimeApplicationStore {
+  return {
+    async read(identity) {
+      const conversation = await store.getConversation(
+        identity.projectPath,
+        identity.sessionName,
+        identity.conversationId,
+      );
+      return conversation
+        ? { found: true, state: conversation.mcpRuntime }
+        : { found: false };
+    },
+    async update(identity, label, updater) {
+      await store.mutateConversation(
+        identity.projectPath,
+        identity.sessionName,
+        identity.conversationId,
+        label,
+        (conversation) => {
+          conversation.mcpRuntime = updater(conversation.mcpRuntime);
+        },
+      );
+    },
+  };
+}
+
 async function writeConversationRuntime(
-  stateManager: StateManager,
-  input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  },
+  applicationState: McpRuntimeApplicationStore,
+  input: McpRuntimeIdentity,
   label: string,
   updater: (
     existing: McpRuntimeApplicationState | undefined,
   ) => McpRuntimeApplicationState,
 ): Promise<void> {
-  await stateManager.mutateConversation(
-    input.projectPath,
-    input.sessionName,
-    input.conversationId,
-    label,
-    (conv: ConversationState) => {
-      const next = updater(conv.mcpRuntime);
-      conv.mcpRuntime = pruneRuntimeState(next);
-    },
+  await applicationState.update(input, label, (state) =>
+    pruneRuntimeState(updater(state)),
   );
 }
 
@@ -652,13 +681,13 @@ function pruneRuntimeState(
 }
 
 async function recordFailureAfterOverride(
-  stateManager: StateManager,
+  applicationState: McpRuntimeApplicationStore,
   input: AfterOverrideChangeInput,
   pendingHash: string,
   sanitized: string,
 ): Promise<void> {
   await writeConversationRuntime(
-    stateManager,
+    applicationState,
     input,
     "mcp.applyAfterOverrideChange.failure",
     (existing) => ({
@@ -675,12 +704,12 @@ async function recordFailureAfterOverride(
 }
 
 async function recordFinalDispositionAfterOverride(
-  stateManager: StateManager,
+  applicationState: McpRuntimeApplicationStore,
   input: AfterOverrideChangeInput,
   disposition: McpApplyDisposition,
 ): Promise<void> {
   await writeConversationRuntime(
-    stateManager,
+    applicationState,
     input,
     "mcp.applyAfterOverrideChange.finalize",
     (existing) => ({

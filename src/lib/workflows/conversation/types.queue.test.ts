@@ -1,11 +1,12 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { describe, expect, it } from "vitest";
 
 import type {
   ConversationEvent,
   ConversationTurnActive,
   ExecutePromptInput,
-  QueuedDeliveryMetadata,
 } from "./types";
+import type { QueuedDeliveryMetadata } from "./turn-spec";
 
 /**
  * Type-level proof that queued delivery metadata threads through the
@@ -50,30 +51,34 @@ describe("queued delivery metadata on conversation turn types", () => {
 
   it("carries queuedDelivery on an ExecutePromptInput", () => {
     const input: ExecutePromptInput = {
+      turn: {
+        kind: "conversation_turn",
+        backend: "claude",
+        promptText: "hello",
+        images: [],
+        modelSelection: null,
+        autonomous: false,
+        queuedDelivery,
+      },
       persistence: "durable",
       projectPath: "/p",
-      projectName: "p",
-      sessionName: "s",
+      target: targetFromStoreSessionName("p", "s", "c1"),
+
       worktreePath: "/w",
-      conversationId: "c1",
+
       transcriptPath: "/t.jsonl",
       agentBackend: "claude",
       backendRef: null,
       promptCount: 0,
       forkedFrom: null,
       role: null,
-      promptText: "hello",
-      images: [],
       streamId: "stream-1",
-      modelSelection: null,
       onModelSelectionResolved: async () => {},
-      autonomous: false,
       debugMode: null,
-      queuedDelivery,
     };
 
-    expect(input.queuedDelivery?.messageIds).toEqual(["m1", "m2"]);
-    expect(input.queuedDelivery?.deliveryAttemptId).toBe("att-1");
+    expect(input.turn.queuedDelivery?.messageIds).toEqual(["m1", "m2"]);
+    expect(input.turn.queuedDelivery?.deliveryAttemptId).toBe("att-1");
   });
 
   it("leaves queuedDelivery optional on every carrier", () => {
@@ -93,29 +98,33 @@ describe("queued delivery metadata on conversation turn types", () => {
       streamId: "stream-1",
     };
     const input: ExecutePromptInput = {
+      turn: {
+        kind: "conversation_turn",
+        backend: "claude",
+        promptText: "hello",
+        images: [],
+        modelSelection: null,
+        autonomous: false,
+      },
       persistence: "durable",
       projectPath: "/p",
-      projectName: "p",
-      sessionName: "s",
+      target: targetFromStoreSessionName("p", "s", "c1"),
+
       worktreePath: "/w",
-      conversationId: "c1",
+
       transcriptPath: "/t.jsonl",
       agentBackend: "claude",
       backendRef: null,
       promptCount: 0,
       forkedFrom: null,
       role: null,
-      promptText: "hello",
-      images: [],
       streamId: "stream-1",
-      modelSelection: null,
       onModelSelectionResolved: async () => {},
-      autonomous: false,
       debugMode: null,
     };
 
     expect(event.queuedDelivery).toBeUndefined();
     expect(turn.queuedDelivery).toBeUndefined();
-    expect(input.queuedDelivery).toBeUndefined();
+    expect(input.turn.queuedDelivery).toBeUndefined();
   });
 });

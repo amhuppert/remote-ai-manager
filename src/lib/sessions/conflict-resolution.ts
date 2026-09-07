@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { getProjectDisplayName as getConversationProjectName } from "@/lib/projects/resolver";
 import { z } from "zod";
 import { conflictEntrySchema } from "../jobs/schemas";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
@@ -9,10 +11,8 @@ import type {
   AgentTurnDispatch,
   ExecuteFreshTaskRunInput,
 } from "@/lib/workflows/conversation/execute-fresh-task-run";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { buildIncomingChangesSection as defaultBuildIncomingChangesSection } from "@/lib/merge-intents/incoming-changes";
 import type { IncomingChangesParams } from "@/lib/merge-intents/incoming-changes";
 import { validateStructuredOutput } from "@/lib/agent-backends/structured-output";
@@ -535,10 +535,18 @@ async function dispatchConflictTurn(input: {
   const executeWorkflowTaskRun =
     input.deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   return executeWorkflowTaskRun({
-    projectPath: input.projectPath,
-    sessionName: input.sessionName,
-    conversationId: input.conversationId,
-    worktreePath: input.worktreePath,
+    binding: {
+      kind: "durable",
+      address: {
+        projectPath: input.projectPath,
+        target: targetFromStoreSessionName(
+          getConversationProjectName(input.projectPath),
+          input.sessionName,
+          input.conversationId,
+        ),
+      },
+      worktreePath: input.worktreePath,
+    },
     kind: "task_run",
     executionClass: "governed-execution",
     executionProfile: "standard",

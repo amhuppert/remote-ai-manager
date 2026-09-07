@@ -1,3 +1,20 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+
+let machineFactory: NonNullable<
+  Parameters<typeof createConversationManagerFixture>[0]
+>["machine"];
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    machine: (adapter, deps) =>
+      machineFactory
+        ? machineFactory(adapter, deps)
+        : managerFixture.providedMachine(adapter),
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+    },
+  });
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { NextResponse } from "next/server";
 import { fromPromise } from "xstate";
@@ -5,13 +22,7 @@ import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { type ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { conversationMachine } from "@/lib/workflows/conversation/machine";
-import {
-  sendConversationEvent,
-  setMachineFactory,
-  startConversationActor,
-  _resetForTesting,
-  _resetMachineFactoryForTesting,
-} from "@/lib/workflows/conversation/manager";
+
 import type {
   ExecutePromptInput,
   PrepareTurnInput,
@@ -87,7 +98,7 @@ function makeDeps(overrides: Partial<AskRouteDeps> = {}): {
   send: ReturnType<typeof vi.fn>;
   resolveLaneAskPermission: ReturnType<typeof vi.fn>;
 } {
-  const send = vi.fn(() => true);
+  const send = vi.fn(async () => true);
   const resolveLaneAskPermission = vi.fn(async () => ({ allowed: false }));
   const deps: AskRouteDeps = {
     auth: authAllows(),
@@ -97,7 +108,7 @@ function makeDeps(overrides: Partial<AskRouteDeps> = {}): {
     async getSession() {
       return { conversations: [conv()] };
     },
-    sendConversationEvent: send,
+    registerConversationQuestion: send,
     resolveLaneAskPermission,
     generateQuestionBatchId: () => "q_test1234",
     log: createCapturingLogger(),
@@ -127,8 +138,7 @@ const validBody = {
 };
 
 afterEach(() => {
-  _resetForTesting();
-  _resetMachineFactoryForTesting();
+  managerFixture.dispose();
 });
 
 describe("POST conversation ask", () => {
@@ -207,7 +217,6 @@ describe("POST conversation ask", () => {
     expect(sessionName).toBe("sess");
     expect(conversationId).toBe("conv-1");
     expect(event).toMatchObject({
-      type: "ASK_QUESTION",
       questionId: "q_test1234",
     });
   });
@@ -340,7 +349,6 @@ describe("POST conversation ask", () => {
     expect(sessionName).toBe("sess");
     expect(conversationId).toBe("conv-1");
     expect(event).toMatchObject({
-      type: "ASK_QUESTION",
       questionId: "q_test1234",
     });
     const questions = (
@@ -350,7 +358,9 @@ describe("POST conversation ask", () => {
   });
 
   it("409 when the machine refuses the event (turn settled between gate and send)", async () => {
-    const { deps } = makeDeps({ sendConversationEvent: () => false });
+    const { deps } = makeDeps({
+      registerConversationQuestion: async () => false,
+    });
     const { POST } = createAskQuestionHandlers(deps);
 
     const res = await POST(makeRequest(validBody), { params });
@@ -359,7 +369,7 @@ describe("POST conversation ask", () => {
   });
 
   it("integration: registers the pending question on a live actor and creates no resolver", async () => {
-    setMachineFactory(() =>
+    machineFactory = () =>
       conversationMachine.provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
@@ -382,15 +392,20 @@ describe("POST conversation ask", () => {
           markReadOnUserTurnStart: () => {},
           drainPendingQueue: () => {},
         },
-      }),
-    );
+      });
 
-    const actor = startConversationActor({
+    const actor = managerFixture.host.start({
+      lastActivityAt: ts,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: "/repos/cc",
-      projectName: "cc",
-      sessionName: "sess",
+      target: targetFromStoreSessionName("cc", "sess", "conv-1"),
+
       worktreePath: "/repos/cc/.worktrees/sess",
-      conversationId: "conv-1",
+
       createdAt: ts,
       forkedFrom: null,
       role: null,
@@ -405,7 +420,10 @@ describe("POST conversation ask", () => {
       expect(JSON.stringify(actor.getSnapshot().value)).toContain("executing");
     });
 
-    const { deps } = makeDeps({ sendConversationEvent });
+    const { deps } = makeDeps({
+      registerConversationQuestion:
+        managerFixture.manager.registerConversationQuestion,
+    });
     const { POST } = createAskQuestionHandlers(deps);
 
     const res = await POST(makeRequest(validBody), { params });
@@ -427,7 +445,7 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
   function projectDeps(
     conversation: ConversationState = conv({ scope: "project" }),
   ) {
-    const send = vi.fn(() => true);
+    const send = vi.fn(async () => true);
     const getProjectConversation = vi.fn(async () => conversation);
     const log = createCapturingLogger();
     return {
@@ -440,7 +458,7 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
           return "/repos/cc";
         },
         getProjectConversation,
-        sendConversationEvent: send,
+        registerConversationQuestion: send,
         generateQuestionBatchId: () => "q_proj1234",
         log,
       },
@@ -487,7 +505,6 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
       PROJECT_CONVERSATION_SESSION_SENTINEL,
       "conv-1",
       expect.objectContaining({
-        type: "ASK_QUESTION",
         questionId: "q_proj1234",
       }),
     );
@@ -646,7 +663,7 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
       {
         name: "event rejected",
         conversation: conv({ scope: "project" }),
-        overrides: { sendConversationEvent: () => false },
+        overrides: { registerConversationQuestion: async () => false },
         event: "ask.event_rejected",
       },
       {
@@ -675,7 +692,7 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
         },
         {
           conversation: conv({ scope: "project" }),
-          overrides: { sendConversationEvent: () => false },
+          overrides: { registerConversationQuestion: async () => false },
         },
         {
           conversation: conv({ scope: "project", role: "validator" }),

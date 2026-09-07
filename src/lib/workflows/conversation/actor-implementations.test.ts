@@ -1,9 +1,29 @@
+import { readRuntimeInstructions } from "./runtime-instructions";
+import {
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+async function readInstructionConfiguration(
+  deps: ActorFixtureDependencies,
+  input: ExecutePromptInput,
+) {
+  const { repeatableInstructions, alignmentVersion } =
+    await readRuntimeInstructions(
+      { execution: deps, context: deps },
+      input,
+      undefined,
+    );
+  return { repeatableInstructions, alignmentVersion };
+}
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import type { ActorFixtureDependencies } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
 import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PrepareTurnInput, ExecutePromptInput } from "./types";
-import type { ActorImplementationDeps } from "./actor-implementations";
-import { shouldRecreateRuntime } from "./pre-turn/runtime-recreate";
+
 import type {
   ConversationBackendCreateInput,
   ConversationBackendEvent,
@@ -50,14 +70,6 @@ vi.mock("@/lib/logging", () => ({
 // Import module under test
 // ---------------------------------------------------------------------------
 
-import {
-  prepareTurnForMachine,
-  executePromptForMachine,
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-  buildEffectivePrompt,
-} from "./actor-implementations";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { RunTaskRunInput } from "./types";
 import type {
@@ -72,6 +84,7 @@ import {
   ASK_QUESTION_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
   CC_CLI_INSTRUCTIONS,
+  TDD_INSTRUCTIONS,
 } from "@/lib/prompt/sdk-driver";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -101,7 +114,7 @@ import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import {
-  createActorImplementationDepsFixture,
+  createActorDependenciesFixture,
   createMockBackendRuntime as createMockBackendRuntimeFixture,
 } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import { createLockManager } from "@/lib/prompt/single-flight";
@@ -156,7 +169,9 @@ const mockBackendRuntime = createMockBackendRuntime();
 
 const mockFactory = {
   backend: "claude" as const,
-  createRuntime: vi.fn(async () => mockBackendRuntime),
+  createRuntime: vi.fn(
+    async (_input: ConversationBackendCreateInput) => mockBackendRuntime,
+  ),
   validateModelSelection: vi.fn(),
 };
 
@@ -165,11 +180,11 @@ const mockFactory = {
 // ---------------------------------------------------------------------------
 
 function createMockDeps(
-  overrides: Partial<ActorImplementationDeps> = {},
-): ActorImplementationDeps {
+  overrides: Partial<ActorFixtureDependencies> = {},
+): ActorFixtureDependencies {
   // Shared fixture, with this file's own backend-runtime factory kept in place:
   // many tests here assert against `mockFactory` / `mockSendTurn` directly.
-  return createActorImplementationDepsFixture({
+  return createActorDependenciesFixture({
     getConversationBackendFactory: vi.fn(() => mockFactory),
     ...overrides,
   });
@@ -185,8 +200,12 @@ function makePrepareTurnInput(
   return {
     persistence: "durable",
     projectPath: "/projects/repo",
-    sessionName: "test-session",
-    conversationId: "conv-1",
+    target: targetFromStoreSessionName(
+      overrides.target?.projectName ?? "repo",
+      "test-session",
+      "conv-1",
+    ),
+
     worktreePath: "/projects/repo/.worktrees/test-session",
     transcriptPath: null,
     ...overrides,
@@ -194,38 +213,51 @@ function makePrepareTurnInput(
 }
 
 function makeExecutePromptInput(
-  overrides: Partial<ExecutePromptInput> = {},
+  overrides: Omit<Partial<ExecutePromptInput>, "turn"> & {
+    turn?: Partial<ExecutePromptInput["turn"]>;
+  } = {},
 ): ExecutePromptInput {
   return {
     persistence: "durable",
     projectPath: "/projects/repo",
-    projectName: "repo",
-    sessionName: "test-session",
+    target: targetFromStoreSessionName("repo", "test-session", "conv-1"),
+
     worktreePath: "/projects/repo/.worktrees/test-session",
-    conversationId: "conv-1",
+
     transcriptPath: "/transcripts/conv-1.jsonl",
     agentBackend: "claude",
     backendRef: null,
     promptCount: 0,
     forkedFrom: null,
     role: null,
-    promptText: "Hello, world!",
-    images: [],
     streamId: "stream-1",
-    modelSelection: null,
     onModelSelectionResolved: async () => {},
-    autonomous: false,
     debugMode: null,
     ...overrides,
+    turn: {
+      kind: "conversation_turn",
+      promptText: "Hello, world!",
+      images: [],
+      modelSelection: null,
+      autonomous: false,
+      backend: overrides.agentBackend ?? "claude",
+      ...overrides.turn,
+    },
   };
 }
 
 function makeProjectExecutePromptInput(
-  overrides: Partial<ExecutePromptInput> = {},
+  overrides: Omit<Partial<ExecutePromptInput>, "turn"> & {
+    turn?: Partial<ExecutePromptInput["turn"]>;
+  } = {},
 ): ExecutePromptInput {
   return makeExecutePromptInput({
-    conversationScope: "project",
-    sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+    target: targetFromStoreSessionName(
+      overrides.target?.projectName ?? "repo",
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+      overrides.target?.conversationId ?? "conv-1",
+    ),
+
     worktreePath: "/projects/repo",
     ...overrides,
   });
@@ -235,445 +267,20 @@ function makeProjectExecutePromptInput(
 // Unit tests: extracted pure functions
 // ===========================================================================
 
-describe("shouldRecreateRuntime", () => {
-  const lowA = { modelId: "a", parameters: { effort: "low" } };
-  const highA = { modelId: "a", parameters: { effort: "high" } };
-  const lowB = { modelId: "b", parameters: { effort: "low" } };
-
-  it("returns false when session is undefined", () => {
-    expect(shouldRecreateRuntime(undefined, lowA)).toBe(false);
-  });
-
-  it("returns false when session is dead", () => {
-    expect(
-      shouldRecreateRuntime({ status: "dead", modelSelection: lowA }, highA),
-    ).toBe(false);
-  });
-
-  it("returns false when the complete selection is unchanged", () => {
-    expect(
-      shouldRecreateRuntime({ status: "alive", modelSelection: lowA }, lowA),
-    ).toBe(false);
-  });
-
-  it("returns true when model changed", () => {
-    expect(
-      shouldRecreateRuntime({ status: "alive", modelSelection: lowA }, lowB),
-    ).toBe(true);
-  });
-
-  it("returns true when a model parameter changed", () => {
-    expect(
-      shouldRecreateRuntime({ status: "alive", modelSelection: lowA }, highA),
-    ).toBe(true);
-  });
-
-  it("returns true when an existing parameter is removed", () => {
-    expect(
-      shouldRecreateRuntime(
-        { status: "alive", modelSelection: lowA },
-        { modelId: "a", parameters: {} },
-      ),
-    ).toBe(true);
-  });
-
-  it("returns false when both parameter maps are empty", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: { modelId: "a", parameters: {} },
-        },
-        { modelId: "a", parameters: {} },
-      ),
-    ).toBe(false);
-  });
-
-  it("returns true when outputFormat changes from undefined to defined", () => {
-    const schema = { type: "object", properties: { name: { type: "string" } } };
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          outputFormat: undefined,
-        },
-        lowA,
-        { type: "json_schema", schema },
-      ),
-    ).toBe(true);
-  });
-
-  it("returns true when outputFormat changes from defined to undefined", () => {
-    const schema = { type: "object", properties: { name: { type: "string" } } };
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          outputFormat: { type: "json_schema", schema },
-        },
-        lowA,
-        undefined,
-      ),
-    ).toBe(true);
-  });
-
-  it("returns true when outputFormat schema changes", () => {
-    const schema1 = { type: "object", properties: { a: { type: "string" } } };
-    const schema2 = { type: "object", properties: { b: { type: "number" } } };
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          outputFormat: { type: "json_schema", schema: schema1 },
-        },
-        lowA,
-        { type: "json_schema", schema: schema2 },
-      ),
-    ).toBe(true);
-  });
-
-  it("returns false when outputFormat is the same object reference", () => {
-    const format = {
-      type: "json_schema" as const,
-      schema: { type: "object", properties: { a: { type: "string" } } },
-    };
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          outputFormat: format,
-        },
-        lowA,
-        format,
-      ),
-    ).toBe(false);
-  });
-
-  it("returns false when both outputFormats are undefined", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          outputFormat: undefined,
-        },
-        lowA,
-        undefined,
-      ),
-    ).toBe(false);
-  });
-
-  it("returns true when the alignment version advanced (3 -> 4)", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          alignmentVersion: 3,
-        },
-        lowA,
-        undefined,
-        4,
-      ),
-    ).toBe(true);
-  });
-
-  it("returns false when the alignment version is unchanged (3 === 3)", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          alignmentVersion: 3,
-        },
-        lowA,
-        undefined,
-        3,
-      ),
-    ).toBe(false);
-  });
-
-  it("returns false when both alignment versions are null", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          alignmentVersion: null,
-        },
-        lowA,
-        undefined,
-        null,
-      ),
-    ).toBe(false);
-  });
-
-  it("returns true when the charter was deactivated (3 -> null)", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          alignmentVersion: 3,
-        },
-        lowA,
-        undefined,
-        null,
-      ),
-    ).toBe(true);
-  });
-
-  it("returns true when a charter became active (null -> 3)", () => {
-    expect(
-      shouldRecreateRuntime(
-        {
-          status: "alive",
-          modelSelection: lowA,
-          alignmentVersion: null,
-        },
-        lowA,
-        undefined,
-        3,
-      ),
-    ).toBe(true);
-  });
-
-  it("treats a missing runtime alignmentVersion as null (no recreate when desired is null)", () => {
-    expect(
-      shouldRecreateRuntime(
-        { status: "alive", modelSelection: lowA },
-        lowA,
-        undefined,
-        null,
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("buildEffectivePrompt", () => {
-  it("prepends the active ticket block ahead of everything else", () => {
-    const block = "<active-ticket>\nidentifier: repo#3\n</active-ticket>";
-    const result = buildEffectivePrompt(
-      "hello",
-      false,
-      [],
-      null,
-      "http://debug",
-      ".debug/conv/instrumentation.json",
-      block,
-    );
-    expect(result).toBe(`${block}\n\nhello`);
-  });
-
-  it("places the ticket block before debug instructions", () => {
-    const block = "<active-ticket>\nidentifier: repo#3\n</active-ticket>";
-    const debugMode = {
-      active: true,
-      recording: true,
-      logFilePath: "/tmp/debug.jsonl",
-      enteredAt: "2024-01-01T00:00:00Z",
-      debugSessionId: "debug-session-1",
-      hypotheses: [] as never[],
-      reproductionSteps: [] as string[],
-      instructionsDelivered: false,
-      phase: "hypothesizing" as const,
-      fixSummary: null,
-      verificationSteps: [] as string[],
-      lastTurnFailed: false,
-    };
-    const result = buildEffectivePrompt(
-      "help debug",
-      false,
-      [],
-      debugMode,
-      "http://debug-url",
-      ".debug/conv/instrumentation.json",
-      block,
-    );
-    expect(typeof result).toBe("string");
-    expect((result as string).startsWith(block)).toBe(true);
-    expect(result as string).toContain("<debug-mode>");
-    expect(result as string).toContain("help debug");
-  });
-
-  it("prepends the ticket block as a text block when the prompt carries images", () => {
-    const block = "<active-ticket>\nidentifier: repo#3\n</active-ticket>";
-    const blocks = [
-      { type: "text" as const, text: "hello" },
-      { type: "image" as const, mediaType: "image/png", base64Data: "abc" },
-    ];
-    const result = buildEffectivePrompt(
-      "hello",
-      true,
-      blocks,
-      null,
-      "http://debug",
-      ".debug/conv/instrumentation.json",
-      block,
-    );
-    expect(Array.isArray(result)).toBe(true);
-    expect((result as unknown[])[0]).toEqual({ type: "text", text: block });
-  });
-
-  it("returns plain text when no images", () => {
-    const result = buildEffectivePrompt(
-      "hello",
-      false,
-      [],
-      null,
-      "http://debug",
-      ".debug/conv/instrumentation.json",
-      null,
-    );
-    expect(result).toBe("hello");
-  });
-
-  it("returns content blocks when has images", () => {
-    const blocks = [
-      { type: "text" as const, text: "hello" },
-      { type: "image" as const, mediaType: "image/png", base64Data: "abc" },
-    ];
-    const result = buildEffectivePrompt(
-      "hello",
-      true,
-      blocks,
-      null,
-      "http://debug",
-      ".debug/conv/instrumentation.json",
-      null,
-    );
-    expect(result).toEqual(blocks);
-  });
-
-  it("prepends debug instructions on first debug turn", () => {
-    const debugMode = {
-      active: true,
-      debugSessionId: "debug-session-prompt",
-      recording: false,
-      logFilePath: "/tmp/debug.jsonl",
-      enteredAt: "2024-01-01T00:00:00Z",
-      hypotheses: [] as never[],
-      reproductionSteps: [] as string[],
-      instructionsDelivered: false,
-      phase: "hypothesizing" as const,
-      fixSummary: null,
-      verificationSteps: [] as string[],
-      lastTurnFailed: false,
-    };
-    const result = buildEffectivePrompt(
-      "help debug",
-      false,
-      [],
-      debugMode,
-      "http://debug-url",
-      ".debug/conv/instrumentation.json",
-      null,
-    );
-    expect(typeof result).toBe("string");
-    expect(result as string).toContain("<debug-mode>");
-    expect(result as string).toContain("help debug");
-    expect(result as string).toContain("http://debug-url");
-    expect(result as string).toContain("/tmp/debug.jsonl");
-  });
-
-  it("prepends phase context when instructions already delivered", () => {
-    const debugMode = {
-      active: true,
-      debugSessionId: "debug-session-phase",
-      recording: false,
-      logFilePath: "/tmp/debug.jsonl",
-      enteredAt: "2024-01-01T00:00:00Z",
-      hypotheses: [] as never[],
-      reproductionSteps: [] as string[],
-      instructionsDelivered: true,
-      phase: "hypothesizing" as const,
-      fixSummary: null,
-      verificationSteps: [] as string[],
-      lastTurnFailed: false,
-    };
-    const result = buildEffectivePrompt(
-      "help debug",
-      false,
-      [],
-      debugMode,
-      "http://debug-url",
-      ".debug/conv/instrumentation.json",
-      null,
-    );
-    expect(typeof result).toBe("string");
-    expect(result as string).toContain("<debug-phase>");
-    expect(result as string).toContain("HYPOTHESIZING");
-    expect(result as string).toContain("help debug");
-    expect(result as string).not.toContain("<debug-mode>");
-  });
-
-  it("does not prepend when debugMode is null", () => {
-    const result = buildEffectivePrompt(
-      "hello",
-      false,
-      [],
-      null,
-      "http://debug",
-      ".debug/conv/instrumentation.json",
-      null,
-    );
-    expect(result).toBe("hello");
-  });
-
-  it("prepends debug instructions to image content blocks", () => {
-    const blocks = [
-      { type: "text" as const, text: "check this" },
-      { type: "image" as const, mediaType: "image/png", base64Data: "abc" },
-    ];
-    const debugMode = {
-      active: true,
-      debugSessionId: "debug-session-image",
-      recording: false,
-      logFilePath: "/tmp/debug.jsonl",
-      enteredAt: "2024-01-01T00:00:00Z",
-      hypotheses: [] as never[],
-      reproductionSteps: [] as string[],
-      instructionsDelivered: false,
-      phase: "hypothesizing" as const,
-      fixSummary: null,
-      verificationSteps: [] as string[],
-      lastTurnFailed: false,
-    };
-    const result = buildEffectivePrompt(
-      "check this",
-      true,
-      blocks,
-      debugMode,
-      "http://debug-url",
-      ".debug/conv/instrumentation.json",
-      null,
-    );
-    expect(Array.isArray(result)).toBe(true);
-    const arr = result as Array<{ type: string; text?: string }>;
-    expect(arr[0]!.type).toBe("text");
-    expect(arr[0]!.text).toContain("<debug-mode>");
-  });
-});
-
 // ===========================================================================
 // Integration tests: prepareTurnForMachine
 // ===========================================================================
 
 describe("prepareTurnForMachine", () => {
-  let mockDeps: ActorImplementationDeps;
+  let mockDeps: ActorFixtureDependencies;
 
   beforeEach(() => {
     _resetForTesting();
     mockDeps = createMockDeps();
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
   });
 
   afterEach(() => {
-    _resetActorDepsForTesting();
     _resetForTesting();
   });
 
@@ -686,22 +293,24 @@ describe("prepareTurnForMachine", () => {
     const input = makePrepareTurnInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await prepareTurnForMachine(input);
+    const result = await conversationActors.prepareTurnForMachine(input);
 
     expect(mockDeps.acquireConversationLock).toHaveBeenCalledWith(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     expect(mockDeps.acquireQuerySlot).toHaveBeenCalledWith(
-      `prompt:${input.sessionName}`,
+      `prompt:${conversationTargetStoreSessionName(input.target)}`,
+      { signal: undefined },
     );
     expect(result.transcriptPath).toBe("/transcripts/conv-1.jsonl");
 
@@ -716,14 +325,15 @@ describe("prepareTurnForMachine", () => {
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await prepareTurnForMachine(input);
+    const result = await conversationActors.prepareTurnForMachine(input);
 
     expect(result.transcriptPath).toBe("/existing/path.jsonl");
     expect(mockDeps.getTranscriptPath).not.toHaveBeenCalled();
@@ -733,14 +343,15 @@ describe("prepareTurnForMachine", () => {
     const input = makePrepareTurnInput({ transcriptPath: null });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await prepareTurnForMachine(input);
+    const result = await conversationActors.prepareTurnForMachine(input);
 
     expect(mockDeps.getTranscriptPath).toHaveBeenCalledWith("conv-1");
     expect(result.transcriptPath).toBe("/transcripts/conv-1.jsonl");
@@ -748,39 +359,43 @@ describe("prepareTurnForMachine", () => {
 
   it("throws when runtime state is not registered", async () => {
     const input = makePrepareTurnInput();
-    await expect(prepareTurnForMachine(input)).rejects.toThrow(
-      /No runtime state/,
-    );
+    await expect(
+      conversationActors.prepareTurnForMachine(input),
+    ).rejects.toThrow(/No runtime state/);
   });
 
-  it("skips conversation lock acquisition when skipConversationLock is set on runtime", async () => {
+  it("acquires the conversation lock even when a caller supplies an obsolete bypass field", async () => {
     const releaseSlot = vi.fn();
     vi.mocked(mockDeps.acquireQuerySlot).mockResolvedValue(releaseSlot);
 
     const input = makePrepareTurnInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
-      skipConversationLock: true,
+      ...{ skipConversationLock: true },
     });
 
-    const result = await prepareTurnForMachine(input);
+    const result = await conversationActors.prepareTurnForMachine(input);
 
-    // Conversation lock should NOT be acquired
-    expect(mockDeps.acquireConversationLock).not.toHaveBeenCalled();
+    expect(mockDeps.acquireConversationLock).toHaveBeenCalledWith(
+      input.projectPath,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
+    );
     // Query slot should still be acquired
     expect(mockDeps.acquireQuerySlot).toHaveBeenCalledWith(
-      `prompt:${input.sessionName}`,
+      `prompt:${conversationTargetStoreSessionName(input.target)}`,
+      { signal: undefined },
     );
     expect(result.transcriptPath).toBe("/transcripts/conv-1.jsonl");
 
-    // Runtime should NOT have a releaseConversationLock
     const runtime = getConversationRuntime(key);
-    expect(runtime?.releaseConversationLock).toBeUndefined();
+    expect(runtime?.releaseConversationLock).toBeTypeOf("function");
     expect(runtime?.releaseQuerySlot).toBe(releaseSlot);
   });
 });
@@ -790,7 +405,7 @@ describe("prepareTurnForMachine", () => {
 // ===========================================================================
 
 describe("executePromptForMachine", () => {
-  let mockDeps: ActorImplementationDeps;
+  let mockDeps: ActorFixtureDependencies;
 
   const defaultTurnResult: ConversationBackendTurnResult = {
     backendRef: { backend: "claude", ref: "sdk-session-1" },
@@ -811,7 +426,7 @@ describe("executePromptForMachine", () => {
     vi.clearAllMocks();
 
     mockDeps = createMockDeps();
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     mockSendTurn.mockResolvedValue(defaultTurnResult);
     mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
@@ -819,25 +434,36 @@ describe("executePromptForMachine", () => {
   });
 
   afterEach(() => {
-    _resetActorDepsForTesting();
     _resetForTesting();
   });
 
   it("returns and streams a nonretryable admission refusal before creating a runtime", async () => {
     const input = makeExecutePromptInput({
+      turn: {
+        fsWritePolicy: { mode: "allowlist", allowWrite: [], denyWrite: [] },
+      },
       agentBackend: "cursor",
-      fsWritePolicy: { mode: "allowlist", allowWrite: [], denyWrite: [] },
     });
     const streamEmit = vi.fn();
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController(), streamEmit },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+        streamEmit,
+      },
     );
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
     expect(result.failure).toMatchObject({
       kind: "capability_unavailable",
       code: "backend-role-unsupported",
@@ -861,9 +487,11 @@ describe("executePromptForMachine", () => {
         parameters: { fast: "true" },
       };
       const input = makeExecutePromptInput({
+        turn: {
+          modelSelection: selection,
+        },
         agentBackend: "cursor",
         backendRef: { backend: "cursor", ref: "agent-created" },
-        modelSelection: selection,
         forkedFrom: {
           sourceConversationId: "source",
           messageIndex: 1,
@@ -884,18 +512,21 @@ describe("executePromptForMachine", () => {
       });
       try {
         fixture.seedProject(input.projectPath);
-        fixture.seedSession(input.projectPath, input.sessionName);
+        fixture.seedSession(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+        );
         await fixture.seedConversation(
           input.projectPath,
-          input.sessionName,
+          conversationTargetStoreSessionName(input.target),
           makeSharedConversationState({
-            id: input.conversationId,
+            id: input.target.conversationId,
             agentBackend: "cursor",
             backendRef: input.backendRef,
             forkedFrom: input.forkedFrom,
           }),
         );
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getConversation: fixture.store.getConversation,
             mutateConversation: fixture.store.mutateConversation,
@@ -909,24 +540,37 @@ describe("executePromptForMachine", () => {
         registerConversationRuntime(
           conversationRuntimeKey(
             input.projectPath,
-            input.sessionName,
-            input.conversationId,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
           ),
-          { abortController: new AbortController() },
+          {
+            managed: createManagedRuntimeFixture(
+              conversationRuntimeKey(
+                input.projectPath,
+                conversationTargetStoreSessionName(input.target),
+                input.target.conversationId,
+              ),
+            ),
+            abortController: new AbortController(),
+          },
         );
-        expect((await executePromptForMachine(input)).error).toBeNull();
+        expect(
+          (await conversationActors.executePromptForMachine(input)).error,
+        ).toBeNull();
         const stored = await fixture
           .recreateStore()
           .getConversation(
             input.projectPath,
-            input.sessionName,
-            input.conversationId,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
           );
         expect(stored?.forkedFrom?.syntheticSeedAcceptedRef).toEqual(
           accepted ? input.backendRef : undefined,
         );
         expect(stored?.forkedFrom?.syntheticSeed).toBe("anchored history");
-        expect((await executePromptForMachine(input)).error).toBeNull();
+        expect(
+          (await conversationActors.executePromptForMachine(input)).error,
+        ).toBeNull();
         expect(seeds).toEqual([
           "anchored history",
           accepted ? null : "anchored history",
@@ -941,14 +585,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
@@ -971,19 +616,30 @@ describe("executePromptForMachine", () => {
   describe("project-turn diagnostics (R1.3)", () => {
     async function runProjectTurn() {
       const log = createCapturingLogger();
-      setActorDeps(createMockDeps({ log }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ log }),
+      );
 
       const input = makeProjectExecutePromptInput();
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
       return { log, result };
     }
 
@@ -1020,23 +676,34 @@ describe("executePromptForMachine", () => {
       // The fix removes the sentinel, not the diagnostic: a session turn must
       // remain attributable to its session.
       const log = createCapturingLogger();
-      setActorDeps(createMockDeps({ log }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ log }),
+      );
 
       const input = makeExecutePromptInput();
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const complete = log.entries.find((e) => e.message === "prompt.complete");
       expect(complete?.fields).toMatchObject({
         scope: "session",
-        sessionName: input.sessionName,
+        sessionName: conversationTargetStoreSessionName(input.target),
       });
     });
 
@@ -1048,7 +715,9 @@ describe("executePromptForMachine", () => {
     // is exactly how the sentinel survived the previous fix.
     it("emits scope:project from the retry policy's runtime-replacement event", async () => {
       const log = createCapturingLogger();
-      setActorDeps(createMockDeps({ log }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ log }),
+      );
 
       // A dead runtime whose prompt provably never reached the agent — the one
       // shape the policy retries.
@@ -1069,12 +738,21 @@ describe("executePromptForMachine", () => {
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const retry = log.entries.find(
         (e) => e.message === "prompt.runtime_retry",
@@ -1089,7 +767,9 @@ describe("executePromptForMachine", () => {
 
     it("emits scope:project from the retry policy's continuation-contradiction event", async () => {
       const log = createCapturingLogger();
-      setActorDeps(createMockDeps({ log }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ log }),
+      );
 
       // An adapter bug: "clear" must imply a null ref. The policy normalizes
       // and logs it — with the turn's identity.
@@ -1103,12 +783,21 @@ describe("executePromptForMachine", () => {
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const contradiction = log.entries.find(
         (e) => e.message === "prompt.continuation_pair_contradiction",
@@ -1128,18 +817,29 @@ describe("executePromptForMachine", () => {
     // or a log line as a public `sessionName`.
     it("hands the transcript writer a store-named carrier, never a public sessionName", async () => {
       const safeAppendTranscriptEntry = vi.fn(async () => {});
-      setActorDeps(createMockDeps({ safeAppendTranscriptEntry }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ safeAppendTranscriptEntry }),
+      );
 
       const input = makeProjectExecutePromptInput();
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const metas = safeAppendTranscriptEntry.mock.calls
         .map((call) => (call as unknown[])[2])
@@ -1165,7 +865,12 @@ describe("executePromptForMachine", () => {
         overrides: Partial<PrepareTurnInput> = {},
       ): PrepareTurnInput {
         return makePrepareTurnInput({
-          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          target: targetFromStoreSessionName(
+            overrides.target?.projectName ?? "repo",
+            PROJECT_CONVERSATION_SESSION_SENTINEL,
+            overrides.target?.conversationId ?? "conv-1",
+          ),
+
           worktreePath: "/projects/repo",
           ...overrides,
         });
@@ -1174,10 +879,11 @@ describe("executePromptForMachine", () => {
       function registerFor(input: PrepareTurnInput): string {
         const key = conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         );
         registerConversationRuntime(key, {
+          managed: createManagedRuntimeFixture(key),
           abortController: new AbortController(),
         });
         return key;
@@ -1186,7 +892,7 @@ describe("executePromptForMachine", () => {
       it("emits scope:project from the production conversation lock", async () => {
         const log = createCapturingLogger();
         const lockManager = createLockManager(log);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             acquireConversationLock: lockManager.acquireConversationLock,
           }),
@@ -1194,7 +900,7 @@ describe("executePromptForMachine", () => {
 
         const input = makeProjectPrepareTurnInput();
         const key = registerFor(input);
-        await prepareTurnForMachine(input);
+        await conversationActors.prepareTurnForMachine(input);
         getConversationRuntime(key)?.releaseConversationLock?.();
 
         const lockEvents = log.entries.filter((e) =>
@@ -1207,7 +913,7 @@ describe("executePromptForMachine", () => {
         for (const entry of lockEvents) {
           expect(entry.fields).toMatchObject({
             scope: "project",
-            conversationId: input.conversationId,
+            conversationId: input.target.conversationId,
           });
           expect(entry.fields).not.toHaveProperty("sessionName");
         }
@@ -1219,7 +925,7 @@ describe("executePromptForMachine", () => {
       it("emits scope:project when the lock rejects a concurrent project turn", async () => {
         const log = createCapturingLogger();
         const lockManager = createLockManager(log);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             acquireConversationLock: lockManager.acquireConversationLock,
           }),
@@ -1227,8 +933,10 @@ describe("executePromptForMachine", () => {
 
         const input = makeProjectPrepareTurnInput();
         registerFor(input);
-        await prepareTurnForMachine(input);
-        await expect(prepareTurnForMachine(input)).rejects.toThrow(/busy/i);
+        await conversationActors.prepareTurnForMachine(input);
+        await expect(
+          conversationActors.prepareTurnForMachine(input),
+        ).rejects.toThrow(/busy/i);
 
         const rejected = log.entries.find(
           (e) => e.message === "conversation-lock.rejected",
@@ -1246,7 +954,7 @@ describe("executePromptForMachine", () => {
       // sink without needing to reach into another module's file logger.
       it("hands the query semaphore a scope-discriminated label", async () => {
         const labels: string[] = [];
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             acquireQuerySlot: vi.fn(async (label: string) => {
               labels.push(label);
@@ -1257,9 +965,11 @@ describe("executePromptForMachine", () => {
 
         const input = makeProjectPrepareTurnInput();
         registerFor(input);
-        await prepareTurnForMachine(input);
+        await conversationActors.prepareTurnForMachine(input);
 
-        expect(labels).toEqual([`prompt:project:${input.conversationId}`]);
+        expect(labels).toEqual([
+          `prompt:project:${input.target.conversationId}`,
+        ]);
         expect(labels[0]).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
       });
 
@@ -1268,15 +978,21 @@ describe("executePromptForMachine", () => {
       // it was built by interpolating the runtime key — which embeds the store
       // session name.
       it("names no sentinel when the runtime is missing", async () => {
-        setActorDeps(createMockDeps());
+        conversationActors = createTestActorImplementations(createMockDeps());
         const input = makeProjectPrepareTurnInput({
-          conversationId: "unregistered",
+          target: targetFromStoreSessionName(
+            "repo",
+            PROJECT_CONVERSATION_SESSION_SENTINEL,
+            "unregistered",
+          ),
         });
 
-        const err: unknown = await prepareTurnForMachine(input).then(
-          () => null,
-          (e: unknown) => e,
-        );
+        const err: unknown = await conversationActors
+          .prepareTurnForMachine(input)
+          .then(
+            () => null,
+            (e: unknown) => e,
+          );
         expect(err).toBeInstanceOf(Error);
         const message = err instanceof Error ? err.message : "";
         expect(message).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
@@ -1287,7 +1003,7 @@ describe("executePromptForMachine", () => {
         const log = createCapturingLogger();
         const lockManager = createLockManager(log);
         const labels: string[] = [];
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             acquireConversationLock: lockManager.acquireConversationLock,
             acquireQuerySlot: vi.fn(async (label: string) => {
@@ -1299,16 +1015,18 @@ describe("executePromptForMachine", () => {
 
         const input = makePrepareTurnInput();
         registerFor(input);
-        await prepareTurnForMachine(input);
+        await conversationActors.prepareTurnForMachine(input);
 
-        expect(labels).toEqual([`prompt:${input.sessionName}`]);
+        expect(labels).toEqual([
+          `prompt:${conversationTargetStoreSessionName(input.target)}`,
+        ]);
         const acquired = log.entries.find(
           (e) => e.message === "conversation-lock.acquired",
         );
         expect(acquired?.fields).toMatchObject({
           scope: "session",
-          sessionName: input.sessionName,
-          conversationId: input.conversationId,
+          sessionName: conversationTargetStoreSessionName(input.target),
+          conversationId: input.target.conversationId,
         });
       });
     });
@@ -1320,17 +1038,30 @@ describe("executePromptForMachine", () => {
   // ("prompt.seedMcpRuntime"); the ephemeral variant must skip that write.
   it("gates the invoked actor's durable mutateConversation on the ephemeral persistence mode", async () => {
     const durableInput = makeExecutePromptInput({
-      conversationId: "conv-durable",
+      target: targetFromStoreSessionName(
+        "repo",
+        "test-session",
+        "conv-durable",
+      ),
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         durableInput.projectPath,
-        durableInput.sessionName,
-        durableInput.conversationId,
+        conversationTargetStoreSessionName(durableInput.target),
+        durableInput.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            durableInput.projectPath,
+            conversationTargetStoreSessionName(durableInput.target),
+            durableInput.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
-    await executePromptForMachine(durableInput);
+    await conversationActors.executePromptForMachine(durableInput);
     expect(mockDeps.mutateConversation).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -1342,25 +1073,36 @@ describe("executePromptForMachine", () => {
     vi.mocked(mockDeps.mutateConversation).mockClear();
 
     const ephemeralInput = makeExecutePromptInput({
-      conversationId: "conv-ephemeral",
+      target: targetFromStoreSessionName(
+        "repo",
+        "test-session",
+        "conv-ephemeral",
+      ),
+
       persistence: "ephemeral",
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         ephemeralInput.projectPath,
-        ephemeralInput.sessionName,
-        ephemeralInput.conversationId,
+        conversationTargetStoreSessionName(ephemeralInput.target),
+        ephemeralInput.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            ephemeralInput.projectPath,
+            conversationTargetStoreSessionName(ephemeralInput.target),
+            ephemeralInput.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
-    await executePromptForMachine(ephemeralInput);
-    // The persistence facet's `gateActorDurableWrites` replaced the actor's
-    // `mutateConversation` seam with a no-op, so the injected durable seam is
-    // never reached.
+    await conversationActors.executePromptForMachine(ephemeralInput);
     expect(mockDeps.mutateConversation).not.toHaveBeenCalled();
   });
 
-  it("gates turn-start MCP apply and idle capability drain for ephemeral turns", async () => {
+  it("enforces turn-start MCP policy and idle capability drain without ephemeral bookkeeping writes", async () => {
     const reusedRuntime = createMockBackendRuntime({
       modelSelection: {
         modelId: "opus",
@@ -1371,42 +1113,69 @@ describe("executePromptForMachine", () => {
       defaultTurnResult,
     );
     const reusedInput = makeExecutePromptInput({
-      conversationId: "conv-ephemeral-reused",
+      target: targetFromStoreSessionName(
+        "repo",
+        "test-session",
+        "conv-ephemeral-reused",
+      ),
+
       persistence: "ephemeral",
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         reusedInput.projectPath,
-        reusedInput.sessionName,
-        reusedInput.conversationId,
+        conversationTargetStoreSessionName(reusedInput.target),
+        reusedInput.target.conversationId,
       ),
       {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            reusedInput.projectPath,
+            conversationTargetStoreSessionName(reusedInput.target),
+            reusedInput.target.conversationId,
+          ),
+          reusedRuntime,
+        ),
         abortController: new AbortController(),
-        backendRuntime: reusedRuntime,
       },
     );
 
-    await executePromptForMachine(reusedInput);
+    await conversationActors.executePromptForMachine(reusedInput);
 
-    expect(mockDeps.applyMcpAtTurnStart).not.toHaveBeenCalled();
+    expect(mockDeps.applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
 
     mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
     const failedInput = makeExecutePromptInput({
-      conversationId: "conv-ephemeral-failed",
+      target: targetFromStoreSessionName(
+        "repo",
+        "test-session",
+        "conv-ephemeral-failed",
+      ),
+
       persistence: "ephemeral",
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         failedInput.projectPath,
-        failedInput.sessionName,
-        failedInput.conversationId,
+        conversationTargetStoreSessionName(failedInput.target),
+        failedInput.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            failedInput.projectPath,
+            conversationTargetStoreSessionName(failedInput.target),
+            failedInput.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
 
-    await executePromptForMachine(failedInput);
+    await conversationActors.executePromptForMachine(failedInput);
 
-    expect(mockDeps.applyCapabilityWhenIdle).not.toHaveBeenCalled();
+    expect(mockDeps.applyCapabilityWhenIdle).toHaveBeenCalled();
+    expect(mockDeps.mutateConversation).not.toHaveBeenCalled();
   });
 
   it("reuses an existing alive backend runtime", async () => {
@@ -1423,15 +1192,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, existingRuntime),
       abortController: new AbortController(),
-      backendRuntime: existingRuntime,
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     // Should NOT create a new runtime
     expect(mockFactory.createRuntime).not.toHaveBeenCalled();
@@ -1445,6 +1214,29 @@ describe("executePromptForMachine", () => {
     });
   });
 
+  it("refreshes baked TDD instructions between two turns", async () => {
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
+    );
+    registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
+      abortController: new AbortController(),
+    });
+    await conversationActors.executePromptForMachine(input);
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    vi.mocked(mockDeps.getSessionState).mockResolvedValue({
+      tddEnabled: true,
+    } as Awaited<ReturnType<typeof mockDeps.getSessionState>>);
+    await conversationActors.executePromptForMachine(input);
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(2);
+    expect(
+      mockFactory.createRuntime.mock.calls[1]?.[0].sessionInstructions,
+    ).toContain(TDD_INSTRUCTIONS);
+  });
+
   it("recreates runtime when model changes", async () => {
     const existingRuntime = createMockBackendRuntime({
       modelSelection: {
@@ -1454,22 +1246,24 @@ describe("executePromptForMachine", () => {
     });
 
     const input = makeExecutePromptInput({
-      modelSelection: {
-        modelId: "claude-opus-4-20250514",
-        parameters: { effort: "high" },
+      turn: {
+        modelSelection: {
+          modelId: "claude-opus-4-20250514",
+          parameters: { effort: "high" },
+        },
       },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, existingRuntime),
       abortController: new AbortController(),
-      backendRuntime: existingRuntime,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(existingRuntime.close).toHaveBeenCalled();
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
@@ -1497,17 +1291,18 @@ describe("executePromptForMachine", () => {
       },
     ]);
 
-    const input = makeExecutePromptInput({ modelSelection: null });
+    const input = makeExecutePromptInput({ turn: { modelSelection: null } });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "claude-haiku-4-5",
@@ -1570,23 +1365,34 @@ describe("executePromptForMachine", () => {
       ]),
       log,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({
+      turn: {
+        modelSelection: null,
+      },
       agentBackend: "cursor",
-      modelSelection: null,
       onModelSelectionResolved,
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
 
-    const execution = executePromptForMachine(input);
+    const execution = conversationActors.executePromptForMachine(input);
 
     await vi.waitFor(() => {
       expect(onModelSelectionResolved).toHaveBeenCalledWith(canonicalSelection);
@@ -1649,23 +1455,35 @@ describe("executePromptForMachine", () => {
       })),
       log,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({
+      turn: {
+        modelSelection: null,
+      },
       agentBackend: "cursor",
-      modelSelection: null,
       onModelSelectionResolved,
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController(), streamEmit },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+        streamEmit,
+      },
     );
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBe(
       'Cursor model "composer-2.5" is not allowed for this project.',
@@ -1713,35 +1531,46 @@ describe("executePromptForMachine", () => {
         })),
       })),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({
+      turn: {
+        modelSelection: {
+          modelId: "composer-2.5",
+          parameters: { fast: "true" },
+        },
+        queuedDelivery: {
+          messageIds: ["m1", "m2"],
+          deliveryAttemptId: "att-model",
+        },
+      },
       agentBackend: "cursor",
-      modelSelection: {
-        modelId: "composer-2.5",
-        parameters: { fast: "true" },
-      },
-      queuedDelivery: {
-        messageIds: ["m1", "m2"],
-        deliveryAttemptId: "att-model",
-      },
     });
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBe(error);
     expect(mockDeps.markQueuedFailed).toHaveBeenCalledWith({
       projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
+      sessionName: conversationTargetStoreSessionName(input.target),
+      conversationId: input.target.conversationId,
       ids: ["m1", "m2"],
       deliveryAttemptId: "att-model",
       error,
@@ -1750,21 +1579,24 @@ describe("executePromptForMachine", () => {
 
   it("does not read the transcript when the turn carries an explicit complete selection", async () => {
     const input = makeExecutePromptInput({
-      modelSelection: {
-        modelId: "opus",
-        parameters: { effort: "high" },
+      turn: {
+        modelSelection: {
+          modelId: "opus",
+          parameters: { effort: "high" },
+        },
       },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockDeps.readConversationMessages).not.toHaveBeenCalled();
     expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
@@ -1783,22 +1615,25 @@ describe("executePromptForMachine", () => {
     });
     mockFactory.createRuntime.mockResolvedValue(codexRuntime);
     const input = makeExecutePromptInput({
-      agentBackend: "codex",
-      modelSelection: {
-        modelId: "gpt-5.4",
-        parameters: { fast: "true", reasoning: "high" },
+      turn: {
+        modelSelection: {
+          modelId: "gpt-5.4",
+          parameters: { fast: "true", reasoning: "high" },
+        },
       },
+      agentBackend: "codex",
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockDeps.readConversationMessages).not.toHaveBeenCalled();
     expect(mockSendTurn).toHaveBeenCalledWith(
@@ -1853,15 +1688,15 @@ describe("executePromptForMachine", () => {
       });
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key, reused),
         abortController: new AbortController(),
-        backendRuntime: reused,
       });
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       // Reused runtime failed readiness → recreated once, retried → ready.
       expect(reusedPrepare).toHaveBeenCalledTimes(1);
@@ -1914,15 +1749,15 @@ describe("executePromptForMachine", () => {
       const input = makeExecutePromptInput();
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key, reused),
         abortController: new AbortController(),
-        backendRuntime: reused,
       });
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(reusedPrepare).toHaveBeenCalledTimes(1);
       expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
@@ -1939,10 +1774,11 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       sendToMachine,
     });
@@ -1965,7 +1801,7 @@ describe("executePromptForMachine", () => {
       },
     );
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(sendToMachine).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1982,19 +1818,21 @@ describe("executePromptForMachine", () => {
 
     const schema = { type: "object", properties: { name: { type: "string" } } };
     const input = makeExecutePromptInput({
-      outputFormat: { type: "json_schema", schema },
+      turn: {
+        outputFormat: { type: "json_schema", schema },
+      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, existingRuntime),
       abortController: new AbortController(),
-      backendRuntime: existingRuntime,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(existingRuntime.close).toHaveBeenCalled();
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
@@ -2007,19 +1845,21 @@ describe("executePromptForMachine", () => {
     });
 
     const input = makeExecutePromptInput({
-      outputFormat: undefined,
+      turn: {
+        outputFormat: undefined,
+      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, existingRuntime),
       abortController: new AbortController(),
-      backendRuntime: existingRuntime,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(existingRuntime.close).toHaveBeenCalled();
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
@@ -2033,6 +1873,12 @@ describe("executePromptForMachine", () => {
     });
 
     const input = makeExecutePromptInput({
+      turn: {
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object" },
+        },
+      },
       debugMode: {
         active: true,
         debugSessionId: "debug-session-output-format",
@@ -2047,21 +1893,18 @@ describe("executePromptForMachine", () => {
         verificationSteps: [],
         lastTurnFailed: false,
       },
-      outputFormat: {
-        type: "json_schema",
-        schema: { type: "object" },
-      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     expect(result.error).toBeNull();
@@ -2097,19 +1940,20 @@ describe("executePromptForMachine", () => {
         idleQuerySessionTtlMs: 300_000,
       })),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.validateModelSelection).toHaveBeenCalledWith({
       modelId: "gpt-5.4",
@@ -2148,7 +1992,7 @@ describe("executePromptForMachine", () => {
         idleQuerySessionTtlMs: 300_000,
       })),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
     mockFactory.validateModelSelection.mockImplementation(() => {
       throw new Error('Invalid Codex reasoning effort: "max"');
     });
@@ -2156,15 +2000,16 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       streamEmit,
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBe('Invalid Codex reasoning effort: "max"');
     expect(mockDeps.safeAppendTranscriptEntry).not.toHaveBeenCalled();
@@ -2180,14 +2025,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBe("SDK crashed");
     expect(result.aborted).toBe(false);
@@ -2196,29 +2042,30 @@ describe("executePromptForMachine", () => {
   it("drains Claude capability idle work when a caller turn fails", async () => {
     const applyCapabilityWhenIdle = vi.fn(async () => ({}));
     mockDeps = createMockDeps({ applyCapabilityWhenIdle });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
     mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBe("SDK crashed");
     expect(result.aborted).toBe(false);
     expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
     expect(applyCapabilityWhenIdle).toHaveBeenCalledWith({
       projectPath: input.projectPath,
-      projectName: input.projectName,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
+      projectName: input.target.projectName,
+      sessionName: conversationTargetStoreSessionName(input.target),
+      conversationId: input.target.conversationId,
       worktreePath: input.worktreePath,
       backend: "claude",
     });
@@ -2258,15 +2105,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, staleRuntime),
       abortController: new AbortController(),
-      backendRuntime: staleRuntime,
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(staleSendTurn).toHaveBeenCalledTimes(1);
     expect(staleRuntime.close).toHaveBeenCalledTimes(1);
@@ -2292,12 +2139,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
-    registerConversationRuntime(key, { abortController });
+    registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
+      abortController,
+    });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.aborted).toBe(true);
   });
@@ -2333,7 +2183,7 @@ describe("executePromptForMachine", () => {
         idleQuerySessionTtlMs: 300_000,
       })),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
     mockSendTurn.mockImplementation(
       async (turnInput: ConversationBackendTurnInput) =>
         new Promise<ConversationBackendTurnResult>((_, reject) => {
@@ -2349,14 +2199,15 @@ describe("executePromptForMachine", () => {
       const input = makeExecutePromptInput();
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
 
-      const resultPromise = executePromptForMachine(input);
+      const resultPromise = conversationActors.executePromptForMachine(input);
 
       await vi.advanceTimersByTimeAsync(25);
       const result = await resultPromise;
@@ -2370,7 +2221,7 @@ describe("executePromptForMachine", () => {
     }
   });
 
-  it("uses a fresh abort controller when a previous turn left the runtime controller aborted", async () => {
+  it("preserves cancellation already signalled on the admitted runtime controller", async () => {
     const staleAbortController = new AbortController();
     staleAbortController.abort();
 
@@ -2385,27 +2236,26 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: staleAbortController,
     });
 
-    const result = await executePromptForMachine(input);
+    await expect(
+      conversationActors.executePromptForMachine(input),
+    ).rejects.toMatchObject({
+      name: "AbortError",
+    });
     const runtime = getConversationRuntime(key);
-
-    expect(result.aborted).toBe(false);
-    expect(capturedSignal?.aborted).toBe(false);
-    expect(runtime?.abortController).not.toBe(staleAbortController);
-    expect(runtime?.abortController.signal.aborted).toBe(false);
-    expect(mockDeps.registerAbortController).toHaveBeenCalledWith(
-      input.conversationId,
-      runtime?.abortController,
-    );
+    expect(capturedSignal).toBeUndefined();
+    expect(runtime?.abortController).toBe(staleAbortController);
+    expect(runtime?.abortController.signal.aborted).toBe(true);
   });
 
-  it("aborts the controller before closing the runtime when the safety-net timeout fires", async () => {
+  it("signals the attempt controller when the safety-net timeout fires", async () => {
     vi.mocked(mockDeps.readConfig).mockResolvedValue({
       agentBackends: {
         claude: {
@@ -2463,29 +2313,29 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
-    registerConversationRuntime(key, { abortController });
+    registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
+      abortController,
+    });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
-    expect(events).toContain("abort");
-    expect(events).toContain("close-after-abort");
-    expect(events.indexOf("abort")).toBeLessThan(
-      events.indexOf("close-after-abort"),
-    );
-    expect(events).not.toContain("close");
+    expect(events).toEqual(["abort"]);
+    expect(abortController.signal.reason).toBe("timeout");
   });
 
   it("merges portable MCP tooling overrides from runtime state into factory.createRuntime", async () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       tooling: {
         portableMcp: {
@@ -2500,7 +2350,7 @@ describe("executePromptForMachine", () => {
       },
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     const createCall = (
@@ -2527,23 +2377,23 @@ describe("executePromptForMachine", () => {
 
     const input = makeExecutePromptInput({
       projectPath: "/projects/repo",
-      projectName: "repo",
-      sessionName: "sess-a",
-      conversationId: "conv-xyz",
+      target: targetFromStoreSessionName("repo", "sess-a", "conv-xyz"),
+
       worktreePath: "/projects/repo/.worktrees/sess-a",
       agentBackend: "claude",
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       tooling: { portableMcp: transient },
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockDeps.composePortableMcpForConversation).toHaveBeenCalledTimes(1);
     expect(mockDeps.composePortableMcpForConversation).toHaveBeenCalledWith({
@@ -2576,19 +2426,20 @@ describe("executePromptForMachine", () => {
     mockDeps = createMockDeps({
       composePortableMcpForConversation: vi.fn(async () => composed),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const createCall = (
       mockFactory.createRuntime.mock.calls as unknown[][]
@@ -2614,17 +2465,18 @@ describe("executePromptForMachine", () => {
       effectiveConfigHash: "hash-codex",
     }));
     mockDeps = createMockDeps({ applyMcpAtTurnStart });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, reusedRuntime),
       abortController: new AbortController(),
-      backendRuntime: reusedRuntime,
+
       tooling: {
         portableMcp: {
           servers: [
@@ -2638,7 +2490,7 @@ describe("executePromptForMachine", () => {
       },
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
     expect(applyMcpAtTurnStart).toHaveBeenCalledWith({
@@ -2666,17 +2518,18 @@ describe("executePromptForMachine", () => {
       error: "server-1: unsupported field",
     }));
     mockDeps = createMockDeps({ applyMcpAtTurnStart });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, reusedRuntime),
       abortController: new AbortController(),
-      backendRuntime: reusedRuntime,
+
       streamEmit,
       tooling: {
         portableMcp: {
@@ -2691,7 +2544,7 @@ describe("executePromptForMachine", () => {
       },
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(reusedRuntime.sendTurn).not.toHaveBeenCalled();
     expect(result.error).toContain(
@@ -2769,19 +2622,20 @@ describe("executePromptForMachine", () => {
       mutateConversation,
       applyMcpAtTurnStart,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const expectedHash = computeEffectiveConfigHash(composed);
     expect(conversationState.mcpRuntime?.lastAppliedConfigHash).toBe(
@@ -2793,11 +2647,11 @@ describe("executePromptForMachine", () => {
 
     vi.clearAllMocks();
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, reusedRuntime),
       abortController: new AbortController(),
-      backendRuntime: reusedRuntime,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(applyMcpAtTurnStart).toHaveBeenCalledTimes(1);
     expect(reusedRuntime.sendTurn).toHaveBeenCalledTimes(1);
@@ -2807,14 +2661,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     const createCall = (
@@ -2850,13 +2705,13 @@ describe("executePromptForMachine", () => {
         },
       },
     };
-    const composeCapabilityConfigForConversation: ActorImplementationDeps["composeCapabilityConfigForConversation"] =
+    const composeCapabilityConfigForConversation: ActorFixtureDependencies["composeCapabilityConfigForConversation"] =
       vi.fn(async () => ({
         capabilities: seededCapabilities,
         runtimeState: seededRuntimeState,
       }));
     let capturedSeed: AgentCapabilityRuntimeApplicationState | undefined;
-    const mutateConversation: ActorImplementationDeps["mutateConversation"] =
+    const mutateConversation: ActorFixtureDependencies["mutateConversation"] =
       vi.fn(
         async (_projectPath, _sessionName, _conversationId, label, mutate) => {
           if (label === "prompt.seedCapabilityRuntime") {
@@ -2871,19 +2726,20 @@ describe("executePromptForMachine", () => {
       composeCapabilityConfigForConversation,
       mutateConversation,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(composeCapabilityConfigForConversation).toHaveBeenCalledTimes(1);
     const createCall = (
@@ -2930,32 +2786,33 @@ describe("executePromptForMachine", () => {
         },
       },
     };
-    const composeCapabilityConfigForConversation: ActorImplementationDeps["composeCapabilityConfigForConversation"] =
+    const composeCapabilityConfigForConversation: ActorFixtureDependencies["composeCapabilityConfigForConversation"] =
       vi.fn(async () => ({
         capabilities: seededCapabilities,
         runtimeState: seededRuntimeState,
       }));
     const applyCapabilityAtTurnStart = vi.fn<
-      ActorImplementationDeps["applyCapabilityAtTurnStart"]
+      ActorFixtureDependencies["applyCapabilityAtTurnStart"]
     >(async () => ({}));
 
     mockDeps = createMockDeps({
       composeCapabilityConfigForConversation,
       applyCapabilityAtTurnStart,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(composeCapabilityConfigForConversation).toHaveBeenCalledTimes(1);
     expect(applyCapabilityAtTurnStart).toHaveBeenCalledWith({
@@ -2973,25 +2830,26 @@ describe("executePromptForMachine", () => {
   });
 
   it("does not persist capability runtime state when compose returns undefined", async () => {
-    const mutateConversation: ActorImplementationDeps["mutateConversation"] =
+    const mutateConversation: ActorFixtureDependencies["mutateConversation"] =
       vi.fn(async () => {});
     mockDeps = createMockDeps({
       composeCapabilityConfigForConversation: vi.fn(async () => undefined),
       mutateConversation,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const labels = (
       mutateConversation as ReturnType<typeof vi.fn>
@@ -3031,7 +2889,7 @@ describe("executePromptForMachine", () => {
       runtimeState: seededRuntimeState,
     }));
     let capturedSeed: AgentCapabilityRuntimeApplicationState | undefined;
-    const mutateConversation: ActorImplementationDeps["mutateConversation"] =
+    const mutateConversation: ActorFixtureDependencies["mutateConversation"] =
       vi.fn(
         async (_projectPath, _sessionName, _conversationId, label, mutate) => {
           if (label === "prompt.seedCapabilityRuntime") {
@@ -3046,21 +2904,24 @@ describe("executePromptForMachine", () => {
       composeCapabilityConfigForProjectConversation,
       mutateConversation,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeProjectExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(composeCapabilityConfigForProjectConversation).toHaveBeenCalledWith({
+      backend: "claude",
+      worktreePath: "/projects/repo",
       projectPath: "/projects/repo",
       projectName: "repo",
       conversationId: "conv-1",
@@ -3114,26 +2975,27 @@ describe("executePromptForMachine", () => {
       runtimeState: seededRuntimeState,
     }));
     const applyCapabilityAtTurnStart = vi.fn<
-      ActorImplementationDeps["applyCapabilityAtTurnStart"]
+      ActorFixtureDependencies["applyCapabilityAtTurnStart"]
     >(async () => ({}));
 
     mockDeps = createMockDeps({
       composeCapabilityConfigForProjectConversation,
       applyCapabilityAtTurnStart,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeProjectExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const createCall = (
       mockFactory.createRuntime.mock.calls as unknown[][]
@@ -3169,19 +3031,20 @@ describe("executePromptForMachine", () => {
     mockDeps = createMockDeps({
       composeCapabilityConfigForProjectConversation,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeProjectExecutePromptInput({ agentBackend: "claude" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(mockDeps.getConversationBackendFactory).toHaveBeenCalledWith(
       "claude",
@@ -3213,20 +3076,21 @@ describe("executePromptForMachine", () => {
     mockDeps = createMockDeps({
       composeCapabilityConfigForProjectConversation,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeProjectExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       streamEmit,
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBeNull();
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
@@ -3254,28 +3118,33 @@ describe("executePromptForMachine", () => {
     });
 
     const input = makeExecutePromptInput({
-      outputFormat: {
-        type: "json_schema",
-        schema: { type: "object" },
+      turn: {
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object" },
+        },
       },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.structuredOutput).toEqual(structuredData);
   });
 
   it("prepends debug instructions on first debug turn", async () => {
     const input = makeExecutePromptInput({
-      promptText: "Help me debug this",
+      turn: {
+        promptText: "Help me debug this",
+      },
       debugMode: {
         active: true,
         debugSessionId: "debug-session-first-turn",
@@ -3293,14 +3162,15 @@ describe("executePromptForMachine", () => {
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
     const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
@@ -3312,9 +3182,15 @@ describe("executePromptForMachine", () => {
     const worktreePath = "/projects/repo/.worktrees/test-session";
     const conversationId = "conv-abs-manifest";
     const input = makeExecutePromptInput({
+      turn: {
+        promptText: "Help me debug this",
+      },
       worktreePath,
-      conversationId,
-      promptText: "Help me debug this",
+      target: targetFromStoreSessionName(
+        "repo",
+        "test-session",
+        conversationId,
+      ),
       debugMode: {
         active: true,
         debugSessionId: "debug-session-absolute-manifest",
@@ -3332,14 +3208,15 @@ describe("executePromptForMachine", () => {
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
     const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
@@ -3364,10 +3241,11 @@ describe("executePromptForMachine", () => {
     function registerRuntime(input: ExecutePromptInput): void {
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
     }
@@ -3378,15 +3256,17 @@ describe("executePromptForMachine", () => {
     }
 
     it("prepends the live ticket block to the turn's effective prompt, never to sessionInstructions", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getLiveTicketBlock: vi.fn(async () => TICKET_BLOCK),
         }),
       );
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const turnInput = lastTurnInput();
       expect(turnInput.promptText.startsWith(TICKET_BLOCK)).toBe(true);
@@ -3405,45 +3285,53 @@ describe("executePromptForMachine", () => {
     });
 
     it("leaves the prompt untouched for unlinked sessions", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getLiveTicketBlock: vi.fn(async () => null),
         }),
       );
-      const input = makeExecutePromptInput({ promptText: "plain turn" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "plain turn" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(lastTurnInput().promptText).toBe("plain turn");
     });
 
     it("does not look up tickets for project conversations", async () => {
       const getLiveTicketBlock = vi.fn(async () => TICKET_BLOCK);
-      setActorDeps(createMockDeps({ getLiveTicketBlock }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ getLiveTicketBlock }),
+      );
       const input = makeProjectExecutePromptInput({
-        promptText: "project turn",
+        turn: {
+          promptText: "project turn",
+        },
       });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(getLiveTicketBlock).not.toHaveBeenCalled();
       expect(lastTurnInput().promptText).toBe("project turn");
     });
 
     it("proceeds without the block when the ticket lookup fails", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getLiveTicketBlock: vi.fn(async () => {
             throw new Error("db unavailable");
           }),
         }),
       );
-      const input = makeExecutePromptInput({ promptText: "resilient turn" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "resilient turn" },
+      });
       registerRuntime(input);
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(result.error).toBeNull();
       expect(lastTurnInput().promptText).toBe("resilient turn");
@@ -3492,7 +3380,7 @@ describe("executePromptForMachine", () => {
             return repo.findLinkedTicket(projectPath, sessionName);
           },
         });
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getLiveTicketBlock: (projectPath, sessionName) =>
               provider.getForSession(projectPath, sessionName),
@@ -3509,18 +3397,20 @@ describe("executePromptForMachine", () => {
         (
           existingRuntime.sendTurn as ReturnType<typeof vi.fn>
         ).mockResolvedValue(defaultTurnResult);
-        const input = makeExecutePromptInput({ promptText: "first turn" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "first turn" },
+        });
         const key = conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         );
         registerConversationRuntime(key, {
+          managed: createManagedRuntimeFixture(key, existingRuntime),
           abortController: new AbortController(),
-          backendRuntime: existingRuntime,
         });
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
         const firstPrompt = lastTurnInput().promptText;
         expect(firstPrompt).toContain("<active-ticket>");
         expect(firstPrompt).toContain("attachments: none");
@@ -3534,8 +3424,8 @@ describe("executePromptForMachine", () => {
           updatedAt: "2026-07-05T01:00:00.000Z",
         });
 
-        await executePromptForMachine(
-          makeExecutePromptInput({ promptText: "second turn" }),
+        await conversationActors.executePromptForMachine(
+          makeExecutePromptInput({ turn: { promptText: "second turn" } }),
         );
         const secondPrompt = lastTurnInput().promptText;
         expect(secondPrompt).toContain("att-mid");
@@ -3558,10 +3448,11 @@ describe("executePromptForMachine", () => {
     function registerRuntime(input: ExecutePromptInput): void {
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
     }
@@ -3571,7 +3462,7 @@ describe("executePromptForMachine", () => {
       return (call[0] as ConversationBackendTurnInput).promptText;
     }
 
-    function userTranscriptText(deps: ActorImplementationDeps): string {
+    function userTranscriptText(deps: ActorFixtureDependencies): string {
       const call = vi
         .mocked(deps.safeAppendTranscriptEntry)
         .mock.calls.find(
@@ -3592,19 +3483,22 @@ describe("executePromptForMachine", () => {
                 id: "np-1",
                 name: "Design Notes",
                 revision: 4,
+                openComments: { count: 0, latestCreatedAt: null },
                 writeMode: "full-edit" as const,
                 content: `Body line.\n\n[Image: img-a]\n\nSee ${nested}`,
               }
             : null,
         ),
       });
-      setActorDeps(notepadDeps);
+      conversationActors = createTestActorImplementations(notepadDeps);
       const input = makeExecutePromptInput({
-        promptText: `Please review ${NOTEPAD_REF} today.`,
+        turn: {
+          promptText: `Please review ${NOTEPAD_REF} today.`,
+        },
       });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const delivered = deliveredPromptText();
       expect(delivered).toContain("id: np-1");
@@ -3623,17 +3517,19 @@ describe("executePromptForMachine", () => {
     });
 
     it("injects a not-found block naming the id when the notepad was deleted", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           readNotepadForInjection: vi.fn(async () => null),
         }),
       );
       const input = makeExecutePromptInput({
-        promptText: `Look: ${NOTEPAD_REF}`,
+        turn: {
+          promptText: `Look: ${NOTEPAD_REF}`,
+        },
       });
       registerRuntime(input);
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(result.error).toBeNull();
       const delivered = deliveredPromptText();
@@ -3643,18 +3539,22 @@ describe("executePromptForMachine", () => {
 
     it("does not read notepads for a prompt with no notepad reference", async () => {
       const readNotepadForInjection = vi.fn(async () => null);
-      setActorDeps(createMockDeps({ readNotepadForInjection }));
-      const input = makeExecutePromptInput({ promptText: "plain turn" });
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ readNotepadForInjection }),
+      );
+      const input = makeExecutePromptInput({
+        turn: { promptText: "plain turn" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(readNotepadForInjection).not.toHaveBeenCalled();
       expect(deliveredPromptText()).toBe("plain turn");
     });
 
     it("delivers the un-expanded text when the notepad read fails", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           readNotepadForInjection: vi.fn(async () => {
             throw new Error("state store unavailable");
@@ -3662,78 +3562,128 @@ describe("executePromptForMachine", () => {
         }),
       );
       const input = makeExecutePromptInput({
-        promptText: `Resilient ${NOTEPAD_REF}`,
+        turn: {
+          promptText: `Resilient ${NOTEPAD_REF}`,
+        },
       });
       registerRuntime(input);
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(result.error).toBeNull();
       expect(deliveredPromptText()).toBe(`Resilient ${NOTEPAD_REF}`);
     });
 
-    it("records the notepad as delivered to this conversation at the expansion seam", async () => {
+    it("does not record a rendered reference when the backend never accepts input", async () => {
+      const recordNotepadDeliveries = vi.fn(async () => {});
+      conversationActors = createTestActorImplementations(
+        createMockDeps({
+          readNotepadForInjection: vi.fn(async () => ({
+            id: "np-1",
+            name: "Design Notes",
+            revision: 4,
+            openComments: { count: 0, latestCreatedAt: null },
+            writeMode: "full-edit" as const,
+            content: "Prepared body",
+          })),
+          recordNotepadDeliveries,
+        }),
+      );
+      const input = makeExecutePromptInput({
+        turn: { promptText: NOTEPAD_REF },
+      });
+      registerRuntime(input);
+      mockSendTurn.mockRejectedValueOnce(
+        new Error("rejected before acceptance"),
+      );
+      await conversationActors.executePromptForMachine(input);
+      expect(recordNotepadDeliveries).not.toHaveBeenCalled();
+    });
+
+    it("records the prepared reference after backend acceptance", async () => {
       const recordNotepadDeliveries = vi.fn(async () => {});
       const notepadDeps = createMockDeps({
         readNotepadForInjection: vi.fn(async () => ({
           id: "np-1",
           name: "Design Notes",
           revision: 4,
+          openComments: { count: 0, latestCreatedAt: null },
           writeMode: "full-edit" as const,
           content: "Body line.",
         })),
         recordNotepadDeliveries,
       });
-      setActorDeps(notepadDeps);
+      conversationActors = createTestActorImplementations(notepadDeps);
       const input = makeExecutePromptInput({
-        promptText: `Please review ${NOTEPAD_REF} today.`,
+        turn: {
+          promptText: `Please review ${NOTEPAD_REF} today.`,
+        },
       });
       registerRuntime(input);
+      mockSendTurn.mockImplementationOnce(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordNotepadDeliveries).toHaveBeenCalledWith({
-        conversationId: input.conversationId,
-        notepads: [{ notepadId: "np-1", revision: 4 }],
+        conversationId: input.target.conversationId,
+        notepads: [
+          {
+            notepadId: "np-1",
+            revision: 4,
+            openComments: { count: 0, latestCreatedAt: null },
+          },
+        ],
       });
     });
 
     it("records nothing for a turn carrying no notepad reference", async () => {
       const recordNotepadDeliveries = vi.fn(async () => {});
-      setActorDeps(createMockDeps({ recordNotepadDeliveries }));
-      const input = makeExecutePromptInput({ promptText: "plain turn" });
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ recordNotepadDeliveries }),
+      );
+      const input = makeExecutePromptInput({
+        turn: { promptText: "plain turn" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordNotepadDeliveries).not.toHaveBeenCalled();
     });
 
     it("records nothing for a dangling reference — a deleted notepad was never delivered", async () => {
       const recordNotepadDeliveries = vi.fn(async () => {});
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           readNotepadForInjection: vi.fn(async () => null),
           recordNotepadDeliveries,
         }),
       );
       const input = makeExecutePromptInput({
-        promptText: `Look: ${NOTEPAD_REF}`,
+        turn: {
+          promptText: `Look: ${NOTEPAD_REF}`,
+        },
       });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordNotepadDeliveries).not.toHaveBeenCalled();
     });
 
     it("still delivers the turn when recording the watermark fails", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           readNotepadForInjection: vi.fn(async () => ({
             id: "np-1",
             name: "Design Notes",
             revision: 4,
+            openComments: { count: 0, latestCreatedAt: null },
             writeMode: "full-edit" as const,
             content: "Body line.",
           })),
@@ -3743,11 +3693,19 @@ describe("executePromptForMachine", () => {
         }),
       );
       const input = makeExecutePromptInput({
-        promptText: `Please review ${NOTEPAD_REF}`,
+        turn: {
+          promptText: `Please review ${NOTEPAD_REF}`,
+        },
       });
       registerRuntime(input);
+      mockSendTurn.mockImplementationOnce(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(result.error).toBeNull();
       expect(deliveredPromptText()).toContain("Body line.");
@@ -3781,18 +3739,20 @@ describe("executePromptForMachine", () => {
 
       it("prepends the notice to the agent's prompt while the transcript keeps the user's text", async () => {
         const append = vi.fn<
-          ActorImplementationDeps["safeAppendTranscriptEntry"]
+          ActorFixtureDependencies["safeAppendTranscriptEntry"]
         >(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             safeAppendTranscriptEntry: append,
             prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         const delivered = deliveredPromptText();
         expect(delivered).toContain(NOTICE_BLOCK);
@@ -3808,7 +3768,7 @@ describe("executePromptForMachine", () => {
       });
 
       it("prepends nothing when no tracked notepad changed", async () => {
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             prepareNotepadChangeNotice: vi.fn(
               async (conversationId: string) => ({
@@ -3817,23 +3777,25 @@ describe("executePromptForMachine", () => {
                 advances: [],
               }),
             ),
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         expect(deliveredPromptText()).toBe("carry on");
       });
 
       it("advances the watermarks only once the backend accepts the message", async () => {
         const settleNotepadChangeNotice = vi.fn(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
             settleNotepadChangeNotice,
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
         mockSendTurn.mockImplementation(
           async (turnInput: ConversationBackendTurnInput) => {
@@ -3842,10 +3804,12 @@ describe("executePromptForMachine", () => {
             return defaultTurnResult;
           },
         );
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         expect(settleNotepadChangeNotice).toHaveBeenCalledWith(
           preparedNotice(),
@@ -3854,28 +3818,30 @@ describe("executePromptForMachine", () => {
 
       it("leaves the watermarks untouched when the turn fails before acceptance", async () => {
         const settleNotepadChangeNotice = vi.fn(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
             settleNotepadChangeNotice,
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
         mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
       });
 
       it("keeps the watermarks advanced when the turn fails after acceptance", async () => {
         const settleNotepadChangeNotice = vi.fn(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
             settleNotepadChangeNotice,
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
         mockSendTurn.mockImplementation(
           async (turnInput: ConversationBackendTurnInput) => {
@@ -3883,10 +3849,12 @@ describe("executePromptForMachine", () => {
             throw new Error("post-ack crash");
           },
         );
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         expect(settleNotepadChangeNotice).toHaveBeenCalledTimes(1);
       });
@@ -3896,7 +3864,7 @@ describe("executePromptForMachine", () => {
         // delivered. A neighbouring settle failing must not strand the
         // watermark and make the agent read the same notice twice.
         const settleNotepadChangeNotice = vi.fn(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             prepareNotepadChangeNotice: vi.fn(async () => preparedNotice()),
             settleNotepadChangeNotice,
@@ -3919,7 +3887,7 @@ describe("executePromptForMachine", () => {
             settleWorkflowResults: vi.fn(async () => {
               throw new Error("workflow settle unavailable");
             }),
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
         mockSendTurn.mockImplementation(
           async (turnInput: ConversationBackendTurnInput) => {
@@ -3927,10 +3895,14 @@ describe("executePromptForMachine", () => {
             return defaultTurnResult;
           },
         );
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await expect(
+          conversationActors.executePromptForMachine(input),
+        ).rejects.toThrow("Turn context receipts failed");
 
         expect(settleNotepadChangeNotice).toHaveBeenCalledWith(
           preparedNotice(),
@@ -3939,32 +3911,35 @@ describe("executePromptForMachine", () => {
 
       it("delivers the turn without a notice when preparing one fails", async () => {
         const settleNotepadChangeNotice = vi.fn(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             prepareNotepadChangeNotice: vi.fn(async () => {
               throw new Error("state store unavailable");
             }),
             settleNotepadChangeNotice,
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
-        const input = makeExecutePromptInput({ promptText: "carry on" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "carry on" },
+        });
         registerRuntime(input);
 
-        const result = await executePromptForMachine(input);
+        const result = await conversationActors.executePromptForMachine(input);
 
         expect(result.error).toBeNull();
         expect(deliveredPromptText()).toBe("carry on");
         expect(settleNotepadChangeNotice).not.toHaveBeenCalled();
       });
 
-      it("prepares the notice after recording this message's own notepads", async () => {
+      it("prepares from local references and records them after acceptance", async () => {
         const order: string[] = [];
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             readNotepadForInjection: vi.fn(async () => ({
               id: "np-1",
               name: "Design Notes",
               revision: 4,
+              openComments: { count: 0, latestCreatedAt: null },
               writeMode: "full-edit" as const,
               content: "Body line.",
             })),
@@ -3977,17 +3952,25 @@ describe("executePromptForMachine", () => {
                 return { conversationId, block: null, advances: [] };
               },
             ),
-          } as unknown as Partial<ActorImplementationDeps>),
+          } as unknown as Partial<ActorFixtureDependencies>),
         );
         const input = makeExecutePromptInput({
-          promptText: `Please review ${NOTEPAD_REF}`,
+          turn: {
+            promptText: `Please review ${NOTEPAD_REF}`,
+          },
         });
         registerRuntime(input);
+        mockSendTurn.mockImplementationOnce(
+          async (turnInput: ConversationBackendTurnInput) => {
+            await turnInput.onEvent({ type: "input_accepted" });
+            return defaultTurnResult;
+          },
+        );
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         // Content delivered in full this turn needs no notice to re-read it.
-        expect(order).toEqual(["record", "prepare"]);
+        expect(order).toEqual(["prepare", "record"]);
       });
     });
   });
@@ -4029,10 +4012,11 @@ describe("executePromptForMachine", () => {
     function registerRuntime(input: ExecutePromptInput): void {
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
     }
@@ -4050,24 +4034,26 @@ describe("executePromptForMachine", () => {
 
     it("claims and prepends pending boundaries for a direct turn without changing stored user text", async () => {
       const append = vi.fn<
-        ActorImplementationDeps["safeAppendTranscriptEntry"]
+        ActorFixtureDependencies["safeAppendTranscriptEntry"]
       >(async () => {});
       const claimWorkflowResults = vi.fn(async () => claimedResults());
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           safeAppendTranscriptEntry: append,
           claimWorkflowResults,
-        } as unknown as Partial<ActorImplementationDeps>),
+        } as unknown as Partial<ActorFixtureDependencies>),
       );
-      const input = makeExecutePromptInput({ promptText: "direct user text" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "direct user text" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(claimWorkflowResults).toHaveBeenCalledWith({
         projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        originConversationId: input.conversationId,
+        sessionName: conversationTargetStoreSessionName(input.target),
+        originConversationId: input.target.conversationId,
         attemptId: "stream-1",
       });
       const turnInput = mockSendTurn.mock.calls.at(-1)![0] as
@@ -4085,14 +4071,14 @@ describe("executePromptForMachine", () => {
 
     it("claims and prepends pending boundaries for a queued turn without changing stored user text", async () => {
       const append = vi.fn<
-        ActorImplementationDeps["appendTranscriptEntryOnce"]
+        ActorFixtureDependencies["appendTranscriptEntryOnce"]
       >(async () => {});
       const claimWorkflowResults = vi.fn(async () => claimedResults());
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           appendTranscriptEntryOnce: append,
           claimWorkflowResults,
-        } as unknown as Partial<ActorImplementationDeps>),
+        } as unknown as Partial<ActorFixtureDependencies>),
       );
       mockSendTurn.mockImplementation(
         async (turnInput: ConversationBackendTurnInput) => {
@@ -4101,20 +4087,22 @@ describe("executePromptForMachine", () => {
         },
       );
       const input = makeExecutePromptInput({
-        promptText: "queued user text",
-        queuedDelivery: {
-          messageIds: ["message-1"],
-          deliveryAttemptId: "queue-attempt-1",
+        turn: {
+          promptText: "queued user text",
+          queuedDelivery: {
+            messageIds: ["message-1"],
+            deliveryAttemptId: "queue-attempt-1",
+          },
         },
       });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(claimWorkflowResults).toHaveBeenCalledWith({
         projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        originConversationId: input.conversationId,
+        sessionName: conversationTargetStoreSessionName(input.target),
+        originConversationId: input.target.conversationId,
         attemptId: "queue-attempt-1",
       });
       const turnInput = mockSendTurn.mock.calls.at(-1)![0] as
@@ -4133,24 +4121,26 @@ describe("executePromptForMachine", () => {
     it("returns claimed boundaries to pending when dispatch fails before input acceptance", async () => {
       const releaseWorkflowResults = vi.fn(async () => 2);
       const settleWorkflowResults = vi.fn(async () => 0);
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           claimWorkflowResults: vi.fn(async () => claimedResults()),
           releaseWorkflowResults,
           settleWorkflowResults,
-        } as unknown as Partial<ActorImplementationDeps>),
+        } as unknown as Partial<ActorFixtureDependencies>),
       );
       mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
-      const input = makeExecutePromptInput({ promptText: "retry safely" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "retry safely" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(settleWorkflowResults).not.toHaveBeenCalled();
       expect(releaseWorkflowResults).toHaveBeenCalledWith({
         projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        originConversationId: input.conversationId,
+        sessionName: conversationTargetStoreSessionName(input.target),
+        originConversationId: input.target.conversationId,
         attemptId: "stream-1",
       });
     });
@@ -4158,12 +4148,12 @@ describe("executePromptForMachine", () => {
     it("settles claimed boundaries at input acceptance and does not release them when the turn later fails", async () => {
       const releaseWorkflowResults = vi.fn(async () => 0);
       const settleWorkflowResults = vi.fn(async () => 2);
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           claimWorkflowResults: vi.fn(async () => claimedResults()),
           releaseWorkflowResults,
           settleWorkflowResults,
-        } as unknown as Partial<ActorImplementationDeps>),
+        } as unknown as Partial<ActorFixtureDependencies>),
       );
       mockSendTurn.mockImplementation(
         async (turnInput: ConversationBackendTurnInput) => {
@@ -4171,15 +4161,17 @@ describe("executePromptForMachine", () => {
           throw new Error("post-ack crash");
         },
       );
-      const input = makeExecutePromptInput({ promptText: "accepted once" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "accepted once" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(settleWorkflowResults).toHaveBeenCalledWith({
         projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        originConversationId: input.conversationId,
+        sessionName: conversationTargetStoreSessionName(input.target),
+        originConversationId: input.target.conversationId,
         attemptId: "stream-1",
       });
       expect(releaseWorkflowResults).not.toHaveBeenCalled();
@@ -4219,14 +4211,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
     const systemEntry = calls.find(
@@ -4309,14 +4302,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "claude" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
     const frameAppend = calls.find(
@@ -4356,7 +4350,7 @@ describe("executePromptForMachine", () => {
         },
         indexMarkdownDocuments: async () => {},
       });
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           safeAppendTranscriptEntry: (
             conversationId: string,
@@ -4433,15 +4427,24 @@ describe("executePromptForMachine", () => {
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
-      const entries = await persistedEntries(input.conversationId);
+      const entries = await persistedEntries(input.target.conversationId);
       expect(entries.filter((entry) => entry.id === frameId)).toHaveLength(1);
       expect(
         broadcasts.filter(
@@ -4464,15 +4467,24 @@ describe("executePromptForMachine", () => {
       registerConversationRuntime(
         conversationRuntimeKey(
           input.projectPath,
-          input.sessionName,
-          input.conversationId,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
         ),
-        { abortController: new AbortController() },
+        {
+          managed: createManagedRuntimeFixture(
+            conversationRuntimeKey(
+              input.projectPath,
+              conversationTargetStoreSessionName(input.target),
+              input.target.conversationId,
+            ),
+          ),
+          abortController: new AbortController(),
+        },
       );
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
-      const entries = await persistedEntries(input.conversationId);
+      const entries = await persistedEntries(input.target.conversationId);
       expect(entries.filter((entry) => entry.uuid === "u-anon-1")).toHaveLength(
         2,
       );
@@ -4483,14 +4495,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "claude" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
     const assistantEntries = calls.filter(
@@ -4513,14 +4526,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
     const assistantEntries = calls.filter(
@@ -4549,14 +4563,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const calls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock.calls;
     const assistantEntries = calls.filter(
@@ -4597,15 +4612,16 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       streamEmit,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const errorEvents = streamEmit.mock.calls.filter(
       ([event]) => event === "error",
@@ -4644,15 +4660,16 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput({ agentBackend: "codex" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       streamEmit,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const errorEvents = streamEmit.mock.calls.filter(
       ([event]) => event === "error",
@@ -4674,25 +4691,28 @@ describe("executePromptForMachine", () => {
     });
 
     const input = makeExecutePromptInput({
-      outputFormat: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: { answer: { type: "number" } },
-          required: ["answer"],
+      turn: {
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { answer: { type: "number" } },
+            required: ["answer"],
+          },
         },
       },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.structuredOutput).toEqual({ answer: 42 });
     expect(result.error).toBeNull();
@@ -4707,26 +4727,29 @@ describe("executePromptForMachine", () => {
     });
 
     const input = makeExecutePromptInput({
-      outputFormat: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: { answer: { type: "number" } },
-          required: ["answer"],
+      turn: {
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { answer: { type: "number" } },
+            required: ["answer"],
+          },
         },
       },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
       streamEmit,
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toMatch(/structured output failed validation/i);
     expect(result.aborted).toBe(false);
@@ -4752,7 +4775,7 @@ describe("executePromptForMachine", () => {
       }),
       status: "uncertain" as const,
     };
-    setActorDeps(
+    conversationActors = createTestActorImplementations(
       createMockDeps({
         getConversation: async () =>
           makeSharedConversationState({ pendingQueue: [row] }),
@@ -4762,12 +4785,21 @@ describe("executePromptForMachine", () => {
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
     expect(result.error).toBe(
       "Review queued deliveries before sending another prompt.",
     );
@@ -4777,7 +4809,7 @@ describe("executePromptForMachine", () => {
   it("does not dispatch after cancellation during runtime creation", async () => {
     const controller = new AbortController();
     const backendRuntime = createMockBackendRuntime();
-    setActorDeps(
+    conversationActors = createTestActorImplementations(
       createMockDeps({
         getConversationBackendFactory: () => ({
           backend: "claude",
@@ -4792,36 +4824,48 @@ describe("executePromptForMachine", () => {
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
-    await executePromptForMachine(input, controller.signal).catch(() => {});
+    await conversationActors
+      .executePromptForMachine(input, controller.signal)
+      .catch(() => {});
     expect(mockSendTurn).not.toHaveBeenCalled();
   });
 
   it("routes the conversation turn through deps.executeAgentCall (Task 6.1 parity)", async () => {
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
-    setActorDeps(
+    conversationActors = createTestActorImplementations(
       createMockDeps({
         executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
           typeof vi.fn
         >,
-      } as unknown as Partial<ActorImplementationDeps>),
+      } as unknown as Partial<ActorFixtureDependencies>),
     );
 
     const input = makeExecutePromptInput({ agentBackend: "claude" });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
     const [request, facadeDeps] = executeAgentCallSpy.mock.calls[0]!;
@@ -4837,29 +4881,30 @@ describe("executePromptForMachine", () => {
   it("expands the native /spec command for the agent without rewriting the user transcript", async () => {
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     const appendSpy = vi.fn<
-      ActorImplementationDeps["safeAppendTranscriptEntry"]
+      ActorFixtureDependencies["safeAppendTranscriptEntry"]
     >(async () => {});
-    setActorDeps(
+    conversationActors = createTestActorImplementations(
       createMockDeps({
         executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
           typeof vi.fn
         >,
         safeAppendTranscriptEntry: appendSpy,
-      } as unknown as Partial<ActorImplementationDeps>),
+      } as unknown as Partial<ActorFixtureDependencies>),
     );
 
     const rawPrompt = "/spec Add a project health endpoint";
-    const input = makeExecutePromptInput({ promptText: rawPrompt });
+    const input = makeExecutePromptInput({ turn: { promptText: rawPrompt } });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const [request] = executeAgentCallSpy.mock.calls[0]!;
     const agentPrompt = (request as { prompt: string }).prompt;
@@ -4890,31 +4935,34 @@ describe("executePromptForMachine", () => {
     };
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     const appendSpy = vi.fn<
-      ActorImplementationDeps["safeAppendTranscriptEntry"]
+      ActorFixtureDependencies["safeAppendTranscriptEntry"]
     >(async () => {});
-    setActorDeps(
+    conversationActors = createTestActorImplementations(
       createMockDeps({
         executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
           typeof vi.fn
         >,
         safeAppendTranscriptEntry: appendSpy,
-      } as unknown as Partial<ActorImplementationDeps>),
+      } as unknown as Partial<ActorFixtureDependencies>),
     );
 
     const input = makeExecutePromptInput({
-      promptText: "",
-      documentFeedback: { items: [fbItem] },
+      turn: {
+        promptText: "",
+        documentFeedback: { items: [fbItem] },
+      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     // Agent-facing prompt is derived from the payload and embeds each item's
     // quote, path, heading, and line.
@@ -4938,21 +4986,26 @@ describe("executePromptForMachine", () => {
 
   it("leaves the user turn unchanged (text only, no feedback block) when documentFeedback is absent", async () => {
     const appendSpy = vi.fn<
-      ActorImplementationDeps["safeAppendTranscriptEntry"]
+      ActorFixtureDependencies["safeAppendTranscriptEntry"]
     >(async () => {});
-    setActorDeps(createMockDeps({ safeAppendTranscriptEntry: appendSpy }));
+    conversationActors = createTestActorImplementations(
+      createMockDeps({ safeAppendTranscriptEntry: appendSpy }),
+    );
 
-    const input = makeExecutePromptInput({ promptText: "Hello, world!" });
+    const input = makeExecutePromptInput({
+      turn: { promptText: "Hello, world!" },
+    });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const userEntry = appendSpy.mock.calls
       .map((c) => c[1] as { type: string; content: unknown })
@@ -4979,15 +5032,15 @@ describe("executePromptForMachine", () => {
     };
     const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
     const appendSpy = vi.fn<
-      ActorImplementationDeps["appendTranscriptEntryOnce"]
+      ActorFixtureDependencies["appendTranscriptEntryOnce"]
     >(async () => {});
-    setActorDeps(
+    conversationActors = createTestActorImplementations(
       createMockDeps({
         executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
           typeof vi.fn
         >,
         appendTranscriptEntryOnce: appendSpy,
-      } as unknown as Partial<ActorImplementationDeps>),
+      } as unknown as Partial<ActorFixtureDependencies>),
     );
 
     mockSendTurn.mockImplementation(
@@ -4998,20 +5051,26 @@ describe("executePromptForMachine", () => {
     );
 
     const input = makeExecutePromptInput({
-      promptText: "also handle the empty-state case",
-      documentFeedback: { items: [fbItem] },
-      queuedDelivery: { messageIds: ["m1", "m2"], deliveryAttemptId: "att-1" },
+      turn: {
+        promptText: "also handle the empty-state case",
+        documentFeedback: { items: [fbItem] },
+        queuedDelivery: {
+          messageIds: ["m1", "m2"],
+          deliveryAttemptId: "att-1",
+        },
+      },
     });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     // Agent receives the user's text AND the derived feedback prose.
     const [request] = executeAgentCallSpy.mock.calls[0]!;
@@ -5057,17 +5116,20 @@ describe("executePromptForMachine", () => {
       },
     );
 
-    const input = makeExecutePromptInput({ waitForBackgroundTasks: true });
+    const input = makeExecutePromptInput({
+      turn: { waitForBackgroundTasks: true },
+    });
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(capturedTurnInput.value?.waitForBackgroundTasks).toBe(true);
     expect(result.backgroundWait).toEqual(backgroundWait);
@@ -5087,14 +5149,15 @@ describe("executePromptForMachine", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(capturedTurnInput.value?.waitForBackgroundTasks).toBeUndefined();
     expect(result.backgroundWait).toBeUndefined();
@@ -5121,62 +5184,67 @@ describe("executePromptForMachine", () => {
         saveTranscriptImage,
         getNextImageIndex,
       });
-      setActorDeps(mockDeps);
+      conversationActors = createTestActorImplementations(mockDeps);
 
       const input = makeExecutePromptInput({
-        promptText: "look at [Image #1] and [Image #2]",
-        images: [
-          {
-            attachmentId: "att-a",
-            mediaType: "image/png",
-            base64Data: "AAAA",
-            inlineMarkerIndex: 1,
-          },
-          {
-            attachmentId: "att-b",
-            mediaType: "image/jpeg",
-            base64Data: "BBBB",
-            inlineMarkerIndex: 2,
-          },
-          {
-            attachmentId: "att-c",
-            mediaType: "image/webp",
-            base64Data: "CCCC",
-          },
-        ],
+        turn: {
+          promptText: "look at [Image #1] and [Image #2]",
+          images: [
+            {
+              attachmentId: "att-a",
+              mediaType: "image/png",
+              base64Data: "AAAA",
+              inlineMarkerIndex: 1,
+            },
+            {
+              attachmentId: "att-b",
+              mediaType: "image/jpeg",
+              base64Data: "BBBB",
+              inlineMarkerIndex: 2,
+            },
+            {
+              attachmentId: "att-c",
+              mediaType: "image/webp",
+              base64Data: "CCCC",
+            },
+          ],
+        },
       });
 
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
-      expect(getNextImageIndex).toHaveBeenCalledWith(input.conversationId);
+      expect(getNextImageIndex).toHaveBeenCalledWith(
+        input.target.conversationId,
+      );
 
       expect(saveTranscriptImage).toHaveBeenCalledTimes(3);
       expect(saveTranscriptImage).toHaveBeenNthCalledWith(
         1,
-        input.conversationId,
+        input.target.conversationId,
         5,
         "image/png",
         "AAAA",
       );
       expect(saveTranscriptImage).toHaveBeenNthCalledWith(
         2,
-        input.conversationId,
+        input.target.conversationId,
         6,
         "image/jpeg",
         "BBBB",
       );
       expect(saveTranscriptImage).toHaveBeenNthCalledWith(
         3,
-        input.conversationId,
+        input.target.conversationId,
         7,
         "image/webp",
         "CCCC",
@@ -5281,7 +5349,7 @@ describe("executePromptForMachine", () => {
           appendOrder.push("markDelivered");
         }),
       });
-      setActorDeps(mockDeps);
+      conversationActors = createTestActorImplementations(mockDeps);
 
       mockSendTurn.mockImplementation(
         async (turnInput: ConversationBackendTurnInput) => {
@@ -5291,22 +5359,25 @@ describe("executePromptForMachine", () => {
       );
 
       const input = makeExecutePromptInput({
-        promptText: "queued follow-up",
-        queuedDelivery: {
-          messageIds: ["m1", "m2"],
-          deliveryAttemptId: "att-1",
+        turn: {
+          promptText: "queued follow-up",
+          queuedDelivery: {
+            messageIds: ["m1", "m2"],
+            deliveryAttemptId: "att-1",
+          },
         },
       });
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       const userCalls = userAppendCalls();
       expect(userCalls).toHaveLength(1);
@@ -5318,8 +5389,8 @@ describe("executePromptForMachine", () => {
       expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
       expect(mockDeps.markQueuedDelivered).toHaveBeenCalledWith({
         projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
+        sessionName: conversationTargetStoreSessionName(input.target),
+        conversationId: input.target.conversationId,
         ids: ["m1", "m2"],
         deliveryAttemptId: "att-1",
       });
@@ -5334,25 +5405,35 @@ describe("executePromptForMachine", () => {
       mockSendTurn.mockRejectedValue(new Error("backend dispatch failed"));
 
       const input = makeExecutePromptInput({
-        promptText: "queued follow-up",
-        queuedDelivery: {
-          messageIds: ["m1"],
-          deliveryAttemptId: "att-1",
+        turn: {
+          promptText: "queued follow-up",
+          queuedDelivery: {
+            messageIds: ["m1"],
+            deliveryAttemptId: "att-1",
+          },
         },
       });
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(userAppendCalls()).toHaveLength(0);
       expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
+      await conversationActors.finalizeQueuedDeliveryForMachine({
+        projectPath: input.projectPath,
+        target: input.target,
+
+        persistence: input.persistence,
+        queuedDelivery: input.turn.queuedDelivery!,
+      });
       expect(mockDeps.markQueuedUncertain).toHaveBeenCalledTimes(1);
       expect(mockDeps.markQueuedUncertain).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -5436,10 +5517,11 @@ describe("executePromptForMachine", () => {
     function registerRuntime(input: ExecutePromptInput): void {
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       });
     }
@@ -5568,16 +5650,18 @@ describe("executePromptForMachine", () => {
 
     it("prepends the block to a session turn's effective prompt below the ticket block, never to sessionInstructions", async () => {
       const getMemoryIndexBlock = vi.fn(async () => memoryBlock(MEMORY_BLOCK));
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getLiveTicketBlock: vi.fn(async () => TICKET_BLOCK),
           getMemoryIndexBlock,
         }),
       );
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(getMemoryIndexBlock).toHaveBeenCalledWith({
         projectPath: "/projects/repo",
@@ -5607,13 +5691,17 @@ describe("executePromptForMachine", () => {
 
     it("prepends the block to a project conversation's turn as well", async () => {
       const getMemoryIndexBlock = vi.fn(async () => memoryBlock(MEMORY_BLOCK));
-      setActorDeps(createMockDeps({ getMemoryIndexBlock }));
+      conversationActors = createTestActorImplementations(
+        createMockDeps({ getMemoryIndexBlock }),
+      );
       const input = makeProjectExecutePromptInput({
-        promptText: "project turn",
+        turn: {
+          promptText: "project turn",
+        },
       });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(getMemoryIndexBlock).toHaveBeenCalledWith({
         projectPath: "/projects/repo",
@@ -5648,7 +5736,7 @@ describe("executePromptForMachine", () => {
     it("records a watermark for every note revision the injected block carried", async () => {
       const recordMemoryIndexDeliveries = vi.fn(async () => {});
       const log = createCapturingLogger();
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           log,
           getMemoryIndexBlock: vi.fn(async () =>
@@ -5661,10 +5749,12 @@ describe("executePromptForMachine", () => {
         }),
       );
       acceptTurnOnSend();
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordMemoryIndexDeliveries).toHaveBeenCalledWith({
         conversationId: "conv-1",
@@ -5694,7 +5784,7 @@ describe("executePromptForMachine", () => {
 
     it("records the watermark only once the backend accepts the message", async () => {
       const recordMemoryIndexDeliveries = vi.fn(async () => {});
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () =>
             memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
@@ -5714,10 +5804,12 @@ describe("executePromptForMachine", () => {
           return defaultTurnResult;
         },
       );
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(callsBeforeAcceptance).toBe(0);
       expect(recordMemoryIndexDeliveries).toHaveBeenCalledTimes(1);
@@ -5725,7 +5817,7 @@ describe("executePromptForMachine", () => {
 
     it("records nothing when the turn fails before the backend accepts it", async () => {
       const recordMemoryIndexDeliveries = vi.fn(async () => {});
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () =>
             memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
@@ -5734,17 +5826,19 @@ describe("executePromptForMachine", () => {
         }),
       );
       mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordMemoryIndexDeliveries).not.toHaveBeenCalled();
     });
 
     it("records the delivery once when acceptance fires repeatedly", async () => {
       const recordMemoryIndexDeliveries = vi.fn(async () => {});
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () =>
             memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
@@ -5759,10 +5853,12 @@ describe("executePromptForMachine", () => {
           return defaultTurnResult;
         },
       );
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordMemoryIndexDeliveries).toHaveBeenCalledTimes(1);
     });
@@ -5772,7 +5868,7 @@ describe("executePromptForMachine", () => {
     // write failing must not cost the observation.
     it("records the watermark even when another post-acceptance write fails", async () => {
       const recordMemoryIndexDeliveries = vi.fn(async () => {});
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () =>
             memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 3)]),
@@ -5785,10 +5881,14 @@ describe("executePromptForMachine", () => {
         }),
       );
       acceptTurnOnSend();
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await expect(
+        conversationActors.executePromptForMachine(input),
+      ).rejects.toThrow("Turn context receipts failed");
 
       expect(recordMemoryIndexDeliveries).toHaveBeenCalledWith({
         conversationId: "conv-1",
@@ -5824,7 +5924,7 @@ describe("executePromptForMachine", () => {
           },
         );
         if (!created.ok) throw new Error(created.error.code);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -5843,10 +5943,12 @@ describe("executePromptForMachine", () => {
 
         mockSendTurn.mockRejectedValue(new Error("pre-ack crash"));
         const rejected = makeExecutePromptInput({
-          promptText: "rejected turn",
+          turn: {
+            promptText: "rejected turn",
+          },
         });
         registerRuntime(rejected);
-        await executePromptForMachine(rejected);
+        await conversationActors.executePromptForMachine(rejected);
 
         expect(
           await telemetry.listObservations({ kind: "retrieval_index" }),
@@ -5855,10 +5957,12 @@ describe("executePromptForMachine", () => {
 
         acceptTurnOnSend();
         const delivered = makeExecutePromptInput({
-          promptText: "delivered turn",
+          turn: {
+            promptText: "delivered turn",
+          },
         });
         registerRuntime(delivered);
-        await executePromptForMachine(delivered);
+        await conversationActors.executePromptForMachine(delivered);
 
         expect(
           await telemetry.listObservations({ kind: "retrieval_index" }),
@@ -5909,7 +6013,7 @@ describe("executePromptForMachine", () => {
           },
         );
         if (!created.ok) throw new Error(created.error.code);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -5930,10 +6034,14 @@ describe("executePromptForMachine", () => {
 
         acceptTurnOnSend();
         const delivered = makeExecutePromptInput({
-          promptText: "delivered turn",
+          turn: {
+            promptText: "delivered turn",
+          },
         });
         registerRuntime(delivered);
-        await executePromptForMachine(delivered);
+        await expect(
+          conversationActors.executePromptForMachine(delivered),
+        ).rejects.toThrow("Turn context receipts failed");
 
         expect(
           await telemetry.listObservations({ kind: "retrieval_index" }),
@@ -5951,17 +6059,19 @@ describe("executePromptForMachine", () => {
 
     it("records nothing when the conversation has no block to be shown", async () => {
       const recordMemoryIndexDeliveries = vi.fn(async () => {});
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () => null),
           recordMemoryIndexDeliveries,
         }),
       );
       acceptTurnOnSend();
-      const input = makeExecutePromptInput({ promptText: "do the work" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "do the work" },
+      });
       registerRuntime(input);
 
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(recordMemoryIndexDeliveries).not.toHaveBeenCalled();
     });
@@ -5986,17 +6096,19 @@ describe("executePromptForMachine", () => {
       "settles $case even with zero entries",
       async ({ delivery, expectedKind }) => {
         const recordMemoryIndexDeliveries = vi.fn(async () => {});
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: vi.fn(async () => delivery),
             recordMemoryIndexDeliveries,
           }),
         );
         acceptTurnOnSend();
-        const input = makeExecutePromptInput({ promptText: "zero-entry turn" });
+        const input = makeExecutePromptInput({
+          turn: { promptText: "zero-entry turn" },
+        });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         expect(recordMemoryIndexDeliveries).toHaveBeenCalledOnce();
         expect(recordMemoryIndexDeliveries).toHaveBeenCalledWith({
@@ -6009,7 +6121,7 @@ describe("executePromptForMachine", () => {
     );
 
     it("completes the turn when the watermark write fails", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () =>
             memoryBlock(MEMORY_BLOCK, [indexEntry("mem-1", 1)]),
@@ -6020,27 +6132,31 @@ describe("executePromptForMachine", () => {
         }),
       );
       acceptTurnOnSend();
-      const input = makeExecutePromptInput({ promptText: "resilient turn" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "resilient turn" },
+      });
       registerRuntime(input);
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(result.error).toBeNull();
       expect(lastTurnInput().promptText).toContain(MEMORY_BLOCK);
     });
 
     it("proceeds without the block when the memory read fails", async () => {
-      setActorDeps(
+      conversationActors = createTestActorImplementations(
         createMockDeps({
           getMemoryIndexBlock: vi.fn(async () => {
             throw new Error("memory store unavailable");
           }),
         }),
       );
-      const input = makeExecutePromptInput({ promptText: "resilient turn" });
+      const input = makeExecutePromptInput({
+        turn: { promptText: "resilient turn" },
+      });
       registerRuntime(input);
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       expect(result.error).toBeNull();
       expect(lastTurnInput().promptText).toBe("resilient turn");
@@ -6056,23 +6172,27 @@ describe("executePromptForMachine", () => {
           ...mockBackendRuntime,
           backend: agentBackend,
         });
-        setActorDeps(createMockDeps({ getMemoryIndexBlock }));
+        conversationActors = createTestActorImplementations(
+          createMockDeps({ getMemoryIndexBlock }),
+        );
         const input = makeExecutePromptInput({
+          turn: {
+            promptText: "first turn",
+            modelSelection:
+              agentBackend === "codex"
+                ? {
+                    modelId: "gpt-5.4",
+                    parameters: { reasoning: "high", fast: "false" },
+                  }
+                : agentBackend === "cursor"
+                  ? { modelId: "composer-2.5", parameters: { fast: "true" } }
+                  : null,
+          },
           agentBackend,
-          promptText: "first turn",
-          modelSelection:
-            agentBackend === "codex"
-              ? {
-                  modelId: "gpt-5.4",
-                  parameters: { reasoning: "high", fast: "false" },
-                }
-              : agentBackend === "cursor"
-                ? { modelId: "composer-2.5", parameters: { fast: "true" } }
-                : null,
         });
         registerRuntime(input);
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
 
         const instructions = createdRuntimeInstructions();
         expect(instructions).toContain(MEMORY_ADVISORY_CONTRACT);
@@ -6087,7 +6207,7 @@ describe("executePromptForMachine", () => {
       try {
         seedSessionRows(db);
         const { memoryService, provider } = createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6108,20 +6228,29 @@ describe("executePromptForMachine", () => {
           (
             existingRuntime.sendTurn as ReturnType<typeof vi.fn>
           ).mockResolvedValue(defaultTurnResult);
-          const first = makeInput({ promptText: `${label} turn one` });
+          const first = makeInput({
+            turn: { promptText: `${label} turn one` },
+          });
           registerConversationRuntime(
             conversationRuntimeKey(
               first.projectPath,
-              first.sessionName,
-              first.conversationId,
+              conversationTargetStoreSessionName(first.target),
+              first.target.conversationId,
             ),
             {
+              managed: createManagedRuntimeFixture(
+                conversationRuntimeKey(
+                  first.projectPath,
+                  conversationTargetStoreSessionName(first.target),
+                  first.target.conversationId,
+                ),
+                existingRuntime,
+              ),
               abortController: new AbortController(),
-              backendRuntime: existingRuntime,
             },
           );
 
-          await executePromptForMachine(first);
+          await conversationActors.executePromptForMachine(first);
           expect(lastTurnInput().promptText).not.toContain("<memory-index>");
 
           const created = await memoryService.create(
@@ -6139,8 +6268,8 @@ describe("executePromptForMachine", () => {
           );
           if (!created.ok) throw new Error(created.error.code);
 
-          await executePromptForMachine(
-            makeInput({ promptText: `${label} turn two` }),
+          await conversationActors.executePromptForMachine(
+            makeInput({ turn: { promptText: `${label} turn two` } }),
           );
           const second = lastTurnInput().promptText;
           expect(second).toContain("<memory-index>");
@@ -6159,8 +6288,8 @@ describe("executePromptForMachine", () => {
           );
           expect(archived.ok).toBe(true);
 
-          await executePromptForMachine(
-            makeInput({ promptText: `${label} turn three` }),
+          await conversationActors.executePromptForMachine(
+            makeInput({ turn: { promptText: `${label} turn three` } }),
           );
           expect(lastTurnInput().promptText).not.toContain(
             `captured-after-${label}-turn-one`,
@@ -6178,7 +6307,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6219,10 +6348,12 @@ describe("executePromptForMachine", () => {
             return defaultTurnResult;
           },
         );
-        const first = makeExecutePromptInput({ promptText: "racing turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "racing turn" },
+        });
         registerRuntime(first);
 
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
 
         const afterFirst = await telemetry.readIndexDelivery("conv-1");
         expect(afterFirst.state?.lastDeliveryAt).toBe(
@@ -6236,8 +6367,11 @@ describe("executePromptForMachine", () => {
         ]);
         setNow("2026-07-05T00:02:00.000Z");
         acceptTurnOnSend();
-        await executePromptForMachine(
-          makeExecutePromptInput({ promptText: "next turn", promptCount: 1 }),
+        await conversationActors.executePromptForMachine(
+          makeExecutePromptInput({
+            turn: { promptText: "next turn" },
+            promptCount: 1,
+          }),
         );
 
         const nextPrompt = lastTurnInput().promptText;
@@ -6255,7 +6389,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6280,9 +6414,11 @@ describe("executePromptForMachine", () => {
         );
         if (!created.ok) throw new Error(created.error.code);
         acceptTurnOnSend();
-        const first = makeExecutePromptInput({ promptText: "first turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "first turn" },
+        });
         registerRuntime(first);
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
         const before = (await telemetry.readIndexDelivery("conv-1")).state;
         expect(before?.lastFullAt).toBe("2026-07-05T00:00:00.000Z");
 
@@ -6316,8 +6452,11 @@ describe("executePromptForMachine", () => {
           updatedAt: "2026-07-05T00:01:00.000Z",
         });
         setNow("2026-07-05T00:02:00.000Z");
-        await executePromptForMachine(
-          makeExecutePromptInput({ promptText: "second turn", promptCount: 1 }),
+        await conversationActors.executePromptForMachine(
+          makeExecutePromptInput({
+            turn: { promptText: "second turn" },
+            promptCount: 1,
+          }),
         );
 
         expect(artifacts.findById("cc-compaction-1")?.kind).toBe(
@@ -6339,7 +6478,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6363,10 +6502,12 @@ describe("executePromptForMachine", () => {
         );
         if (!baseline.ok) throw new Error(baseline.error.code);
         acceptTurnOnSend();
-        const first = makeExecutePromptInput({ promptText: "first turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "first turn" },
+        });
         registerRuntime(first);
 
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
 
         const firstPrompt = lastTurnInput().promptText;
         expect(firstPrompt).toContain("<memory-index>");
@@ -6383,8 +6524,11 @@ describe("executePromptForMachine", () => {
         );
         if (!added.ok) throw new Error(added.error.code);
 
-        await executePromptForMachine(
-          makeExecutePromptInput({ promptText: "second turn", promptCount: 1 }),
+        await conversationActors.executePromptForMachine(
+          makeExecutePromptInput({
+            turn: { promptText: "second turn" },
+            promptCount: 1,
+          }),
         );
 
         const secondPrompt = lastTurnInput().promptText;
@@ -6405,7 +6549,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6415,11 +6559,13 @@ describe("executePromptForMachine", () => {
         );
         acceptTurnOnSend();
         const first = makeExecutePromptInput({
-          promptText: "empty first turn",
+          turn: {
+            promptText: "empty first turn",
+          },
         });
         registerRuntime(first);
 
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
 
         expect(lastTurnInput().promptText).not.toContain("<memory-index>");
         expect(
@@ -6441,8 +6587,11 @@ describe("executePromptForMachine", () => {
         );
         if (!created.ok) throw new Error(created.error.code);
 
-        await executePromptForMachine(
-          makeExecutePromptInput({ promptText: "second turn", promptCount: 1 }),
+        await conversationActors.executePromptForMachine(
+          makeExecutePromptInput({
+            turn: { promptText: "second turn" },
+            promptCount: 1,
+          }),
         );
 
         expect(lastTurnInput().promptText).toContain("<memory-index-delta>");
@@ -6458,7 +6607,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6481,13 +6630,18 @@ describe("executePromptForMachine", () => {
         );
         if (!created.ok) throw new Error(created.error.code);
         acceptTurnOnSend();
-        const first = makeExecutePromptInput({ promptText: "first turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "first turn" },
+        });
         registerRuntime(first);
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
 
         setNow("2026-07-05T00:02:00.000Z");
-        await executePromptForMachine(
-          makeExecutePromptInput({ promptText: "quiet turn", promptCount: 1 }),
+        await conversationActors.executePromptForMachine(
+          makeExecutePromptInput({
+            turn: { promptText: "quiet turn" },
+            promptCount: 1,
+          }),
         );
 
         const quietBlock = lastTurnInput()
@@ -6508,7 +6662,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6533,22 +6687,28 @@ describe("executePromptForMachine", () => {
         );
         if (!created.ok) throw new Error(created.error.code);
         acceptTurnOnSend();
-        const first = makeExecutePromptInput({ promptText: "first turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "first turn" },
+        });
         registerRuntime(first);
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
         expect(lastTurnInput().promptText).toContain("<memory-index>");
 
         setNow("2026-07-05T00:01:00.000Z");
         registerRuntime(
           makeExecutePromptInput({
-            promptText: "runtime restarted",
+            turn: {
+              promptText: "runtime restarted",
+            },
             promptCount: 1,
             backendRef: null,
           }),
         );
-        await executePromptForMachine(
+        await conversationActors.executePromptForMachine(
           makeExecutePromptInput({
-            promptText: "runtime restarted",
+            turn: {
+              promptText: "runtime restarted",
+            },
             promptCount: 1,
             backendRef: null,
           }),
@@ -6572,7 +6732,7 @@ describe("executePromptForMachine", () => {
         seedSessionRows(db);
         const { memoryService, provider, telemetry, setNow } =
           createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6602,17 +6762,21 @@ describe("executePromptForMachine", () => {
             return { ...defaultTurnResult, compacted: true };
           },
         );
-        const first = makeExecutePromptInput({ promptText: "compacting turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "compacting turn" },
+        });
         registerRuntime(first);
 
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
 
         expect((await telemetry.readIndexDelivery("conv-1")).state).toBeNull();
         setNow("2026-07-05T00:01:00.000Z");
         acceptTurnOnSend();
-        await executePromptForMachine(
+        await conversationActors.executePromptForMachine(
           makeExecutePromptInput({
-            promptText: "after compaction",
+            turn: {
+              promptText: "after compaction",
+            },
             promptCount: 1,
           }),
         );
@@ -6638,7 +6802,7 @@ describe("executePromptForMachine", () => {
         let externalTurnEvent:
           | ((event: ConversationBackendEvent) => void)
           | undefined;
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getConversationBackendFactory: vi.fn(() => ({
               ...mockFactory,
@@ -6670,10 +6834,12 @@ describe("executePromptForMachine", () => {
         );
         if (!created.ok) throw new Error(created.error.code);
         acceptTurnOnSend();
-        const first = makeExecutePromptInput({ promptText: "first user turn" });
+        const first = makeExecutePromptInput({
+          turn: { promptText: "first user turn" },
+        });
         registerRuntime(first);
 
-        await executePromptForMachine(first);
+        await conversationActors.executePromptForMachine(first);
 
         expect(
           (await telemetry.readIndexDelivery("conv-1")).state,
@@ -6695,9 +6861,11 @@ describe("executePromptForMachine", () => {
         });
 
         setNow("2026-07-05T00:01:00.000Z");
-        await executePromptForMachine(
+        await conversationActors.executePromptForMachine(
           makeExecutePromptInput({
-            promptText: "after external compaction",
+            turn: {
+              promptText: "after external compaction",
+            },
             promptCount: 1,
           }),
         );
@@ -6740,7 +6908,7 @@ describe("executePromptForMachine", () => {
           seedSessionRows(db);
           const { memoryService, provider, telemetry, setNow } =
             createRealMemoryDelivery(db);
-          setActorDeps(
+          conversationActors = createTestActorImplementations(
             createMockDeps({
               getMemoryIndexBlock: (request) =>
                 provider.getForConversation(request),
@@ -6771,36 +6939,47 @@ describe("executePromptForMachine", () => {
             },
           );
           const first = makeExecutePromptInput({
+            turn: {
+              promptText: "first turn",
+              modelSelection,
+            },
             agentBackend: backend,
-            modelSelection,
-            promptText: "first turn",
           });
           registerConversationRuntime(
             conversationRuntimeKey(
               first.projectPath,
-              first.sessionName,
-              first.conversationId,
+              conversationTargetStoreSessionName(first.target),
+              first.target.conversationId,
             ),
             {
+              managed: createManagedRuntimeFixture(
+                conversationRuntimeKey(
+                  first.projectPath,
+                  conversationTargetStoreSessionName(first.target),
+                  first.target.conversationId,
+                ),
+                createMockBackendRuntime({
+                  backend,
+                  modelSelection,
+                }),
+              ),
               abortController: new AbortController(),
-              backendRuntime: createMockBackendRuntime({
-                backend,
-                modelSelection,
-              }),
             },
           );
 
-          await executePromptForMachine(first);
+          await conversationActors.executePromptForMachine(first);
 
           expect(
             (await telemetry.readIndexDelivery("conv-1")).state,
           ).not.toBeNull();
           setNow("2026-07-05T00:01:00.000Z");
-          await executePromptForMachine(
+          await conversationActors.executePromptForMachine(
             makeExecutePromptInput({
+              turn: {
+                promptText: "second turn",
+                modelSelection,
+              },
               agentBackend: backend,
-              modelSelection,
-              promptText: "second turn",
               promptCount: 1,
             }),
           );
@@ -6870,7 +7049,7 @@ describe("executePromptForMachine", () => {
           createdAt: "2026-07-04T00:00:00.000Z",
         });
         const { memoryService, provider } = createRealMemoryDelivery(db);
-        setActorDeps(
+        conversationActors = createTestActorImplementations(
           createMockDeps({
             getMemoryIndexBlock: (request) =>
               provider.getForConversation(request),
@@ -6916,18 +7095,32 @@ describe("executePromptForMachine", () => {
           defaultTurnResult,
         );
         const input = makeExecutePromptInput({
-          conversationId: "conv-lane",
-          promptText: "lane turn",
+          turn: {
+            promptText: "lane turn",
+          },
+          target: targetFromStoreSessionName(
+            "repo",
+            "test-session",
+            "conv-lane",
+          ),
         });
         registerConversationRuntime(
           conversationRuntimeKey(
             input.projectPath,
-            input.sessionName,
-            input.conversationId,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
           ),
           {
+            managed: createManagedRuntimeFixture(
+              conversationRuntimeKey(
+                input.projectPath,
+                conversationTargetStoreSessionName(input.target),
+                input.target.conversationId,
+              ),
+              laneRuntime,
+            ),
             abortController: new AbortController(),
-            backendRuntime: laneRuntime,
+
             workflowContext: {
               executionId: WORKFLOW_EXECUTION_ID,
               contextId: "memory-index-delivery",
@@ -6935,7 +7128,7 @@ describe("executePromptForMachine", () => {
           },
         );
 
-        await executePromptForMachine(input);
+        await conversationActors.executePromptForMachine(input);
         const prompt = lastTurnInput().promptText;
         // A lane's own execution context is an active artifact too (memory
         // R10.1): it is the unit linked-only delivery is exact to.
@@ -6960,7 +7153,7 @@ describe("executePromptForMachine", () => {
 // ===========================================================================
 
 describe("executePromptForMachine alignment injection", () => {
-  let mockDeps: ActorImplementationDeps;
+  let mockDeps: ActorFixtureDependencies;
 
   const turnResult: ConversationBackendTurnResult = {
     backendRef: { backend: "claude", ref: "sdk-session-align" },
@@ -6999,22 +7192,29 @@ describe("executePromptForMachine alignment injection", () => {
     return createCall["sessionInstructions"] as string[];
   }
 
-  /** The `alignmentVersion` passed to the single createRuntime call. */
+  /** The charter version selected by the host for the created backend. */
   function capturedAlignmentVersion(): number | null {
-    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
-    const createCall = (
-      mockFactory.createRuntime.mock.calls as unknown[][]
-    )[0]![0] as Record<string, unknown>;
-    return createCall["alignmentVersion"] as number | null;
+    const call = mockFactory.createRuntime.mock.calls[0]?.[0];
+    if (!call) throw new Error("Runtime was not created");
+    const key = conversationRuntimeKey(
+      call.projectPath,
+      conversationTargetStoreSessionName(call.conversationTarget),
+      call.conversationId,
+    );
+    return (
+      getConversationRuntime(key)?.managed.configurationSnapshot
+        ?.alignmentVersion ?? null
+    );
   }
 
   function registerFreshRuntime(input: ExecutePromptInput): void {
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
   }
@@ -7028,7 +7228,6 @@ describe("executePromptForMachine alignment injection", () => {
   });
 
   afterEach(() => {
-    _resetActorDepsForTesting();
     _resetForTesting();
   });
 
@@ -7043,12 +7242,12 @@ describe("executePromptForMachine alignment injection", () => {
       getSessionState: vi.fn(async () => makeSessionState()),
       getActiveAlignmentInjection: vi.fn(async () => injection),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedSessionInstructions();
     expect(instructions).toContain(injection.text);
@@ -7056,7 +7255,7 @@ describe("executePromptForMachine alignment injection", () => {
     expect(capturedAlignmentVersion()).toBe(3);
     expect(mockDeps.getActiveAlignmentInjection).toHaveBeenCalledWith(
       input.projectPath,
-      input.sessionName,
+      conversationTargetStoreSessionName(input.target),
     );
   });
 
@@ -7065,12 +7264,12 @@ describe("executePromptForMachine alignment injection", () => {
       getSessionState: vi.fn(async () => makeSessionState()),
       getActiveAlignmentInjection: vi.fn(async () => null),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedSessionInstructions();
     expect(instructions).toContain(CC_CLI_INSTRUCTIONS);
@@ -7082,12 +7281,14 @@ describe("executePromptForMachine alignment injection", () => {
       getSessionState: vi.fn(async () => makeSessionState()),
       getActiveAlignmentInjection: vi.fn(async () => null),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const input = makeExecutePromptInput({ askUserQuestionsEnabled: true });
+    const input = makeExecutePromptInput({
+      turn: { askUserQuestionsEnabled: true },
+    });
     registerFreshRuntime(input);
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedSessionInstructions();
     expect(instructions).toContain(ASK_QUESTION_INSTRUCTIONS_ENABLED);
@@ -7099,12 +7300,12 @@ describe("executePromptForMachine alignment injection", () => {
       getSessionState: vi.fn(async () => makeSessionState()),
       getActiveAlignmentInjection: vi.fn(async () => null),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedSessionInstructions();
     expect(instructions).toContain(ASK_QUESTION_INSTRUCTIONS);
@@ -7119,12 +7320,12 @@ describe("executePromptForMachine alignment injection", () => {
         { filePath: "docs/spec.md", description: "the spec" },
       ]),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedSessionInstructions();
     expect(instructions.some((s) => s.includes("<objective>"))).toBe(false);
@@ -7167,7 +7368,7 @@ describe("executePromptForMachine alignment injection", () => {
       getActiveAlignmentVersion: vi.fn(async () => 4),
       mutateConversation,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const staleClose = vi.fn();
     const staleRuntime = createMockBackendRuntime({
@@ -7175,7 +7376,7 @@ describe("executePromptForMachine alignment injection", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      alignmentVersion: 3,
+
       close: staleClose,
     });
     const freshRuntime = createMockBackendRuntime({
@@ -7183,7 +7384,6 @@ describe("executePromptForMachine alignment injection", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      alignmentVersion: 4,
     });
     (freshRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
       turnResult,
@@ -7193,20 +7393,21 @@ describe("executePromptForMachine alignment injection", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key, staleRuntime, {
+        ...(await readInstructionConfiguration(mockDeps, input)),
+        alignmentVersion: 3,
+      }),
       abortController: new AbortController(),
-      backendRuntime: staleRuntime,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(staleClose).toHaveBeenCalledTimes(1);
-    expect(mockDeps.unregisterBackendRuntime).toHaveBeenCalledWith(
-      input.conversationId,
-    );
+    expect(getConversationRuntime(key)?.managed.backend).toBe(freshRuntime);
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
     expect(capturedAlignmentVersion()).toBe(4);
 
@@ -7223,7 +7424,7 @@ describe("executePromptForMachine alignment injection", () => {
       getActiveAlignmentInjection: vi.fn(async () => injection),
       getActiveAlignmentVersion: vi.fn(async () => 3),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const reusedClose = vi.fn();
     const reusedRuntime = createMockBackendRuntime({
@@ -7231,7 +7432,7 @@ describe("executePromptForMachine alignment injection", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      alignmentVersion: 3,
+
       close: reusedClose,
     });
     (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -7241,15 +7442,19 @@ describe("executePromptForMachine alignment injection", () => {
     const input = makeExecutePromptInput();
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(
+        key,
+        reusedRuntime,
+        await readInstructionConfiguration(mockDeps, input),
+      ),
       abortController: new AbortController(),
-      backendRuntime: reusedRuntime,
     });
 
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     expect(reusedClose).not.toHaveBeenCalled();
     expect(mockDeps.unregisterBackendRuntime).not.toHaveBeenCalled();
@@ -7293,7 +7498,6 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
   });
 
   afterEach(() => {
-    _resetActorDepsForTesting();
     _resetForTesting();
   });
 
@@ -7333,7 +7537,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
         getActiveAlignmentInjection: vi.fn(async () => advancedInjection),
         mutateConversation,
       });
-      setActorDeps(mockDeps);
+      conversationActors = createTestActorImplementations(mockDeps);
 
       // The continuity handle for the live session: the recreated runtime must
       // resume it via persistedRef so conversation history is not lost.
@@ -7355,7 +7559,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       const staleRuntime = createMockBackendRuntime({
         backend,
         modelSelection,
-        alignmentVersion: BAKED_VERSION,
+
         close: staleClose,
       });
 
@@ -7375,7 +7579,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       const freshRuntime = createMockBackendRuntime({
         backend,
         modelSelection,
-        alignmentVersion: ADVANCED_VERSION,
+
         sendTurn: freshSendTurn,
       });
       mockFactory.createRuntime.mockResolvedValue(freshRuntime);
@@ -7386,25 +7590,26 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       const input = makeExecutePromptInput({
         agentBackend: backend,
         backendRef: continuityRef,
-        modelSelection,
+        turn: { modelSelection },
       });
       const key = conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       );
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key, staleRuntime, {
+          ...(await readInstructionConfiguration(mockDeps, input)),
+          alignmentVersion: BAKED_VERSION,
+        }),
         abortController: new AbortController(),
-        backendRuntime: staleRuntime,
       });
 
-      const result = await executePromptForMachine(input);
+      const result = await conversationActors.executePromptForMachine(input);
 
       // Recreated, not reused.
       expect(staleClose).toHaveBeenCalledTimes(1);
-      expect(mockDeps.unregisterBackendRuntime).toHaveBeenCalledWith(
-        input.conversationId,
-      );
+      expect(staleClose).toHaveBeenCalledTimes(1);
       expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
 
       // Rebuilt instructions carry the NEW charter governing section + version.
@@ -7412,7 +7617,10 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
       expect(createInput["sessionInstructions"] as string[]).toContain(
         NEW_CHARTER_TEXT,
       );
-      expect(createInput["alignmentVersion"]).toBe(ADVANCED_VERSION);
+      expect(
+        getConversationRuntime(key)?.managed.configurationSnapshot
+          ?.alignmentVersion,
+      ).toBe(ADVANCED_VERSION);
 
       // Continuity: the recreated runtime resumes the same backend session.
       expect(createInput["persistedRef"]).toEqual(continuityRef);
@@ -7430,7 +7638,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
 // ===========================================================================
 
 describe("executePromptForMachine pending agent notices", () => {
-  let mockDeps: ActorImplementationDeps;
+  let mockDeps: ActorFixtureDependencies;
 
   function makeConversationState(
     overrides: Partial<ConversationState> = {},
@@ -7453,10 +7661,11 @@ describe("executePromptForMachine pending agent notices", () => {
   function registerFreshRuntime(input: ExecutePromptInput): void {
     const key = conversationRuntimeKey(
       input.projectPath,
-      input.sessionName,
-      input.conversationId,
+      conversationTargetStoreSessionName(input.target),
+      input.target.conversationId,
     );
     registerConversationRuntime(key, {
+      managed: createManagedRuntimeFixture(key),
       abortController: new AbortController(),
     });
   }
@@ -7487,7 +7696,6 @@ describe("executePromptForMachine pending agent notices", () => {
   });
 
   afterEach(() => {
-    _resetActorDepsForTesting();
     _resetForTesting();
   });
 
@@ -7499,11 +7707,11 @@ describe("executePromptForMachine pending agent notices", () => {
         }),
       ),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedCreateInput()[
       "sessionInstructions"
@@ -7533,11 +7741,11 @@ describe("executePromptForMachine pending agent notices", () => {
     mockDeps = createMockDeps({
       getConversation: vi.fn(async () => makeConversationState()),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const instructions = capturedCreateInput()[
       "sessionInstructions"
@@ -7550,11 +7758,11 @@ describe("executePromptForMachine pending agent notices", () => {
     mockDeps = createMockDeps({
       getConversation: vi.fn(async () => makeConversationState()),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeExecutePromptInput();
     registerFreshRuntime(input);
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const onBackgroundTasksLost = capturedCreateInput()[
       "onBackgroundTasksLost"
@@ -7603,11 +7811,11 @@ describe("executePromptForMachine pending agent notices", () => {
       getConversation: vi.fn(async () => makeConversationState()),
       getSessionState: vi.fn(async () => null),
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeProjectExecutePromptInput();
     registerFreshRuntime(input);
-    await executePromptForMachine(input);
+    await conversationActors.executePromptForMachine(input);
 
     const onBackgroundTasksLost = capturedCreateInput()[
       "onBackgroundTasksLost"
@@ -7658,13 +7866,13 @@ describe("executePromptForMachine pending agent notices", () => {
       mockDeps = createMockDeps({
         getConversation: vi.fn(async () => makeConversationState()),
       });
-      setActorDeps(mockDeps);
+      conversationActors = createTestActorImplementations(mockDeps);
     });
 
     it("records the backend's snapshot against the conversation", async () => {
       const input = makeExecutePromptInput();
       registerFreshRuntime(input);
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       backgroundActivityHandler()(snapshot("task-a"));
 
@@ -7676,7 +7884,7 @@ describe("executePromptForMachine pending agent notices", () => {
     it("clears the recorded snapshot when the backend session dies with tasks in flight", async () => {
       const input = makeExecutePromptInput();
       registerFreshRuntime(input);
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       backgroundActivityHandler()(snapshot("task-a"));
       (
@@ -7695,14 +7903,14 @@ describe("executePromptForMachine pending agent notices", () => {
     it("clears the recorded snapshot before a replacement runtime is created", async () => {
       const input = makeExecutePromptInput();
       registerFreshRuntime(input);
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
       backgroundActivityHandler()(snapshot("task-a"));
 
       // A second turn that recreates the runtime: the new subprocess starts
       // with an empty set, so the previous subprocess's snapshot must not
       // survive as a phantom "still running" indicator.
       registerFreshRuntime(input);
-      await executePromptForMachine(input);
+      await conversationActors.executePromptForMachine(input);
 
       expect(getBackgroundActivityChannel().get("conv-1")).toBe(null);
     });
@@ -7715,23 +7923,48 @@ describe("executePromptForMachine pending agent notices", () => {
 
 describe("runTaskRunTurnForMachine", () => {
   function makeRunTaskRunInput(
-    overrides: Partial<RunTaskRunInput> = {},
+    overrides: Omit<Partial<RunTaskRunInput>, "turn"> & {
+      turn?: Partial<RunTaskRunInput["turn"]>;
+    } = {},
   ): RunTaskRunInput {
-    return {
-      executionClass: "nongoverned-task" as const,
+    const input: RunTaskRunInput = {
       persistence: "durable",
       projectPath: "/projects/repo",
-      projectName: "repo",
-      sessionName: "test-session",
+      target: targetFromStoreSessionName("repo", "test-session", "conv-1"),
+
       worktreePath: "/projects/repo/.worktrees/test-session",
-      conversationId: "conv-1",
+
       agentBackend: "claude",
       backendRef: null,
-      promptText: "do the task",
-      modelSelection: null,
       onModelSelectionResolved: async () => {},
       ...overrides,
+      turn: {
+        kind: "task_run",
+        executionClass: "nongoverned-task" as const,
+        promptText: "do the task",
+        modelSelection: null,
+        backend: overrides.agentBackend ?? "claude",
+        ...overrides.turn,
+      },
     };
+    registerConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
+      ),
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
+    );
+    return input;
   }
 
   function makeMockTaskRunner(
@@ -7744,7 +7977,7 @@ describe("runTaskRunTurnForMachine", () => {
     };
   }
 
-  let mockDeps: ActorImplementationDeps;
+  let mockDeps: ActorFixtureDependencies;
 
   beforeEach(() => {
     _resetForTesting();
@@ -7752,7 +7985,6 @@ describe("runTaskRunTurnForMachine", () => {
   });
 
   afterEach(() => {
-    _resetActorDepsForTesting();
     _resetForTesting();
   });
 
@@ -7763,14 +7995,16 @@ describe("runTaskRunTurnForMachine", () => {
         throw new Error("refused tasks must not resolve a runner");
       }),
     });
-    setActorDeps(mockDeps);
-    const result = await runTaskRunTurnForMachine(
+    conversationActors = createTestActorImplementations(mockDeps);
+    const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
-        agentBackend: "cursor",
-        modelSelection: {
-          modelId: "composer-2.5",
-          parameters: { fast: "true" },
+        turn: {
+          modelSelection: {
+            modelId: "composer-2.5",
+            parameters: { fast: "true" },
+          },
         },
+        agentBackend: "cursor",
       }),
     );
     expect(result.failure).toMatchObject({
@@ -7782,11 +8016,7 @@ describe("runTaskRunTurnForMachine", () => {
     expect(mockDeps.getTaskRunner).not.toHaveBeenCalled();
   });
 
-  it("registers an abort controller for the turn and threads its signal into the runner, unregistering after", async () => {
-    // A workflow abort cancels task-run turns (validators) through the
-    // conversations abort-registry: the turn must register a controller under
-    // its conversation id, hand that controller's signal to the runner, and
-    // unregister once the run settles.
+  it("threads the admitted controller into the runner without replacing it", async () => {
     let runnerSignal: AbortSignal | undefined;
     const runner = makeMockTaskRunner(async (req) => {
       runnerSignal = req.signal;
@@ -7805,45 +8035,45 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    await runTaskRunTurnForMachine(makeRunTaskRunInput());
+    const input = makeRunTaskRunInput();
+    const admittedController = getConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
+      ),
+    )!.abortController;
+    await conversationActors.runTaskRunTurnForMachine(input);
 
-    const registerCalls = vi.mocked(mockDeps.registerAbortController).mock
-      .calls;
-    expect(registerCalls).toHaveLength(1);
-    const [registeredConversationId, registeredController] = registerCalls[0]!;
-    expect(registeredConversationId).toBe("conv-1");
-
-    expect(runnerSignal).toBeDefined();
+    expect(runnerSignal).toBe(admittedController.signal);
     expect(runnerSignal!.aborted).toBe(false);
-    registeredController.abort();
+    admittedController.abort();
     expect(runnerSignal!.aborted).toBe(true);
-
-    // Compare-and-delete contract: teardown unregisters the exact controller
-    // it registered so a stale finally can never strip a replacement turn's.
-    expect(mockDeps.unregisterAbortController).toHaveBeenCalledWith(
-      "conv-1",
-      registeredController,
-    );
   });
 
-  it("unregisters the abort controller when the agent call throws", async () => {
+  it("preserves the admitted controller when the agent call throws", async () => {
     mockDeps = createMockDeps({
       getTaskRunner: vi.fn(() => {
         throw new Error("no runner available");
       }),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
-
+    const input = makeRunTaskRunInput();
+    const runtime = getConversationRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
+      ),
+    )!;
+    const controller = runtime.abortController;
+    const result = await conversationActors.runTaskRunTurnForMachine(input);
     expect(result.error).toContain("no runner available");
-    expect(mockDeps.unregisterAbortController).toHaveBeenCalledWith(
-      "conv-1",
-      expect.any(AbortController),
-    );
+    expect(runtime.abortController).toBe(controller);
   });
 
   it("task_run WITHOUT outputFormat: persists exactly one assistant TranscriptMessage and forwards content blocks", async () => {
@@ -7861,10 +8091,10 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeRunTaskRunInput();
-    const result = await runTaskRunTurnForMachine(input);
+    const result = await conversationActors.runTaskRunTurnForMachine(input);
 
     const appendCalls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock
       .calls;
@@ -7913,20 +8143,22 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const input = makeRunTaskRunInput({
-      outputFormat: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: { result: { type: "string" } },
-          required: ["result"],
+      turn: {
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { result: { type: "string" } },
+            required: ["result"],
+          },
         },
       },
     });
 
-    const result = await runTaskRunTurnForMachine(input);
+    const result = await conversationActors.runTaskRunTurnForMachine(input);
 
     const appendCalls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock
       .calls;
@@ -7961,16 +8193,18 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(
+    const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
-        outputFormat: {
-          type: "json_schema",
-          schema: {
-            type: "object",
-            properties: { result: { type: "string" } },
-            required: ["result"],
+        turn: {
+          outputFormat: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: { result: { type: "string" } },
+              required: ["result"],
+            },
           },
         },
       }),
@@ -8000,16 +8234,18 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(
+    const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
-        outputFormat: {
-          type: "json_schema",
-          schema: {
-            type: "object",
-            properties: { result: { type: "string" } },
-            required: ["result"],
+        turn: {
+          outputFormat: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: { result: { type: "string" } },
+              required: ["result"],
+            },
           },
         },
       }),
@@ -8042,22 +8278,24 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(
+    const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
-        outputFormat: {
-          type: "json_schema",
-          schema: {
-            type: "object",
-            properties: {
-              message: { type: "string" },
-              resolutionContext: { type: "string" },
+        turn: {
+          outputFormat: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: {
+                message: { type: "string" },
+                resolutionContext: { type: "string" },
+              },
+              required: ["message", "resolutionContext"],
             },
-            required: ["message", "resolutionContext"],
           },
+          structuredOutputTextField: "message",
         },
-        structuredOutputTextField: "message",
       }),
     );
 
@@ -8120,10 +8358,12 @@ describe("runTaskRunTurnForMachine", () => {
       executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
         typeof vi.fn
       >,
-    } as unknown as Partial<ActorImplementationDeps>);
-    setActorDeps(mockDeps);
+    } as unknown as Partial<ActorFixtureDependencies>);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+    const result = await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput(),
+    );
 
     expect(result.aborted).toBe(true);
     expect(result.error).toBe("user aborted");
@@ -8182,10 +8422,12 @@ describe("runTaskRunTurnForMachine", () => {
       executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
         typeof vi.fn
       >,
-    } as unknown as Partial<ActorImplementationDeps>);
-    setActorDeps(mockDeps);
+    } as unknown as Partial<ActorFixtureDependencies>);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+    const result = await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput(),
+    );
 
     expect(result.failure).toEqual({
       kind: "session_died",
@@ -8246,10 +8488,12 @@ describe("runTaskRunTurnForMachine", () => {
       executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
         typeof vi.fn
       >,
-    } as unknown as Partial<ActorImplementationDeps>);
-    setActorDeps(mockDeps);
+    } as unknown as Partial<ActorFixtureDependencies>);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+    const result = await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput(),
+    );
 
     expect(result.error).toBe("backend error");
     expect(result.transcript).toEqual(transcript);
@@ -8273,7 +8517,7 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     const origin = {
       source: "workflow" as const,
@@ -8284,7 +8528,9 @@ describe("runTaskRunTurnForMachine", () => {
       },
     };
 
-    await runTaskRunTurnForMachine(makeRunTaskRunInput({ origin }));
+    await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ turn: { origin } }),
+    );
 
     const appendCalls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock
       .calls;
@@ -8310,10 +8556,12 @@ describe("runTaskRunTurnForMachine", () => {
       executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
         typeof vi.fn
       >,
-    } as unknown as Partial<ActorImplementationDeps>);
-    setActorDeps(mockDeps);
+    } as unknown as Partial<ActorFixtureDependencies>);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    await runTaskRunTurnForMachine(makeRunTaskRunInput({ promptText: "go" }));
+    await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ turn: { promptText: "go" } }),
+    );
 
     expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
     const [request, facadeDeps] = executeAgentCallSpy.mock.calls[0]!;
@@ -8378,7 +8626,7 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
     let acknowledgeSelection!: () => void;
     const onModelSelectionResolved = vi.fn(
@@ -8387,7 +8635,7 @@ describe("runTaskRunTurnForMachine", () => {
           acknowledgeSelection = resolve;
         }),
     );
-    const execution = runTaskRunTurnForMachine(
+    const execution = conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
         agentBackend: "codex",
         onModelSelectionResolved,
@@ -8447,12 +8695,14 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    await runTaskRunTurnForMachine(
+    await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
+        turn: {
+          modelSelection: aliasSelection,
+        },
         agentBackend: "codex",
-        modelSelection: aliasSelection,
         onModelSelectionResolved,
       }),
     );
@@ -8497,12 +8747,14 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(
+    const result = await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
+        turn: {
+          modelSelection: invalidSelection,
+        },
         agentBackend: "codex",
-        modelSelection: invalidSelection,
         onModelSelectionResolved,
       }),
     );
@@ -8530,16 +8782,18 @@ describe("runTaskRunTurnForMachine", () => {
       getTaskRunner: vi.fn(() => runner),
       executeAgentCall: defaultExecuteAgentCall,
     });
-    setActorDeps(mockDeps);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    await runTaskRunTurnForMachine(
+    await conversationActors.runTaskRunTurnForMachine(
       makeRunTaskRunInput({
-        agentBackend: "codex",
-        modelSelection: {
-          modelId: "gpt-5.5",
-          parameters: { fast: "false", reasoning: "low" },
+        turn: {
+          modelSelection: {
+            modelId: "gpt-5.5",
+            parameters: { fast: "false", reasoning: "low" },
+          },
+          timeoutMs: 12_000,
         },
-        timeoutMs: 12_000,
+        agentBackend: "codex",
       }),
     );
 
@@ -8577,11 +8831,11 @@ describe("runTaskRunTurnForMachine", () => {
       executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
         typeof vi.fn
       >,
-    } as unknown as Partial<ActorImplementationDeps>);
-    setActorDeps(mockDeps);
+    } as unknown as Partial<ActorFixtureDependencies>);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    await runTaskRunTurnForMachine(
-      makeRunTaskRunInput({ promptText: "derive ticket fields" }),
+    await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ turn: { promptText: "derive ticket fields" } }),
     );
 
     expect(getLiveTicketBlock).toHaveBeenCalledWith(
@@ -8621,11 +8875,11 @@ describe("runTaskRunTurnForMachine", () => {
       executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
         typeof vi.fn
       >,
-    } as unknown as Partial<ActorImplementationDeps>);
-    setActorDeps(mockDeps);
+    } as unknown as Partial<ActorFixtureDependencies>);
+    conversationActors = createTestActorImplementations(mockDeps);
 
-    const result = await runTaskRunTurnForMachine(
-      makeRunTaskRunInput({ promptText: "derive ticket fields" }),
+    const result = await conversationActors.runTaskRunTurnForMachine(
+      makeRunTaskRunInput({ turn: { promptText: "derive ticket fields" } }),
     );
 
     expect(result.error).toBeNull();

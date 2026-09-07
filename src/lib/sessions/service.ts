@@ -42,7 +42,7 @@ import { stopAllForSession } from "../dev-server/registry";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { executeOptimisticWorkflow } from "../shared/optimistic";
-import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import { stopConversationActor } from "@/lib/workflows/conversation/manager";
 import {
   getTaskRunner as registryGetTaskRunner,
   prepareManagedSkillsCheckout as registryPrepareManagedSkillsCheckout,
@@ -127,6 +127,12 @@ export interface DeleteProjectResult {
 }
 
 export interface SessionDeps {
+  stopConversationActor(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    reason: string,
+  ): Promise<void>;
   existsSync: typeof existsSync;
   rm: typeof rm;
   execFileAsync: typeof execFileAsync;
@@ -268,6 +274,7 @@ function getAlignmentService() {
 }
 
 const defaultSessionDeps: SessionDeps = {
+  stopConversationActor,
   existsSync,
   rm,
   execFileAsync,
@@ -937,11 +944,12 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     // Awaited before the worktree goes away: a live backend worker holds the
     // worktree as its cwd, so removal has to follow verified teardown.
     for (const conv of session.conversations) {
-      try {
-        await getRuntime(conv.id)?.close();
-      } catch {
-        // best-effort: don't block deletion
-      }
+      await deps.stopConversationActor(
+        projectPath,
+        sessionName,
+        conv.id,
+        "session_deletion",
+      );
     }
 
     try {

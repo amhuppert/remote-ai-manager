@@ -175,7 +175,7 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
       deliver() {
         throw new Error("not used by resolveLaneAskPermission");
       },
-      sendConversationEvent() {
+      async clearConversationQuestion() {
         return true;
       },
       now: () => NOW,
@@ -406,7 +406,11 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       publishUserInputPending: publisher.publishUserInputPending,
       publishUserInputResolved: publisher.publishUserInputResolved,
       deliver: publisher.deliver,
-      sendConversationEvent: (_projectPath, _sessionName, conversationId) => {
+      clearConversationQuestion: async (
+        _projectPath,
+        _sessionName,
+        conversationId,
+      ) => {
         cleared.push({ conversationId });
         return true;
       },

@@ -182,7 +182,7 @@ export class CodexConversationRuntime
   // Resolved once: the output format is fixed for the runtime's lifetime, so
   // every turn (including a repair turn) dispatches the contract the same way.
   private readonly structuredOutputDispatch: CodexStructuredOutputDispatch | null;
-  readonly alignmentVersion: number | null;
+
   /** The write envelope this runtime's turns execute under; undefined when unrestricted. */
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
@@ -265,7 +265,7 @@ export class CodexConversationRuntime
     this.structuredOutputDispatch = input.outputFormat
       ? resolveCodexStructuredOutput(input.outputFormat.schema)
       : null;
-    this.alignmentVersion = input.alignmentVersion ?? null;
+
     this.fsWritePolicy = input.fsWritePolicy;
     this.deps = deps;
 

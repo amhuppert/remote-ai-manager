@@ -1,3 +1,4 @@
+import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { commandRequestRefusal } from "@/lib/commands/route-admission";
 import { BackendAdmissionError } from "@/lib/agent-backends/execution-admission";
 /**
@@ -15,7 +16,6 @@ import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/pro
 import {
   BackendMismatchError,
   ModelSelectionValidationError,
-  type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
 import {

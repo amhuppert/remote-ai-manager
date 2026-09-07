@@ -53,7 +53,10 @@ import type {
   WorkflowValidatorIssue,
   WorkflowValidatorPlanDefect,
 } from "@/lib/workflow-graph/definition-schemas";
-import { isQuerySlotAdmissionTimeout } from "@/lib/shared/query-semaphore";
+import {
+  adaptValidatorTaskResult,
+  classifyGraphDispatchFailure,
+} from "./conversation-turn-result";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
@@ -76,7 +79,7 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { LaneConversationPendingState } from "./user-input-gate";
-import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
+
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   GraphWorkflowContextValidatorInput,
@@ -93,15 +96,16 @@ import type {
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import {
   composeValidatorLaneWriteEnvelope as defaultComposeValidatorLaneWriteEnvelope,
   type ComposeValidatorLaneWriteEnvelopeInput,
   type ValidatorLaneWriteEnvelope,
 } from "@/lib/workflow-graph/lane-write-policy";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
-import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { getConversation as defaultGetConversation } from "@/lib/state-store";
 import {
@@ -562,24 +566,6 @@ export type ValidatorOutcome =
       engine: AgentBackendId;
     };
 
-/**
- * The outcome for a dispatch that failed, classified by whether it was ever
- * admitted. Both cases arrive here as opaque failure text, so the classification
- * has to happen at every site that turns one into an outcome — otherwise queue
- * pressure reaches the cohort disguised as a provider failure.
- */
-function classifyDispatchFailure(
-  message: string,
-  engine: AgentBackendId,
-): Extract<
-  ValidatorOutcome,
-  { kind: "infra_error" } | { kind: "queue_admission_timeout" }
-> {
-  return isQuerySlotAdmissionTimeout(message)
-    ? { kind: "queue_admission_timeout", message, engine }
-    : { kind: "infra_error", reason: "exception", message, engine };
-}
-
 function validateIssueTaskIds(
   issues: WorkflowValidatorIssue[],
   allowedTaskIds: Set<string> | null,
@@ -1023,23 +1009,10 @@ function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
  * backend-agnostic and is the single place that maps raw text plus optional
  * structured output into a `ValidatorOutcome`.
  */
-interface ValidatorTaskResult {
-  text: string | null;
-  structuredOutput?: unknown;
-  transcript?: AgentTranscriptEntry[];
-  error: string | null;
-  timedOut: boolean;
-  backendRef: AgentSessionRef | null;
-  continuationDisposition: TaskRunResult["continuationDisposition"];
-  usage: {
-    inputTokens: number | null;
-    outputTokens: number | null;
-    cachedInputTokens: number | null;
-    costUsd: number | null;
-  } | null;
-}
+type ValidatorTaskResult = ReturnType<typeof adaptValidatorTaskResult>;
 
 interface ValidatorTaskInvocation {
+  strategy: "task" | "conversation";
   prompt: string;
   backend: AgentBackendId;
   workingDirectory: string;
@@ -1087,89 +1060,35 @@ function syntheticValidatorConversationId(
   return `__validator__:${executionId}:${contextId}:${lane}:${assignmentId}:${backend}`;
 }
 
-function buildValidatorActorInput(
+function buildValidatorBinding(
   invocation: ValidatorTaskInvocation,
   projectName: string,
-): EnsureActorInputData {
-  return {
-    // A validator lane runs against a session worktree, not the project root.
-    conversationScope: "session",
-    projectName,
-    sessionWorktreePath: invocation.workingDirectory,
-    // A synthetic validator lane has no persisted ConversationState record, so
-    // it runs the ephemeral persistence adapter — every durable side effect is
-    // inert (previously these turns logged `Conversation not found in session`
-    // on every syncDerived / mark-read / mark-unread transition).
-    persistence: "ephemeral",
-    conversation: {
-      createdAt: new Date().toISOString(),
-      forkedFrom: null,
-      role: null,
-      transcriptPath: null,
-      agentBackend: invocation.backend,
-      backendRef: invocation.resumeRef ?? null,
-      promptCount: 0,
-      debugMode: null,
-    },
+): ConversationBinding {
+  // A validator lane runs against a session worktree, not the project root.
+  const address = {
+    projectPath: invocation.projectPath,
+    target: sessionConversationTarget(
+      projectName,
+      invocation.sessionName,
+      invocation.conversationId,
+    ),
   };
-}
-
-function extractValidatorUsage(
-  result: TaskRunResult,
-): ValidatorTaskResult["usage"] {
-  const { inputTokens, outputTokens, cachedInputTokens, costUsd } =
-    result.usage;
-  if (
-    inputTokens === null &&
-    outputTokens === null &&
-    cachedInputTokens === null
-  ) {
-    return null;
-  }
-  return { inputTokens, outputTokens, cachedInputTokens, costUsd };
-}
-
-function taskRunResultToValidatorTaskResult(
-  result: TaskRunResult,
-): ValidatorTaskResult {
-  const usage = extractValidatorUsage(result);
-  if (result.kind === "error") {
+  if (invocation.strategy === "conversation")
     return {
-      text: null,
-      ...(result.transcript !== undefined
-        ? { transcript: result.transcript }
-        : {}),
-      error: result.error,
-      timedOut: /timed out after/i.test(result.error),
-      backendRef: result.backendRef ?? null,
-      continuationDisposition: result.continuationDisposition,
-      usage,
+      kind: "durable",
+      address,
+      worktreePath: invocation.workingDirectory,
     };
-  }
-  if (result.kind === "structured") {
-    return {
-      text: result.text.length > 0 ? result.text : null,
-      structuredOutput: result.structuredOutput,
-      ...(result.transcript !== undefined
-        ? { transcript: result.transcript }
-        : {}),
-      error: null,
-      timedOut: false,
-      backendRef: result.backendRef ?? null,
-      continuationDisposition: result.continuationDisposition,
-      usage,
-    };
-  }
+  // A synthetic validator lane has no persisted ConversationState record, so
+  // it runs the ephemeral persistence adapter — every durable side effect is
+  // inert.
   return {
-    text: result.text,
-    ...(result.transcript !== undefined
-      ? { transcript: result.transcript }
-      : {}),
-    error: null,
-    timedOut: false,
-    backendRef: result.backendRef ?? null,
-    continuationDisposition: result.continuationDisposition,
-    usage,
+    kind: "ephemeral",
+    address,
+    worktreePath: invocation.workingDirectory,
+    backend: invocation.backend,
+    role: null,
+    transcriptPath: null,
   };
 }
 
@@ -1259,12 +1178,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     invocation: ValidatorTaskInvocation,
   ): Promise<ValidatorTaskResult> {
     const projectName = getProjectDisplayName(invocation.projectPath);
-    const actorInput = buildValidatorActorInput(invocation, projectName);
+    const binding = buildValidatorBinding(invocation, projectName);
 
     const result = await executeWorkflowTaskRun({
-      projectPath: invocation.projectPath,
-      sessionName: invocation.sessionName,
-      conversationId: invocation.conversationId,
+      binding,
       kind: "task_run",
       executionClass: "governed-execution",
       executionProfile: "standard",
@@ -1277,7 +1194,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       },
       timeoutMs: invocation.timeoutMs,
       modelSelection: invocation.modelSelection,
-      actorInput,
+      ...(invocation.strategy === "task"
+        ? { resumeRef: invocation.resumeRef }
+        : {}),
       origin: {
         source: "workflow",
         workflow: {
@@ -1288,7 +1207,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       },
     });
 
-    return taskRunResultToValidatorTaskResult(result);
+    return adaptValidatorTaskResult(result);
   }
 
   /**
@@ -1454,6 +1373,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         backend,
       );
       const taskResult = await dispatchValidatorTurn({
+        strategy: "task",
         prompt,
         systemInstructions,
         backend,
@@ -1493,8 +1413,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       }
 
       if (taskResult.error) {
-        const outcome: ValidatorOutcome = classifyDispatchFailure(
-          taskResult.error,
+        const outcome: ValidatorOutcome = classifyGraphDispatchFailure(
+          taskResult,
           backend,
         );
         execLogger?.validation(contextId, "validator.result_parsed", {
@@ -1605,6 +1525,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       }));
     }
     const taskResult = await dispatchValidatorTurn({
+      strategy: resolved.strategy,
       prompt,
       systemInstructions,
       backend,
@@ -1670,7 +1591,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const text = taskResult.text ?? "";
     const { result: parsed, parsePath }: ParsedValidatorResponse = runnerError
       ? {
-          result: classifyDispatchFailure(runnerError, backend),
+          result: classifyGraphDispatchFailure(taskResult, backend),
           parsePath: "runner_error",
         }
       : parseValidatorResponse({
@@ -2231,7 +2152,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       });
 
       return {
-        result: classifyDispatchFailure(errorMessage, validatorPlan.backend),
+        result: classifyGraphDispatchFailure(
+          error instanceof Error ? error : new Error(errorMessage),
+          validatorPlan.backend,
+        ),
         metadata: buildNoServiceMetadata(),
       };
     }

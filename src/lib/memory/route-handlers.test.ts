@@ -1,3 +1,4 @@
+import { runtimeConfigurationFixture } from "@/lib/workflows/conversation/testing/runtime-configuration-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -870,18 +871,16 @@ describe("memory routes — index preview", () => {
               hasResumeHandle: false,
             };
           },
-          getRuntime() {
+          getRuntimeConfiguration() {
             return {
+              ...runtimeConfigurationFixture(),
               status: "alive",
               modelSelection: { modelId: "claude-opus-5", parameters: {} },
               alignmentVersion: 2,
             };
           },
-          async getSessionCreationMode() {
-            return "normal";
-          },
-          async getActiveAlignmentVersion() {
-            return active;
+          async readDesiredRuntimeConfiguration(_id, current) {
+            return { ...current, alignmentVersion: active };
           },
         },
         conversationId,

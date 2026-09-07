@@ -12,6 +12,7 @@ export interface ExternalTurnHandlerIdentity {
 }
 
 export interface ExternalTurnHandlerRuntime {
+  isCurrent?(): boolean;
   sendToMachine(event: ConversationEvent): void;
 }
 
@@ -40,33 +41,44 @@ export interface ExternalTurnHandlerDeps {
  * records `transcript_entry` envelopes verbatim and forwards the turn
  * lifecycle to the machine — it never reads a provider payload.
  */
+export interface ExternalTurnHandler {
+  (event: ConversationBackendEvent): void;
+  drain(): Promise<void>;
+  stopAndDrain(): Promise<void>;
+}
+
 export function createExternalTurnHandler(
   identity: ExternalTurnHandlerIdentity,
   runtime: ExternalTurnHandlerRuntime,
   deps: ExternalTurnHandlerDeps,
-): (event: ConversationBackendEvent) => void {
+): ExternalTurnHandler {
   // One chain serializes every handler action — frame appends AND machine
   // sends — so frames land in the JSONL in emission order, machine completion
   // is observed only after all of the turn's frame appends settle, and a
   // following turn's start can never overtake a completion still waiting on
   // slow appends. The handler itself cannot await, so it queues.
   let chain: Promise<void> = Promise.resolve();
+  let stopped = false;
+  const effects = new Set<Promise<unknown>>();
 
   const enqueue = (
     step: () => void | Promise<void>,
     failureEvent: string,
     context: Record<string, unknown> = {},
   ): void => {
-    chain = chain.then(step).catch((err) => {
-      logger.warn(failureEvent, {
-        conversationId: identity.conversationId,
-        ...context,
-        error: getErrorMessage(err),
+    chain = chain
+      .then(() => (runtime.isCurrent?.() === false ? undefined : step()))
+      .catch((err) => {
+        logger.warn(failureEvent, {
+          conversationId: identity.conversationId,
+          ...context,
+          error: getErrorMessage(err),
+        });
       });
-    });
   };
 
-  return (event: ConversationBackendEvent): void => {
+  const handle = (event: ConversationBackendEvent): void => {
+    if (stopped || runtime.isCurrent?.() === false) return;
     switch (event.type) {
       case "external_turn_started": {
         enqueue(
@@ -118,12 +130,14 @@ export function createExternalTurnHandler(
             // the turn's appends settled and completion was sent, but a slow
             // capability apply must not delay the next turn's frames.
             if (deps.applyCapabilityWhenIdle) {
-              void deps.applyCapabilityWhenIdle().catch((err) => {
+              const effect = deps.applyCapabilityWhenIdle().catch((err) => {
                 logger.warn("external_turn.capability_idle_drain_failed", {
                   conversationId: identity.conversationId,
                   error: getErrorMessage(err),
                 });
               });
+              effects.add(effect);
+              void effect.finally(() => effects.delete(effect));
             }
           },
           "external_turn.machine_send_failed",
@@ -136,4 +150,15 @@ export function createExternalTurnHandler(
         return;
     }
   };
+  const drain = async () => {
+    await chain;
+    await Promise.allSettled(effects);
+  };
+  return Object.assign(handle, {
+    drain,
+    stopAndDrain: async () => {
+      stopped = true;
+      await drain();
+    },
+  });
 }

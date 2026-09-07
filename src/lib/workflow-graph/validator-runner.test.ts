@@ -26,11 +26,9 @@ import {
   splitQuestionAnswersBlock,
 } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import { QUERY_SLOT_ADMISSION_TIMEOUT_CODE } from "@/lib/shared/query-semaphore";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
@@ -2083,8 +2081,9 @@ describe("createValidatorRunner", () => {
 
     expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        actorInput: expect.objectContaining({
-          conversation: expect.objectContaining({ agentBackend: "codex" }),
+        binding: expect.objectContaining({
+          kind: "ephemeral",
+          backend: "codex",
         }),
         modelSelection: {
           modelId: "gpt-5.4",
@@ -2126,8 +2125,14 @@ describe("createValidatorRunner", () => {
 
     expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        conversationId: expect.stringMatching(/^__validator__:/),
-        actorInput: expect.objectContaining({ persistence: "ephemeral" }),
+        binding: expect.objectContaining({
+          kind: "ephemeral",
+          address: expect.objectContaining({
+            target: expect.objectContaining({
+              conversationId: expect.stringMatching(/^__validator__:/),
+            }),
+          }),
+        }),
       }),
     );
   });
@@ -2196,9 +2201,12 @@ describe("createValidatorRunner", () => {
 
       expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
         expect.objectContaining({
-          actorInput: expect.objectContaining({
-            conversation: expect.objectContaining({
-              agentBackend: TESTFAKE_BACKEND_ID,
+          binding: expect.objectContaining({
+            kind: "durable",
+            address: expect.objectContaining({
+              target: expect.objectContaining({
+                conversationId: "testfake-conversation",
+              }),
             }),
           }),
         }),
@@ -2728,11 +2736,14 @@ describe("createValidatorRunner", () => {
     // The specialist never started: the global query semaphore never admitted
     // it. Reporting that as `infra_error` would make the cohort spend one of the
     // specialist's three attempts on a dispatch that never reached a provider.
-    const executeWorkflowTaskRun = vi.fn(async () =>
-      errorTaskRun(
-        `Query semaphore timeout after 300000ms waiting for slot (label: prompt:session-1) [${QUERY_SLOT_ADMISSION_TIMEOUT_CODE}]`,
-      ),
-    );
+    const executeWorkflowTaskRun = vi.fn(async () => ({
+      ...errorTaskRun("Capacity was unavailable"),
+      notStarted: {
+        kind: "not_started" as const,
+        reason: "query_slot_timeout" as const,
+        message: "Capacity was unavailable",
+      },
+    }));
     const runner = createValidatorRunner({
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
@@ -3200,7 +3211,7 @@ describe("context validator continuity runtime integration", () => {
     // routes through executeWorkflowTaskRun with the same conversationId across
     // calls so the actor can persist backendRef and resume the session.
     const conversationIds = executeWorkflowTaskRun.mock.calls.map(
-      ([input]) => input.conversationId,
+      ([input]) => input.binding.address.target.conversationId,
     );
     expect(conversationIds[0]).toBeDefined();
     expect(conversationIds[0]).toBe(conversationIds[1]);
@@ -3231,7 +3242,7 @@ describe("context validator continuity runtime integration", () => {
       async (input: ExecuteWorkflowTaskRunInput) => {
         laneAtDispatch =
           repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY] ?? null;
-        dispatchedConversationId = input.conversationId;
+        dispatchedConversationId = input.binding.address.target.conversationId;
         return textTaskRun(passResponseJson, {
           backendRef: { backend: "claude", ref: "sdk-session-1" },
         });
@@ -3296,7 +3307,7 @@ describe("context validator continuity runtime integration", () => {
       async (input: ExecuteWorkflowTaskRunInput) => {
         laneAtDispatch =
           repo.read().laneStates["context-plan"]?.[VALIDATOR_LANE_KEY] ?? null;
-        dispatchedConversationId = input.conversationId;
+        dispatchedConversationId = input.binding.address.target.conversationId;
         return textTaskRun(passResponseJson, {
           backendRef: { backend: "codex", ref: "thread-1" },
         });
@@ -3844,8 +3855,8 @@ describe("validator-runner executionTarget override", () => {
     // worktreePath flows through to the actor input that drives the runner.
     expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        actorInput: expect.objectContaining({
-          sessionWorktreePath: laneWorktreeDir,
+        binding: expect.objectContaining({
+          worktreePath: laneWorktreeDir,
         }),
       }),
     );
@@ -3887,8 +3898,8 @@ describe("validator-runner executionTarget override", () => {
     expect(resolveWorktreePath).toHaveBeenCalledWith("/repo", "session-1");
     expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        actorInput: expect.objectContaining({
-          sessionWorktreePath: sessionWorktreeDir,
+        binding: expect.objectContaining({
+          worktreePath: sessionWorktreeDir,
         }),
       }),
     );

@@ -85,7 +85,7 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
     status: "alive",
     modelSelection: CLAUDE_SELECTION,
     outputFormat: undefined,
-    alignmentVersion: null,
+
     async sendTurn(input) {
       sendTurnCalls.value += 1;
       captured.value = input;
@@ -362,7 +362,7 @@ describe("dispatchConversationTurn", () => {
       status: "alive",
       modelSelection: CLAUDE_SELECTION,
       outputFormat: undefined,
-      alignmentVersion: null,
+
       async sendTurn() {
         throw new Error("network down");
       },

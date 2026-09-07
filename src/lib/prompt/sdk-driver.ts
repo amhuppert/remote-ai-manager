@@ -1,3 +1,6 @@
+import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import { z } from "zod";
+import { conversationTurnRequestSchema } from "@/lib/workflows/conversation/turn-spec";
 import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-schemas";
 /**
  * Prompt execution facade — delegates to the conversation lifecycle module.
@@ -10,17 +13,11 @@ import { queuedMessageNeedsReview } from "@/lib/conversations/message-queue-sche
 
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import type {
-  BackgroundWaitSummary,
   ConversationBackendFactory,
   WorkflowLaneIdentity,
 } from "@/lib/agent-backends/conversation";
-import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
-import type {
-  DocumentFeedbackPayload,
-  NotepadFeedbackPayload,
-} from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
@@ -32,10 +29,12 @@ import {
 import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflow-graph/collaboration-schemas";
 import type { CollaborationAgentTwoRequest } from "@/lib/workflows/collaboration/types";
 import type {
-  EnsureActorInputData,
-  ExecuteConversationTurnInput,
-  ConversationTurnExecution,
-} from "@/lib/workflows/conversation/manager";
+  ConversationBinding,
+  ConversationTurnSubmission,
+  TurnAdmission,
+} from "@/lib/workflows/conversation/turn-spec";
+import { toPromptStreamResult } from "@/lib/workflows/conversation/turn-result";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
 import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
@@ -71,160 +70,6 @@ const logger = createLogger("prompt");
 /** Appended to the system prompt when session.tddEnabled is true. */
 export const TDD_INSTRUCTIONS =
   "<methodology>Use red-green-refactor TDD. Write a failing behavior-level test first and run it to confirm it fails for the right reason — the assertion on the missing behavior, not an import error or broken setup; scaffold the minimal module skeleton first when the test could only fail on a missing import. Make it pass with the minimum code, then refactor with tests green. Bug fixes always start from a failing reproduction test. Skip test-first only where there is no behavior to pin — pure scaffolding, type or config changes, mechanical renames or wiring, throwaway spikes, visual-only UI tweaks — and say so when you skip. In the TDD loop, run the registered test command scoped explicitly to the single test file you are iterating on (e.g. `cctl validate run test --queue-if-busy -- path/to/file.test.ts`) — a file path, never a directory path. Wider runs such as `--scope changed` remain available but are not part of the TDD loop; use them strategically at checkpoints.</methodology>";
-
-/**
- * Appended to the system prompt when a conversation is in debug mode.
- * Placeholders are replaced at runtime.
- *
- * NOTE: This prompt instructs the agent to produce two machine-readable
- * artifacts as side effects rather than as the agent's text response:
- *   1. `.debug/instrumentation.json` — written via the filesystem `Write`
- *      tool. Validated post-write by `debugInstrumentationManifestSchema`
- *      (from `@/lib/debug-log/schemas`) in `src/lib/debug-log.ts:readManifest`.
- *   2. Per-probe JSON entries POSTed to `{DEBUG_LOG_URL}` from the
- *      instrumented app at runtime. Validated per-request by
- *      `debugLogEntrySchema.safeParse` in `src/app/api/debug-logs/route.ts`.
- *
- * Neither contract uses the turn's `outputFormat` because neither artifact
- * travels through the agent's text response — the manifest is a file the agent
- * writes during the same turn, and the log entries are HTTP requests the
- * instrumented code makes at user-reproduction time. Structured-output
- * transport cannot constrain side effects of tool calls; instead, both
- * contracts are enforced at consumption via Zod schemas in
- * `@/lib/debug-log/schemas`.
- *
- * The agent's actual *text* response carries the per-phase `outputFormat`
- * derived from `debug-schemas.ts` through the shared backend pipeline (see the
- * conversation lifecycle module).
- */
-export const DEBUG_MODE_INSTRUCTIONS = `<debug-mode>
-You are in Debug Mode. Debug with runtime evidence, not static guesswork.
-
-## Workflow
-1. **Hypothesize + Instrument (same turn)**: Form 3-5 plausible root-cause hypotheses labeled H1, H2, etc., and immediately add the minimum instrumentation needed to test them in the same response. Explain what each hypothesis predicts and where you instrumented. Do not stop after listing hypotheses.
-2. **Wait for Reproduction**: Return clear ordered reproduction steps as the \`reproductionSteps\` array in your structured JSON output. The UI renders the steps deterministically from that field. Do not continue until the user says reproduction is complete.
-3. **Analyze Evidence (same turn fix or re-instrument)**: Read \`{DEBUG_LOG_FILE_PATH}\` and classify each hypothesis as supported, refuted, or inconclusive. Then choose ONE outcome based on whether the evidence is sufficient to justify a fix:
-   - **\`fix_applied\`**: when at least one hypothesis is well-supported and the rest are refuted or inconclusive, implement the minimal fix in this same turn and return verification steps.
-   - **\`more_instrumentation\`**: when evidence is inconclusive or insufficient, extend the hypothesis set, add fresh targeted instrumentation in the same turn, and return reproduction steps the user should re-execute.
-4. **Verify**: Ask the user to verify the applied fix.
-5. **Clean Up**: After the user clicks "Mark Fixed", remove all instrumentation you added.
-
-## Debug Log API
-POST logs to: {DEBUG_LOG_URL}
-
-Each log entry must be a JSON object with:
-- \`timestamp\`: ISO 8601 string
-- \`hypothesisId\`: \`"H1"\`, \`"H2"\`, etc.
-- \`location\`: \`"file/path.ts:lineNumber"\`
-- \`message\`: human-readable description
-- \`data\`: object with the runtime values needed to test the hypothesis
-
-Probes must NOT set the \`X-CC-Debug-Log: 1\` header. The receiver drops every request carrying that header as a self-instrumentation signal, so adding it from a normal probe silently discards every entry. The header is reserved for one narrow case: when the project being debugged is Command Center itself and your probe sits inside CC's own debug-log code path. In that scenario only, set the header (and have any \`fetch\` wrapper skip requests carrying it) so the receiver short-circuits the recursive POST. If you are not debugging CC, omit the header entirely.
-
-Keep logs narrowly targeted to decision points, inputs, outputs, state transitions, and invariants that distinguish between hypotheses. Instrumentation must be fire-and-forget and must never break the app.
-
-## Instrumentation Markers
-
-Every instrumentation block MUST be wrapped with structured comment markers so it can be reliably found and removed during cleanup.
-
-**Multi-line blocks** — use START/END delimiters:
-\`\`\`
-// @debug-probe:{hypothesisId}:{slug} START
-...instrumentation code...
-// @debug-probe:{hypothesisId}:{slug} END
-\`\`\`
-
-**Single-line additions** (imports, variable declarations needed only for instrumentation):
-\`\`\`
-import { useRef } from "react"; // @debug-probe:{hypothesisId}:{slug}
-\`\`\`
-
-Format: \`@debug-probe:{hypothesisId}:{slug}\` where:
-- \`{hypothesisId}\` is the hypothesis being tested (e.g., \`H1\`, \`H2\`)
-- \`{slug}\` is a short kebab-case label (e.g., \`pre-dispatch\`, \`token-check\`)
-
-Example instrumentation with markers:
-\`\`\`typescript
-// @debug-probe:H1:token-validation START
-void fetch("{DEBUG_LOG_URL}", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    timestamp: new Date().toISOString(),
-    hypothesisId: "H1",
-    location: "src/lib/auth.ts:42",
-    message: "Token validation result",
-    data: { tokenPrefix: token?.slice(0, 8), isValid, userId }
-  })
-}).catch(() => {});
-// @debug-probe:H1:token-validation END
-\`\`\`
-
-## Instrumentation Manifest
-
-After adding instrumentation, write a manifest to \`{DEBUG_MANIFEST_PATH}\` that tracks every probe. This manifest is the source of truth for cleanup.
-
-\`\`\`json
-{
-  "conversationId": "the-conversation-id",
-  "createdAt": "ISO 8601 timestamp",
-  "probes": [
-    {
-      "id": "H1:token-validation",
-      "file": "src/lib/auth.ts",
-      "description": "Logs token validation result to test H1"
-    },
-    {
-      "id": "H2:state-before-dispatch",
-      "file": "src/app/api/route.ts",
-      "description": "Captures actor state before event dispatch"
-    }
-  ]
-}
-\`\`\`
-
-Each probe entry has:
-- \`id\`: matches the \`{hypothesisId}:{slug}\` in the comment marker
-- \`file\`: relative path to the instrumented file
-- \`description\`: what this probe captures
-
-Update the manifest whenever you add or remove probes during additional instrumentation passes.
-
-## Cleanup Verification
-
-During cleanup, after removing all instrumentation:
-1. Read \`{DEBUG_MANIFEST_PATH}\` to get the list of probed files
-2. Remove all \`@debug-probe\` markers from those files
-3. Run \`grep -r "@debug-probe" src/\` to verify zero results — if any remain, remove them
-4. Do NOT delete \`{DEBUG_MANIFEST_PATH}\` yourself; Command Center cross-checks your structured report against the manifest and removes the file only after the verification passes. Set \`acknowledgesManifestDeletionContract: true\` in your structured response to confirm you understand CC owns the deletion.
-5. Check each modified file for orphaned imports or variables that were only needed by removed probes
-
-## Rules
-- Never propose or implement a fix before reviewing runtime evidence from \`{DEBUG_LOG_FILE_PATH}\`.
-- Prefer a few high-signal logs over broad tracing.
-- If the evidence is incomplete, add another targeted instrumentation pass instead of guessing.
-- During the analyze-evidence phase you ARE permitted (and expected, when the runtime evidence is sufficient) to implement the minimal fix in the same turn. Cleanup of debug instrumentation is still deferred until the user clicks "Mark Fixed".
-- NEVER remove instrumentation until the user clicks "Mark Fixed". The user controls when cleanup happens, not you.
-- ALL instrumentation MUST use \`@debug-probe\` comment markers and be tracked in \`{DEBUG_MANIFEST_PATH}\`.
-</debug-mode>`;
-
-/**
- * Phase-specific context snippets prepended to every debug turn after the
- * initial instructions have been delivered. Keeps the agent focused on the
- * current phase without repeating the full workflow.
- */
-export const DEBUG_PHASE_CONTEXT: Record<string, string> = {
-  hypothesizing:
-    '<debug-phase>Phase: HYPOTHESIZING. Form hypotheses, add instrumentation, and provide reproduction steps. Return structured JSON with EVERY one of these fields:\n- `hypotheses` (array, 3\u20135 items): each item has `id` (sequential labels "H1", "H2", \u2026 \u2014 use higher numbers when extending an earlier set), `description` (one sentence), and `instrumentationPlan` (concrete probes you will add).\n- `reproductionSteps` (string[], at least 2): only the user-facing actions to reproduce the bug, written as imperatives ("Click X", "Send a request to Y"). Do NOT include closing remarks directed at yourself or the user (e.g. "tell me when done") \u2014 those belong in the conversational text outside the structured output.</debug-phase>',
-  awaiting_reproduction:
-    "<debug-phase>Phase: AWAITING REPRODUCTION. The user has not yet confirmed reproduction. Answer follow-up questions but do NOT analyze evidence or propose fixes yet.</debug-phase>",
-  analyzing_evidence:
-    '<debug-phase>Phase: ANALYZING EVIDENCE. Read the debug log file at {DEBUG_LOG_FILE_PATH} and classify each hypothesis as supported, refuted, or inconclusive based strictly on what the logs show. Then choose ONE of two outcomes based on whether the evidence is sufficient to justify a fix:\n\n(a) FIX_APPLIED \u2014 If at least one hypothesis is well-supported and the rest are refuted or inconclusive AND the evidence is sufficient to commit to a minimal fix, IMPLEMENT THE FIX IN THIS SAME TURN. Return structured JSON with EVERY one of these fields:\n- `outcome`: "fix_applied"\n- `supportedHypotheses` (string[]): hypothesis ids ("H1", "H2", \u2026) the evidence supports.\n- `refutedHypotheses` (string[]): ids the evidence refutes.\n- `inconclusiveHypotheses` (string[]): ids that need more evidence.\n- `evidenceSummary` (string): short prose summary tying log lines to hypotheses.\n- `fixSummary` (string): one or two sentences naming what changed and why.\n- `verificationSteps` (string[], at least 1): the concrete steps the user runs to verify the fix.\nDo NOT remove any instrumentation in this turn \u2014 cleanup only happens when the user clicks "Mark Fixed".\n\n(b) MORE_INSTRUMENTATION \u2014 If the existing evidence is inconclusive or insufficient, EXTEND THE HYPOTHESIS SET and add fresh debug instrumentation in this same turn (using @debug-probe markers and updating {DEBUG_MANIFEST_PATH}). Return structured JSON with EVERY one of these fields:\n- `outcome`: "more_instrumentation"\n- `supportedHypotheses`, `refutedHypotheses`, `inconclusiveHypotheses` (string[]): classification of the existing hypotheses.\n- `evidenceSummary` (string): short prose summary tying log lines to hypotheses.\n- `hypotheses` (array, 1\u20135 items): the extended hypothesis set, each with `id` (sequential labels "H1", "H2", \u2026 \u2014 continue numbering past the prior round; do NOT reuse earlier ids), `description`, and `instrumentationPlan`.\n- `reproductionSteps` (string[], at least 1): imperative steps the user should re-execute so the new probes capture evidence.\n\nThe choice between (a) and (b) depends on whether the existing evidence is sufficient to justify a fix.</debug-phase>',
-  awaiting_verification:
-    '<debug-phase>Phase: AWAITING VERIFICATION. The user is verifying the fix. Answer questions but do NOT remove instrumentation — cleanup only happens when the user clicks "Mark Fixed".</debug-phase>',
-  cleanup_instrumentation:
-    '<debug-phase>Phase: CLEANUP. Remove ALL debug instrumentation you added (logging statements, fetch calls to the debug log API, etc.). Follow the cleanup procedure: read {DEBUG_MANIFEST_PATH} for the probe manifest, remove all @debug-probe markers from every file listed there, run `grep -r "@debug-probe" src/` to verify none remain, and check for orphaned imports. Do NOT delete {DEBUG_MANIFEST_PATH} yourself — Command Center cross-checks your structured report against the manifest and removes the manifest after a passing verification.\n\nReturn structured JSON with EVERY one of these fields:\n- `removedInstrumentation` (boolean): true once every @debug-probe marker has been removed.\n- `filesModified` (string[]): every file path listed in the manifest must appear here. Use repository-relative paths.\n- `grepVerificationPassed` (boolean): true when `grep -r "@debug-probe" src/` returned zero results.\n- `acknowledgesManifestDeletionContract` (boolean): set to true to confirm you understand CC (not the agent) deletes the manifest.\n- `notes` (string): brief summary of the cleanup; "" if nothing notable.</debug-phase>',
-};
 
 /** Appended to every system prompt to orient the agent about its CC environment. */
 export const CC_CONTEXT =
@@ -286,39 +131,9 @@ export interface PromptDeps {
   getConversationBackendFactory: typeof getConversationBackendFactory;
 
   // Lifecycle operations — injected to avoid vi.mock() on the manager module
-  ensureConversationLifecycle(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    options?: {
-      executionTarget?: ExecutionTarget;
-      actorInput?: EnsureActorInputData;
-    },
-  ): Promise<void>;
-  executeConversationTurn(
-    input: ExecuteConversationTurnInput,
-  ): Promise<ConversationTurnExecution>;
-
-  setTooling?(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    tooling: ConversationToolingOverrides,
-  ): void;
-
-  setWorkflowContext?(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    workflowContext: WorkflowLaneIdentity,
-  ): void;
-
-  setSkipConversationLock?(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    skip: boolean,
-  ): void;
+  submitConversationTurn(
+    input: ConversationTurnSubmission,
+  ): Promise<TurnAdmission>;
 
   /**
    * Dispatches a `/collab` prompt to the collaboration manager.
@@ -363,8 +178,6 @@ const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD: CollaborationAutonomousResolution
 async function getDefaultPromptDeps(): Promise<PromptDeps> {
   if (_defaultPromptDeps) return _defaultPromptDeps;
   const manager = await import("@/lib/workflows/conversation/manager");
-  const runtimeState =
-    await import("@/lib/workflows/conversation/runtime-state");
   const collabModule = await import("@/lib/workflows/collaboration/manager");
   _defaultPromptDeps = {
     getConversation,
@@ -373,8 +186,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     getProjectDisplayName,
     readConfig,
     getConversationBackendFactory,
-    ensureConversationLifecycle: manager.ensureConversationLifecycle,
-    executeConversationTurn: manager.executeConversationTurn,
+    submitConversationTurn: manager.submitConversationTurn,
     async dispatchCollabStart(input) {
       const collabManager = collabModule.getDefaultCollaborationManager();
       const startInput: Parameters<typeof collabManager.start>[0] = {
@@ -397,49 +209,6 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
       return { workflowId: result.workflowId };
     },
     dispatchConversationCommand: defaultDispatchConversationCommand,
-    setTooling: (projectPath, sessionName, conversationId, tooling) => {
-      const key = runtimeState.conversationRuntimeKey(
-        projectPath,
-        sessionName,
-        conversationId,
-      );
-      const runtime = runtimeState.getConversationRuntime(key);
-      if (runtime) {
-        runtime.tooling = tooling;
-      }
-    },
-    setWorkflowContext: (
-      projectPath,
-      sessionName,
-      conversationId,
-      workflowContext,
-    ) => {
-      const key = runtimeState.conversationRuntimeKey(
-        projectPath,
-        sessionName,
-        conversationId,
-      );
-      const runtime = runtimeState.getConversationRuntime(key);
-      if (runtime) {
-        runtime.workflowContext = workflowContext;
-      }
-    },
-    setSkipConversationLock: (
-      projectPath,
-      sessionName,
-      conversationId,
-      skip,
-    ) => {
-      const key = runtimeState.conversationRuntimeKey(
-        projectPath,
-        sessionName,
-        conversationId,
-      );
-      const runtime = runtimeState.getConversationRuntime(key);
-      if (runtime) {
-        runtime.skipConversationLock = skip;
-      }
-    },
   };
   return _defaultPromptDeps;
 }
@@ -474,9 +243,19 @@ export function createPromptExecutor(deps: PromptDeps) {
   };
 }
 
-export interface PromptStreamOptions {
-  autonomous?: boolean;
-  backend?: AgentBackendId;
+const promptStreamTurnOptionsSchema = conversationTurnRequestSchema
+  .omit({
+    kind: true,
+    promptText: true,
+    images: true,
+    modelSelection: true,
+    queuedDelivery: true,
+  })
+  .strip();
+
+export interface PromptStreamOptions extends z.input<
+  typeof promptStreamTurnOptionsSchema
+> {
   /**
    * Called once the prompt, command, or collaboration request has been
    * accepted by its execution owner. Failures are logged without changing the
@@ -491,19 +270,12 @@ export interface PromptStreamOptions {
    * leaves it unset, so non-lane sessions carry neither var.
    */
   workflowContext?: WorkflowLaneIdentity;
-  skipConversationLock?: boolean;
   /**
    * Profile for the conversation this call CREATES (no `conversationId` was
    * supplied). An existing conversation's profile is already resolved and
    * settles at admission, so this is ignored there.
    */
   profile?: AgentProfileRef;
-  // `outputFormat` is intentionally opt-in. Regular user-facing chat is
-  // free-form markdown by design — requiring a JSON schema would prevent the
-  // streaming chat response the UI renders. Workflow callers (debug mode,
-  // validator, collaboration round responses) opt into the backend-neutral
-  // structured-output pipeline; everyone else gets unconstrained text.
-  outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   collab?: CollabPromptConfig;
   /**
    * When supplied, the conversation actor input uses this resolved target's
@@ -518,68 +290,13 @@ export interface PromptStreamOptions {
    * entry supplies this (built from the project record + repo-root worktree)
    * because the conversation has no host session to load from.
    */
-  actorInput?: EnsureActorInputData;
-  /**
-   * Opt-in: hold the turn open after the agent yields until its in-flight
-   * waitable background tasks settle (or the wait times out). Set only by the
-   * graph-workflow implementer runner; every other caller (interactive chat,
-   * planner/validator/collab turns) leaves it unset so behavior is unchanged.
-   */
-  waitForBackgroundTasks?: boolean;
+  binding?: ConversationBinding;
+  signal?: AbortSignal;
   /**
    * Workflow-owned turns wait for an in-flight conversation continuation to
    * settle before dispatch. Interactive sends retain fail-fast busy semantics.
    */
   waitForConversationReady?: boolean;
-  /**
-   * Structured document-review feedback to record on the user turn. When set,
-   * the turn's transcript carries a `document_feedback` block and the
-   * agent-facing prompt text is derived from it when `promptText` is empty.
-   * Unset for every non-feedback send.
-   */
-  documentFeedback?: DocumentFeedbackPayload;
-  /**
-   * Notepad comment dispatches to record on the user turn. Each records a
-   * `notepad_feedback` block and contributes its derived prose when
-   * `promptText` is empty. Unset for every non-dispatch send.
-   */
-  notepadFeedback?: readonly NotepadFeedbackPayload[];
-  /**
-   * Effective ask-user-questions availability for this turn: the resolved
-   * per-context toggle AND the lane holding a real conversation. Set only by
-   * the graph-workflow runners; when true the session instructions select the
-   * enabled asking-questions variant. Every other caller leaves it unset, so
-   * non-workflow conversations keep the default autonomous-denied guidance.
-   */
-  askUserQuestionsEnabled?: boolean;
-  /**
-   * Server-derived filesystem-write envelope for this turn. Set only by the
-   * graph-workflow implementer runner, which composes it from the context's
-   * authored placement before any dispatch decision; every other caller leaves
-   * it unset, so an ordinary conversation keeps its unrestricted worktree.
-   * Carried onto the claimed turn, so the turn that runs is the one the
-   * envelope was composed for.
-   */
-  fsWritePolicy?: FsWritePolicy;
-}
-
-export interface PromptStreamResult {
-  conversationId: string;
-  contextTokens: number | null;
-  contextWindowMax: number | null;
-  structuredOutput?: unknown;
-  aborted?: boolean;
-  /** True when the SDK auto-compacted the context at least once this turn. */
-  compacted: boolean;
-  abortReason?: "timeout" | "stalled" | "user" | "shutdown";
-  timeoutMs?: number;
-  error?: string | null;
-  /**
-   * Summary of the bounded background-task wait the turn performed. Present
-   * only when a wait actually occurred (the turn opted in and waitable tasks
-   * were in flight); absent otherwise.
-   */
-  backgroundWait?: BackgroundWaitSummary;
 }
 
 async function notifyPromptAccepted(
@@ -938,6 +655,19 @@ export async function executePromptStream(
         });
 
   const streamId = randomUUID();
+  const streamedErrors = new Set<string>();
+  const emitProgress = (event: string, data: unknown) => {
+    if (
+      event === "error" &&
+      typeof data === "object" &&
+      data !== null &&
+      "message" in data &&
+      typeof data.message === "string"
+    ) {
+      streamedErrors.add(data.message);
+    }
+    emit(event, data);
+  };
 
   logger.info("prompt.submit", {
     ...scopeRef,
@@ -947,124 +677,67 @@ export async function executePromptStream(
     conversationId,
   });
 
-  // Ensure actor exists (creates if needed, loading from state)
-  const actorOptions: {
-    executionTarget?: ExecutionTarget;
-    actorInput?: EnsureActorInputData;
-  } = {};
-  if (options?.executionTarget !== undefined) {
-    actorOptions.executionTarget = options.executionTarget;
-  }
-  if (options?.actorInput !== undefined) {
-    actorOptions.actorInput = options.actorInput;
-  }
-  await resolvedDeps.ensureConversationLifecycle(
-    projectPath,
-    session.sessionName,
-    conversationId,
-    Object.keys(actorOptions).length > 0 ? actorOptions : undefined,
-  );
-
-  // Register per-invocation tooling overrides on the conversation runtime state
-  if (options?.tooling) {
-    resolvedDeps.setTooling?.(
-      projectPath,
-      session.sessionName,
-      conversationId,
-      options.tooling,
-    );
-  }
-
-  // Register graph-workflow lane identity so it reaches the session env when the
-  // backend runtime is (re)created for this lane conversation.
-  if (options?.workflowContext) {
-    resolvedDeps.setWorkflowContext?.(
-      projectPath,
-      session.sessionName,
-      conversationId,
-      options.workflowContext,
-    );
-  }
-
-  // Allow validator conversations to bypass the conversation lock
-  if (options?.skipConversationLock) {
-    resolvedDeps.setSkipConversationLock?.(
-      projectPath,
-      session.sessionName,
-      conversationId,
-      true,
-    );
-  }
-
-  const execution = await resolvedDeps.executeConversationTurn({
-    projectPath,
-    sessionName: session.sessionName,
-    conversationId,
-    streamId,
-    emit,
-    ...(options?.waitForConversationReady ? { waitUntilReady: true } : {}),
-    onAccepted: () => notifyPromptAccepted(options, scopeRef, conversationId),
+  const admission = await resolvedDeps.submitConversationTurn({
+    binding: options?.binding ?? {
+      kind: "durable",
+      address: {
+        projectPath,
+        target: targetFromStoreSessionName(
+          resolvedDeps.getProjectDisplayName(projectPath),
+          session.sessionName,
+          conversationId,
+        ),
+      },
+      ...(options?.executionTarget
+        ? { worktreePath: options.executionTarget.worktreePath }
+        : {}),
+    },
+    transport: { streamId, emit: emitProgress },
+    executionContext: {
+      tooling: options?.tooling,
+      workflowContext: options?.workflowContext,
+    },
+    signal: options?.signal,
+    waitUntilReady: options?.waitForConversationReady,
     turn: {
+      ...promptStreamTurnOptionsSchema.parse(options ?? {}),
       promptText,
       images,
       backend: resolvedBackend,
       modelSelection: turnModelSelection,
-      autonomous: options?.autonomous,
-      outputFormat: options?.outputFormat,
-      ...(options?.waitForBackgroundTasks
-        ? { waitForBackgroundTasks: true }
-        : {}),
-      ...(options?.documentFeedback
-        ? { documentFeedback: options.documentFeedback }
-        : {}),
-      ...(options?.notepadFeedback?.length
-        ? { notepadFeedback: options.notepadFeedback }
-        : {}),
-      ...(options?.askUserQuestionsEnabled
-        ? { askUserQuestionsEnabled: true }
-        : {}),
-      ...(options?.fsWritePolicy !== undefined
-        ? { fsWritePolicy: options.fsWritePolicy }
-        : {}),
     },
   });
-
-  if (execution.status === "rejected") {
-    const errorMessage = "Conversation is not ready to accept a new prompt";
-    logger.error("prompt.submit_rejected", {
+  if (admission.kind === "refused") {
+    logger.warn("prompt.submit_rejected", {
       conversationId,
       ...scopeRef,
-      reason: execution.reason,
+      reason: admission.code,
     });
-    emitErrorAndDone(emit, errorMessage);
+    emitErrorAndDone(emit, admission.message);
     return {
       conversationId,
-      ...execution.result,
-      error: errorMessage,
+      contextTokens: null,
+      contextWindowMax: null,
+      aborted: admission.code === "cancelled",
+      compacted: false,
+      error: admission.message,
     };
   }
-
-  if (execution.status === "failed") {
-    logger.error("prompt.facade_error", {
-      ...scopeRef,
-      conversationId,
-      error: execution.error,
-    });
-    emitErrorAndDone(emit, execution.error);
-    return {
-      conversationId,
-      ...execution.result,
-      error: execution.result.error ?? execution.error,
-    };
-  }
+  await notifyPromptAccepted(options, scopeRef, conversationId);
+  const settled = await admission.turn.completed;
+  const result = toPromptStreamResult(settled.outcome, conversationId);
+  if (result.error && !streamedErrors.has(result.error))
+    emit("error", { message: result.error });
 
   logger.info("prompt.complete", {
     ...scopeRef,
     conversationId,
+    failed: Boolean(result.error),
+    aborted: result.aborted ?? false,
   });
 
   emit("done", {});
-  return { conversationId, ...execution.result };
+  return result;
 }
 
 // ============================================================

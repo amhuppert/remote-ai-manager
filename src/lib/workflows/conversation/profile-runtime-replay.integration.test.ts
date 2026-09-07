@@ -1,3 +1,7 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
 /**
  * R6.2 / R6.5 through the PRODUCTION turn path.
  *
@@ -32,14 +36,10 @@ import {
 } from "@/lib/agent-profiles/composer";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
-  createActorImplementationDepsFixture,
+  createActorDependenciesFixture,
   createMockBackendRuntime,
 } from "./testing/actor-deps-fixture";
-import {
-  executePromptForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "./actor-implementations";
+
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
@@ -77,7 +77,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  _resetActorDepsForTesting();
   resetRuntimeRegistry();
   fixture.close();
 });
@@ -104,8 +103,8 @@ async function runTurnAfterRestart(
     });
   };
 
-  setActorDeps(
-    createActorImplementationDepsFixture({
+  conversationActors = createTestActorImplementations(
+    createActorDependenciesFixture({
       getConversation: (projectPath, sessionName, id) =>
         restarted.getConversation(projectPath, sessionName, id),
       getConversationBackendFactory: () => ({
@@ -117,33 +116,46 @@ async function runTurnAfterRestart(
   );
 
   const input: ExecutePromptInput = {
+    turn: {
+      kind: "conversation_turn",
+      backend: backend,
+      promptText: "Hello",
+      images: [],
+      modelSelection: null,
+      autonomous: false,
+    },
     persistence: "durable",
     projectPath: PROJECT_PATH,
-    projectName: PROJECT_NAME,
-    sessionName: SESSION_NAME,
+    target: targetFromStoreSessionName(
+      PROJECT_NAME,
+      SESSION_NAME,
+      conversationId,
+    ),
+
     worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-    conversationId,
+
     transcriptPath: `/transcripts/${conversationId}.jsonl`,
     agentBackend: backend,
     backendRef: null,
     promptCount: 0,
     forkedFrom: null,
     role: null,
-    promptText: "Hello",
-    images: [],
     streamId: "stream-1",
-    modelSelection: null,
     onModelSelectionResolved: async () => {},
-    autonomous: false,
     debugMode: null,
   };
 
   registerConversationRuntime(
     conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, conversationId),
-    { abortController: new AbortController() },
+    {
+      managed: createManagedRuntimeFixture(
+        conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, conversationId),
+      ),
+      abortController: new AbortController(),
+    },
   );
 
-  await executePromptForMachine(input);
+  await conversationActors.executePromptForMachine(input);
 
   expect(created).toHaveLength(1);
   return created[0]!;

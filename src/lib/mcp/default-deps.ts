@@ -1,3 +1,4 @@
+import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 /**
  * Default production dependencies for MCP config route handlers.
  *
@@ -22,10 +23,8 @@ import {
   createMcpRuntimeApplyService,
   type McpRuntimeApplyService,
 } from "./runtime-apply";
-import {
-  conversationRuntimeKey,
-  getConversationRuntime,
-} from "@/lib/workflows/conversation/runtime-state";
+import { getConversationTooling } from "@/lib/workflows/conversation/manager";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   createMcpConfigMutationService,
   type McpConfigMutationService,
@@ -161,18 +160,20 @@ const defaultResolvePortableForConversation =
     },
     getProjectDisplayName,
     getConversationTooling(input) {
-      const key = conversationRuntimeKey(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-      );
-      return getConversationRuntime(key)?.tooling;
+      return getConversationTooling({
+        projectPath: input.projectPath,
+        target: targetFromStoreSessionName(
+          getProjectDisplayName(input.projectPath),
+          input.sessionName,
+          input.conversationId,
+        ),
+      });
     },
   });
 
 export const defaultMcpRuntimeApplyService: McpRuntimeApplyService =
   createMcpRuntimeApplyService({
-    stateManager: defaultStateManager,
+    applicationState: createMcpRuntimeApplicationStore(defaultStateManager),
     getRuntime,
     resolvePortableForConversation: defaultResolvePortableForConversation,
   });

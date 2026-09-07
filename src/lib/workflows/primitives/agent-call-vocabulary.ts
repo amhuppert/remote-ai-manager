@@ -70,7 +70,7 @@ const conversationImageRefSchema = z.object({
   base64Data: z.string().min(1),
 });
 
-const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(
+export const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(
   (value) =>
     typeof value === "object" &&
     value !== null &&
@@ -78,7 +78,7 @@ const portableMcpConfigInputSchema = z.custom<PortableMcpConfig>(
   { message: "tooling must be a PortableMcpConfig with a servers array" },
 );
 
-const outputSchemaInputSchema = z.record(z.string(), z.unknown());
+export const outputSchemaInputSchema = z.record(z.string(), z.unknown());
 const structuredOutputRepairInputSchema = z.object({
   maxAttempts: z.number().int().min(0).max(1),
 });

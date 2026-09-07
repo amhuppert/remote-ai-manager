@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { getProjectDisplayName as getConversationProjectName } from "@/lib/projects/resolver";
 /**
  * Dispatches the D2 format turn that captures a context's structured output.
  *
@@ -27,8 +29,8 @@ import {
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
 const logger = createLogger("graph-workflow-output-capture");
 
@@ -135,9 +137,20 @@ export function createGraphWorkflowOutputCaptureRunner(
     });
 
     const result = await executeWorkflowTaskRun({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: input.projectPath,
+          target: targetFromStoreSessionName(
+            getConversationProjectName(input.projectPath),
+            input.sessionName,
+            input.conversationId,
+          ),
+        },
+        ...(input.executionTarget
+          ? { worktreePath: input.executionTarget.worktreePath }
+          : {}),
+      },
       kind: "task_run",
       executionClass: "governed-execution",
       executionProfile: "standard",
@@ -151,9 +164,6 @@ export function createGraphWorkflowOutputCaptureRunner(
         ? { fsWritePolicy: writeEnvelope.policy }
         : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      ...(input.executionTarget !== undefined
-        ? { worktreePath: input.executionTarget.worktreePath }
-        : {}),
       origin: {
         source: "workflow",
         workflow: {

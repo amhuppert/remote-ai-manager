@@ -7,11 +7,11 @@ import {
   parseValidatorResponse,
   type ValidatorOutcome,
 } from "./validator-runner";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
-  ExecuteWorkflowTaskRunInput,
   TaskRunResult,
   TaskRunUsage,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+} from "@/lib/workflows/conversation/turn-result";
 import type {
   AgentCallRequest,
   AgentCallResult,

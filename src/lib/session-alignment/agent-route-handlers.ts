@@ -26,7 +26,7 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
+import { describeActiveTurn } from "@/lib/workflows/conversation/manager";
 
 import {
   ALIGNMENT_AUTONOMOUS_DENIAL_MESSAGE,
@@ -121,7 +121,8 @@ export function createSessionAlignmentAgentRouteHandlers(
     request: Request,
     context: RouteContext,
   ): Promise<
-    { error: Response } | { projectPath: string; sessionName: string }
+    | { error: Response }
+    | { projectPath: string; projectName: string; sessionName: string }
   > {
     const denied = await deps.auth.requireToken(request);
     if (denied) return { error: denied };
@@ -132,7 +133,11 @@ export function createSessionAlignmentAgentRouteHandlers(
 
     const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
     if (!resolved.ok) return { error: resolved.response };
-    return { projectPath: resolved.value.projectPath, sessionName };
+    return {
+      projectPath: resolved.value.projectPath,
+      projectName: name,
+      sessionName,
+    };
   }
 
   async function readJsonBody(
@@ -157,6 +162,7 @@ export function createSessionAlignmentAgentRouteHandlers(
 
       const authoringContext = {
         projectPath: scope.projectPath,
+        projectName: scope.projectName,
         sessionName: scope.sessionName,
         conversationId: parsed.data.conversationId,
       };
@@ -194,6 +200,7 @@ export function createSessionAlignmentAgentRouteHandlers(
 
       const authoringContext = {
         projectPath: scope.projectPath,
+        projectName: scope.projectName,
         sessionName: scope.sessionName,
         conversationId: parsed.data.conversationId,
       };
@@ -201,7 +208,7 @@ export function createSessionAlignmentAgentRouteHandlers(
       if (!attended.ok) return attendedRefusalResponse(attended.reason);
 
       try {
-        const originMessageId = attended.runtime.currentTurnMessageId ?? null;
+        const originMessageId = attended.runtime.originMessageId ?? null;
         const { batchId } = await deps.proposeDecisions({
           projectPath: authoringContext.projectPath,
           sessionName: authoringContext.sessionName,
@@ -242,7 +249,7 @@ const defaultDeps: SessionAlignmentAgentRouteDeps = {
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
-  getRuntime: getConversationRuntime,
+  describeActiveTurn,
   beginDraft: (input) => getProductionService().beginDraft(input),
   fillDraft: (input) => getProductionService().fillDraft(input),
   proposeDecisions: (input) => getProductionService().proposeDecisions(input),

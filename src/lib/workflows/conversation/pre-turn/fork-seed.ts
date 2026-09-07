@@ -147,5 +147,6 @@ export async function acknowledgeSyntheticForkSeed(
       conversationId: input.conversationId,
       error: getErrorMessage(error),
     });
+    throw error;
   }
 }

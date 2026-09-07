@@ -1,44 +1,11 @@
-/**
- * R8.1 sequencing — admission is AWAITED before `SUBMIT_PROMPT` reaches the
- * actor, on both paths that produce one.
- *
- * The test holds admission open on a deferred promise and asserts the actor has
- * received nothing while it is pending. That is the property the requirement
- * names: not "admission is also called", but "the prompt does not reach the
- * runtime until the profile is settled". An implementation that fired admission
- * without awaiting it would pass a call-count assertion and fail this one.
- */
+/** Profile admission must commit before either direct or queued execution. */
+import { expect, it, vi } from "vitest";
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
 
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  executeConversationTurn,
-  getActorRegistry,
-} from "@/lib/workflows/conversation/manager";
-import { conversationRuntimeKey } from "@/lib/workflows/conversation/runtime-state";
-import {
-  drainConversationQueue,
-  type ConversationQueueDeps,
-  type DrainSelf,
-} from "./message-queue-drain";
-import {
-  setConversationProfileAdmissionDeps,
-  _resetConversationProfileAdmissionDepsForTesting,
-  type ConversationProfileAdmissionDeps,
-} from "./profile-admission";
-import type { ConversationEvent } from "@/lib/workflows/conversation/types";
-import type { ConversationActorRef } from "@/lib/workflows/conversation/machine";
-import type { ConversationState } from "./schemas";
+import { drainConversationQueue } from "./message-queue-drain";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
-const PROJECT_PATH = "/repo-ordering";
-const SESSION_NAME = "ordering-session";
-const CONVERSATION_ID = "ordering-conv";
-
-interface Deferred {
-  promise: Promise<void>;
-  release(): void;
-}
-
-function deferred(): Deferred {
+function deferred() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
     release = resolve;
@@ -46,132 +13,73 @@ function deferred(): Deferred {
   return { promise, release };
 }
 
-/**
- * A store seam whose write does not settle until released — standing in for any
- * real durable write that has not yet reached disk.
- */
-function blockingAdmissionDeps(
-  gate: Deferred,
-): ConversationProfileAdmissionDeps {
-  return {
-    async mutateConversation(_p, _s, _c, _label, mutate) {
-      await gate.promise;
-      return mutate({
-        profileSnapshot: null,
-        profileLockedAt: null,
-      } as unknown as ConversationState);
-    },
-  };
-}
-
-/**
- * The narrow slice of the actor `executeConversationTurn` touches: acceptance,
- * dispatch, and the settled projection it reads back. It reports "idle" so the
- * turn resolves immediately after the send, keeping the assertion on ordering
- * rather than on a simulated turn.
- */
-function recordingActor(received: ConversationEvent[]) {
-  return {
-    getSnapshot: () => ({
-      can: () => true,
-      value: "idle",
-      status: "active",
-      context: {
-        totals: { contextTokens: null, contextWindowMax: null },
-        lastResult: null,
-        lastError: null,
-      },
-    }),
-    send: (event: ConversationEvent) => {
-      received.push(event);
-    },
-  };
-}
-
-afterEach(() => {
-  _resetConversationProfileAdmissionDepsForTesting();
-  getActorRegistry().clear();
-});
-
-describe("executeConversationTurn", () => {
-  it("does not send SUBMIT_PROMPT until admission resolves", async () => {
+it.each(["direct", "queued"] as const)(
+  "awaits profile admission before %s prompt execution",
+  async (path) => {
     const gate = deferred();
-    setConversationProfileAdmissionDeps(blockingAdmissionDeps(gate));
-
-    const received: ConversationEvent[] = [];
-    getActorRegistry().set(
-      conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
-      recordingActor(received) as unknown as ConversationActorRef,
-    );
-
-    const turn = executeConversationTurn({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      streamId: "stream-ordering",
-      emit: () => {},
-      turn: { promptText: "Hello", backend: "claude" },
+    let admitting = false;
+    const prompts: string[] = [];
+    const fixture = await createLifecycleFixture({
+      beforeProfileAdmission: () => {
+        admitting = true;
+        return gate.promise;
+      },
+      actorDeps: {
+        executeAgentCall: async (request) => {
+          prompts.push(request.prompt);
+          return {
+            backend: "claude",
+            backendRef: null,
+            capabilities: capabilityViewForBackend("claude"),
+            usage: {},
+            artifacts: [],
+            outcome: { kind: "completed", text: "done" },
+            continuationDisposition: "retain",
+          };
+        },
+      },
     });
-
-    // Let every already-resolvable continuation run. The prompt must still be
-    // held: admission has not committed.
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(received).toEqual([]);
-
-    gate.release();
-    await turn.catch(() => undefined);
-
-    expect(received.map((event) => event.type)).toContain("SUBMIT_PROMPT");
-  });
-});
-
-describe("drainConversationQueue", () => {
-  it("does not send a queued SUBMIT_PROMPT until admission resolves", async () => {
-    const gate = deferred();
-    setConversationProfileAdmissionDeps(blockingAdmissionDeps(gate));
-
-    const received: ConversationEvent[] = [];
-    const self: DrainSelf = {
-      getSnapshot: () => ({ can: () => true }),
-      send: (event) => {
-        received.push(event);
-      },
-    };
-
-    const deps = {
-      claimNextTurnBatch: async () => ({
-        messageIds: ["m1"],
-        deliveryAttemptId: "attempt-1",
-        content: [{ type: "text" as const, text: "queued hello" }],
-        command: null,
-      }),
-      markPending: async () => {},
-      markFailed: async () => {},
-      markDelivered: async () => {},
-      runConversationCommand: async () => {
-        throw new Error("not a command batch");
-      },
-    } as unknown as ConversationQueueDeps;
-
-    const drain = drainConversationQueue(
-      self,
-      {
-        projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: CONVERSATION_ID,
-        projectName: "repo-ordering",
-      } as Parameters<typeof drainConversationQueue>[1],
-      deps,
-    );
-
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(received).toEqual([]);
-
-    gate.release();
-    await drain;
-
-    expect(received.map((event) => event.type)).toEqual(["SUBMIT_PROMPT"]);
-  });
-});
+    try {
+      await fixture.manager.ensureConversationLifecycle(fixture.binding);
+      const actor = fixture.actor(
+        fixture.identity.projectPath,
+        fixture.identity.sessionName,
+        fixture.identity.conversationId,
+      )!;
+      if (path === "queued")
+        await fixture.queue.enqueue({
+          ...fixture.identity,
+          content: [{ type: "text", text: "queued hello" }],
+        });
+      const pending =
+        path === "direct"
+          ? fixture.manager.submitConversationTurn({
+              binding: fixture.binding,
+              turn: { promptText: "direct hello" },
+            })
+          : drainConversationQueue(
+              {
+                projectPath: fixture.identity.projectPath,
+                target: fixture.binding.address.target,
+              },
+              {
+                ...fixture.queue,
+                submitTurn: fixture.manager.submitConversationTurn,
+                runConversationCommand: async () => {
+                  throw new Error("No command expected");
+                },
+              },
+            );
+      await vi.waitFor(() => expect(admitting).toBe(true));
+      expect(actor.getSnapshot().context.activeTurn).toBeNull();
+      expect(prompts).toEqual([]);
+      gate.release();
+      await pending;
+      await vi.waitFor(() => expect(prompts).toHaveLength(1));
+      expect(prompts[0]).toContain(`${path} hello`);
+    } finally {
+      gate.release();
+      await fixture.close();
+    }
+  },
+);

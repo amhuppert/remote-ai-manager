@@ -140,7 +140,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
-  readonly alignmentVersion: number | null;
+
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
@@ -205,7 +205,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.conversationCapability = input.conversationCapability;
     this.modelSelection = input.modelSelection;
     this.outputFormat = input.outputFormat;
-    this.alignmentVersion = input.alignmentVersion ?? null;
+
     this.fsWritePolicy = input.fsWritePolicy;
     this.backendRef =
       input.persistedRef?.backend === CURSOR_BACKEND_ID

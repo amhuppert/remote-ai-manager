@@ -2,7 +2,7 @@
 
 Command Center has three orchestration shapes. Pick by shape; do not invent a fourth (see P7 in `docs/reports/2026-07-12_consolidated-architecture-design-and-plan.md`):
 
-1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. One actor per conversation; owns the prompt-turn lifecycle, queue drain, and rehydration. Every agent turn flows through it — this is the spine.
+1. **Conversation actor** (XState v5, long-lived) — `src/lib/workflows/conversation/`. One actor per conversation; owns the prompt-turn lifecycle, queue drain, and rehydration. Conversation turns and hosted tasks enter through its semantic manager API. Fresh tasks use AgentCall without a conversation host.
 2. **Job machines** (XState v5, ephemeral) — `src/lib/workflows/merge/` (Smart Merge) and `src/lib/workflows/commit/` (Smart Commit), hosted by `src/lib/jobs/queue.ts`. Machine actors are not restart-durable by decision; the `BackgroundJob` registry records phases and outcomes.
 3. **Graph engine** (deterministic execution loop, NOT XState) — `src/lib/workflow-graph/`. Multi-context executions with loop-generation fencing at the persistence layer. Do not convert it to XState — the loop already has machine-grade guarantees plus fencing XState cannot provide.
 
@@ -16,9 +16,13 @@ src/lib/workflows/
 ├── utils.ts                    # extractErrorMessage, errorAssign, createTerminalStates
 ├── conversation/               # the conversation-actor spine
 │   ├── machine.ts              # setup() → createMachine(); long-lived, zero final states by design
-│   ├── actors.ts               # fromPromise stubs (default impls lazy-import production logic)
+│   ├── actors.ts               # provided actor invocations and owned settlement
 │   ├── actor-implementations.ts# production actor logic (AgentCall dispatch, pre/post-turn concerns)
-│   ├── manager.ts              # actor lifecycle: .provide() wiring, globalThis registry, event dispatch
+│   ├── manager.ts              # admission, semantic commands, observation and cancellation
+│   ├── actor-host.ts           # shared creation/rehydration factory and subscriptions
+│   ├── production.ts           # lazy production dependency composition
+│   ├── turn-attempt.ts         # admitted work, cancellation and completion receipts
+│   ├── runtime-binding.ts      # backend incarnation, configuration and owned close
 │   ├── persistence.ts          # debounced snapshot writes → ConversationState.machineSnapshot
 │   └── runtime-state.ts        # external registry for non-serializable runtime data
 ├── merge/, commit/             # ephemeral job machines (types.ts, actors.ts, machine.ts)
@@ -62,7 +66,7 @@ export const doWork = fromPromise<WorkOutput, WorkInput>(async ({ input }) => {
 });
 ```
 
-Production injects via `.provide()` at the hosting site (`conversation/manager.ts` for the conversation actor; the job machines' `fromPromise` defaults already lazy-import production logic, so `jobs/queue.ts` starts them unprovided). Tests inject fakes via `.provide()` — **never `vi.mock()` for actors**:
+Production injects via `.provide()` at the hosting site (`conversation/actor-host.ts` with required dependencies from `conversation/production.ts` for the conversation actor; the job machines' `fromPromise` defaults already lazy-import production logic, so `jobs/queue.ts` starts them unprovided). Tests inject fakes via `.provide()` — **never `vi.mock()` for actors**:
 
 ```typescript
 const testMachine = fooMachine.provide({
@@ -72,13 +76,15 @@ const testMachine = fooMachine.provide({
 
 ## Non-serializable state (`conversation/runtime-state.ts` pattern)
 
-Machine context must be JSON-serializable. AbortControllers, lock release fns, backend runtime handles, and stream emitters live in an external registry keyed by `${projectPath}::${sessionName}::${conversationId}`; the registry is a `globalThis` singleton (HMR-safe). Registered when the actor is created (handles attach per turn); conversation actors are long-lived with zero final states, so cleanup is explicit — `cleanupConversationRuntime` aborts in-flight work and releases locks when the actor is stopped (`stopConversationActor`, rebind, failed rehydrate).
+Machine context must be JSON-serializable. The host's runtime registry stores non-serializable ownership: `TurnAttempt` owns admitted execution, cancellation, receipts and completion; `ManagedConversationRuntime` owns backend incarnation, configuration and close. The backend registry is an index for capability/live-input adapters. It does not own close. Stop, rebind and disposal await execution, close and required durable settlement before releasing the host. Failed settlement stays owned for explicit reconciliation.
+
+Consumers submit through `submitConversationTurn` or `executeConversationTurn`, cancel through the admitted handle or `requestConversationStop`, and observe semantic manager reads. Questions use `registerConversationQuestion` and batch-matched `clearConversationQuestion`; debug commands share the serialized durable command boundary. Consumers do not send machine events or coordinate controllers. The exact boundaries are enforced by `conversation/boundaries.arch.test.ts`.
 
 ## Snapshot persistence (`conversation/persistence.ts` pattern)
 
-- Long-lived actors, no terminal state, so there is no terminal flush: the machine's `persistSnapshot` action fires on every durable transition and writes debounce 500 ms.
-- `persistSnapshotAfterTransition` defers the snapshot capture to a microtask — XState runs transition actions before the macrostep commits, so a synchronous `getPersistedSnapshot()` would persist the PREVIOUS state.
-- Restore validates `_schemaVersion` and returns `null` on mismatch (actor starts fresh).
+- Intermediate snapshot writes debounce 500 ms. Command acknowledgement, turn completion and disposal flush their required row and snapshot receipts before reporting success.
+- `persistSnapshotAfterTransition` synchronously enrolls a receipt, then defers capture until the XState macrostep commits. A durability barrier includes those deferred captures.
+- Restore validates `_schemaVersion` and returns `null` on mismatch (actor starts fresh). A usable snapshot receives the durable row's authoritative totals and prompt count before hosting.
 - Deps are injected via a setter (`setPersistenceDeps`) + `_resetForTesting` — the setter DI pattern from engineering-principles.
 
 ## Job-machine hosting (`jobs/queue.ts` + `jobs/machine-host.ts`)

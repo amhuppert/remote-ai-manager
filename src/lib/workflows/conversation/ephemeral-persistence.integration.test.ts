@@ -1,3 +1,53 @@
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
+let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
+  async () => {
+    throw new Error("Fixture actor loader is not configured");
+  };
+let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
+  async () => ({ found: true, requiresQueueReview: false });
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    loadActors: async () => conversationActors,
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+      loadActorInput: (...args) => actorInputLoader(...args),
+      readAdmissionState: (...args) => admissionReader(...args),
+      queue: {
+        submitTurn: (...args) => currentQueueDependencies().submitTurn(...args),
+        claimNextTurnBatch: (...args) =>
+          currentQueueDependencies().claimNextTurnBatch(...args),
+        markPending: (...args) =>
+          currentQueueDependencies().markPending(...args),
+        markDelivered: (...args) =>
+          currentQueueDependencies().markDelivered(...args),
+        markFailed: (...args) => currentQueueDependencies().markFailed(...args),
+        recoverAbandonedDeliveries: (...args) =>
+          currentQueueDependencies().recoverAbandonedDeliveries(...args),
+        runConversationCommand: (...args) =>
+          currentQueueDependencies().runConversationCommand(...args),
+      },
+    },
+  });
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import type { ActorFixtureDependencies } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { loadActorInput } from "./actor-input-loader";
+
+import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "@/lib/conversations/profile-admission";
+
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createMemoryTelemetryService } from "@/lib/memory/telemetry";
+import { createMemoryTelemetryRepo } from "@/lib/state-store/memory-telemetry-repo";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import { createMockBackendRuntime } from "./testing/actor-deps-fixture";
+
 /**
  * Integration: a runtime constructed `persistence: "ephemeral"` (compaction
  * lanes, workflow-graph validator lanes — neither backed by a
@@ -17,7 +67,10 @@ import { fromPromise, createActor, type AnyActorRef } from "xstate";
 
 // Shared logger so warnings emitted from any module under test (the
 // conversation manager, the persistence adapter) are observable by the test.
-const { warnSpy } = vi.hoisted(() => ({ warnSpy: vi.fn() }));
+const { warnSpy, errorSpy } = vi.hoisted(() => ({
+  warnSpy: vi.fn(),
+  errorSpy: vi.fn(),
+}));
 vi.mock("@/lib/logging", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/logging")>();
   return {
@@ -26,16 +79,11 @@ vi.mock("@/lib/logging", async (importActual) => {
       debug: vi.fn(),
       info: vi.fn(),
       warn: warnSpy,
-      error: vi.fn(),
+      error: errorSpy,
     }),
   };
 });
 
-import {
-  createProvidedMachine,
-  _resetForTesting as resetManagerActors,
-  _resetMachineFactoryForTesting,
-} from "./manager";
 import {
   durableConversationPersistence,
   ephemeralConversationPersistence,
@@ -47,15 +95,7 @@ import {
   setPersistenceDeps,
   _resetForTesting as resetPersistenceForTesting,
 } from "./persistence";
-import {
-  setActorDeps,
-  _resetActorDepsForTesting,
-  type ActorImplementationDeps,
-} from "./actor-implementations";
-import {
-  executeWorkflowTaskRun,
-  _resetExecuteWorkflowTaskRunForTesting,
-} from "./execute-workflow-task-run";
+
 import { _resetForTesting as resetRuntimeState } from "./runtime-state";
 import {
   setConversationQueueDeps,
@@ -112,7 +152,7 @@ const fakeTaskRunResult: PromptActorResult = {
 function providedMachineWithFakeBackend(
   adapter: typeof durableConversationPersistence,
 ) {
-  return createProvidedMachine(adapter).provide({
+  return managerFixture.providedMachine(adapter).provide({
     actors: {
       prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
         async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
@@ -167,6 +207,7 @@ async function driveTaskRunTurn(
   actor.start();
   const settled = waitForState(actor, "idle");
   actor.send({
+    kind: "task_run",
     executionClass: "nongoverned-task" as const,
     type: "SUBMIT_TASK_RUN",
     promptText: "Validate the context.",
@@ -188,12 +229,18 @@ function makeInput(
     Pick<ConversationInput, "persistence">,
 ): ConversationInput {
   return {
-    conversationScope: "session",
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    target: targetFromStoreSessionName("proj", SESSION_NAME, "conv-1"),
+
     projectPath: PROJECT_PATH,
-    projectName: "proj",
-    sessionName: SESSION_NAME,
+
     worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-    conversationId: "conv-1",
+
     createdAt: "2026-01-01T00:00:00Z",
     forkedFrom: null,
     role: null,
@@ -228,9 +275,9 @@ function makeMissingConversationDeps(): {
   };
 }
 
-function syncDerivedWarnCalls(): unknown[][] {
-  return warnSpy.mock.calls.filter(
-    (call) => call[0] === "conversation-manager.sync_derived_failed",
+function persistenceFailureCalls(): unknown[][] {
+  return errorSpy.mock.calls.filter(
+    (call) => call[0] === "conversation.persistence_failed",
   );
 }
 
@@ -242,6 +289,7 @@ function syncDerivedWarnCalls(): unknown[][] {
 describe("ephemeral conversation runtime — no durable writes (machine-action delegation)", () => {
   beforeEach(() => {
     warnSpy.mockClear();
+    errorSpy.mockClear();
     // Inert snapshot + queue seams so a durable runtime's OTHER writes cannot
     // reach a real store during the contrast case; the assertion is scoped to
     // the derived-field mutation the audit flagged.
@@ -251,6 +299,7 @@ describe("ephemeral conversation runtime — no durable writes (machine-action d
       deleteConversationMachineSnapshot: async () => {},
     });
     setConversationQueueDeps({
+      submitTurn: managerFixture.manager.submitConversationTurn,
       claimNextTurnBatch: async () => null,
       markPending: async () => {},
       markDelivered: async () => {},
@@ -275,11 +324,17 @@ describe("ephemeral conversation runtime — no durable writes (machine-action d
     // compile. The required, no-default field is the mechanism.
     // @ts-expect-error persistence is required on ConversationInput
     const missing: ConversationInput = {
+      lastActivityAt: "2026-01-01T00:00:00Z",
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: PROJECT_PATH,
-      projectName: "proj",
-      sessionName: SESSION_NAME,
+      target: targetFromStoreSessionName("proj", SESSION_NAME, "conv-1"),
+
       worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-      conversationId: "conv-1",
+
       createdAt: "2026-01-01T00:00:00Z",
       forkedFrom: null,
       role: null,
@@ -305,8 +360,12 @@ describe("ephemeral conversation runtime — no durable writes (machine-action d
 
     const actor = await driveTaskRunTurn(
       makeInput({
-        conversationId:
+        target: targetFromStoreSessionName(
+          "proj",
+          "test-session",
           "__validator__:exec-1:context-1:context_validator:claude",
+        ),
+
         persistence: "ephemeral",
       }),
       ephemeralConversationPersistence,
@@ -317,7 +376,7 @@ describe("ephemeral conversation runtime — no durable writes (machine-action d
 
     expect(actor.getSnapshot().context.transient).toBe(true);
     expect(mutate).not.toHaveBeenCalled();
-    expect(syncDerivedWarnCalls()).toHaveLength(0);
+    expect(persistenceFailureCalls()).toHaveLength(0);
     actor.stop();
   });
 
@@ -326,16 +385,22 @@ describe("ephemeral conversation runtime — no durable writes (machine-action d
     setConversationPersistenceAdapterDeps(deps);
 
     const actor = await driveTaskRunTurn(
-      makeInput({ conversationId: "conv-durable-1", persistence: "durable" }),
+      makeInput({
+        target: targetFromStoreSessionName(
+          "proj",
+          "test-session",
+          "conv-durable-1",
+        ),
+        persistence: "durable",
+      }),
       durableConversationPersistence,
     );
 
-    // Durable adapter writes are fire-and-forget async: wait for the derived
-    // sync to attempt its mutation and the adapter to log the not-found failure
-    // — the exact 1,314× symptom the ephemeral facet removes.
+    // The durable control drive must reach the same write seam that the
+    // ephemeral adapter suppresses, and retain its storage failure.
     await vi.waitFor(() => {
       expect(mutate).toHaveBeenCalled();
-      const calls = syncDerivedWarnCalls();
+      const calls = persistenceFailureCalls();
       expect(calls.length).toBeGreaterThan(0);
       expect(JSON.stringify(calls)).toContain("Conversation not found");
     });
@@ -384,7 +449,7 @@ const fakeCompletedAgentCall: AgentCallResult = {
 };
 
 /**
- * Full `ActorImplementationDeps` for the production `runTaskRun` / `prepareTurn`
+ * Full `ActorFixtureDependencies` for the production `runTaskRun` / `prepareTurn`
  * actors with a fake backend. Every durable state-store WRITE dep is routed to
  * the fixture store so a stray actor write would land in the diffed database;
  * the backend call and transcript/lock/slot seams are inert doubles. Deps the
@@ -392,7 +457,7 @@ const fakeCompletedAgentCall: AgentCallResult = {
  */
 function makeFakeBackendActorDeps(
   fixture: ReturnType<typeof createPersistenceFixture>,
-): ActorImplementationDeps {
+): ActorFixtureDependencies {
   const unusedInTaskRun = (name: string) => (): never => {
     throw new Error(`fake backend: ${name} is not used on the task_run path`);
   };
@@ -486,8 +551,6 @@ function makeFakeBackendActorDeps(
     getReferenceDocuments: async () => [],
     readConversationMessages: async () => [],
     fileExists: () => false,
-    registerAbortController: () => {},
-    unregisterAbortController: () => {},
     composePortableMcpForConversation: async () => ({ servers: [] }),
     applyMcpAtTurnStart: async () => ({
       conversationId: "c",
@@ -520,13 +583,36 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
 
   beforeEach(() => {
     warnSpy.mockClear();
+    errorSpy.mockClear();
     // Real machine factory + real actors: no factory override, no provide().
-    _resetMachineFactoryForTesting();
-    _resetExecuteWorkflowTaskRunForTesting();
-    resetManagerActors();
+
+    managerFixture.dispose();
     resetRuntimeState();
 
     fixture = createPersistenceFixture();
+    actorInputLoader = (p, s, c) =>
+      loadActorInput(
+        {
+          getSession: fixture.store.getSession,
+          getProjectConversation: fixture.store.getProjectConversation,
+          getProjectDisplayName: () => "proj",
+        },
+        p,
+        s,
+        c,
+      );
+    admissionReader = async (key) => ({
+      found:
+        (await fixture.store.getConversation(
+          key.projectPath,
+          key.sessionName,
+          key.conversationId,
+        )) !== null,
+      requiresQueueReview: false,
+    });
+    setConversationProfileAdmissionDeps({
+      mutateConversation: fixture.store.mutateConversation,
+    });
     // Every durable seam points at the fixture, so ANY write the runtime makes
     // lands in the diffed database (Design 4: verify against the DB, not queue
     // call counts). The ephemeral facet must leave all of them untouched.
@@ -544,6 +630,7 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
       queueAutoName: () => {},
     });
     setConversationQueueDeps({
+      submitTurn: managerFixture.manager.submitConversationTurn,
       claimNextTurnBatch: async () => null,
       markPending: async () => {},
       markDelivered: async () => {},
@@ -555,7 +642,9 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
         usedFallback: false,
       }),
     });
-    setActorDeps(makeFakeBackendActorDeps(fixture));
+    conversationActors = createTestActorImplementations(
+      makeFakeBackendActorDeps(fixture),
+    );
 
     // Route the project-conversation notification durable write to the fixture's
     // own `notifications` table, so a wrongly-notifying ephemeral project
@@ -576,15 +665,15 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
   });
 
   afterEach(() => {
-    resetManagerActors();
+    managerFixture.dispose();
     resetRuntimeState();
-    _resetMachineFactoryForTesting();
-    _resetExecuteWorkflowTaskRunForTesting();
-    _resetActorDepsForTesting();
+
     _resetConversationPersistenceAdapterDepsForTesting();
     resetPersistenceForTesting();
     _resetConversationQueueDepsForTesting();
     _resetProjectConversationStatusNotificationDepsForTesting();
+
+    _resetConversationProfileAdmissionDepsForTesting();
     fixture.close();
   });
 
@@ -595,36 +684,136 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
     conversationId: string;
     persistence: "durable" | "ephemeral";
   }): Promise<void> {
-    await executeWorkflowTaskRun({
-      executionClass: "nongoverned-task" as const,
+    const address = {
       projectPath: PROJECT_PATH,
-      sessionName: opts.sessionName,
-      conversationId: opts.conversationId,
+      target: targetFromStoreSessionName(
+        "proj",
+        opts.sessionName,
+        opts.conversationId,
+      ),
+    };
+    await managerFixture.executeWorkflowTaskRun({
+      binding:
+        opts.persistence === "durable"
+          ? { kind: "durable", address, worktreePath: opts.worktreePath }
+          : {
+              kind: "ephemeral",
+              address,
+              worktreePath: opts.worktreePath,
+              backend: "claude",
+              role: null,
+              transcriptPath: null,
+            },
+      executionClass: "nongoverned-task" as const,
       kind: "task_run",
       prompt: "Do the task.",
       timeoutMs: 30_000,
-      actorInput: {
-        conversationScope: "session",
-        projectName: "proj",
-        sessionWorktreePath: opts.worktreePath,
-        persistence: opts.persistence,
-        conversation: {
-          createdAt: "2026-01-01T00:00:00Z",
-          forkedFrom: null,
-          role: null,
-          transcriptPath: null,
-          agentBackend: "claude",
-          backendRef: null,
-          promptCount: 0,
-          debugMode: null,
-        },
-      },
     });
     // Let the finalize transition's fire-and-forget durable writes settle.
     await vi.waitFor(() => expect(warnSpy).toBeDefined());
     await Promise.resolve();
     await Promise.resolve();
   }
+
+  it.each([
+    ["session", "ephemeral"],
+    ["project", "ephemeral"],
+    ["session", "durable"],
+    ["project", "durable"],
+  ] as const)(
+    "%s %s streaming compaction respects the memory reset gate",
+    async (scope, persistence) => {
+      const id = "stream-compaction";
+      const sessionName =
+        scope === "project"
+          ? PROJECT_CONVERSATION_SESSION_SENTINEL
+          : SESSION_NAME;
+      fixture.seedProject(PROJECT_PATH);
+      if (scope === "session") fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+      const row = conversationStateSchema.parse({
+        id,
+        scope,
+        status: "new",
+        transcriptPath: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        promptCount: 0,
+        agentBackend: "claude",
+      });
+      if (persistence === "durable") {
+        if (scope === "project")
+          await fixture.seedProjectConversation(PROJECT_PATH, row);
+        else await fixture.seedConversation(PROJECT_PATH, SESSION_NAME, row);
+      }
+      const telemetry = createMemoryTelemetryService({
+        repo: createMemoryTelemetryRepo(fixture.db, createWriteQueue()),
+        now: () => "2026-01-01T00:00:00Z",
+      });
+      await telemetry.recordDelivery({
+        conversationId: id,
+        channel: "index",
+        kind: "full",
+        composedAt: "2026-01-01T00:00:00Z",
+        notes: [],
+      });
+      let dispatches = 0;
+      const backendRuntime = createMockBackendRuntime({
+        async sendTurn(input) {
+          dispatches++;
+          await input.onEvent({ type: "input_accepted" });
+          return {
+            backendRef: null,
+            costUsd: 0.5,
+            durationMs: 20,
+            numTurns: 1,
+            contextTokens: 100,
+            contextWindowMax: 200000,
+            contentBlocks: [],
+            aborted: false,
+            compacted: true,
+            failure: null,
+            continuationDisposition: "retain",
+          };
+        },
+      });
+      conversationActors = createTestActorImplementations({
+        ...makeFakeBackendActorDeps(fixture),
+        getConversationBackendFactory: () => ({
+          backend: "claude",
+          createRuntime: async () => backendRuntime,
+        }),
+        executeAgentCall,
+        resetMemoryIndexDelivery: telemetry.resetIndexDelivery,
+      });
+      const before = dumpAllTables(fixture.db);
+      const actor = managerFixture.host.start(
+        makeInput({
+          target: targetFromStoreSessionName("test-project", sessionName, id),
+
+          persistence,
+          worktreePath:
+            scope === "project"
+              ? PROJECT_PATH
+              : `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
+        }),
+      );
+      const settled = waitForState(actor, "idle");
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Compact this turn",
+        streamId: "compaction-stream",
+      });
+      await settled;
+      expect(actor.getSnapshot().context.lastResult?.error).toBeNull();
+      expect(dispatches).toBe(1);
+      if (persistence === "ephemeral") {
+        expect(dumpAllTables(fixture.db)).toEqual(before);
+        expect((await telemetry.readIndexDelivery(id)).state).not.toBeNull();
+      } else {
+        expect((await telemetry.readIndexDelivery(id)).state).toBeNull();
+      }
+    },
+  );
 
   it("session-scoped ephemeral validator lane makes zero table changes and logs no not-found error", async () => {
     // A project + session exist, but NO conversation row — exactly a validator
@@ -641,7 +830,7 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
     });
 
     expect(dumpAllTables(fixture.db)).toEqual(before);
-    expect(syncDerivedWarnCalls()).toHaveLength(0);
+    expect(persistenceFailureCalls()).toHaveLength(0);
     expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(
       "Conversation not found",
     );
@@ -670,7 +859,7 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
         }
       ).n,
     ).toBe(0);
-    expect(syncDerivedWarnCalls()).toHaveLength(0);
+    expect(persistenceFailureCalls()).toHaveLength(0);
   });
 
   it("durable session runtime persists across the same drive (guards against a vacuous fixture)", async () => {
@@ -712,6 +901,19 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
 
   it("durable project conversation writes a notification row (proves the ephemeral suppression is a real difference)", async () => {
     fixture.seedProject(PROJECT_PATH);
+    await fixture.seedProjectConversation(
+      PROJECT_PATH,
+      conversationStateSchema.parse({
+        id: "proj-conv-1",
+        scope: "project",
+        transcriptPath: null,
+        status: "new",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        agentBackend: "claude",
+      }),
+    );
     const before = dumpAllTables(fixture.db);
 
     await driveTaskRun({

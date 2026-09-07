@@ -1,3 +1,23 @@
+import {
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+
+let machineFactory: NonNullable<
+  Parameters<typeof createConversationManagerFixture>[0]
+>["machine"];
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    machine: (adapter, deps) =>
+      machineFactory
+        ? machineFactory(adapter, deps)
+        : managerFixture.providedMachine(adapter),
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+    },
+  });
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fromPromise } from "xstate";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
@@ -10,14 +30,7 @@ import {
   _resetPublicationForTesting,
 } from "@/lib/events/publication";
 import { applySyncDerivedFields } from "@/lib/workflows/conversation/persistence-adapter";
-import {
-  createProvidedMachine,
-  sendConversationEvent,
-  setMachineFactory,
-  startConversationActor,
-  _resetForTesting,
-  _resetMachineFactoryForTesting,
-} from "@/lib/workflows/conversation/manager";
+
 import type {
   ExecutePromptInput,
   PrepareTurnInput,
@@ -31,7 +44,7 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-sc
  * Durability of a project conversation's pending question (charter: "Durability
  * claims need real persistence").
  *
- * The unit tests for the project Ask adapter stub `sendConversationEvent`, so
+ * The unit tests for the project Ask adapter stub `registerConversationQuestion`, so
  * they prove the handler CALLS the store seam — not that the pending batch
  * survives. The sentinel-aware store path is exactly what could silently fail
  * here: a project conversation lives in its own table, and the write is keyed by
@@ -75,8 +88,8 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
     // key to the project-conversations table. `broadcastAskQuestion` is left
     // PRODUCTION too — the scope-discriminated SSE it emits is the other half of
     // R4.1, and stubbing it would leave the request's last hop unproven.
-    setMachineFactory((adapter) =>
-      createProvidedMachine(adapter).provide({
+    machineFactory = (adapter) =>
+      managerFixture.providedMachine(adapter).provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
             async () => ({ transcriptPath: "/tmp/t.jsonl" }),
@@ -90,8 +103,8 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
             syncWrites.push(
               fixture.deps.mutateConversation(
                 context.projectPath,
-                context.sessionName,
-                context.conversationId,
+                conversationTargetStoreSessionName(context.target),
+                context.target.conversationId,
                 "test.syncDerived",
                 (c) => applySyncDerivedFields(context, c),
               ),
@@ -108,13 +121,12 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
           markReadOnUserTurnStart: () => {},
           drainPendingQueue: () => {},
         },
-      }),
-    );
+      });
   });
 
   afterEach(() => {
-    _resetForTesting();
-    _resetMachineFactoryForTesting();
+    managerFixture.dispose();
+
     _resetPublicationForTesting();
     fixture.close();
   });
@@ -138,7 +150,8 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
         return PROJECT_PATH;
       },
       getProjectConversation: fixture.store.getProjectConversation,
-      sendConversationEvent,
+      registerConversationQuestion:
+        managerFixture.manager.registerConversationQuestion,
       generateQuestionBatchId: () => "q_durable1",
       log: createCapturingLogger(),
     });
@@ -146,12 +159,22 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
 
   /** Start a live project-scope turn — keyed by the sentinel, as production is. */
   async function startProjectTurn() {
-    const actor = startConversationActor({
+    const actor = managerFixture.host.start({
+      lastActivityAt: ts,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: PROJECT_PATH,
-      projectName: "cc",
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      target: targetFromStoreSessionName(
+        "cc",
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONVERSATION_ID,
+      ),
+
       worktreePath: PROJECT_PATH,
-      conversationId: CONVERSATION_ID,
+
       createdAt: ts,
       forkedFrom: null,
       role: null,
@@ -255,7 +278,7 @@ describe("project ask persists the pending question (R1.1 / R2.4)", () => {
     });
 
     // Drop every live actor — the state a restarted server would come up with.
-    _resetForTesting();
+    managerFixture.dispose();
 
     const recovered = await fixture.store.getProjectConversation(
       PROJECT_PATH,

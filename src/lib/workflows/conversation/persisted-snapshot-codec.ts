@@ -1,3 +1,8 @@
+import {
+  conversationTargetSchema,
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
 /**
  * Persisted-snapshot projection codec.
  *
@@ -55,7 +60,8 @@ export type ConversationContextDisposition =
 /**
  * Every `ConversationContext` field's disposition. The persisted snapshot
  * restores the machine's context wholesale, so each field is the source of its
- * own resumed value — every field is therefore `persist`. The two large content
+ * own resumed value. The target is reconstructed from the flat identity fields.
+ * The two large content
  * carriers are not top-level context fields: `lastResult.contentBlocks` is a
  * sub-field stripped by {@link toPersistedConversationSnapshot}'s `lastResult`
  * projection, and `children` is an XState-envelope field dropped at the snapshot
@@ -63,12 +69,9 @@ export type ConversationContextDisposition =
  */
 export const CONVERSATION_CONTEXT_DISPOSITION = {
   _schemaVersion: "persist",
-  conversationScope: "persist",
+  target: "derive-on-rehydrate",
   projectPath: "persist",
-  projectName: "persist",
-  sessionName: "persist",
   worktreePath: "persist",
-  conversationId: "persist",
   createdAt: "persist",
   lastActivityAt: "persist",
   status: "persist",
@@ -267,6 +270,13 @@ function projectContext(rawContext: unknown): unknown {
         ? projectLastResult(rawContext[key])
         : rawContext[key];
   }
+  const target = conversationTargetSchema.safeParse(rawContext.target);
+  if (target.success) {
+    out.conversationScope = target.data.scope;
+    out.projectName = target.data.projectName;
+    out.sessionName = conversationTargetStoreSessionName(target.data);
+    out.conversationId = target.data.conversationId;
+  }
   return out;
 }
 
@@ -311,11 +321,26 @@ export function toPersistedConversationSnapshot(
  * `children` encodes "child actors are re-created lazily", so the token means
  * "no live children", and `{}` is exactly that.
  */
-export function restorePersistedSnapshotEnvelope<T>(snapshot: T): T {
-  if (typeof snapshot !== "object" || snapshot === null) return snapshot;
-  const record = snapshot as Record<string, unknown>;
-  const children = record["children"];
-  if (typeof children === "object" && children !== null) return snapshot;
-  record["children"] = {};
-  return snapshot;
+export function restorePersistedSnapshotEnvelope(snapshot: unknown): void {
+  if (!isRecord(snapshot)) return;
+  if (!isRecord(snapshot.children)) snapshot.children = {};
+  if (!isRecord(snapshot.context)) return;
+  const context = snapshot.context;
+  const identity = z
+    .object({
+      projectName: z.string(),
+      sessionName: z.string(),
+      conversationId: z.string(),
+    })
+    .safeParse(context);
+  if (!identity.success) return;
+  context.target = targetFromStoreSessionName(
+    identity.data.projectName,
+    identity.data.sessionName,
+    identity.data.conversationId,
+  );
+  delete context.projectName;
+  delete context.sessionName;
+  delete context.conversationId;
+  delete context.conversationScope;
 }

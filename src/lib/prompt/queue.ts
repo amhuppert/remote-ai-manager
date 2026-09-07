@@ -181,6 +181,7 @@ export interface QueueMessageDeps {
    */
   prepareNotepadChangeNotice(
     conversationId: string,
+    references?: readonly NotepadDeliveryRecord[],
   ): Promise<PreparedNotepadChangeNotice>;
   settleNotepadChangeNotice(notice: PreparedNotepadChangeNotice): Promise<void>;
 }
@@ -200,8 +201,8 @@ const defaultDeps: QueueMessageDeps = {
     getNotepadInjectionReader().readForInjection(notepadId),
   recordNotepadDeliveries: (input) =>
     getNotepadDeliveryTracker().recordDelivered(input),
-  prepareNotepadChangeNotice: (conversationId) =>
-    getNotepadDeliveryTracker().prepare(conversationId),
+  prepareNotepadChangeNotice: (conversationId, references) =>
+    getNotepadDeliveryTracker().prepare(conversationId, references),
   settleNotepadChangeNotice: (notice) =>
     getNotepadDeliveryTracker().settle(notice),
 };
@@ -370,29 +371,6 @@ export async function queueMessage(
     }
   }
 
-  // A notepad becomes watermark-tracked for this conversation exactly here —
-  // where its content was put in front of the agent (R21). Recorded before the
-  // row is enqueued, so a message that waits in the queue is still recorded as
-  // delivered content the moment it was expanded, matching the live turn.
-  if (deliveredNotepads.length > 0) {
-    try {
-      await deps.recordNotepadDeliveries({
-        conversationId,
-        notepads: deliveredNotepads.map(({ id, revision }) => ({
-          notepadId: id,
-          revision,
-        })),
-      });
-    } catch (err) {
-      logger.warn("queue.notepad_delivery_record_failed", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        ...scopeRef,
-        conversationId,
-        count: deliveredNotepads.length,
-        error: getErrorMessage(err),
-      });
-    }
-  }
   const deliveryContent =
     documentFeedback || notepadFeedback
       ? buildQueueContent({
@@ -533,11 +511,17 @@ export async function queueMessage(
     return { entry, deliveryTiming: "in_turn" };
   }
 
-  // Prepared AFTER the recording above: a notepad whose full content this very
-  // message carries needs no notice telling the agent to re-read it.
+  // Rendered references provide a local baseline until backend acceptance.
   let notepadChangeNotice: PreparedNotepadChangeNotice | null = null;
   try {
-    notepadChangeNotice = await deps.prepareNotepadChangeNotice(conversationId);
+    notepadChangeNotice = await deps.prepareNotepadChangeNotice(
+      conversationId,
+      deliveredNotepads.map(({ id, revision, openComments }) => ({
+        notepadId: id,
+        revision,
+        openComments,
+      })),
+    );
     if (notepadChangeNotice.block !== null) {
       logger.info("queue.notepad_change_notice_prepended", {
         projectName: deps.getProjectDisplayName(projectPath),
@@ -609,6 +593,26 @@ export async function queueMessage(
     return { entry, deliveryTiming: "in_turn" };
   }
 
+  if (deliveredNotepads.length > 0) {
+    try {
+      await deps.recordNotepadDeliveries({
+        conversationId,
+        notepads: deliveredNotepads.map(({ id, revision, openComments }) => ({
+          notepadId: id,
+          revision,
+          openComments,
+        })),
+      });
+    } catch (err) {
+      logger.warn("queue.notepad_delivery_record_failed", {
+        projectName: deps.getProjectDisplayName(projectPath),
+        ...scopeRef,
+        conversationId,
+        count: deliveredNotepads.length,
+        error: getErrorMessage(err),
+      });
+    }
+  }
   // `queueUserInput` resolving IS backend acceptance, and that is the settle
   // gate (D17): a delivery that threw above left the row pending AND the
   // watermarks untouched, so the notice re-fires on the next message rather

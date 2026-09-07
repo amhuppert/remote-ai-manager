@@ -27,8 +27,10 @@ import {
   getGraphWorkflowPendingArtifacts,
   clearGraphWorkflowPendingArtifacts,
 } from "@/lib/state-store";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
-import type { ConversationEvent } from "@/lib/workflows/conversation/types";
+import {
+  registerConversationQuestion,
+  clearConversationQuestion,
+} from "@/lib/workflows/conversation/manager";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
 import {
@@ -61,12 +63,12 @@ const AUTONOMOUS_DENIAL =
 
 /** What batch registration itself needs — no session lookup, no lane gate. */
 export interface AskRegistrationDeps {
-  sendConversationEvent(
+  registerConversationQuestion(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    event: ConversationEvent,
-  ): boolean;
+    question: { questionId: string; questions: AskQuestionItem[] },
+  ): Promise<boolean>;
   generateQuestionBatchId(): string;
   /**
    * Injected so a test can read the diagnostics this path actually emits. The
@@ -83,18 +85,11 @@ export interface AskRouteDeps extends AskRegistrationDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<{ conversations: ConversationState[] } | null>;
-  sendConversationEvent(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    event: ConversationEvent,
-  ): boolean;
   resolveLaneAskPermission(
     projectPath: string,
     sessionName: string,
     conversationId: string,
   ): Promise<LaneAskPermission>;
-  generateQuestionBatchId(): string;
 }
 
 const LANE_ASK_ROLES = new Set<ConversationRole>(["iteration", "validator"]);
@@ -303,11 +298,11 @@ async function registerAskBatchAfterRoleGate(
     // The one place the sentinel is materialized: the session-keyed storage API
     // (A5). It is passed straight into the call and never bound to a name that a
     // later log line could pick up.
-    const accepted = deps.sendConversationEvent(
+    const accepted = await deps.registerConversationQuestion(
       projectPath,
       storeSessionNameFromScopeRef(scopeRef),
       conversationId,
-      { type: "ASK_QUESTION", questionId: questionBatchId, questions },
+      { questionId: questionBatchId, questions },
     );
     if (!accepted) {
       deps.log.warn("ask.event_rejected", {
@@ -393,7 +388,7 @@ const userInputGateService = createUserInputGateService({
   publishUserInputPending: eventPublisher.publishUserInputPending,
   publishUserInputResolved: eventPublisher.publishUserInputResolved,
   deliver: eventPublisher.deliver,
-  sendConversationEvent,
+  clearConversationQuestion,
   now: () => new Date().toISOString(),
 });
 
@@ -401,7 +396,7 @@ const defaultHandlers = createAskQuestionHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
-  sendConversationEvent,
+  registerConversationQuestion,
   resolveLaneAskPermission: userInputGateService.resolveLaneAskPermission,
   generateQuestionBatchId: () => `q_${randomUUID()}`,
   log,
@@ -414,7 +409,7 @@ const defaultProjectHandlers = createProjectAskQuestionHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getProjectConversation,
-  sendConversationEvent,
+  registerConversationQuestion,
   generateQuestionBatchId: () => `q_${randomUUID()}`,
   log,
 });

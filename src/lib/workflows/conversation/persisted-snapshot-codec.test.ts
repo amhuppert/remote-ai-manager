@@ -1,3 +1,4 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { describe, it, expect } from "vitest";
 import type { Snapshot } from "xstate";
 import type { ConversationContext } from "./types";
@@ -20,12 +21,12 @@ function bigBlocks(): unknown[] {
 function makeFullSnapshot(): Snapshot<unknown> {
   const context: ConversationContext = {
     _schemaVersion: 1,
-    conversationScope: "session",
+    target: targetFromStoreSessionName("proj", "sess", "conv-1"),
+
     projectPath: "/repo",
-    projectName: "proj",
-    sessionName: "sess",
+
     worktreePath: "/repo/.worktrees/sess",
-    conversationId: "conv-1",
+
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-02T00:00:00Z",
     status: "waiting_for_input",

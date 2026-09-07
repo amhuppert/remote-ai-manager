@@ -1,3 +1,4 @@
+import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { createPendingEntry } from "@/lib/conversations/message-queue-service";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -7,10 +8,12 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
 import { ModelSelectionPolicyError } from "@/lib/agent-backends/model-selection";
 import type {
-  ConversationTurnExecution,
-  ConversationTurnProjection,
-  ExecuteConversationTurnInput,
-} from "@/lib/workflows/conversation/manager";
+  ConversationTurnSubmission,
+  TurnAdmission,
+} from "@/lib/workflows/conversation/turn-spec";
+import type { SettledConversationTurn } from "@/lib/workflows/conversation/turn-result";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 
 // ---------------------------------------------------------------------------
@@ -37,7 +40,6 @@ import {
   BackendMismatchError,
   ModelSelectionValidationError,
   ConversationCommandDispatcherUnavailableError,
-  DEBUG_MODE_INSTRUCTIONS,
   TDD_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS,
   ASK_QUESTION_INSTRUCTIONS_ENABLED,
@@ -147,7 +149,7 @@ interface LegacyPromptTestDeps {
 
 type TestPromptDeps = PromptDeps & LegacyPromptTestDeps;
 
-function projectMockTurn(): ConversationTurnProjection {
+function projectMockTurn(): Omit<PromptStreamResult, "conversationId"> {
   const context = mockActor.getSnapshot().context as {
     totals?: {
       contextTokens?: number | null;
@@ -160,7 +162,7 @@ function projectMockTurn(): ConversationTurnProjection {
       abortReason?: "timeout" | "user" | "shutdown";
       timeoutMs?: number;
       error?: string | null;
-      backgroundWait?: ConversationTurnProjection["backgroundWait"];
+      backgroundWait?: PromptStreamResult["backgroundWait"];
     };
     lastError?: string | null;
   };
@@ -230,57 +232,108 @@ function createTestDeps(
     attachPromptStream: vi.fn(),
     detachPromptStream: vi.fn(),
     sendConversationEvent: vi.fn(() => true),
-    ensureConversationLifecycle: vi.fn(async (...args: unknown[]) => {
-      await deps.ensureConversationActor(...args);
-    }),
-    executeConversationTurn: vi.fn(
-      async (
-        input: ExecuteConversationTurnInput,
-      ): Promise<ConversationTurnExecution> => {
-        deps.attachPromptStream(
-          input.projectPath,
-          input.sessionName,
-          input.conversationId,
-          input.streamId,
-          input.emit,
+    submitConversationTurn: vi.fn(
+      async (input: ConversationTurnSubmission): Promise<TurnAdmission> => {
+        const { projectPath, target } = input.binding.address;
+        const sessionName = conversationTargetStoreSessionName(target);
+        const streamId = input.transport?.streamId ?? "task";
+        await deps.ensureConversationActor(
+          projectPath,
+          sessionName,
+          target.conversationId,
+          { binding: input.binding },
         );
-        try {
-          const accepted = deps.sendConversationEvent(
-            input.projectPath,
-            input.sessionName,
-            input.conversationId,
-            {
-              type: "SUBMIT_PROMPT",
-              ...input.turn,
-              streamId: input.streamId,
-            },
-          );
-          if (!accepted) {
-            return {
-              status: "rejected",
-              reason: "not_ready",
-              result: projectMockTurn(),
-            };
-          }
-          await input.onAccepted?.();
+        const accepted = deps.sendConversationEvent(
+          projectPath,
+          sessionName,
+          target.conversationId,
+          { type: "SUBMIT_PROMPT", ...input.turn, streamId },
+        );
+        if (!accepted)
+          return {
+            kind: "refused",
+            code: "busy",
+            message: "Conversation is not ready to accept a new prompt",
+          };
+        deps.attachPromptStream(
+          projectPath,
+          sessionName,
+          target.conversationId,
+          streamId,
+          input.transport?.emit,
+        );
+        const completed: Promise<SettledConversationTurn> = (async () => {
           try {
             await waitForMockTurnCompletion();
-            return { status: "completed", result: projectMockTurn() };
-          } catch (err) {
+            const projection = projectMockTurn();
+            const backend = input.turn.backend ?? "claude";
             return {
-              status: "failed",
-              error: err instanceof Error ? err.message : "Prompt failed",
-              result: projectMockTurn(),
+              attemptId: streamId,
+              status: "awaiting",
+              pendingQuestion: null,
+              outcome: {
+                kind: "call_result",
+                result: {
+                  backend,
+                  backendRef: null,
+                  capabilities: capabilityViewForBackend(backend),
+                  artifacts: [],
+                  usage: {
+                    contextTokens: projection.contextTokens ?? undefined,
+                    contextWindowMax: projection.contextWindowMax ?? undefined,
+                  },
+                  outcome:
+                    projection.aborted || projection.error
+                      ? {
+                          kind: "failed",
+                          error: {
+                            backend,
+                            failureKind: projection.aborted
+                              ? "aborted"
+                              : "backend_error",
+                            message: projection.error ?? "Cancelled",
+                            retryable: false,
+                          },
+                        }
+                      : {
+                          kind: "completed",
+                          text: null,
+                          structuredOutput: projection.structuredOutput,
+                        },
+                  compacted: projection.compacted,
+                  backgroundWait: projection.backgroundWait,
+                },
+              },
             };
+          } catch (error) {
+            return {
+              attemptId: streamId,
+              status: "awaiting",
+              pendingQuestion: null,
+              outcome: {
+                kind: "not_started",
+                reason: "configuration",
+                message:
+                  error instanceof Error ? error.message : "Prompt failed",
+              },
+            };
+          } finally {
+            deps.detachPromptStream(
+              projectPath,
+              sessionName,
+              target.conversationId,
+              streamId,
+            );
           }
-        } finally {
-          deps.detachPromptStream(
-            input.projectPath,
-            input.sessionName,
-            input.conversationId,
-            input.streamId,
-          );
-        }
+        })();
+        return {
+          kind: "accepted",
+          turn: {
+            attemptId: streamId,
+            completed,
+            cancel: async () => completed,
+          },
+        };
       },
     ),
   });
@@ -317,24 +370,6 @@ beforeEach(() => {
       return { unsubscribe: vi.fn() };
     },
   );
-});
-
-// ===========================================================================
-// Tests
-// ===========================================================================
-
-describe("DEBUG_MODE_INSTRUCTIONS", () => {
-  // The receiver drops any request carrying X-CC-Debug-Log: 1 as `self_log`.
-  // The header is ONLY useful when the project under debug is Command Center
-  // itself — it breaks recursion on the debug-log path. For every other
-  // project, sending the header silently discards every probe entry, which
-  // is what happened during the May 2026 end-to-end flow test.
-  it("scopes the X-CC-Debug-Log header to the self-debug-CC case", () => {
-    if (!DEBUG_MODE_INSTRUCTIONS.includes("X-CC-Debug-Log")) return;
-    expect(DEBUG_MODE_INSTRUCTIONS).toMatch(
-      /Command Center itself|self-debug|debugging CC/i,
-    );
-  });
 });
 
 describe("TDD_INSTRUCTIONS", () => {
@@ -562,7 +597,7 @@ describe("executePromptStream (facade)", () => {
           held.id,
         ),
       ).rejects.toThrow("Review queued deliveries");
-      expect(deps.executeConversationTurn).not.toHaveBeenCalled();
+      expect(deps.submitConversationTurn).not.toHaveBeenCalled();
     },
   );
 
@@ -748,14 +783,11 @@ describe("executePromptStream (facade)", () => {
     expect(events.find(([e]) => e === "error")).toBeTruthy();
     expect(events.find(([e]) => e === "done")).toBeTruthy();
     expect(onAccepted).not.toHaveBeenCalled();
-    // The SSE stream is still torn down on the fail-fast path.
-    expect(deps.detachPromptStream).toHaveBeenCalled();
+    expect(deps.attachPromptStream).not.toHaveBeenCalled();
   });
 
   it("carries invocation tooling and turn options across the facade boundary", async () => {
-    const setTooling = vi.fn();
-    const setSkipConversationLock = vi.fn();
-    deps = createTestDeps({ setTooling, setSkipConversationLock });
+    deps = createTestDeps();
     const executor = createPromptExecutor(deps);
     const tooling = { portableMcp: { servers: [] } };
     const images = [
@@ -776,27 +808,15 @@ describe("executePromptStream (facade)", () => {
       images,
       {
         tooling,
-        skipConversationLock: true,
         waitForBackgroundTasks: true,
         waitForConversationReady: true,
       },
     );
 
-    expect(setTooling).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      tooling,
-    );
-    expect(setSkipConversationLock).toHaveBeenCalledWith(
-      "/projects/repo",
-      "test-session",
-      "conv-123",
-      true,
-    );
-    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+    expect(deps.submitConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         waitUntilReady: true,
+        executionContext: expect.objectContaining({ tooling }),
         turn: expect.objectContaining({
           images,
           waitForBackgroundTasks: true,
@@ -1331,7 +1351,7 @@ describe("executePromptStream (facade)", () => {
       requestedSelection,
     );
 
-    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+    expect(deps.submitConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         turn: expect.objectContaining({
           modelSelection: canonicalSelection,
@@ -1369,7 +1389,7 @@ describe("executePromptStream (facade)", () => {
       requestedSelection,
     );
 
-    const dispatchedSelection = vi.mocked(deps.executeConversationTurn).mock
+    const dispatchedSelection = vi.mocked(deps.submitConversationTurn).mock
       .calls[0]?.[0].turn.modelSelection;
     const persistedEvent = vi
       .mocked(deps.sendConversationEvent)
@@ -2082,9 +2102,13 @@ describe("conversation command interception", () => {
     expect(result.conversationId).toBe("conv-123");
     expect(deps.createConversation).toHaveBeenCalledTimes(1);
     expect(dispatchConversationCommand).not.toHaveBeenCalled();
-    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+    expect(deps.submitConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        conversationId: "conv-123",
+        binding: expect.objectContaining({
+          address: expect.objectContaining({
+            target: expect.objectContaining({ conversationId: "conv-123" }),
+          }),
+        }),
         turn: expect.objectContaining({
           promptText: "/spec durable audit log",
         }),

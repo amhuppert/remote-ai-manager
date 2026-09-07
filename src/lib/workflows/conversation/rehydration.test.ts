@@ -1,3 +1,36 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+
+let machineFactory: NonNullable<
+  Parameters<typeof createConversationManagerFixture>[0]
+>["machine"];
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    machine: (adapter, deps) =>
+      machineFactory
+        ? machineFactory(adapter, deps)
+        : managerFixture.providedMachine(adapter),
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+      queue: {
+        submitTurn: (...args) => currentQueueDependencies().submitTurn(...args),
+        claimNextTurnBatch: (...args) =>
+          currentQueueDependencies().claimNextTurnBatch(...args),
+        markPending: (...args) =>
+          currentQueueDependencies().markPending(...args),
+        markDelivered: (...args) =>
+          currentQueueDependencies().markDelivered(...args),
+        markFailed: (...args) => currentQueueDependencies().markFailed(...args),
+        recoverAbandonedDeliveries: (...args) =>
+          currentQueueDependencies().recoverAbandonedDeliveries(...args),
+        runConversationCommand: (...args) =>
+          currentQueueDependencies().runConversationCommand(...args),
+      },
+    },
+  });
+
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   collectRehydrationCandidates,
@@ -6,12 +39,7 @@ import {
   shouldRehydrateSnapshot,
   type RehydrateConversationActorsDeps,
 } from "./rehydration";
-import {
-  getConversationActor,
-  setMachineFactory,
-  _resetForTesting,
-  _resetMachineFactoryForTesting,
-} from "./manager";
+
 import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
@@ -105,9 +133,9 @@ const emptyState = (): ManagerState =>
   });
 
 afterEach(() => {
-  _resetForTesting();
+  managerFixture.dispose();
   resetRuntime();
-  _resetMachineFactoryForTesting();
+
   _resetConversationQueueDepsForTesting();
 });
 
@@ -158,13 +186,15 @@ describe("collectRehydrationCandidates", () => {
           content: [{ type: "text", text: "later" }],
         });
         setConversationQueueDeps({
+          submitTurn: managerFixture.manager.submitConversationTurn,
           ...queue,
           runConversationCommand: async () => {
             throw new Error("not a command");
           },
         });
-        setMachineFactory(createTestMachine);
+        machineFactory = createTestMachine;
         const count = await rehydrateConversationActors({
+          ...rehydrationInfrastructure(),
           mutateConversation: fixture.store.mutateConversation,
           readAllForStartup: () => readAllForStartupFromDb(fixture.db),
           listAllProjectConversations:
@@ -177,11 +207,9 @@ describe("collectRehydrationCandidates", () => {
         });
         expect(count).toBe(1);
         expect(
-          getConversationActor(
-            projectPath,
-            sessionName,
-            conversationId,
-          )?.getSnapshot().value,
+          managerFixture
+            .actor(projectPath, sessionName, conversationId)
+            ?.getSnapshot().value,
         ).toBe("idle");
         const reloaded = await fixture
           .recreateStore()
@@ -195,7 +223,7 @@ describe("collectRehydrationCandidates", () => {
         expect(reloaded?.totalCostUsd).toBe(0.42);
         expect(await queue.claimNextTurnBatch(key)).toBeNull();
       } finally {
-        _resetForTesting();
+        managerFixture.dispose();
         fixture.close();
       }
     },
@@ -229,6 +257,7 @@ describe("rehydrateConversationActors (project conversations)", () => {
     snapshots: Record<string, unknown> = {},
   ): RehydrateConversationActorsDeps {
     return {
+      ...rehydrationInfrastructure(),
       readAllForStartup: () => emptyState(),
       listAllProjectConversations: async () => projectConvs,
       getProjectDisplayName: () => "demo",
@@ -288,6 +317,7 @@ describe("workflow-result post-commit reconciliation", () => {
     const reconcileWorkflowResultEffects = vi.fn(async () => 1);
 
     const count = await rehydrateConversationActors({
+      ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([]),
       listAllProjectConversations: async () => [],
       getProjectDisplayName: () => "demo",
@@ -307,6 +337,7 @@ describe("workflow-result post-commit reconciliation", () => {
     const recoverWorkflowResultClaims = vi.fn(async () => 1);
 
     const count = await rehydrateConversationActors({
+      ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([]),
       listAllProjectConversations: async () => [],
       getProjectDisplayName: () => "demo",
@@ -376,11 +407,17 @@ describe("waitingForInput rehydration contract", () => {
   }
 
   const actorInput: ConversationInput = {
+    lastActivityAt: ts,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    contextTokens: null,
+    contextWindowMax: null,
     projectPath: "/repo",
-    projectName: "demo",
-    sessionName: "feat",
+    target: targetFromStoreSessionName("demo", "feat", "c-wfi"),
+
     worktreePath: "/repo/.worktrees/feat",
-    conversationId: "c-wfi",
+
     createdAt: ts,
     forkedFrom: null,
     role: null,
@@ -393,6 +430,7 @@ describe("waitingForInput rehydration contract", () => {
 
   const claimNextTurnBatch = vi.fn(async () => null);
   const noopQueueDeps: ConversationQueueDeps = {
+    submitTurn: managerFixture.manager.submitConversationTurn,
     claimNextTurnBatch,
     markPending: async () => {},
     markDelivered: async () => {},
@@ -451,7 +489,7 @@ describe("waitingForInput rehydration contract", () => {
 
   it("a conversation persisted in waitingForInput wakes in waitingForInput after restart", async () => {
     const persisted = await captureWaitingForInputSnapshot();
-    setMachineFactory(stubbedMachine);
+    machineFactory = stubbedMachine;
     setConversationQueueDeps(noopQueueDeps);
 
     const conversation = conv({
@@ -459,6 +497,7 @@ describe("waitingForInput rehydration contract", () => {
       status: "waiting_for_input",
     });
     const deps: RehydrateConversationActorsDeps = {
+      ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([conversation]),
       listAllProjectConversations: async () => [],
       getProjectDisplayName: () => "demo",
@@ -472,7 +511,7 @@ describe("waitingForInput rehydration contract", () => {
     const count = await rehydrateConversationActors(deps);
     expect(count).toBe(1);
 
-    const actor = getConversationActor("/repo", "feat", "c-wfi");
+    const actor = managerFixture.actor("/repo", "feat", "c-wfi");
     expect(actor).toBeDefined();
     const snap = actor!.getSnapshot();
     expect(snap.value).toBe("waitingForInput");
@@ -504,7 +543,7 @@ describe("waitingForInput rehydration contract", () => {
       backend: "claude",
       sessionId: "sess-legacy-snap",
     };
-    setMachineFactory(stubbedMachine);
+    machineFactory = stubbedMachine;
     setConversationQueueDeps(noopQueueDeps);
 
     const conversation = conv({
@@ -512,6 +551,7 @@ describe("waitingForInput rehydration contract", () => {
       status: "waiting_for_input",
     });
     const deps: RehydrateConversationActorsDeps = {
+      ...rehydrationInfrastructure(),
       readAllForStartup: () => stateWith([conversation]),
       listAllProjectConversations: async () => [],
       getProjectDisplayName: () => "demo",
@@ -523,7 +563,7 @@ describe("waitingForInput rehydration contract", () => {
     const count = await rehydrateConversationActors(deps);
     expect(count).toBe(1);
 
-    const actor = getConversationActor("/repo", "feat", "c-wfi");
+    const actor = managerFixture.actor("/repo", "feat", "c-wfi");
     expect(actor).toBeDefined();
     expect(actor!.getSnapshot().context.backendRef).toEqual({
       backend: "claude",
@@ -544,7 +584,17 @@ describe("waitingForInput rehydration contract", () => {
       await fixture.seedConversation(
         "/repo",
         "feat",
-        conv({ id: "c-db", status: "waiting_for_input" }),
+        conv({
+          id: "c-db",
+          status: "waiting_for_input",
+          promptCount: 8,
+          totalCostUsd: 4.5,
+          totalDurationMs: 9000,
+          totalTurns: 17,
+          contextTokens: 1200,
+          contextWindowMax: 200000,
+          lastActivityAt: "2026-02-01T00:00:00.000Z",
+        }),
       );
       const persisted = await captureWaitingForInputSnapshot();
       await fixture.store.upsertConversationMachineSnapshot(
@@ -553,10 +603,11 @@ describe("waitingForInput rehydration contract", () => {
         persisted,
       );
 
-      setMachineFactory(stubbedMachine);
+      machineFactory = stubbedMachine;
       setConversationQueueDeps(noopQueueDeps);
 
       const count = await rehydrateConversationActors({
+        ...rehydrationInfrastructure(),
         readAllForStartup: () => readAllForStartupFromDb(fixture.db),
         listAllProjectConversations: fixture.store.listAllProjectConversations,
         getProjectDisplayName: () => "demo",
@@ -566,8 +617,19 @@ describe("waitingForInput rehydration contract", () => {
       });
 
       expect(count).toBe(1);
-      const actor = getConversationActor("/repo", "feat", "c-db");
+      const actor = managerFixture.actor("/repo", "feat", "c-db");
       expect(actor).toBeDefined();
+      expect(actor!.getSnapshot().context.totals).toEqual({
+        totalCostUsd: 4.5,
+        totalDurationMs: 9000,
+        totalTurns: 17,
+        contextTokens: 1200,
+        contextWindowMax: 200000,
+      });
+      expect(actor!.getSnapshot().context.promptCount).toBe(8);
+      expect(actor!.getSnapshot().context.lastActivityAt).toBe(
+        "2026-02-01T00:00:00.000Z",
+      );
       expect(actor!.getSnapshot().value).toBe("waitingForInput");
     } finally {
       fixture.close();
@@ -694,6 +756,7 @@ function makeQueueDeps(
   overrides: Partial<ConversationQueueDeps> = {},
 ): ConversationQueueDeps {
   return {
+    submitTurn: managerFixture.manager.submitConversationTurn,
     claimNextTurnBatch: vi.fn(async () => null),
     markPending: vi.fn(async () => {}),
     markDelivered: vi.fn(async () => {}),
@@ -719,11 +782,21 @@ describe("rehydrateOneConversationActor startup recovery", () => {
   // independent of which resumable state the snapshot captured.
   function makeResumableSnapshot(): Snapshot<unknown> {
     const input: ConversationInput = {
+      lastActivityAt: DEFAULT_INPUT.createdAt,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: DEFAULT_INPUT.projectPath,
-      projectName: DEFAULT_INPUT.projectName,
-      sessionName: DEFAULT_INPUT.sessionName,
+      target: targetFromStoreSessionName(
+        DEFAULT_INPUT.projectName,
+        DEFAULT_INPUT.sessionName,
+        CONV_ID,
+      ),
+
       worktreePath: DEFAULT_INPUT.worktreePath,
-      conversationId: CONV_ID,
+
       createdAt: DEFAULT_INPUT.createdAt,
       forkedFrom: null,
       role: null,
@@ -748,6 +821,12 @@ describe("rehydrateOneConversationActor startup recovery", () => {
       storeSessionName: DEFAULT_INPUT.sessionName,
       worktreePath: DEFAULT_INPUT.worktreePath,
       conversation: {
+        lastActivityAt: DEFAULT_INPUT.createdAt,
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        contextTokens: null,
+        contextWindowMax: null,
         id: CONV_ID,
         createdAt: DEFAULT_INPUT.createdAt,
         forkedFrom: null,
@@ -756,13 +835,14 @@ describe("rehydrateOneConversationActor startup recovery", () => {
         agentBackend: "claude" as const,
         backendRef: null,
         promptCount: 1,
+        debugMode: null,
       },
       snapshot,
     };
   }
 
   it("awaits recoverAbandonedDeliveries before starting the actor", async () => {
-    setMachineFactory(createTestMachine);
+    machineFactory = createTestMachine;
 
     // Gate recovery on a deferred. `actor.start()` is the statement after the
     // awaited recovery, so while the gate is unresolved the actor cannot have
@@ -782,6 +862,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
 
     const rehydratePromise = rehydrateOneConversationActor(
       rehydrateArgs(makeResumableSnapshot()),
+      rehydrationInfrastructure(),
     ).then((started) => {
       order.push("rehydrate-resolved");
       return started;
@@ -805,7 +886,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
     expect(order).toEqual(["recover-called", "rehydrate-resolved"]);
     // The actor became live only after recovery resolved.
     expect(
-      getConversationActor(
+      managerFixture.actor(
         DEFAULT_INPUT.projectPath,
         DEFAULT_INPUT.sessionName,
         CONV_ID,
@@ -814,7 +895,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
   });
 
   it("does not start an actor when durable recovery fails", async () => {
-    setMachineFactory(createTestMachine);
+    machineFactory = createTestMachine;
 
     const recoverAbandonedDeliveries = vi.fn(async () => {
       throw new Error("recover boom");
@@ -823,12 +904,13 @@ describe("rehydrateOneConversationActor startup recovery", () => {
 
     const started = await rehydrateOneConversationActor(
       rehydrateArgs(makeResumableSnapshot()),
+      rehydrationInfrastructure(),
     );
 
     expect(recoverAbandonedDeliveries).toHaveBeenCalledTimes(1);
     expect(started).toBe(false);
     expect(
-      getConversationActor(
+      managerFixture.actor(
         DEFAULT_INPUT.projectPath,
         DEFAULT_INPUT.sessionName,
         CONV_ID,
@@ -866,6 +948,7 @@ describe("rehydrateOneConversationActor startup recovery", () => {
       const restartedStore = fixture.recreateStore();
 
       await rehydrateConversationActors({
+        ...rehydrationInfrastructure(),
         readAllForStartup: () => stateWith([conv({ id: CONV_ID })]),
         listAllProjectConversations: async () => [],
         getProjectDisplayName: () => "demo",
@@ -911,20 +994,31 @@ describe("project-scope rehydration diagnostics", () => {
   const PROJECT_KEY = `${PROJECT_PATH}::${PROJECT_CONVERSATION_SESSION_SENTINEL}::${PROJECT_CONV_ID}`;
 
   afterEach(() => {
-    _resetForTesting();
-    _resetMachineFactoryForTesting();
+    managerFixture.dispose();
+
     _resetConversationQueueDepsForTesting();
     resetRuntime();
   });
 
   function makeProjectSnapshot(): Snapshot<unknown> {
     const input: ConversationInput = {
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: PROJECT_PATH,
-      projectName: "test-project",
+      target: targetFromStoreSessionName(
+        "test-project",
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        PROJECT_CONV_ID,
+      ),
+
       // The runtime/state-store key for a project conversation (A5).
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+
       worktreePath: PROJECT_PATH,
-      conversationId: PROJECT_CONV_ID,
+
       createdAt: "2026-01-01T00:00:00.000Z",
       forkedFrom: null,
       role: null,
@@ -949,6 +1043,12 @@ describe("project-scope rehydration diagnostics", () => {
       storeSessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
       worktreePath: PROJECT_PATH,
       conversation: {
+        lastActivityAt: "2026-01-01T00:00:00.000Z",
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        contextTokens: null,
+        contextWindowMax: null,
         id: PROJECT_CONV_ID,
         createdAt: "2026-01-01T00:00:00.000Z",
         forkedFrom: null,
@@ -957,6 +1057,7 @@ describe("project-scope rehydration diagnostics", () => {
         agentBackend: "claude" as const,
         backendRef: null,
         promptCount: 1,
+        debugMode: null,
       },
       snapshot: makeProjectSnapshot(),
       log,
@@ -964,12 +1065,13 @@ describe("project-scope rehydration diagnostics", () => {
   }
 
   it("reports scope:project on the rehydrated event", async () => {
-    setMachineFactory(createTestMachine);
+    machineFactory = createTestMachine;
     setConversationQueueDeps(makeQueueDeps());
     const log = createCapturingLogger();
 
     const started = await rehydrateOneConversationActor(
       projectRehydrateArgs(log),
+      rehydrationInfrastructure(),
     );
 
     expect(started).toBe(true);
@@ -987,7 +1089,7 @@ describe("project-scope rehydration diagnostics", () => {
   });
 
   it("reports scope:project when abandoned-delivery recovery fails", async () => {
-    setMachineFactory(createTestMachine);
+    machineFactory = createTestMachine;
     setConversationQueueDeps(
       makeQueueDeps({
         recoverAbandonedDeliveries: vi.fn(async () => {
@@ -999,6 +1101,7 @@ describe("project-scope rehydration diagnostics", () => {
 
     const started = await rehydrateOneConversationActor(
       projectRehydrateArgs(log),
+      rehydrationInfrastructure(),
     );
 
     expect(started).toBe(false);
@@ -1013,17 +1116,27 @@ describe("project-scope rehydration diagnostics", () => {
   });
 
   it("still reports the real session name for a session conversation", async () => {
-    setMachineFactory(createTestMachine);
+    machineFactory = createTestMachine;
     setConversationQueueDeps(makeQueueDeps());
     const log = createCapturingLogger();
 
     const args = projectRehydrateArgs(log);
     const sessionInput: ConversationInput = {
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: PROJECT_PATH,
-      projectName: "test-project",
-      sessionName: "feat",
+      target: targetFromStoreSessionName(
+        "test-project",
+        "feat",
+        PROJECT_CONV_ID,
+      ),
+
       worktreePath: `${PROJECT_PATH}/.worktrees/feat`,
-      conversationId: PROJECT_CONV_ID,
+
       createdAt: "2026-01-01T00:00:00.000Z",
       forkedFrom: null,
       role: null,
@@ -1038,13 +1151,16 @@ describe("project-scope rehydration diagnostics", () => {
     const snapshot = seedActor.getPersistedSnapshot();
     seedActor.stop();
 
-    await rehydrateOneConversationActor({
-      ...args,
-      key: `${PROJECT_PATH}::feat::${PROJECT_CONV_ID}`,
-      storeSessionName: "feat",
-      worktreePath: `${PROJECT_PATH}/.worktrees/feat`,
-      snapshot,
-    });
+    await rehydrateOneConversationActor(
+      {
+        ...args,
+        key: `${PROJECT_PATH}::feat::${PROJECT_CONV_ID}`,
+        storeSessionName: "feat",
+        worktreePath: `${PROJECT_PATH}/.worktrees/feat`,
+        snapshot,
+      },
+      rehydrationInfrastructure(),
+    );
 
     const rehydrated = log.entries.find(
       (e) => e.message === "conversation-manager.rehydrated",
@@ -1055,3 +1171,11 @@ describe("project-scope rehydration diagnostics", () => {
     });
   });
 });
+
+function rehydrationInfrastructure() {
+  return {
+    host: managerFixture.host,
+    queue: currentQueueDependencies(),
+    mutateConversation: async () => {},
+  };
+}

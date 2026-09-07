@@ -5,10 +5,9 @@
  * `draft_ready` for `/align` or `activated` for approved-decision
  * incorporation, while proposals persist for review.
  */
-import {
-  conversationRuntimeKey,
-  type ConversationRuntimeState,
-} from "@/lib/workflows/conversation/runtime-state";
+import type { ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
+import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 
 import {
   AlignmentDraftNotFoundError,
@@ -24,6 +23,7 @@ export const ALIGNMENT_AUTONOMOUS_DENIAL_MESSAGE =
   "Autonomous optimistic mode — alignment tools are unavailable; make your best judgment and proceed.";
 
 export interface AlignmentAuthoringContext {
+  projectName: string;
   projectPath: string;
   sessionName: string;
   conversationId: string;
@@ -31,7 +31,9 @@ export interface AlignmentAuthoringContext {
 
 /** Service + runtime seams (method syntax → bivariant params). */
 export interface AlignmentAuthoringDeps {
-  getRuntime(key: string): ConversationRuntimeState | undefined;
+  describeActiveTurn(
+    address: ConversationAddress,
+  ): ActiveConversationTurnDescription | null;
   beginDraft(
     input: BeginDraftInput,
   ): Promise<{ authoringPrompt: string; draftId: string }>;
@@ -40,7 +42,7 @@ export interface AlignmentAuthoringDeps {
 }
 
 export type AttendedRuntimeResolution =
-  | { ok: true; runtime: ConversationRuntimeState }
+  | { ok: true; runtime: ActiveConversationTurnDescription }
   | { ok: false; reason: "no_runtime" | "autonomous" };
 
 /**
@@ -51,19 +53,20 @@ export type AttendedRuntimeResolution =
  */
 export function resolveAttendedRuntime(
   context: AlignmentAuthoringContext,
-  deps: Pick<AlignmentAuthoringDeps, "getRuntime">,
+  deps: Pick<AlignmentAuthoringDeps, "describeActiveTurn">,
 ): AttendedRuntimeResolution {
-  const runtime = deps.getRuntime(
-    conversationRuntimeKey(
-      context.projectPath,
+  const runtime = deps.describeActiveTurn({
+    projectPath: context.projectPath,
+    target: sessionConversationTarget(
+      context.projectName,
       context.sessionName,
       context.conversationId,
     ),
-  );
+  });
   if (!runtime) {
     return { ok: false, reason: "no_runtime" };
   }
-  if (runtime.currentTurnAutonomous === true) {
+  if (runtime.autonomous === true) {
     return { ok: false, reason: "autonomous" };
   }
   return { ok: true, runtime };

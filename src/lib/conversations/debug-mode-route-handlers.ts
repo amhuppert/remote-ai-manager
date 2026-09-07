@@ -1,3 +1,5 @@
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
+import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
 /**
  * Debug-mode route handlers for a conversation.
  *
@@ -20,7 +22,10 @@ import {
   getDebugLogPath,
   clearDebugLog,
 } from "@/lib/debug-log/service";
-import { ensureConversationActor } from "@/lib/workflows/conversation/manager";
+import {
+  type ConversationCommandOutcome,
+  ensureConversationLifecycle,
+} from "@/lib/workflows/conversation/manager";
 import { getDefaultDebugAdapter } from "@/lib/workflows/conversation/debug-adapter";
 import { createDebugLogStatsHandlers } from "@/lib/debug-log/stats-route-handlers";
 import { resolveSessionConversationRoute } from "./route-resolution";
@@ -47,11 +52,21 @@ export const updateDebugMode = withTracing(async (request, { params }) => {
   }
 
   try {
-    await ensureConversationActor(projectPath, sessionName, conversationId);
+    await ensureConversationLifecycle({
+      kind: "durable",
+      address: {
+        projectPath,
+        target: sessionConversationTarget(
+          (await params)["name"] ?? "",
+          sessionName,
+          conversationId,
+        ),
+      },
+    });
     const adapter = getDefaultDebugAdapter();
     const target = { projectPath, sessionName, conversationId };
 
-    let dispatched: boolean;
+    let dispatched: ConversationCommandOutcome;
     switch (body.action) {
       case "enter": {
         if (conversation.debugMode?.active) {
@@ -65,33 +80,33 @@ export const updateDebugMode = withTracing(async (request, { params }) => {
           session.worktreePath,
           conversationId,
         );
-        dispatched = adapter.enterDebugMode(target, { logFilePath });
+        dispatched = await adapter.enterDebugMode(target, { logFilePath });
         break;
       }
       case "exit":
-        dispatched = adapter.exitDebugMode(target);
+        dispatched = await adapter.exitDebugMode(target);
         break;
       case "mark_reproduced":
-        dispatched = adapter.markReproduced(target);
+        dispatched = await adapter.markReproduced(target);
         break;
       case "mark_fix_verified":
-        dispatched = adapter.markFixVerified(target);
+        dispatched = await adapter.markFixVerified(target);
         break;
       case "mark_fix_failed":
-        dispatched = adapter.markFixFailed(target);
+        dispatched = await adapter.markFixFailed(target);
         break;
       case "revert_to_awaiting_reproduction":
-        dispatched = adapter.revertToAwaitingReproduction(target);
+        dispatched = await adapter.revertToAwaitingReproduction(target);
         break;
       case "revert_to_awaiting_verification":
-        dispatched = adapter.revertToAwaitingVerification(target);
+        dispatched = await adapter.revertToAwaitingVerification(target);
         break;
       case "retry_turn":
-        dispatched = adapter.retryDebugTurn(target);
+        dispatched = await adapter.retryDebugTurn(target);
         break;
     }
 
-    if (!dispatched) {
+    if (dispatched.kind === "refused") {
       return NextResponse.json(
         {
           error: `Action '${body.action}' is not valid in the current debug phase`,
@@ -149,10 +164,32 @@ export const deleteDebugModeLogs = withTracing(async (_request, { params }) => {
 });
 
 /** POST .../debug-mode/recording — start/stop debug log recording */
-export const updateDebugModeRecording = withTracing(
-  async (request, { params }) => {
+interface DebugRecordingRouteDeps {
+  resolveProjectPath(name: string): ReturnType<typeof resolveProjectPath>;
+  getSession(
+    ...args: Parameters<typeof getSession>
+  ): ReturnType<typeof getSession>;
+  ensureConversation(binding: ConversationBinding): Promise<void>;
+  setRecording(
+    target: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
+    recording: boolean,
+  ): Promise<ConversationCommandOutcome>;
+}
+
+export function createDebugModeRecordingHandler(deps: DebugRecordingRouteDeps) {
+  return async (
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ) => {
     const resolved = await resolveSessionConversationRoute(
-      { resolveProjectPath, getSession },
+      {
+        resolveProjectPath: deps.resolveProjectPath,
+        getSession: deps.getSession,
+      },
       { params },
     );
     if (!resolved.ok) return resolved.response;
@@ -177,24 +214,27 @@ export const updateDebugModeRecording = withTracing(
     }
 
     try {
-      getDefaultDebugAdapter().setRecording(
+      await deps.ensureConversation({
+        kind: "durable",
+        address: {
+          projectPath,
+          target: sessionConversationTarget(
+            (await params)["name"] ?? "",
+            sessionName,
+            conversationId,
+          ),
+        },
+      });
+      const outcome = await deps.setRecording(
         { projectPath, sessionName, conversationId },
         body.recording,
       );
 
-      // syncDerivedFields is fire-and-forget in the machine, so the SSE broadcast
-      // and query invalidation can race ahead of the persisted write. Await the
-      // write here so callers always re-fetch up-to-date recording state.
-      const { mutateConversation } = await import("@/lib/state-store");
-      await mutateConversation(
-        projectPath,
-        sessionName,
-        conversationId,
-        "debug-recording-toggle",
-        (c) => {
-          if (c.debugMode) c.debugMode.recording = body.recording;
-        },
-      );
+      if (outcome.kind === "refused")
+        return NextResponse.json(
+          { error: outcome.message } satisfies ApiError,
+          { status: 409 },
+        );
 
       return NextResponse.json({ ok: true });
     } catch (err) {
@@ -204,5 +244,15 @@ export const updateDebugModeRecording = withTracing(
         status: 500,
       });
     }
-  },
+  };
+}
+
+export const updateDebugModeRecording = withTracing(
+  createDebugModeRecordingHandler({
+    resolveProjectPath,
+    getSession,
+    ensureConversation: ensureConversationLifecycle,
+    setRecording: (target, recording) =>
+      getDefaultDebugAdapter().setRecording(target, recording),
+  }),
 );

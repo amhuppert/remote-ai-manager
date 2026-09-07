@@ -1,30 +1,19 @@
 /**
- * Route handlers for aborting a running conversation turn, at either scope.
- *
- * Stop is scope-neutral machinery reached through two route adapters: the abort
- * registry is keyed by conversation id alone, and the conversation machine owns
- * the ABORT_TURN transition (which also clears any pending question). Only route
- * resolution differs — a session conversation is addressed through its session,
- * a project conversation directly (D13/D1).
- *
- * Both halting steps are required. Signalling the AbortController stops backend
- * execution but leaves the machine mid-turn, so the conversation settles into
- * the wrong terminal state and a pending question can be stranded; sending the
- * transition alone would leave the backend running.
+ * Scope-specific route resolution delegates cancellation and acknowledged
+ * settlement to the conversation lifecycle.
  */
 
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession, getProjectConversation } from "@/lib/state-store";
-import { abortConversation as abortConversationRegistry } from "@/lib/conversations/abort-registry";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
-import type { ConversationEvent } from "@/lib/workflows/conversation/types";
+import { requestConversationStop } from "@/lib/workflows/conversation/manager";
+import type {
+  ConversationAddress,
+  TurnCancelReason,
+} from "@/lib/workflows/conversation/turn-spec";
 import { resolveSessionConversationRoute } from "./route-resolution";
 import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
-import {
-  storeSessionNameFromScopeRef,
-  type ConversationScopeRef,
-} from "./conversation-target";
+import { type ConversationScopeRef } from "./conversation-target";
 import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "./schemas";
@@ -35,14 +24,10 @@ type RouteContext = { params: Promise<Record<string, string>> };
 
 /** What stopping a turn needs once its conversation is resolved. */
 export interface AbortTurnDeps {
-  /** Signals the conversation-keyed AbortController; false when none is live. */
-  abortConversation(conversationId: string): boolean;
-  sendConversationEvent(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    event: ConversationEvent,
-  ): boolean;
+  requestConversationStop(
+    address: ConversationAddress,
+    reason: TurnCancelReason,
+  ): { requested: boolean; settled: Promise<void> };
   /**
    * Injected so a test can read the diagnostics this path actually emits: a
    * sentinel reaching a log field is an R1.3 leak the module-level logger hides.
@@ -67,37 +52,32 @@ export interface ProjectAbortRouteDeps extends AbortTurnDeps {
 }
 
 /** Stop one conversation's turn. Scope-invariant. */
-function abortTurn(
+async function abortTurn(
   deps: AbortTurnDeps,
   resolved: {
     projectPath: string;
+    projectName: string;
     scopeRef: ConversationScopeRef;
     conversationId: string;
   },
-): Response {
+): Promise<Response> {
   const { projectPath, scopeRef, conversationId } = resolved;
 
-  // Keyed by conversation id, so signalling one conversation's controller
-  // cannot reach another conversation's turn.
-  const aborted = deps.abortConversation(conversationId);
-
-  // The transition is sent whether or not a controller was live: a conversation
-  // parked on a pending question has nothing to signal, and the transition is
-  // what clears that question. A machine refusal is not a request failure — the
-  // signal above already stopped execution — but it must be diagnosable.
-  //
-  // The one place the sentinel is materialized: the session-keyed actor API
-  // (A5). It is passed straight into the call and never bound to a name a later
-  // log line could pick up.
-  const machineAccepted = deps.sendConversationEvent(
-    projectPath,
-    storeSessionNameFromScopeRef(scopeRef),
-    conversationId,
-    { type: "ABORT_TURN", reason: "user" },
+  const stop = deps.requestConversationStop(
+    {
+      projectPath,
+      target: {
+        ...scopeRef,
+        projectName: resolved.projectName,
+        conversationId,
+      },
+    },
+    "user",
   );
-  if (!machineAccepted) {
+  await stop.settled;
+  const aborted = stop.requested;
+  if (!aborted)
     deps.log.warn("abort.event_rejected", { conversationId, ...scopeRef });
-  }
 
   if (!aborted) {
     return NextResponse.json(
@@ -124,6 +104,7 @@ export function createAbortHandlers(deps: AbortRouteDeps) {
     // by construction.
     return abortTurn(deps, {
       projectPath,
+      projectName: (await context.params)["name"] ?? "",
       scopeRef: { scope: "session", sessionName },
       conversationId,
     });
@@ -147,6 +128,7 @@ export function createProjectAbortHandlers(deps: ProjectAbortRouteDeps) {
 
     return abortTurn(deps, {
       projectPath: resolved.value.projectPath,
+      projectName: (await context.params)["name"] ?? "",
       scopeRef: { scope: "project" },
       conversationId: resolved.value.conversationId,
     });
@@ -158,8 +140,7 @@ export function createProjectAbortHandlers(deps: ProjectAbortRouteDeps) {
 const defaultHandlers = createAbortHandlers({
   resolveProjectPath,
   getSession,
-  abortConversation: abortConversationRegistry,
-  sendConversationEvent,
+  requestConversationStop,
   log: logger,
 });
 
@@ -169,8 +150,7 @@ export const abortConversation = withTracing(defaultHandlers.POST);
 const defaultProjectHandlers = createProjectAbortHandlers({
   resolveProjectPath,
   getProjectConversation,
-  abortConversation: abortConversationRegistry,
-  sendConversationEvent,
+  requestConversationStop,
   log: logger,
 });
 

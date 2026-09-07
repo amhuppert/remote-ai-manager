@@ -49,6 +49,34 @@ describe("createQueuedDeliveryAccounting — normal turns", () => {
 });
 
 describe("createQueuedDeliveryAccounting — queued turns", () => {
+  it("joins overlapping acceptance callbacks through transcript and queue commit", async () => {
+    const deps = makeDeps();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const order: string[] = [];
+    const appendUserEntry = vi.fn(async () => {
+      order.push("append");
+      await pending;
+    });
+    deps.markQueuedDelivered.mockImplementation(async () => {
+      order.push("delivered");
+    });
+    const accounting = createQueuedDeliveryAccounting(deps, {
+      ...identity,
+      queuedDelivery,
+      appendUserEntry,
+    });
+    const first = accounting.handleInputAccepted();
+    const second = accounting.handleInputAccepted();
+    release();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["append", "delivered"]);
+    await accounting.settleAfterTurn();
+    expect(deps.markQueuedUncertain).not.toHaveBeenCalled();
+  });
+
   it("defers the append to acceptance, then marks the batch delivered", async () => {
     const deps = makeDeps();
     const order: string[] = [];

@@ -1,3 +1,4 @@
+import { resolveDebugOutputSchema } from "@/lib/workflows/debug/prompt-policy";
 /**
  * Debug adapter — single seam around debug-mode operations.
  *
@@ -6,22 +7,14 @@
  * the machine reaches it — schema selection for structured output, status
  * emission onto the SSE wire, and lifecycle dispatch from API routes. Each
  * lifecycle method maps onto a `DebugCommand` carried by the machine's single
- * `DEBUG_COMMAND` event; the boolean return mirrors the machine's legality
- * gate (`snapshot.can()`), which routes reject with a 409.
- *
- * `sendConversationEvent` is resolved lazily via `require()` to mirror the
- * dynamic-import deferral used by the SSE publication module and avoid a
- * circular import with `manager.ts`, which itself depends on the conversation
- * machine. Tests can inject a fake sender directly through `createDebugAdapter`.
+ * `DEBUG_COMMAND` event. Commands acknowledge committed state and return an
+ * applied, unchanged, or refused outcome. Production command delivery resolves
+ * lazily; tests inject the same asynchronous command boundary.
  */
-import type { ConversationEvent } from "./types";
+import type { ConversationCommandOutcome } from "./manager";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
 import type { DebugModePhase } from "@/lib/debug-log/schemas";
-import {
-  debugCleanupResultSchema,
-  debugEvidenceAnalysisOutputSchema,
-  debugHypothesisOutputSchema,
-} from "./debug-schemas";
+
 import type { SSEEvent } from "@/lib/api/sse-events";
 import { publishEvent, type PublishOutcome } from "@/lib/events/publication";
 import { randomUUID } from "node:crypto";
@@ -52,17 +45,13 @@ interface DebugLogReceivedInput {
   entryCount: number;
 }
 
-type SendConversationEventFn = (
-  projectPath: string,
-  sessionName: string,
-  conversationId: string,
-  event: ConversationEvent,
-) => boolean;
-
 type PublishSSEFn = (event: SSEEvent) => PublishOutcome;
 
 export interface DebugAdapterDeps {
-  sendConversationEvent?: SendConversationEventFn;
+  executeCommand?(
+    target: DebugTarget,
+    command: DebugCommand,
+  ): Promise<ConversationCommandOutcome>;
   publishSSE?: PublishSSEFn;
   createDebugSessionId?(): string;
 }
@@ -73,67 +62,63 @@ export interface DebugAdapter {
   ): DebugOutputFormat | undefined;
   publishDebugModeStatus(input: DebugStatusInput): PublishOutcome;
   publishDebugLogReceived(input: DebugLogReceivedInput): PublishOutcome;
-  enterDebugMode(target: DebugTarget, args: { logFilePath: string }): boolean;
-  exitDebugMode(target: DebugTarget): boolean;
-  markReproduced(target: DebugTarget): boolean;
-  markFixVerified(target: DebugTarget): boolean;
+  enterDebugMode(
+    target: DebugTarget,
+    args: { logFilePath: string },
+  ): Promise<ConversationCommandOutcome>;
+  exitDebugMode(target: DebugTarget): Promise<ConversationCommandOutcome>;
+  markReproduced(target: DebugTarget): Promise<ConversationCommandOutcome>;
+  markFixVerified(target: DebugTarget): Promise<ConversationCommandOutcome>;
   /**
    * User has tested the agent's claimed fix and confirmed the bug still
    * reproduces. Loops the conversation back to `hypothesizing` so the agent
    * can form a fresh hypothesis set treating the prior attempt as refuted.
    */
-  markFixFailed(target: DebugTarget): boolean;
+  markFixFailed(target: DebugTarget): Promise<ConversationCommandOutcome>;
   /**
    * Inverse of `markReproduced` — used by Strategy B client-side rollback in
    * `DebugActionCard.tsx` when a prompt send fails after the phase has
    * already advanced. Transitions analyzingEvidence → awaitingReproduction.
    */
-  revertToAwaitingReproduction(target: DebugTarget): boolean;
+  revertToAwaitingReproduction(
+    target: DebugTarget,
+  ): Promise<ConversationCommandOutcome>;
   /**
    * Inverse of `markFixVerified` — used by Strategy B client-side rollback.
    * Transitions cleanupInstrumentation → awaitingVerification.
    */
-  revertToAwaitingVerification(target: DebugTarget): boolean;
+  revertToAwaitingVerification(
+    target: DebugTarget,
+  ): Promise<ConversationCommandOutcome>;
   /**
    * From the `debug.error` sub-state, re-runs the failed turn against the
    * preserved phase + activeTurn (no UI input needed).
    */
-  retryDebugTurn(target: DebugTarget): boolean;
-  setRecording(target: DebugTarget, recording: boolean): boolean;
+  retryDebugTurn(target: DebugTarget): Promise<ConversationCommandOutcome>;
+  setRecording(
+    target: DebugTarget,
+    recording: boolean,
+  ): Promise<ConversationCommandOutcome>;
 }
 
-function resolveSchema(
-  phase: DebugModePhase | null | undefined,
-): Record<string, unknown> | undefined {
-  switch (phase) {
-    case "hypothesizing":
-      return debugHypothesisOutputSchema as unknown as Record<string, unknown>;
-    case "analyzing_evidence":
-      return debugEvidenceAnalysisOutputSchema as unknown as Record<
-        string,
-        unknown
-      >;
-    case "cleanup_instrumentation":
-      return debugCleanupResultSchema as unknown as Record<string, unknown>;
-    default:
-      return undefined;
-  }
-}
-
-function defaultSendConversationEvent(
-  projectPath: string,
-  sessionName: string,
-  conversationId: string,
-  event: ConversationEvent,
-): boolean {
-  const mod: { sendConversationEvent: SendConversationEventFn } =
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("./manager");
-  return mod.sendConversationEvent(
-    projectPath,
-    sessionName,
-    conversationId,
-    event,
+async function defaultExecuteCommand(
+  target: DebugTarget,
+  command: DebugCommand,
+): Promise<ConversationCommandOutcome> {
+  const { executeConversationCommand } = await import("./manager");
+  const { getProjectDisplayName } = await import("@/lib/projects/resolver");
+  const { targetFromStoreSessionName } =
+    await import("@/lib/conversations/conversation-target");
+  return executeConversationCommand(
+    {
+      projectPath: target.projectPath,
+      target: targetFromStoreSessionName(
+        getProjectDisplayName(target.projectPath),
+        target.sessionName,
+        target.conversationId,
+      ),
+    },
+    command,
   );
 }
 
@@ -142,33 +127,21 @@ function defaultPublishSSE(event: SSEEvent): PublishOutcome {
 }
 
 export function createDebugAdapter(deps: DebugAdapterDeps = {}): DebugAdapter {
-  const sendEvent = deps.sendConversationEvent ?? defaultSendConversationEvent;
+  const executeCommand = deps.executeCommand ?? defaultExecuteCommand;
   const publishSSE = deps.publishSSE ?? defaultPublishSSE;
   const createDebugSessionId = deps.createDebugSessionId ?? randomUUID;
 
-  const dispatch = (target: DebugTarget, command: DebugCommand): boolean =>
-    sendEvent(target.projectPath, target.sessionName, target.conversationId, {
-      type: "DEBUG_COMMAND",
-      command,
-    });
-
-  // Per-phase wrapper cache. The downstream `shouldRecreateRuntime` check uses
-  // reference equality on `outputFormat`, so returning a fresh `{ type, schema }`
-  // object every call would churn the backend runtime even when the phase
-  // hadn't changed. Schemas are module-level constants, so caching by phase
-  // is safe.
-  const outputFormatCache = new Map<DebugModePhase, DebugOutputFormat>();
+  const dispatch = (
+    target: DebugTarget,
+    command: DebugCommand,
+  ): Promise<ConversationCommandOutcome> => executeCommand(target, command);
 
   return {
     resolveOutputFormat(phase) {
       if (phase == null) return undefined;
-      const cached = outputFormatCache.get(phase);
-      if (cached) return cached;
-      const schema = resolveSchema(phase);
+      const schema = resolveDebugOutputSchema(phase);
       if (!schema) return undefined;
-      const wrapper: DebugOutputFormat = { type: "json_schema", schema };
-      outputFormatCache.set(phase, wrapper);
-      return wrapper;
+      return { type: "json_schema", schema };
     },
 
     publishDebugModeStatus(input) {

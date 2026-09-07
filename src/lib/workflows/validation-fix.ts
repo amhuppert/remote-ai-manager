@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { getProjectDisplayName as getConversationProjectName } from "@/lib/projects/resolver";
 /**
  * Fix pre-merge validation errors in a session worktree via the conversation
  * actor.
@@ -21,10 +23,8 @@ import type {
   AgentTurnDispatch,
   ExecuteFreshTaskRunInput,
 } from "@/lib/workflows/conversation/execute-fresh-task-run";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
 const logger = createLogger("validation-fix");
 
@@ -352,10 +352,18 @@ async function fixValidationErrorsImpl(
 
   try {
     const result = await executeWorkflowTaskRun({
-      projectPath,
-      sessionName,
-      conversationId,
-      worktreePath,
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: projectPath,
+          target: targetFromStoreSessionName(
+            getConversationProjectName(projectPath),
+            sessionName,
+            conversationId,
+          ),
+        },
+        worktreePath: worktreePath,
+      },
       kind: "task_run",
       executionClass: "governed-execution",
       executionProfile: "standard",

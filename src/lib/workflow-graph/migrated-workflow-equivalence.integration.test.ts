@@ -68,7 +68,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { generalizedModelSelection } from "@/lib/state-store/migrations/0035-generalized-model-selection";
 import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
@@ -713,7 +713,9 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
       executionRepository,
       // The external agent boundary — the ONE thing stubbed.
       async executeWorkflowTaskRun(input) {
-        dispatchedConversationIds.push(input.conversationId);
+        dispatchedConversationIds.push(
+          input.binding.address.target.conversationId,
+        );
         return passTurn();
       },
       getProjectDisplayName: () => "legacy-workflows",

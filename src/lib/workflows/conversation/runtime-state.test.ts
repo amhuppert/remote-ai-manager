@@ -1,11 +1,10 @@
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
   getConversationRuntime,
   cleanupConversationRuntime,
-  hasConversationRuntime,
-  getRegisteredConversationKeys,
   _resetForTesting,
   type ConversationRuntimeState,
 } from "./runtime-state";
@@ -26,6 +25,7 @@ describe("conversation runtime-state", () => {
     it("stores and retrieves runtime state", () => {
       const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
       const state: ConversationRuntimeState = {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
       };
       registerConversationRuntime(key, state);
@@ -41,18 +41,22 @@ describe("conversation runtime-state", () => {
     it("aborts the controller and removes from registry", () => {
       const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
       const controller = new AbortController();
-      registerConversationRuntime(key, { abortController: controller });
+      registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
+        abortController: controller,
+      });
 
       cleanupConversationRuntime(key);
 
       expect(controller.signal.aborted).toBe(true);
-      expect(hasConversationRuntime(key)).toBe(false);
+      expect(getConversationRuntime(key)).toBeUndefined();
     });
 
     it("calls releaseConversationLock if present", () => {
       const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
       let lockReleased = false;
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
         releaseConversationLock: () => {
           lockReleased = true;
@@ -67,6 +71,7 @@ describe("conversation runtime-state", () => {
       const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
       let slotReleased = false;
       registerConversationRuntime(key, {
+        managed: createManagedRuntimeFixture(key),
         abortController: new AbortController(),
         releaseQuerySlot: () => {
           slotReleased = true;
@@ -79,34 +84,6 @@ describe("conversation runtime-state", () => {
 
     it("is a no-op for unknown key", () => {
       expect(() => cleanupConversationRuntime("nope")).not.toThrow();
-    });
-  });
-
-  describe("hasConversationRuntime", () => {
-    it("returns true when registered", () => {
-      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-      expect(hasConversationRuntime(key)).toBe(true);
-    });
-
-    it("returns false when not registered", () => {
-      expect(hasConversationRuntime("missing")).toBe(false);
-    });
-  });
-
-  describe("getRegisteredConversationKeys", () => {
-    it("returns all registered keys", () => {
-      registerConversationRuntime("k1", {
-        abortController: new AbortController(),
-      });
-      registerConversationRuntime("k2", {
-        abortController: new AbortController(),
-      });
-      expect(getRegisteredConversationKeys()).toEqual(
-        expect.arrayContaining(["k1", "k2"]),
-      );
     });
   });
 });

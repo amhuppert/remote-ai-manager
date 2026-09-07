@@ -289,6 +289,7 @@ describe("clip provenance through agent injection (R22.2)", () => {
           id: notepadId,
           name: "Inbox",
           revision: 3,
+          openComments: { count: 0, latestCreatedAt: null },
           writeMode: "full-edit",
           content,
         };

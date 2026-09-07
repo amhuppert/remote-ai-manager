@@ -1,3 +1,47 @@
+import {
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
+let machineFactory: NonNullable<
+  Parameters<typeof createConversationManagerFixture>[0]
+>["machine"];
+let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
+  async () => {
+    throw new Error("Fixture actor loader is not configured");
+  };
+let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
+  async () => ({ found: true, requiresQueueReview: false });
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    machine: (adapter, deps) =>
+      machineFactory
+        ? machineFactory(adapter, deps)
+        : managerFixture.providedMachine(adapter),
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+      loadActorInput: (...args) => actorInputLoader(...args),
+      readAdmissionState: (...args) => admissionReader(...args),
+      queue: {
+        submitTurn: (...args) => currentQueueDependencies().submitTurn(...args),
+        claimNextTurnBatch: (...args) =>
+          currentQueueDependencies().claimNextTurnBatch(...args),
+        markPending: (...args) =>
+          currentQueueDependencies().markPending(...args),
+        markDelivered: (...args) =>
+          currentQueueDependencies().markDelivered(...args),
+        markFailed: (...args) => currentQueueDependencies().markFailed(...args),
+        recoverAbandonedDeliveries: (...args) =>
+          currentQueueDependencies().recoverAbandonedDeliveries(...args),
+        runConversationCommand: (...args) =>
+          currentQueueDependencies().runConversationCommand(...args),
+      },
+    },
+  });
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fromPromise } from "xstate";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
@@ -8,18 +52,7 @@ import type { StateStore } from "@/lib/state-store/store";
 import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import { loadActorInput } from "@/lib/workflows/conversation/actor-input-loader";
 import { applySyncDerivedFields } from "@/lib/workflows/conversation/persistence-adapter";
-import {
-  createProvidedMachine,
-  ensureConversationActorAndDrain,
-  getConversationActor,
-  sendConversationEvent,
-  setEnsureConversationActorDeps,
-  setMachineFactory,
-  startConversationActor,
-  _resetForTesting,
-  _resetEnsureConversationActorDepsForTesting,
-  _resetMachineFactoryForTesting,
-} from "@/lib/workflows/conversation/manager";
+
 import {
   setConversationQueueDeps,
   _resetConversationQueueDepsForTesting,
@@ -126,15 +159,15 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     // The exact machine production starts actors with, with the backend actors
     // faked. `executePrompt` records the prompt text it was handed — that is
     // how "the queued answer drains to the agent" is observed.
-    setMachineFactory((adapter) =>
-      createProvidedMachine(adapter).provide({
+    machineFactory = (adapter) =>
+      managerFixture.providedMachine(adapter).provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
             async () => ({ transcriptPath: "/tmp/t.jsonl" }),
           ),
           executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
             async ({ input }) => {
-              delivered.push(input.promptText);
+              delivered.push(input.turn.promptText);
               // Held open: the asking turn must still be running when the ask
               // arrives, and the answering turn's completion is not what this
               // gate is about.
@@ -147,8 +180,8 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
             syncWrites.push(
               store.mutateConversation(
                 context.projectPath,
-                context.sessionName,
-                context.conversationId,
+                conversationTargetStoreSessionName(context.target),
+                context.target.conversationId,
                 "test.syncDerived",
                 (c) => applySyncDerivedFields(context, c),
               ),
@@ -163,8 +196,7 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
           markUnreadOnFinish: () => {},
           markReadOnUserTurnStart: () => {},
         },
-      }),
-    );
+      });
 
     // The queue seams are the production service over whichever store is
     // current — rebound after teardown so phase 2 reads nothing phase 1 left in
@@ -173,12 +205,11 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
   });
 
   afterEach(async () => {
-    _resetForTesting();
+    managerFixture.dispose();
     // Derived-field writes are fire-and-forget; letting them settle before the
     // database closes keeps a teardown race out of the run.
     await Promise.allSettled(syncWrites);
-    _resetMachineFactoryForTesting();
-    _resetEnsureConversationActorDepsForTesting();
+
     _resetConversationQueueDepsForTesting();
     _resetConversationProfileAdmissionDepsForTesting();
     _resetSnapshotPersistenceForTesting();
@@ -187,6 +218,20 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
 
   /** Point every injected store seam at the CURRENT `store` instance. */
   function rebindStoreSeams(): void {
+    admissionReader = async (identity) => {
+      const conversation = await store.getConversation(
+        identity.projectPath,
+        identity.sessionName,
+        identity.conversationId,
+      );
+      return {
+        found: conversation !== null,
+        requiresQueueReview:
+          conversation?.pendingQueue.some(
+            (item) => item.status === "uncertain",
+          ) ?? false,
+      };
+    };
     // The drain settles the conversation's agent profile before it sends, so
     // that seam has to follow the store across the teardown like every other.
     setConversationProfileAdmissionDeps({
@@ -201,6 +246,7 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
       newId: () => `row-${++rowCounter}`,
     });
     setConversationQueueDeps({
+      submitTurn: managerFixture.manager.submitConversationTurn,
       claimNextTurnBatch: (input) => svc.claimNextTurnBatch(input),
       markPending: (input) => svc.markPending(input),
       markDelivered: (input) => svc.markDelivered(input),
@@ -213,19 +259,17 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     });
     // The PRODUCTION loader, over the current repositories. Injecting the store
     // (not the decision) is the point: the scope branch under test is real.
-    setEnsureConversationActorDeps({
-      loadActorInput: (projectPath, sessionName, conversationId) =>
-        loadActorInput(
-          {
-            getSession: store.getSession,
-            getProjectConversation: store.getProjectConversation,
-            getProjectDisplayName: () => "cc",
-          },
-          projectPath,
-          sessionName,
-          conversationId,
-        ),
-    });
+    actorInputLoader = (projectPath, sessionName, conversationId) =>
+      loadActorInput(
+        {
+          getSession: store.getSession,
+          getProjectConversation: store.getProjectConversation,
+          getProjectDisplayName: () => "cc",
+        },
+        projectPath,
+        sessionName,
+        conversationId,
+      );
   }
 
   function queueDeps(svcStore: StateStore): Partial<QueueMessageDeps> {
@@ -266,7 +310,8 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
         return PROJECT_PATH;
       },
       getProjectConversation: (p, c) => store.getProjectConversation(p, c),
-      sendConversationEvent,
+      registerConversationQuestion:
+        managerFixture.manager.registerConversationQuestion,
       generateQuestionBatchId: () => "q_gate1",
       log: createCapturingLogger(),
     });
@@ -280,10 +325,12 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
         return PROJECT_PATH;
       },
       getProjectConversation: (p, c) => store.getProjectConversation(p, c),
-      sendConversationEvent,
+      clearConversationQuestion:
+        managerFixture.manager.clearConversationQuestion,
       queueMessage: (params) => queueMessage({ ...params, deps }),
       // The REAL materialization + drain — the seam the defect lived in.
-      ensureConversationActorAndDrain,
+      ensureConversationActorAndDrain:
+        managerFixture.manager.ensureConversationActorAndDrain,
       async readConfig() {
         return { defaultAgentBackend: "claude" as const };
       },
@@ -311,13 +358,23 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
 
   /** Phase 1: a live project turn asks, and the batch lands durably. */
   async function askOnALiveTurn(): Promise<void> {
-    const actor = startConversationActor({
-      conversationScope: "project",
+    const actor = managerFixture.host.start({
+      lastActivityAt: ts,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      target: targetFromStoreSessionName(
+        "cc",
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONVERSATION_ID,
+      ),
+
       projectPath: PROJECT_PATH,
-      projectName: "cc",
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+
       worktreePath: PROJECT_PATH,
-      conversationId: CONVERSATION_ID,
+
       createdAt: ts,
       forkedFrom: null,
       role: null,
@@ -357,11 +414,11 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
    * survives is exactly what a restarted server would find on disk.
    */
   function tearDownRuntimeAndStore(): void {
-    _resetForTesting();
+    managerFixture.dispose();
     store = fixture.recreateStore();
     rebindStoreSeams();
     expect(
-      getConversationActor(
+      managerFixture.actor(
         PROJECT_PATH,
         PROJECT_CONVERSATION_SESSION_SENTINEL,
         CONVERSATION_ID,
@@ -419,7 +476,7 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
 
   it("replaces an incompatible live actor before draining the answer", async () => {
     await askOnALiveTurn();
-    const incompatibleActor = getConversationActor(
+    const incompatibleActor = managerFixture.actor(
       PROJECT_PATH,
       PROJECT_CONVERSATION_SESSION_SENTINEL,
       CONVERSATION_ID,
@@ -442,7 +499,7 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     expect(res.status).toBe(200);
 
     const recoveredActor = await vi.waitFor(() => {
-      const found = getConversationActor(
+      const found = managerFixture.actor(
         PROJECT_PATH,
         PROJECT_CONVERSATION_SESSION_SENTINEL,
         CONVERSATION_ID,
@@ -472,7 +529,7 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     );
 
     const actor = await vi.waitFor(() => {
-      const found = getConversationActor(
+      const found = managerFixture.actor(
         PROJECT_PATH,
         PROJECT_CONVERSATION_SESSION_SENTINEL,
         CONVERSATION_ID,
@@ -485,6 +542,6 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     // worktree to bind to, and binding to a guessed one would run the agent in
     // the wrong tree.
     expect(context?.worktreePath).toBe(PROJECT_PATH);
-    expect(context?.conversationScope).toBe("project");
+    expect(context?.target.scope).toBe("project");
   });
 });

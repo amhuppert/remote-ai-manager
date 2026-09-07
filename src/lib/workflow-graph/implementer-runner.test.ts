@@ -1,3 +1,4 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
@@ -42,16 +43,13 @@ function makeConversation(
 
 describe("graph workflow implementer runner", () => {
   it("mints the lane capability at dispatch and threads it into the lane identity", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const mintLaneCapability = vi.fn(() => "cclc1.payload.signature");
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation: vi.fn(async () => makeConversation()),
       mintLaneCapability,
     });
@@ -79,34 +77,41 @@ describe("graph workflow implementer runner", () => {
       contextId: "context-plan",
       conversationId: "conversation-1",
     });
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.anything(),
-      expect.any(String),
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        workflowContext: {
-          executionId: "execution-1",
-          contextId: "context-plan",
-          laneCapability: "cclc1.payload.signature",
-        },
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: expect.any(String),
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        }),
+        executionContext: expect.objectContaining({
+          workflowContext: {
+            executionId: "execution-1",
+            contextId: "context-plan",
+            laneCapability: "cclc1.payload.signature",
+          },
+        }),
+        waitUntilReady: true,
       }),
     );
   });
 
   it("dispatches without a capability when the server has no signing token", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation: vi.fn(async () => makeConversation()),
       mintLaneCapability: () => null,
     });
@@ -130,30 +135,40 @@ describe("graph workflow implementer runner", () => {
     // Fail-closed rather than fail-open: the lane still runs, it simply holds
     // no credential (exact match — no `laneCapability` key at all), so its
     // expansion attempts are refused at the route.
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.anything(),
-      expect.any(String),
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        workflowContext: {
-          executionId: "execution-1",
-          contextId: "context-plan",
-        },
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: expect.any(String),
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        }),
+        executionContext: expect.objectContaining({
+          workflowContext: {
+            executionId: "execution-1",
+            contextId: "context-plan",
+          },
+        }),
+        waitUntilReady: true,
       }),
     );
   });
 
   it("executes claude implementer turns through prompt execution", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: 12_345,
-      contextWindowMax: 200_000,
-      compacted: false,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({
+        usage: { contextTokens: 12_345, contextWindowMax: 200_000 },
+        compacted: false,
+      }),
+    );
     const getConversation = vi.fn(async () =>
       makeConversation({
         backendRef: { backend: "claude" as const, ref: "sdk-session-1" },
@@ -161,7 +176,7 @@ describe("graph workflow implementer runner", () => {
     );
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -189,32 +204,42 @@ describe("graph workflow implementer runner", () => {
       placement: { lane: "build", mode: "full" },
     });
 
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        autonomous: true,
-        backend: "claude",
-        workflowContext: {
-          executionId: "execution-1",
-          contextId: "context-plan",
-        },
-        tooling: {
-          portableMcp: {
-            servers: [
-              {
-                id: "transient-tool",
-                transport: "streamable-http",
-                url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
-              },
-            ],
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: "Inspect the codebase",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          autonomous: true,
+          backend: "claude",
+        }),
+        executionContext: expect.objectContaining({
+          workflowContext: {
+            executionId: "execution-1",
+            contextId: "context-plan",
           },
-        },
+          tooling: {
+            portableMcp: {
+              servers: [
+                {
+                  id: "transient-tool",
+                  transport: "streamable-http",
+                  url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
+                },
+              ],
+            },
+          },
+        }),
+        waitUntilReady: true,
       }),
     );
     expect(result).toEqual({
@@ -226,13 +251,10 @@ describe("graph workflow implementer runner", () => {
     });
   });
 
-  it("propagates codex backend to executePromptStream", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-codex",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+  it("propagates codex backend to executeConversationTurn", async () => {
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const getConversation = vi.fn(async () =>
       makeConversation({
         agentBackend: "codex",
@@ -241,7 +263,7 @@ describe("graph workflow implementer runner", () => {
     );
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -269,20 +291,28 @@ describe("graph workflow implementer runner", () => {
       placement: { lane: "build", mode: "full" },
     });
 
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Implement feature",
-      expect.any(Function),
-      "conversation-codex",
-      {
-        modelId: "codex-mini",
-        parameters: { reasoning: "medium", fast: "false" },
-      },
-      undefined,
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        autonomous: true,
-        backend: "codex",
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-codex",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: "Implement feature",
+          modelSelection: {
+            modelId: "codex-mini",
+            parameters: { reasoning: "medium", fast: "false" },
+          },
+          autonomous: true,
+          backend: "codex",
+        }),
+        waitUntilReady: true,
       }),
     );
     expect(result).toEqual({
@@ -294,17 +324,14 @@ describe("graph workflow implementer runner", () => {
     });
   });
 
-  it("forwards executionTarget through executePromptStream options when provided", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+  it("forwards executionTarget through executeConversationTurn options when provided", async () => {
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -332,31 +359,36 @@ describe("graph workflow implementer runner", () => {
       executionTarget,
     });
 
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        executionTarget,
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+          worktreePath: executionTarget.worktreePath,
+        }),
+        turn: expect.objectContaining({
+          promptText: "Inspect the codebase",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        }),
+        waitUntilReady: true,
       }),
     );
   });
 
   it("does not forward an executionTarget when none is provided (solo flow)", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -376,16 +408,26 @@ describe("graph workflow implementer runner", () => {
       placement: { lane: "build", mode: "full" },
     });
 
-    expect(executePromptStream).toHaveBeenCalledTimes(1);
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
-      expect.not.objectContaining({ executionTarget: expect.anything() }),
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    expect(executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+          worktreePath: "/repo/.worktrees/session-1",
+        }),
+        turn: expect.objectContaining({
+          promptText: "Inspect the codebase",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+        }),
+        waitUntilReady: true,
+      }),
     );
   });
 
@@ -394,59 +436,13 @@ describe("graph workflow implementer runner", () => {
     // never by schema-constraining the work turn: an outputFormat here would
     // suppress the streaming turn body the UI renders. Contexts with and
     // without a declared schema must dispatch the identical request shape.
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
-    const getConversation = vi.fn(async () => makeConversation());
-
-    const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
-      getConversation,
-    });
-
-    await runner.runIteration({
-      projectPath: "/repo",
-      session: makeSession(),
-      prompt: "Inspect the codebase",
-      conversationId: "conversation-1",
-      executionId: "execution-1",
-      contextId: "context-plan",
-      backend: "claude",
-      modelSelection: {
-        modelId: "opus",
-        parameters: { effort: "high" },
-      },
-      toolServer: { servers: [] },
-      placement: { lane: "build", mode: "full" },
-    });
-
-    expect(executePromptStream).toHaveBeenCalledTimes(1);
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
-      expect.not.objectContaining({ outputFormat: expect.anything() }),
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
     );
-  });
-
-  it("requests background-task waiting deterministically on every implementer turn", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -466,32 +462,82 @@ describe("graph workflow implementer runner", () => {
       placement: { lane: "build", mode: "full" },
     });
 
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
+    expect(executeConversationTurn).toHaveBeenCalledTimes(1);
+    expect(executeConversationTurn).toHaveBeenCalledWith(
       expect.objectContaining({
-        waitForBackgroundTasks: true,
-        waitForConversationReady: true,
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.not.objectContaining({ outputFormat: expect.anything() }),
+        waitUntilReady: true,
       }),
     );
   });
 
-  it("forwards askUserQuestionsEnabled into executePromptStream options when set (Req 8.1)", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+  it("requests background-task waiting deterministically on every implementer turn", async () => {
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude",
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+      toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
+    });
+
+    expect(executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: "Inspect the codebase",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          waitForBackgroundTasks: true,
+        }),
+        waitUntilReady: true,
+      }),
+    );
+  });
+
+  it("forwards askUserQuestionsEnabled into executeConversationTurn options when set (Req 8.1)", async () => {
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executeConversationTurn,
       getConversation,
     });
 
@@ -512,29 +558,36 @@ describe("graph workflow implementer runner", () => {
       askUserQuestionsEnabled: true,
     });
 
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
-      expect.objectContaining({ askUserQuestionsEnabled: true }),
+    expect(executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: "Inspect the codebase",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          askUserQuestionsEnabled: true,
+        }),
+        waitUntilReady: true,
+      }),
     );
   });
 
-  it("forwards askUserQuestionsEnabled false into executePromptStream options when disabled", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+  it("forwards askUserQuestionsEnabled false into executeConversationTurn options when disabled", async () => {
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -555,15 +608,25 @@ describe("graph workflow implementer runner", () => {
       askUserQuestionsEnabled: false,
     });
 
-    expect(executePromptStream).toHaveBeenCalledWith(
-      "/repo",
-      expect.objectContaining({ sessionName: "session-1" }),
-      "Inspect the codebase",
-      expect.any(Function),
-      "conversation-1",
-      { modelId: "opus", parameters: { effort: "high" } },
-      undefined,
-      expect.objectContaining({ askUserQuestionsEnabled: false }),
+    expect(executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: "/repo",
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: "conversation-1",
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: "Inspect the codebase",
+          modelSelection: { modelId: "opus", parameters: { effort: "high" } },
+          askUserQuestionsEnabled: false,
+        }),
+        waitUntilReady: true,
+      }),
     );
   });
 
@@ -574,13 +637,13 @@ describe("graph workflow implementer runner", () => {
       timedOut: false,
       durationMs: 4200,
     };
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: 100,
-      contextWindowMax: 200_000,
-      compacted: false,
-      backgroundWait,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({
+        usage: { contextTokens: 100, contextWindowMax: 200_000 },
+        compacted: false,
+        backgroundWait: backgroundWait,
+      }),
+    );
     const getConversation = vi.fn(async () =>
       makeConversation({
         backendRef: { backend: "claude" as const, ref: "sdk-session-1" },
@@ -588,7 +651,7 @@ describe("graph workflow implementer runner", () => {
     );
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -619,16 +682,13 @@ describe("graph workflow implementer runner", () => {
   });
 
   it("omits backgroundWait from the return value when no wait occurred", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -652,18 +712,25 @@ describe("graph workflow implementer runner", () => {
   });
 
   it("throws when prompt execution returns an SDK error", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      error: "Claude API overloaded",
-      aborted: false,
-      compacted: false,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({
+        usage: {},
+        compacted: false,
+        outcome: {
+          kind: "failed",
+          error: {
+            backend: "claude",
+            failureKind: "backend_error",
+            message: "Claude API overloaded",
+            retryable: false,
+          },
+        },
+      }),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -689,19 +756,28 @@ describe("graph workflow implementer runner", () => {
   });
 
   it("throws a timeout-specific error when prompt execution times out", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      aborted: true,
-      compacted: false,
-      abortReason: "timeout" as const,
-      timeoutMs: 10_800_000,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn(
+        {
+          usage: {},
+          compacted: false,
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "aborted",
+              message: "Turn aborted",
+              retryable: false,
+            },
+          },
+        },
+        { reason: "timeout" as const, timeoutMs: 10_800_000 },
+      ),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 
@@ -730,19 +806,28 @@ describe("graph workflow implementer runner", () => {
   });
 
   it("throws a stall-specific error when the turn's inactivity watchdog fired", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conversation-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      aborted: true,
-      compacted: false,
-      abortReason: "stalled" as const,
-      timeoutMs: 1_200_000,
-    }));
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn(
+        {
+          usage: {},
+          compacted: false,
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "aborted",
+              message: "Turn aborted",
+              retryable: false,
+            },
+          },
+        },
+        { reason: "stalled" as const, timeoutMs: 1_200_000 },
+      ),
+    );
     const getConversation = vi.fn(async () => makeConversation());
 
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation,
     });
 

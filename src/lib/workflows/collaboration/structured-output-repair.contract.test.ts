@@ -134,7 +134,6 @@ describe("collaboration structured-output repair contract", () => {
           status: "alive",
           modelSelection: input.modelSelection,
           outputFormat: input.outputFormat,
-          alignmentVersion: input.alignmentVersion ?? null,
           async sendTurn(turnInput): Promise<ConversationBackendTurnResult> {
             if (!isFormatRuntime) {
               claudeWorkTurns += 1;

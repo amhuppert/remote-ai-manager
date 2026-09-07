@@ -205,12 +205,7 @@ export interface ConversationBackendRuntime {
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
-  /**
-   * Active alignment charter version baked into this runtime's instructions at
-   * creation (null when no active charter). Compared against the live active
-   * version to decide whether the runtime must be recreated.
-   */
-  readonly alignmentVersion: number | null;
+
   /**
    * The write envelope baked into this runtime at creation, or undefined for an
    * unrestricted one. Read by the caller's recreation check: an envelope is
@@ -302,11 +297,7 @@ export interface ConversationBackendCreateInput extends ExecutionIntent {
   persistedRef: AgentSessionRef | null;
   modelSelection: BackendModelSelection;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
-  /**
-   * Active alignment charter version baked into `sessionInstructions`. Stamped
-   * onto the runtime for version-gated recreation; omitted/null when none.
-   */
-  alignmentVersion?: number | null;
+
   sessionInstructions: string[];
   tooling: ConversationToolingOverrides;
   /**

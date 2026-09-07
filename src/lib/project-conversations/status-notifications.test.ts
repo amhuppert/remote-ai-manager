@@ -1,3 +1,4 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Tests for the project-conversation status notification policy.
  */
@@ -27,11 +28,14 @@ describe("notifyProjectConversationStatusFromContext", () => {
     return {
       _schemaVersion: 1,
       projectPath: "/repo",
-      projectName: "my-project",
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
-      conversationScope: "project",
+      target: targetFromStoreSessionName(
+        "my-project",
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        "conv-plc",
+      ),
+
       worktreePath: "/repo",
-      conversationId: "conv-plc",
+
       createdAt: "2026-01-01T00:00:00Z",
       lastActivityAt: "2026-01-01T00:01:00Z",
       status: "awaiting",
@@ -231,7 +235,11 @@ describe("notifyProjectConversationStatusFromContext", () => {
 
     await notifyProjectConversationStatusFromContext(
       makeContext({
-        sessionName: "session-a",
+        target: targetFromStoreSessionName(
+          makeContext().target.projectName,
+          "session-a",
+          makeContext().target.conversationId,
+        ),
       }),
     );
 

@@ -143,7 +143,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       ...queueDepsOverrides,
     };
 
-    const sendEvent = vi.fn(() => true);
+    const sendEvent = vi.fn(async () => true);
     const drain = vi.fn(async () => {});
     const queueMessageSpy = vi.fn((p: Parameters<typeof queueMessage>[0]) =>
       queueMessage({ ...p, deps: queueDeps }),
@@ -180,7 +180,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         return PROJECT;
       },
       getConversation: fixture.deps.getConversation,
-      sendConversationEvent: sendEvent,
+      clearConversationQuestion: sendEvent,
       queueMessage: queueMessageSpy,
       ensureConversationActorAndDrain: drain,
       recordLaneAnswers,
@@ -314,7 +314,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
     expect(reloaded?.pendingQuestionId).toBeNull();
     expect(reloaded?.pendingQueue).toHaveLength(1);
     expect(sendEvent).toHaveBeenCalledWith(PROJECT, SESSION, CONV, {
-      type: "CLEAR_PENDING_QUESTION",
+      questionId: "q_b1",
     });
   });
 
@@ -336,7 +336,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         parameters: { effort: "high" },
       },
       outputFormat: undefined,
-      alignmentVersion: null,
+
       sendTurn: vi.fn(async () => {
         throw new Error("sendTurn must not run in the answer path");
       }),
@@ -496,7 +496,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
 
       // The conversation's pending marker is cleared via a machine transition.
       expect(sendEvent).toHaveBeenCalledWith(PROJECT, SESSION, CONV, {
-        type: "CLEAR_PENDING_QUESTION",
+        questionId: "q_b1",
       });
 
       // No message was enqueued — the lane conversation's queue stays empty —
@@ -513,7 +513,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
 
     it("clears the marker durably when no live actor accepts the transition", async () => {
       // The lane's asking turn has already ended, so its actor is gone and
-      // `sendConversationEvent` refuses. Nothing else clears the marker on this
+      // `clearConversationQuestion` refuses. Nothing else clears the marker on this
       // path — no message is queued — so a marker left standing makes the
       // execution loop re-park the resumed lane on the batch just answered.
       await fixture.seedConversation(
@@ -521,7 +521,9 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         SESSION,
         seedConversation({ role: "iteration" }),
       );
-      const { deps } = makeDeps({ sendConversationEvent: vi.fn(() => false) });
+      const { deps } = makeDeps({
+        clearConversationQuestion: vi.fn(async () => false),
+      });
       const { POST } = createAnswerHandlers(deps);
 
       const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
@@ -548,7 +550,7 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         seedConversation({ role: "iteration" }),
       );
       const { deps } = makeDeps({
-        sendConversationEvent: vi.fn(() => false),
+        clearConversationQuestion: vi.fn(async () => false),
         recordLaneAnswers: vi.fn(
           async (): Promise<RecordAnswersResult> => ({
             ok: false,

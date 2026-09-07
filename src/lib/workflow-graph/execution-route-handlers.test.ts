@@ -1,3 +1,4 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -3867,10 +3868,10 @@ describe("graph workflow route script validator service", () => {
   });
 });
 
-// -- Implementer runner wiring: unified executePromptStream path ---------------
+// -- Implementer runner wiring: unified executeConversationTurn path ---------------
 // These tests exercise the same wiring pattern used by execution-route-handlers.ts
 // to wire implementer turns through createGraphWorkflowImplementerRunner, verifying
-// that both Claude and Codex backends use executePromptStream and that no
+// that both Claude and Codex backends use executeConversationTurn and that no
 // implementer-only in-memory resume cache is needed.
 
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
@@ -3967,16 +3968,13 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
   });
 }
 
-describe("implementer runner wiring (unified executePromptStream path)", () => {
-  it("codex implementer turns flow through executePromptStream without a resume cache", async () => {
-    const executePromptStream = vi.fn(async () => ({
-      conversationId: "conv-codex-1",
-      contextTokens: null,
-      contextWindowMax: null,
-      compacted: false,
-    }));
+describe("implementer runner wiring (unified executeConversationTurn path)", () => {
+  it("codex implementer turns flow through executeConversationTurn without a resume cache", async () => {
+    const executeConversationTurn = vi.fn(async () =>
+      settledConversationTurn({ usage: {}, compacted: false }),
+    );
     const implementerRunner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation: vi.fn(async () => ({
         backendRef: {
           backend: "codex" as const,
@@ -4030,35 +4028,41 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
       contextId: "context-codex",
     });
 
-    // executePromptStream must be called with codex backend — no task runner fallback
-    expect(executePromptStream).toHaveBeenCalledWith(
-      expect.anything(), // projectPath
-      expect.anything(), // session
-      expect.anything(), // prompt
-      expect.anything(), // emit
-      expect.anything(), // conversationId
-      {
-        modelId: "gpt-5.4-mini",
-        parameters: { reasoning: "medium", fast: "false" },
-      },
-      undefined, // images
-      expect.objectContaining({ backend: "codex", autonomous: true }),
+    // executeConversationTurn must be called with codex backend — no task runner fallback
+    expect(executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          kind: "durable",
+          address: expect.objectContaining({
+            projectPath: expect.anything(),
+            target: expect.objectContaining({
+              scope: "session",
+              conversationId: expect.anything(),
+            }),
+          }),
+        }),
+        turn: expect.objectContaining({
+          promptText: expect.anything(),
+          modelSelection: {
+            modelId: "gpt-5.4-mini",
+            parameters: { reasoning: "medium", fast: "false" },
+          },
+          backend: "codex",
+          autonomous: true,
+        }),
+        waitUntilReady: true,
+      }),
     );
   });
 
-  it("consecutive codex implementer turns each go through executePromptStream (no in-memory cache)", async () => {
+  it("consecutive codex implementer turns each go through executeConversationTurn (no in-memory cache)", async () => {
     let callCount = 0;
-    const executePromptStream = vi.fn(async () => {
+    const executeConversationTurn = vi.fn(async () => {
       callCount++;
-      return {
-        conversationId: `conv-codex-${callCount}`,
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-      };
+      return settledConversationTurn({ usage: {}, compacted: false });
     });
     const implementerRunner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
+      executeConversationTurn,
       getConversation: vi.fn(async () => ({
         backendRef: {
           backend: "codex" as const,
@@ -4111,24 +4115,35 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
       contextId: "context-codex",
     });
 
-    // Initial call + 2 follow-ups = 3 calls, all through executePromptStream.
+    // Initial call + 2 follow-ups = 3 calls, all through executeConversationTurn.
     // Each call proves no in-memory resume cache is used — the runner delegates
-    // every turn to executePromptStream rather than caching a backend ref.
-    expect(executePromptStream).toHaveBeenCalledTimes(3);
+    // every turn to executeConversationTurn rather than caching a backend ref.
+    expect(executeConversationTurn).toHaveBeenCalledTimes(3);
     for (let i = 0; i < 3; i++) {
-      expect(executePromptStream).toHaveBeenNthCalledWith(
+      expect(executeConversationTurn).toHaveBeenNthCalledWith(
         i + 1,
-        expect.anything(),
-        expect.anything(),
-        expect.anything(),
-        expect.anything(),
-        expect.anything(),
-        {
-          modelId: "gpt-5.4-mini",
-          parameters: { reasoning: "medium", fast: "false" },
-        },
-        undefined,
-        expect.objectContaining({ backend: "codex", autonomous: true }),
+        expect.objectContaining({
+          binding: expect.objectContaining({
+            kind: "durable",
+            address: expect.objectContaining({
+              projectPath: expect.anything(),
+              target: expect.objectContaining({
+                scope: "session",
+                conversationId: expect.anything(),
+              }),
+            }),
+          }),
+          turn: expect.objectContaining({
+            promptText: expect.anything(),
+            modelSelection: {
+              modelId: "gpt-5.4-mini",
+              parameters: { reasoning: "medium", fast: "false" },
+            },
+            backend: "codex",
+            autonomous: true,
+          }),
+          waitUntilReady: true,
+        }),
       );
     }
   });

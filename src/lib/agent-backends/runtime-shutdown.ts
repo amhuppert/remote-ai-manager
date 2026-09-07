@@ -1,5 +1,4 @@
 import { createLogger } from "@/lib/logging";
-import { closeAllRuntimes } from "./runtime-registry";
 
 const logger = createLogger("agent-backends.runtime-shutdown");
 
@@ -35,12 +34,13 @@ const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM"] as const;
  * runtime is still closing.
  */
 export function installRuntimeShutdownHook(
+  drainConversations: () => Promise<void>,
   source: ShutdownSignalSource = process,
 ): void {
   for (const signal of SHUTDOWN_SIGNALS) {
     source.once(signal, async () => {
       try {
-        await closeAllRuntimes();
+        await drainConversations();
         logger.info("runtime_shutdown.closed", { signal });
       } catch (err: unknown) {
         logger.error("runtime_shutdown.failed", {

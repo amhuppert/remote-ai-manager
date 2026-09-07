@@ -55,7 +55,7 @@ function makeRuntime(
       parameters: { effort: "high" },
     },
     outputFormat: undefined,
-    alignmentVersion: null,
+
     async sendTurn() {
       return makeTurnResult();
     },

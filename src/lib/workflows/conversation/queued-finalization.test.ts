@@ -1,16 +1,20 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createConversationActors } from "./actors";
+import { ephemeralConversationPersistence } from "./persistence-adapter";
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
 import { afterEach, expect, it } from "vitest";
 import { createActor, fromPromise, waitFor } from "xstate";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
-import { createActorImplementationDepsFixture } from "./testing/actor-deps-fixture";
-import {
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "./actor-implementations";
+import { createActorDependenciesFixture } from "./testing/actor-deps-fixture";
+
 import { conversationMachine } from "./machine";
 import {
   registerConversationRuntime,
+  getConversationRuntime,
   conversationRuntimeKey,
   _resetForTesting,
 } from "./runtime-state";
@@ -21,7 +25,6 @@ import type {
 } from "./types";
 
 afterEach(() => {
-  _resetActorDepsForTesting();
   _resetForTesting();
 });
 
@@ -58,8 +61,8 @@ it.each(["prepare", "execute"])(
     });
     const claim = await queue.claimNextTurnBatch(key);
     if (!claim) throw new Error("missing claim");
-    setActorDeps(
-      createActorImplementationDepsFixture({
+    conversationActors = createTestActorImplementations(
+      createActorDependenciesFixture({
         markQueuedUncertain: queue.markUncertain,
       }),
     );
@@ -69,10 +72,34 @@ it.each(["prepare", "execute"])(
         key.sessionName,
         key.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            key.projectPath,
+            key.sessionName,
+            key.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
+    );
+    const execution = createConversationActors(
+      {
+        executeDebugCommand: async () => {
+          throw new Error("Fixture has no semantic debug command delivery");
+        },
+        verifyDebugCleanup: async () => {
+          throw new Error("No debug verification in queued finalization");
+        },
+        getRuntime: getConversationRuntime,
+        loadActors: async () => conversationActors,
+        drainQueue() {},
+      },
+      ephemeralConversationPersistence,
     );
     const machine = conversationMachine.provide({
       actors: {
+        settleTurn: execution.actors.settleTurn,
         prepareTurn: fromPromise(async () => {
           if (phase === "prepare") throw new Error("no slot");
           return { transcriptPath: "/t" };
@@ -92,8 +119,18 @@ it.each(["prepare", "execute"])(
       },
     });
     const input: ConversationInput = {
-      ...key,
-      projectName: "queue-finalize",
+      lastActivityAt: conversation.createdAt,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      projectPath: key.projectPath,
+      target: targetFromStoreSessionName(
+        "queue-finalize",
+        key.sessionName,
+        key.conversationId,
+      ),
       worktreePath: key.projectPath,
       createdAt: conversation.createdAt,
       forkedFrom: null,

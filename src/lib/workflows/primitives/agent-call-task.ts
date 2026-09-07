@@ -257,8 +257,15 @@ export async function dispatchTaskRun(
       capabilityView: deps.capabilityView,
       backendRef: runResult.backendRef ?? null,
       artifacts: deps.artifacts,
-      failureKind: "timeout",
+      failureKind:
+        deps.signal?.aborted &&
+        deps.signal.reason !== "timeout" &&
+        deps.signal.reason !== "stalled"
+          ? "aborted"
+          : "timeout",
       message,
+      partialText: runResult.text,
+      backendDetails: { timeoutMs: taskRequest.timeoutMs },
       usage: { ...usage, durationMs },
       continuationDisposition: runResult.continuationDisposition,
       ...(runResult.transcript !== undefined
@@ -292,6 +299,7 @@ export async function dispatchTaskRun(
       artifacts: deps.artifacts,
       failureKind: classification.kind,
       message: runResult.error,
+      partialText: runResult.text,
       retryable: classification.retryable,
       ...(classification.retryAfterHint !== undefined
         ? { retryAfterHint: classification.retryAfterHint }
@@ -341,6 +349,8 @@ interface BuildFailureResultInput {
   retryAfterHint?: string;
   usage?: AgentCallUsageMetrics;
   transcript?: AgentTaskResult["transcript"];
+  partialText?: string | null;
+  backendDetails?: unknown;
   continuationDisposition?: AgentCallResult["continuationDisposition"];
 }
 
@@ -353,6 +363,14 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
     artifacts: [...(input.artifacts ?? [])],
     outcome: {
       kind: "failed",
+      ...(input.partialText !== undefined
+        ? {
+            contentBlocks:
+              input.partialText === null
+                ? []
+                : [{ type: "text" as const, text: input.partialText }],
+          }
+        : {}),
       ...(input.transcript !== undefined
         ? { transcript: input.transcript }
         : {}),
@@ -360,6 +378,9 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
         failureKind: input.failureKind,
         backend: input.backend,
         message: input.message,
+        ...(input.backendDetails !== undefined
+          ? { backendDetails: input.backendDetails }
+          : {}),
         ...(input.retryable !== undefined
           ? { retryable: input.retryable }
           : {}),

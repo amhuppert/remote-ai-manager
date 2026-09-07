@@ -26,8 +26,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
-import { getRuntime } from "@/lib/agent-backends/runtime-registry";
-import { getSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
+import {
+  getConversationRuntimeConfiguration,
+  readDesiredConversationRuntimeConfiguration,
+} from "@/lib/workflows/conversation/manager";
+
 import { readNextTurnContextLoss } from "@/lib/workflows/conversation/pre-turn/next-turn-context-loss";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
@@ -1736,23 +1739,9 @@ function defaultDeps(): MemoryRouteDeps {
               hasResumeHandle: project.conversation.backendRef !== null,
             };
           },
-          // A route reading this registry sees the turn's own runtimes: the
-          // capability probe in agent-capabilities/route-defaults.ts already
-          // depends on that, so it is established behavior rather than an
-          // assumption this preview introduces.
-          getRuntime,
-          async getSessionCreationMode(projectPath, sessionName) {
-            const session = await getStateStore().getSession(
-              projectPath,
-              sessionName,
-            );
-            return session?.creationMode;
-          },
-          getActiveAlignmentVersion: (projectPath, sessionName) =>
-            getSessionAlignmentServiceForProduction().getActiveVersion(
-              projectPath,
-              sessionName,
-            ),
+          getRuntimeConfiguration: getConversationRuntimeConfiguration,
+          readDesiredRuntimeConfiguration:
+            readDesiredConversationRuntimeConfiguration,
         },
         conversationId,
       ),

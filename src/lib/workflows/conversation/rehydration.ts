@@ -1,3 +1,9 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import {
+  conversationTotals,
+  toConversationDurableSeed,
+  type ConversationDurableSeed,
+} from "./actor-input-loader";
 /**
  * Conversation actor rehydration policy.
  *
@@ -9,33 +15,22 @@
  * deliveries recovered before its first drain.
  */
 
-import { createActor, type Snapshot } from "xstate";
-import { getActorRegistry, getMachineFactory, isActorSettled } from "./manager";
-import { durableConversationPersistence } from "./persistence-adapter";
-import {
-  conversationRuntimeKey,
-  registerConversationRuntime,
-  getConversationRuntime,
-  cleanupConversationRuntime,
-} from "./runtime-state";
-import {
-  drainConversationQueue,
-  getConversationQueueDeps,
-} from "@/lib/conversations/message-queue-drain";
+import { type Snapshot } from "xstate";
+import { isActorSettled, type ConversationActorHost } from "./actor-host";
+import type { ConversationQueueDeps } from "@/lib/conversations/message-queue-drain";
+import type { ConversationActorRef } from "./machine";
+
+import { conversationRuntimeKey } from "./runtime-state";
+import { drainConversationQueue } from "@/lib/conversations/message-queue-drain";
 import { createLogger, type Logger } from "@/lib/logging";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
-import type { AgentSessionRef, AgentBackendId } from "@/lib/shared/schemas";
-import type {
-  ConversationState,
-  ForkedFrom,
-  ConversationRole,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import {
   PROJECT_CONVERSATION_SESSION_SENTINEL,
   isProjectSentinel,
 } from "@/lib/conversations/project-conversation-scope";
-import type { ConversationSnapshotOwner, StateStore } from "@/lib/state-store";
+import type { ConversationSnapshotOwner } from "@/lib/state-store";
 // Deep import (not the barrel): the whole-state startup read is deliberately
 // NOT a StateStore method, so it is reachable only through the startup-owned
 // module. The `no-restricted-imports` startup-reader gate allowlists this file.
@@ -84,21 +79,11 @@ interface RehydrateOneActorArgs {
    */
   storeSessionName: string;
   worktreePath: string;
-  conversation: {
-    id: string;
-    createdAt: string;
-    forkedFrom: ForkedFrom;
-    role: ConversationRole;
-    transcriptPath: string | null;
-    agentBackend: AgentBackendId;
-    backendRef: AgentSessionRef | null;
-    promptCount: number;
-  };
+  conversation: ConversationDurableSeed & { id: string };
   snapshot?: Snapshot<unknown>;
   /** Structured-log sink. Injected so a test can read what the restore emitted;
    *  log fields are a public identity surface (R1.3). */
   log?: Logger;
-  mutateConversation?: StateStore["mutateConversation"];
 }
 
 /**
@@ -111,6 +96,11 @@ interface RehydrateOneActorArgs {
  */
 export async function rehydrateOneConversationActor(
   args: RehydrateOneActorArgs,
+  deps: {
+    host: ConversationActorHost;
+    queue: ConversationQueueDeps;
+    mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
+  },
 ): Promise<boolean> {
   const { key, projectPath, projectName, storeSessionName, worktreePath } =
     args;
@@ -119,53 +109,45 @@ export async function rehydrateOneConversationActor(
   const scopeRef = scopeRefFromStoreSessionName(storeSessionName);
 
   try {
-    // Register runtime state
-    registerConversationRuntime(key, {
-      abortController: new AbortController(),
-    });
-
-    // A persisted resume-token snapshot means a real ConversationState record
-    // exists, so rehydration always restores onto the durable persistence path.
-    const machine = getMachineFactory()(durableConversationPersistence);
     // XState v5 requires `input` even when restoring from snapshot.
-    // The snapshot already contains the full context, so input is
-    // only used for type satisfaction — it won't override the snapshot.
-    const actor = createActor(machine, {
-      input: {
+    // Row-owned accounting overrides the debounced snapshot; control state
+    // and pending questions remain owned by the validated snapshot.
+    const restored = snapshot as
+      | ReturnType<ConversationActorRef["getSnapshot"]>
+      | undefined;
+    const overlaidSnapshot = restored
+      ? {
+          ...restored,
+          context: {
+            ...restored.context,
+            totals: conversationTotals(conversation),
+            promptCount: conversation.promptCount,
+            lastActivityAt: conversation.lastActivityAt,
+          },
+        }
+      : undefined;
+    const actor = deps.host.create(
+      {
         projectPath,
-        projectName,
-        sessionName: storeSessionName,
+        target: targetFromStoreSessionName(
+          projectName,
+          storeSessionName,
+          conversation.id,
+        ),
+
         worktreePath,
-        conversationId: conversation.id,
-        createdAt: conversation.createdAt,
-        forkedFrom: conversation.forkedFrom,
-        role: conversation.role,
-        transcriptPath: conversation.transcriptPath,
-        agentBackend: conversation.agentBackend,
-        backendRef: conversation.backendRef,
-        promptCount: conversation.promptCount,
+
+        ...conversation,
         persistence: "durable",
       },
-      ...(snapshot
-        ? { snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]> }
-        : {}),
-    });
-
-    getActorRegistry().set(key, actor);
-
-    // Wire sendToMachine
-    const runtime = getConversationRuntime(key);
-    if (runtime) {
-      runtime.sendToMachine = (event) => {
-        actor.send(event);
-      };
-    }
+      overlaidSnapshot,
+    );
 
     // Recover abandoned `delivering` rows before the actor's first drain so a
     // delivery attempt orphaned by the previous process requires review before
     // this actor can drain later messages.
     try {
-      await getConversationQueueDeps().recoverAbandonedDeliveries({
+      await deps.queue.recoverAbandonedDeliveries({
         projectPath,
         sessionName: storeSessionName,
         conversationId: conversation.id,
@@ -180,10 +162,7 @@ export async function rehydrateOneConversationActor(
     }
 
     if (!snapshot) {
-      const mutateConversation =
-        args.mutateConversation ??
-        (await import("@/lib/state-store")).mutateConversation;
-      await mutateConversation(
+      await deps.mutateConversation(
         projectPath,
         storeSessionName,
         conversation.id,
@@ -208,11 +187,7 @@ export async function rehydrateOneConversationActor(
     // waitingForInput) so rows enqueued before the restart — e.g. an answer
     // POSTed moments before the crash — deliver without waiting for new input.
     if (isActorSettled(actor)) {
-      void drainConversationQueue(
-        actor,
-        actor.getSnapshot().context,
-        getConversationQueueDeps(),
-      );
+      void drainConversationQueue(actor.getSnapshot().context, deps.queue);
     }
 
     log.info("conversation-manager.rehydrated", {
@@ -228,8 +203,11 @@ export async function rehydrateOneConversationActor(
       error: getErrorMessage(err),
     });
     // Clean up partial registration
-    cleanupConversationRuntime(key);
-    getActorRegistry().delete(key);
+    const actor = deps.host.get(key);
+    if (actor) {
+      actor.stop();
+      deps.host.remove(key, actor);
+    }
     return false;
   }
 }
@@ -301,7 +279,9 @@ export function collectWorkflowResultRecoveryScopes(
 }
 
 export interface RehydrateConversationActorsDeps {
-  mutateConversation?: StateStore["mutateConversation"];
+  host: ConversationActorHost;
+  queue: ConversationQueueDeps;
+  mutateConversation: import("./effects").ConversationDurableEffects["mutateConversation"];
   /**
    * The startup-only whole-state read. Assembles the project/session/
    * conversation tree without touching the snapshot sidecar — resume tokens are
@@ -336,13 +316,16 @@ export interface RehydrateConversationActorsDeps {
   ): Promise<number>;
 }
 
-async function defaultRehydrateDeps(): Promise<RehydrateConversationActorsDeps> {
+export async function loadRehydrationInfrastructure(): Promise<
+  Omit<RehydrateConversationActorsDeps, "host" | "queue">
+> {
   const stateMod = await import("@/lib/state-store");
   const { getProjectDisplayName } = await import("@/lib/projects/resolver");
   const { validateRestoredSnapshot } = await import("./persistence");
   const { getGraphWorkflowResultDeliveryService } =
     await import("@/lib/workflow-graph/result-delivery-service");
   return {
+    mutateConversation: stateMod.mutateConversation,
     readAllForStartup: readAllForStartupFromDb,
     listAllProjectConversations: stateMod.listAllProjectConversations,
     getProjectDisplayName,
@@ -365,7 +348,11 @@ async function defaultRehydrateDeps(): Promise<RehydrateConversationActorsDeps> 
 export async function rehydrateConversationActors(
   deps?: RehydrateConversationActorsDeps,
 ): Promise<number> {
-  const resolved = deps ?? (await defaultRehydrateDeps());
+  if (!deps) {
+    const { restorePersistedConversations } = await import("./manager");
+    return restorePersistedConversations();
+  }
+  const resolved = deps;
   const projectConversations = await resolved.listAllProjectConversations();
   const state = resolved.readAllForStartup();
   const candidates = collectRehydrationCandidates(state, projectConversations);
@@ -460,27 +447,23 @@ export async function rehydrateConversationActors(
     );
 
     // Skip if already running
-    if (getActorRegistry().has(key)) continue;
+    if (resolved.host.has(key)) continue;
 
-    const started = await rehydrateOneConversationActor({
-      key,
-      projectPath,
-      projectName: resolved.getProjectDisplayName(projectPath),
-      storeSessionName,
-      worktreePath,
-      conversation: {
-        id: conversation.id,
-        createdAt: conversation.createdAt,
-        forkedFrom: conversation.forkedFrom ?? null,
-        role: conversation.role ?? null,
-        transcriptPath: conversation.transcriptPath ?? null,
-        agentBackend: conversation.agentBackend ?? "claude",
-        backendRef: conversation.backendRef ?? null,
-        promptCount: conversation.promptCount ?? 0,
+    const started = await rehydrateOneConversationActor(
+      {
+        key,
+        projectPath,
+        projectName: resolved.getProjectDisplayName(projectPath),
+        storeSessionName,
+        worktreePath,
+        conversation: {
+          id: conversation.id,
+          ...toConversationDurableSeed(conversation),
+        },
+        snapshot: resumeSnapshot,
       },
-      snapshot: resumeSnapshot,
-      mutateConversation: resolved.mutateConversation,
-    });
+      resolved,
+    );
 
     if (started) count++;
   }

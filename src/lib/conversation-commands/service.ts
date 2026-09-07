@@ -1,3 +1,4 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { admitCommand } from "@/lib/commands/admission";
@@ -26,10 +27,8 @@ import {
   type SessionMergeAdmission,
 } from "@/lib/workflow-graph/session-merge-admission";
 import { executeWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { appendNotice, type AppendNoticeInput } from "@/lib/prompt/transcript";
 import { AlignmentNotSupportedError } from "@/lib/session-alignment/service";
 import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
@@ -368,9 +367,17 @@ export function createConversationCommandService(
     let resolved: ReturnType<typeof resolveGeneratedMessage>;
     try {
       const result = await deps.executeWorkflowTaskRun({
-        projectPath: input.projectPath,
-        sessionName: ctx.sessionName,
-        conversationId: input.conversationId,
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: input.projectPath,
+            target: targetFromStoreSessionName(
+              input.projectName,
+              ctx.sessionName,
+              input.conversationId,
+            ),
+          },
+        },
         kind: "task_run",
         executionClass: "nongoverned-task",
         executionProfile: "standard",

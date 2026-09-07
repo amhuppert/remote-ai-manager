@@ -11,7 +11,8 @@
 import { findRefTags } from "@/lib/conversations/ref-tags";
 import { quoteAgentCommandArgument } from "@/lib/tickets/command-arguments";
 import type { NotepadService } from "./service";
-import type { NotepadWriteMode } from "./schemas";
+import type { NotepadCommentsRepo } from "@/lib/state-store/notepad-comments-repo";
+import type { NotepadOpenCommentMarker, NotepadWriteMode } from "./schemas";
 
 /**
  * The reference registry's tag for the notepad kind. Restated here because the
@@ -33,6 +34,7 @@ export interface NotepadInjectionSource {
   id: string;
   name: string;
   revision: number;
+  openComments: NotepadOpenCommentMarker;
   writeMode: NotepadWriteMode;
   /** Canonical Markdown text with inline reference XML and image tokens. */
   content: string;
@@ -54,13 +56,21 @@ export interface NotepadInjectionReader {
  */
 export function createNotepadInjectionReader(
   service: NotepadService,
+  comments: Pick<NotepadCommentsRepo, "openCommentMarker">,
 ): NotepadInjectionReader {
   return {
     async readForInjection(notepadId) {
       const result = await service.get(notepadId);
       if (result.ok) {
         const { id, name, revision, writeMode, content } = result.value;
-        return { id, name, revision, writeMode, content };
+        return {
+          id,
+          name,
+          revision,
+          writeMode,
+          content,
+          openComments: await comments.openCommentMarker(id),
+        };
       }
       if (result.error.code === "not_found") return null;
       throw new Error(
@@ -82,6 +92,10 @@ function renderNotepadBlock(notepad: NotepadInjectionSource): string {
     `name: ${singleLine(notepad.name)}`,
     `revision: ${notepad.revision}`,
     `write-mode: ${notepad.writeMode}`,
+    `open-comments: ${notepad.openComments.count}`,
+    ...(notepad.openComments.latestCreatedAt === null
+      ? []
+      : [`latest-open-comment: ${notepad.openComments.latestCreatedAt}`]),
     `read: ${buildNotepadReadCommand(notepad.id)}`,
     "---",
     notepad.content,

@@ -1,3 +1,4 @@
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -23,10 +24,8 @@ import {
   type TicketsRepo,
 } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import type {
   EnsureConversationCompactionResult,
   LiveCompaction,
@@ -392,8 +391,10 @@ describe("createTicketCommandRunner", () => {
     // Structured turn ran in the originating conversation with the schema.
     expect(taskRunInputs).toHaveLength(1);
     const turn = taskRunInputs[0]!;
-    expect(turn.sessionName).toBe(SESSION_NAME);
-    expect(turn.conversationId).toBe(CONVERSATION_ID);
+    expect(
+      conversationTargetStoreSessionName(turn.binding.address.target),
+    ).toBe(SESSION_NAME);
+    expect(turn.binding.address.target.conversationId).toBe(CONVERSATION_ID);
     expect(turn.outputFormat).toEqual({
       type: "json_schema",
       schema: TICKET_COMMAND_JSON_SCHEMA,
@@ -486,7 +487,11 @@ describe("createTicketCommandRunner", () => {
     const outcome = await runner.run(runInput({ sessionName: null }));
 
     expect(outcome.status).toBe("created");
-    expect(taskRunInputs[0]!.sessionName).toBe("__project__");
+    expect(
+      conversationTargetStoreSessionName(
+        taskRunInputs[0]!.binding.address.target,
+      ),
+    ).toBe("__project__");
 
     const detail = await repo.find(PROJECT_PATH, 1);
     expect(detail!.attachments[0]!.payload).toMatchObject({

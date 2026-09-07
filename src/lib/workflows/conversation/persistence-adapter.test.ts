@@ -1,3 +1,4 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Unit tests for the conversation persistence facet.
  *
@@ -32,7 +33,6 @@ import {
 import type { ProjectConversationNotificationService } from "@/lib/notifications/project-conversation-service";
 import type { ConversationContext } from "./types";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ActorDurableWriteSeams } from "./actor-implementations";
 
 // Infrastructure mock — createLogger is called at module level.
 vi.mock("@/lib/logging", () => ({
@@ -49,12 +49,12 @@ function makeContext(
 ): ConversationContext {
   return {
     _schemaVersion: 1,
-    conversationScope: "session",
+    target: targetFromStoreSessionName("proj", "sess", "conv-1"),
+
     projectPath: "/p",
-    projectName: "proj",
-    sessionName: "sess",
+
     worktreePath: "/p/.worktrees/sess",
-    conversationId: "conv-1",
+
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
     status: "awaiting",
@@ -333,7 +333,12 @@ describe("conversation persistence facet", () => {
       // A project-sentinel session so notifyProjectStatus would fire durably;
       // the ephemeral variant must still skip it.
       const ctx = makeContext({
-        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        target: targetFromStoreSessionName(
+          makeContext().target.projectName,
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+          makeContext().target.conversationId,
+        ),
+
         status: "awaiting",
       });
       ephemeralConversationPersistence.syncDerivedFields(ctx);
@@ -384,7 +389,12 @@ describe("conversation persistence facet", () => {
     it("durable fires the project notification for a sentinel-session conversation", async () => {
       durableConversationPersistence.notifyProjectStatus(
         makeContext({
-          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          target: targetFromStoreSessionName(
+            makeContext().target.projectName,
+            PROJECT_CONVERSATION_SESSION_SENTINEL,
+            makeContext().target.conversationId,
+          ),
+
           status: "awaiting",
         }),
       );
@@ -393,7 +403,14 @@ describe("conversation persistence facet", () => {
 
     it("durable does not notify for an ordinary session conversation", async () => {
       durableConversationPersistence.notifyProjectStatus(
-        makeContext({ sessionName: "sess", status: "awaiting" }),
+        makeContext({
+          target: targetFromStoreSessionName(
+            makeContext().target.projectName,
+            "sess",
+            makeContext().target.conversationId,
+          ),
+          status: "awaiting",
+        }),
       );
       await flush();
       expect(statusCalls).toBe(0);
@@ -402,201 +419,17 @@ describe("conversation persistence facet", () => {
     it("ephemeral never notifies, even for a sentinel-session conversation", async () => {
       ephemeralConversationPersistence.notifyProjectStatus(
         makeContext({
-          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          target: targetFromStoreSessionName(
+            makeContext().target.projectName,
+            PROJECT_CONVERSATION_SESSION_SENTINEL,
+            makeContext().target.conversationId,
+          ),
+
           status: "awaiting",
         }),
       );
       await flush();
       expect(statusCalls).toBe(0);
-    });
-  });
-
-  describe("gateActorDurableWrites (invoked-actor durable seams)", () => {
-    // Every durable state-store WRITE seam the invoked actors can reach. The
-    // apply services are included because they persist INDIRECTLY —
-    // `applyMcpAtTurnStart` through `stateManager.mutateConversation`,
-    // `applyCapability*` through `writeRuntimeState` — so a facet that gated
-    // only the direct writes would let an ephemeral `ExecutePrompt` turn write.
-    const WRITE_SEAMS = [
-      "mutateConversation",
-      "createReferenceDocument",
-      "markQueuedDelivered",
-      "markQueuedUncertain",
-      "markQueuedPending",
-      "markQueuedFailed",
-      "recordNotepadDeliveries",
-      "recordMemoryIndexDeliveries",
-      "settleNotepadChangeNotice",
-      "claimWorkflowResults",
-      "settleWorkflowResults",
-      "releaseWorkflowResults",
-      "applyMcpAtTurnStart",
-      "applyCapabilityAtTurnStart",
-      "applyCapabilityWhenIdle",
-    ] as const;
-
-    interface RecordingWriteSeams extends ActorDurableWriteSeams {
-      /** A non-write marker that must survive the ephemeral overlay untouched. */
-      passthroughMarker: symbol;
-      reached: string[];
-    }
-
-    function makeWriteSeams(): RecordingWriteSeams {
-      const reached: string[] = [];
-      return {
-        passthroughMarker: Symbol("read-seam"),
-        reached,
-        mutateConversation: vi.fn(async () => {
-          reached.push("mutateConversation");
-        }),
-        createReferenceDocument: vi.fn(async () => {
-          reached.push("createReferenceDocument");
-          return {};
-        }),
-        markQueuedDelivered: vi.fn(async () => {
-          reached.push("markQueuedDelivered");
-        }),
-        markQueuedUncertain: vi.fn(async () => {
-          reached.push("markQueuedUncertain");
-        }),
-        markQueuedPending: vi.fn(async () => {
-          reached.push("markQueuedPending");
-        }),
-        markQueuedFailed: vi.fn(async () => {
-          reached.push("markQueuedFailed");
-        }),
-        recordNotepadDeliveries: vi.fn(async () => {
-          reached.push("recordNotepadDeliveries");
-        }),
-        recordMemoryIndexDeliveries: vi.fn(async () => {
-          reached.push("recordMemoryIndexDeliveries");
-        }),
-        settleNotepadChangeNotice: vi.fn(async () => {
-          reached.push("settleNotepadChangeNotice");
-        }),
-        claimWorkflowResults: vi.fn(async () => {
-          reached.push("claimWorkflowResults");
-          return [];
-        }),
-        settleWorkflowResults: vi.fn(async () => {
-          reached.push("settleWorkflowResults");
-          return 0;
-        }),
-        releaseWorkflowResults: vi.fn(async () => {
-          reached.push("releaseWorkflowResults");
-          return 0;
-        }),
-        applyMcpAtTurnStart: vi.fn(async () => {
-          reached.push("applyMcpAtTurnStart");
-          return {
-            conversationId: "conv-1",
-            backend: "claude" as const,
-            disposition: "applied_now" as const,
-            effectiveConfigHash: "hash-1",
-          };
-        }),
-        applyCapabilityAtTurnStart: vi.fn(async () => {
-          reached.push("applyCapabilityAtTurnStart");
-          return {};
-        }),
-        applyCapabilityWhenIdle: vi.fn(async () => {
-          reached.push("applyCapabilityWhenIdle");
-          return {};
-        }),
-      };
-    }
-
-    const identity = {
-      projectPath: "/p",
-      projectName: "proj",
-      sessionName: "sess",
-      conversationId: "conv-1",
-      worktreePath: "/p/.worktrees/sess",
-      backend: "claude" as const,
-    };
-
-    it("durable returns the deps by reference — every write seam stays the injected one", async () => {
-      const seams = makeWriteSeams();
-      const gated =
-        durableConversationPersistence.gateActorDurableWrites(seams);
-      expect(gated).toBe(seams);
-      for (const key of WRITE_SEAMS) {
-        expect(gated[key]).toBe(seams[key]);
-      }
-      // Sanity: a call on the durable-gated deps reaches the real seam.
-      await gated.mutateConversation("/p", "sess", "conv-1", "label", () => {});
-      expect(seams.reached).toContain("mutateConversation");
-    });
-
-    it("ephemeral overrides EVERY durable write seam and leaves non-write deps untouched", () => {
-      const seams = makeWriteSeams();
-      const gated =
-        ephemeralConversationPersistence.gateActorDurableWrites(seams);
-      expect(gated).not.toBe(seams);
-      for (const key of WRITE_SEAMS) {
-        // Each write seam is replaced (not the injected function reference).
-        expect(gated[key]).not.toBe(seams[key]);
-      }
-      // The overlay touches ONLY the write seams — a read/other dep passes through.
-      expect(gated.passthroughMarker).toBe(seams.passthroughMarker);
-    });
-
-    it("ephemeral write seams are inert no-ops — none reaches the injected state-store seam", async () => {
-      const seams = makeWriteSeams();
-      const gated =
-        ephemeralConversationPersistence.gateActorDurableWrites(seams);
-
-      await gated.mutateConversation("/p", "sess", "conv-1", "label", () => {});
-      await gated.createReferenceDocument("/p", "sess", "/f.md", "desc");
-      await gated.markQueuedDelivered({
-        projectPath: "/p",
-        sessionName: "sess",
-        conversationId: "conv-1",
-        ids: ["m1"],
-        deliveryAttemptId: "a1",
-      });
-      await gated.markQueuedUncertain({
-        projectPath: "/p",
-        sessionName: "s",
-        conversationId: "c",
-        ids: ["m"],
-        deliveryAttemptId: "a",
-        error: "unknown",
-      });
-      await gated.markQueuedPending({
-        projectPath: "/p",
-        sessionName: "sess",
-        conversationId: "conv-1",
-        ids: ["m1"],
-        deliveryAttemptId: "a1",
-        error: "e",
-      });
-      await gated.markQueuedFailed({
-        projectPath: "/p",
-        sessionName: "sess",
-        conversationId: "conv-1",
-        ids: ["m1"],
-        deliveryAttemptId: "a1",
-        error: "e",
-      });
-      const mcp = await gated.applyMcpAtTurnStart({
-        projectPath: "/p",
-        sessionName: "sess",
-        conversationId: "conv-1",
-        backend: "claude",
-      });
-      await gated.applyCapabilityAtTurnStart(identity);
-      await gated.applyCapabilityWhenIdle(identity);
-
-      // Not one of the injected durable seams was reached.
-      expect(seams.reached).toEqual([]);
-      expect(seams.mutateConversation).not.toHaveBeenCalled();
-      expect(seams.applyMcpAtTurnStart).not.toHaveBeenCalled();
-      expect(seams.applyCapabilityAtTurnStart).not.toHaveBeenCalled();
-      expect(seams.applyCapabilityWhenIdle).not.toHaveBeenCalled();
-      // The MCP no-op reports a non-rejected, inert disposition so a turn that
-      // consults it still proceeds (the actor only fails on `rejected`).
-      expect(mcp.disposition).toBe("no_active_runtime");
     });
   });
 

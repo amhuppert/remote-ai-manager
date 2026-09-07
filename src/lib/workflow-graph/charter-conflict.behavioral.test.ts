@@ -9,10 +9,8 @@ import {
   createWorkflowExecution,
   seedAssignment,
 } from "./test-fixtures";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";

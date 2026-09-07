@@ -1,3 +1,7 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
 /**
  * Launch-capability eligibility through the PRODUCTION turn path (D7 R9.4,
  * decisions D11/D12).
@@ -25,14 +29,10 @@ import type {
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
 import {
-  createActorImplementationDepsFixture,
+  createActorDependenciesFixture,
   createMockBackendRuntime,
 } from "./testing/actor-deps-fixture";
-import {
-  executePromptForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "./actor-implementations";
+
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
@@ -70,7 +70,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  _resetActorDepsForTesting();
   resetRuntimeRegistry();
   fixture.close();
 });
@@ -94,8 +93,8 @@ async function runTurn(input: {
 
   const created: ConversationBackendCreateInput[] = [];
   mintRequests = [];
-  setActorDeps(
-    createActorImplementationDepsFixture({
+  conversationActors = createTestActorImplementations(
+    createActorDependenciesFixture({
       getConversation: (projectPath, sessionName, id) =>
         store.getConversation(projectPath, sessionName, id),
       // Injected rather than reaching the real signing key: the decision under
@@ -119,32 +118,50 @@ async function runTurn(input: {
 
   registerConversationRuntime(
     conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, input.conversationId),
-    { abortController: new AbortController(), ...input.runtimeState },
+    {
+      managed: createManagedRuntimeFixture(
+        conversationRuntimeKey(
+          PROJECT_PATH,
+          SESSION_NAME,
+          input.conversationId,
+        ),
+      ),
+      abortController: new AbortController(),
+      ...input.runtimeState,
+    },
   );
 
   const promptInput: ExecutePromptInput = {
+    turn: {
+      kind: "conversation_turn",
+      backend: "claude",
+      promptText: "Hello",
+      images: [],
+      modelSelection: null,
+      autonomous: false,
+    },
     persistence: input.persistence ?? "durable",
     projectPath: PROJECT_PATH,
-    projectName: PROJECT_NAME,
-    sessionName: SESSION_NAME,
+    target: targetFromStoreSessionName(
+      PROJECT_NAME,
+      SESSION_NAME,
+      input.conversationId,
+    ),
+
     worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-    conversationId: input.conversationId,
+
     transcriptPath: `/transcripts/${input.conversationId}.jsonl`,
     agentBackend: "claude",
     backendRef: null,
     promptCount: 0,
     forkedFrom: null,
     role: input.role,
-    promptText: "Hello",
-    images: [],
     streamId: "stream-1",
-    modelSelection: null,
     onModelSelectionResolved: async () => {},
-    autonomous: false,
     debugMode: null,
   };
 
-  await executePromptForMachine(promptInput);
+  await conversationActors.executePromptForMachine(promptInput);
 
   expect(created).toHaveLength(1);
   return created[0]!;

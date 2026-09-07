@@ -1,3 +1,4 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -4229,23 +4230,14 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
 
       let dispatchedPolicy: FsWritePolicy | undefined;
       const runner = createGraphWorkflowImplementerRunner({
-        executePromptStream: async (
-          _projectPath,
-          _session,
-          _prompt,
-          _emit,
-          conversationId,
-          _model,
-          _images,
-          options,
-        ) => {
-          dispatchedPolicy = options?.fsWritePolicy;
-          return {
-            conversationId: conversationId ?? "conversation-1",
-            contextTokens: null,
-            contextWindowMax: null,
-            compacted: false,
+        executeConversationTurn: async (submission) => {
+          const options = {
+            ...submission.turn,
+            ...submission.executionContext,
           };
+
+          dispatchedPolicy = options?.fsWritePolicy;
+          return settledConversationTurn({ usage: {}, compacted: false });
         },
         getConversation: async () => null,
         mintLaneCapability: () => null,
@@ -4337,23 +4329,14 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
 
       let dispatchedPolicy: FsWritePolicy | undefined;
       const runner = createGraphWorkflowImplementerRunner({
-        executePromptStream: async (
-          _projectPath,
-          _session,
-          _prompt,
-          _emit,
-          conversationId,
-          _model,
-          _images,
-          options,
-        ) => {
-          dispatchedPolicy = options?.fsWritePolicy;
-          return {
-            conversationId: conversationId ?? "conversation-1",
-            contextTokens: null,
-            contextWindowMax: null,
-            compacted: false,
+        executeConversationTurn: async (submission) => {
+          const options = {
+            ...submission.turn,
+            ...submission.executionContext,
           };
+
+          dispatchedPolicy = options?.fsWritePolicy;
+          return settledConversationTurn({ usage: {}, compacted: false });
         },
         getConversation: async () => null,
         mintLaneCapability: () => null,

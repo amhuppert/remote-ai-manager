@@ -1,3 +1,4 @@
+import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -200,7 +201,7 @@ function createDeps(
   resolved: ResolvedPortableForConversation,
 ): McpRuntimeApplyDeps {
   return {
-    stateManager,
+    applicationState: createMcpRuntimeApplicationStore(stateManager),
     getRuntime: () => runtime,
     resolvePortableForConversation: async () => resolved,
     now: () => new Date("2026-04-21T00:00:00.000Z"),
@@ -466,7 +467,7 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
 
     let resolverCalls = 0;
     const deps: McpRuntimeApplyDeps = {
-      stateManager,
+      applicationState: createMcpRuntimeApplicationStore(stateManager),
       getRuntime: () => undefined,
       resolvePortableForConversation: async () => {
         resolverCalls += 1;
@@ -509,7 +510,7 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
     let call = 0;
     const runtime = makeFakeRuntime({ backend: "claude", isTurnActive: false });
     const deps: McpRuntimeApplyDeps = {
-      stateManager,
+      applicationState: createMcpRuntimeApplicationStore(stateManager),
       getRuntime: () => runtime,
       resolvePortableForConversation: async () => {
         call += 1;
@@ -580,7 +581,7 @@ describe("applyAfterOverrideChange — ordering fence for concurrent overrides",
     const order: string[] = [];
     const runtime = makeFakeRuntime({ backend: "claude", isTurnActive: false });
     const deps: McpRuntimeApplyDeps = {
-      stateManager,
+      applicationState: createMcpRuntimeApplicationStore(stateManager),
       getRuntime: () => runtime,
       resolvePortableForConversation: async () => {
         call += 1;
@@ -641,7 +642,7 @@ describe("applyAfterOverrideChange — resolves before entering the write queue"
       effectiveConfigHash: "ignored",
     };
     const deps: McpRuntimeApplyDeps = {
-      stateManager,
+      applicationState: createMcpRuntimeApplicationStore(stateManager),
       getRuntime: () => undefined,
       async resolvePortableForConversation() {
         observations.push("resolve");
@@ -689,7 +690,7 @@ describe("applyAfterOverrideChange — resolves before entering the write queue"
     const runtime = makeFakeRuntime({ backend: "claude" });
     const portable = portableWith([{ id: "s1" }]);
     const deps: McpRuntimeApplyDeps = {
-      stateManager,
+      applicationState: createMcpRuntimeApplicationStore(stateManager),
       getRuntime: () => runtime,
       resolvePortableForConversation: async () => {
         order.push("resolve:start");
@@ -743,7 +744,7 @@ describe("applyAtTurnStart — resolves before entering the write queue", () => 
     const runtime = makeFakeRuntime({ backend: "claude" });
     const portable = portableWith([{ id: "s1" }]);
     const deps: McpRuntimeApplyDeps = {
-      stateManager,
+      applicationState: createMcpRuntimeApplicationStore(stateManager),
       getRuntime: () => runtime,
       resolvePortableForConversation: async () => {
         order.push("resolve:start");

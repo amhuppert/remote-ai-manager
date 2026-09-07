@@ -31,7 +31,7 @@ import {
   pendingUserInputEntries,
   unansweredPendingUserInputs,
 } from "@/lib/workflow-graph/pending-user-input";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import type {
   ExecutionTargetResolver,
@@ -660,8 +660,14 @@ export function _resetActiveLoopsForTesting(): void {
 // -- Helpers ------------------------------------------------------------------
 
 function isRetryableIterationError(error: unknown): boolean {
-  return /stream closed|querysession (died|is dead|ended before)|processtransport is not ready for writing/i.test(
-    getErrorMessage(error),
+  const unwrapped =
+    error instanceof IterationFailureWithProgressError
+      ? error.originalError
+      : error;
+  return (
+    unwrapped instanceof AgentTurnFailedError &&
+    unwrapped.failure?.kind === "session_died" &&
+    unwrapped.failure.retryable
   );
 }
 
@@ -890,7 +896,7 @@ export function createGraphWorkflowExecutionLoop(
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      sendConversationEvent,
+      clearConversationQuestion,
       now: () => new Date().toISOString(),
     });
   const isConversationBusy =

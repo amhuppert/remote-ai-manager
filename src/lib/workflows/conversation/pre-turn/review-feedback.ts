@@ -24,7 +24,7 @@
 import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { formatNotepadFeedbackPrompt } from "@/lib/notepads/format-feedback";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import type { ExecutePromptInput } from "../types";
+import type { ConversationTurnSpec } from "../turn-spec";
 import { buildUserTranscriptBlocks } from "../build-user-transcript-blocks";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 
@@ -45,8 +45,8 @@ export interface ResolvedTurnPromptText {
  * drained batch, so each keeps its own fragment rather than being merged.
  */
 function deriveFeedbackText(input: {
-  documentFeedback: ExecutePromptInput["documentFeedback"];
-  notepadFeedback: ExecutePromptInput["notepadFeedback"];
+  documentFeedback: ConversationTurnSpec["documentFeedback"];
+  notepadFeedback: ConversationTurnSpec["notepadFeedback"];
 }): string | null {
   const fragments = [
     ...(input.documentFeedback
@@ -60,8 +60,8 @@ function deriveFeedbackText(input: {
 /** Compose the agent-facing prompt text for a turn that may carry feedback. */
 export function resolveTurnPromptText(input: {
   promptText: string;
-  documentFeedback?: ExecutePromptInput["documentFeedback"];
-  notepadFeedback?: ExecutePromptInput["notepadFeedback"];
+  documentFeedback?: ConversationTurnSpec["documentFeedback"];
+  notepadFeedback?: ConversationTurnSpec["notepadFeedback"];
   isQueuedDelivery: boolean;
 }): ResolvedTurnPromptText {
   const derivedFeedbackText = deriveFeedbackText({
@@ -109,8 +109,8 @@ export function composeUserTranscriptBlocks(input: {
   effectivePromptText: string;
   rewrittenPromptText: string;
   isDrainedFeedbackBatch: boolean;
-  documentFeedback?: ExecutePromptInput["documentFeedback"];
-  notepadFeedback?: ExecutePromptInput["notepadFeedback"];
+  documentFeedback?: ConversationTurnSpec["documentFeedback"];
+  notepadFeedback?: ConversationTurnSpec["notepadFeedback"];
   imageRefs: ConversationImageRef[];
 }): MessageContentBlock[] {
   const transcriptUserText = input.isDrainedFeedbackBatch

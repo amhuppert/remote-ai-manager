@@ -227,3 +227,14 @@ export function targetFromStoreSessionName(
     ? projectConversationTarget(projectName, conversationId)
     : sessionConversationTarget(projectName, sessionName, conversationId);
 }
+
+export function conversationStoreIdentity(address: {
+  projectPath: string;
+  target: ConversationTarget;
+}) {
+  return {
+    projectPath: address.projectPath,
+    sessionName: conversationTargetStoreSessionName(address.target),
+    conversationId: address.target.conversationId,
+  };
+}

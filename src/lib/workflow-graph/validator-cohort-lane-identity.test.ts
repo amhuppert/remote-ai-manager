@@ -31,7 +31,7 @@ import {
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { SeededValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
-import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import {
   createExecutionLogger,
   registerExecutionLogger,
@@ -193,7 +193,9 @@ function buildHarness(): Harness {
     continuityService,
     executionRepository,
     async executeWorkflowTaskRun(input) {
-      dispatchedConversationIds.push(input.conversationId);
+      dispatchedConversationIds.push(
+        input.binding.address.target.conversationId,
+      );
       // Snapshot the lane bindings a cancellation pass would discover while
       // this turn is in flight.
       laneConversationIdsAtDispatch.push(

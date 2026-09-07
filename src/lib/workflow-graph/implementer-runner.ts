@@ -2,19 +2,16 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { mintImplementerLaneCapability as defaultMintImplementerLaneCapability } from "@/lib/agent-gateway/token";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
-import {
-  executePromptStream as defaultExecutePromptStream,
-  type PromptStreamResult,
-} from "@/lib/prompt/sdk-driver";
+import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
+import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
+import { adaptGraphConversationTurn } from "./conversation-turn-result";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import type {
-  BackgroundWaitSummary,
-  WorkflowLaneIdentity,
-} from "@/lib/agent-backends/conversation";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { FsWritePolicy } from "@/lib/agent-backends/task";
+
 import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import { getConversationFsWriteRestrictionForBackend } from "@/lib/agent-backends/catalog";
@@ -27,44 +24,10 @@ import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 
 const logger = createLogger("graph-workflow-implementer-runner");
 
-/**
- * The implementer turn enters the AgentCall primitive through the conversation
- * actor: `executePromptStream` ensures the conversation/actor exists and
- * dispatches a SUBMIT_PROMPT event, and the actor's `executePromptForMachine`
- * routes the underlying turn through `executeAgentCall` (Task 6.1 migration).
- *
- * Calling `executeAgentCall` from the runner directly would bypass the
- * conversation lifecycle (transcript writing, single-flight session lock,
- * machine-state transitions) that the graph workflow's UI surfaces depend
- * on. The chain is asserted via parity tests in
- * `src/lib/workflows/primitives/section-6-2-graph-debug-parity.test.ts`.
- */
-
-interface ExecutePromptStreamFn {
-  (
-    projectPath: string,
-    session: SessionState,
-    promptText: string,
-    emit: (event: string, data: unknown) => void,
-    conversationId?: string,
-    modelSelection?: BackendModelSelection,
-    images?: never[],
-    options?: {
-      autonomous?: boolean;
-      backend?: AgentBackendId;
-      tooling?: { portableMcp?: PortableMcpConfig };
-      workflowContext?: WorkflowLaneIdentity;
-      executionTarget?: ExecutionTarget;
-      waitForBackgroundTasks?: boolean;
-      waitForConversationReady?: boolean;
-      askUserQuestionsEnabled?: boolean;
-      fsWritePolicy?: FsWritePolicy;
-    },
-  ): Promise<PromptStreamResult>;
-}
-
+/** The hosted turn owns transcripts, the conversation lock, and lifecycle settlement. */
 export interface GraphWorkflowImplementerRunnerDeps {
-  executePromptStream?: ExecutePromptStreamFn;
+  executeConversationTurn?: typeof defaultExecuteConversationTurn;
+  getProjectDisplayName?(projectPath: string): string;
   getConversation?: typeof defaultGetConversation;
   /**
    * Composes the turn's write envelope. Injected so a test can drive the
@@ -114,7 +77,7 @@ export interface RunIterationInput {
    * Effective ask-user-questions availability for this implementer turn: the
    * context's resolved toggle (an implementer lane always holds a real
    * conversation, so lane-can-ask is always true here). Threaded into the
-   * prompt-stream options so the session instructions advertise the tool.
+   * turn options so the session instructions advertise the tool.
    */
   askUserQuestionsEnabled?: boolean;
   /**
@@ -165,8 +128,10 @@ function renderWriteEnvelopeBriefing(
 export function createGraphWorkflowImplementerRunner(
   deps: GraphWorkflowImplementerRunnerDeps = {},
 ) {
-  const executePromptStream =
-    deps.executePromptStream ?? defaultExecutePromptStream;
+  const executeConversationTurn =
+    deps.executeConversationTurn ?? defaultExecuteConversationTurn;
+  const getProjectDisplayName =
+    deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
   const getConversation = deps.getConversation ?? defaultGetConversation;
   const mintLaneCapability =
     deps.mintLaneCapability ?? defaultMintImplementerLaneCapability;
@@ -259,21 +224,17 @@ export function createGraphWorkflowImplementerRunner(
     }
 
     // Intentionally free-form: no `outputFormat` passed in
-    // `PromptStreamOptions`. The implementer is a tool-using coding turn that
+    // the conversation turn. The implementer is a tool-using coding turn that
     // produces code edits, file writes, and a natural-language summary
     // streamed to the UI as chat content. A JSON schema would suppress the
     // streaming markdown turn body the UI renders.
-    const promptOptions: {
-      autonomous: boolean;
-      backend: AgentBackendId;
-      tooling: { portableMcp: PortableMcpConfig };
-      workflowContext: WorkflowLaneIdentity;
-      executionTarget?: ExecutionTarget;
-      waitForBackgroundTasks: boolean;
-      waitForConversationReady: boolean;
-      askUserQuestionsEnabled: boolean;
-      fsWritePolicy?: FsWritePolicy;
-    } = {
+    const turn = {
+      kind: "conversation_turn" as const,
+      promptText:
+        envelope === null
+          ? input.prompt
+          : `${renderWriteEnvelopeBriefing(envelope)}\n\n${input.prompt}`,
+      modelSelection: input.modelSelection,
       autonomous: true,
       backend: input.backend,
       tooling: {
@@ -294,78 +255,54 @@ export function createGraphWorkflowImplementerRunner(
       // Deterministically opt this implementer turn into holding open for
       // in-flight waitable background tasks. No agent involvement (Req 6.3).
       waitForBackgroundTasks: true,
-      // SDK auto-continuations can briefly retain the lane conversation after
-      // the preceding work turn settles. The execution loop owns this follow-up
-      // and must serialize behind that continuation instead of treating the
-      // transient busy state as an agent failure.
-      waitForConversationReady: true,
+
       // Effective ask-user-questions availability drives the enabled/disabled
       // asking-questions session instructions (Req 8.1-8.4).
       askUserQuestionsEnabled: input.askUserQuestionsEnabled === true,
     };
-    if (input.executionTarget !== undefined) {
-      promptOptions.executionTarget = input.executionTarget;
-    }
-    if (envelope !== null) {
-      promptOptions.fsWritePolicy = envelope.policy;
-    }
-
-    const result = await executePromptStream(
-      input.projectPath,
-      input.session,
-      envelope === null
-        ? input.prompt
-        : `${renderWriteEnvelopeBriefing(envelope)}\n\n${input.prompt}`,
-      () => {},
-      input.conversationId,
-      input.modelSelection,
-      undefined,
-      promptOptions,
-    );
-
-    if (result.error) {
-      logger.error("graph-workflow.implementer.turn_failed", {
+    const { tooling, workflowContext, ...spec } = turn;
+    const execution = await executeConversationTurn({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: input.projectPath,
+          target: sessionConversationTarget(
+            getProjectDisplayName(input.projectPath),
+            input.session.sessionName,
+            input.conversationId,
+          ),
+        },
+        worktreePath:
+          input.executionTarget?.worktreePath ?? input.session.worktreePath,
+      },
+      turn: {
+        ...spec,
+        ...(envelope !== null ? { fsWritePolicy: envelope.policy } : {}),
+      },
+      executionContext: { tooling, workflowContext },
+      // SDK auto-continuations can briefly retain the lane conversation after
+      // the preceding work turn settles. The execution loop owns this follow-up
+      // and must serialize behind that continuation instead of treating the
+      // transient busy state as an agent failure.
+      waitUntilReady: true,
+    });
+    let result: ReturnType<typeof adaptGraphConversationTurn>;
+    try {
+      result = adaptGraphConversationTurn(execution, {
+        contextId: input.contextId,
+        backend: input.backend,
+      });
+    } catch (error) {
+      logger.warn("graph-workflow.implementer.turn_failed", {
         sessionName: input.session.sessionName,
         conversationId: input.conversationId,
         contextId: input.contextId,
         backend: input.backend,
-        error: result.error,
+        error: getErrorMessage(error),
+        cause:
+          error instanceof AgentTurnFailedError ? error.cause : "not_started",
       });
-      const message = `SDK error: ${result.error}`;
-      throw new AgentTurnFailedError(message, {
-        contextId: input.contextId,
-        engine: input.backend,
-        cause: "sdk_error",
-        originalMessage: result.error,
-      });
-    }
-
-    if (result.aborted) {
-      const timedOut = result.abortReason === "timeout";
-      const stalled = result.abortReason === "stalled";
-      const message = stalled
-        ? `Prompt execution stalled: no agent activity for ${result.timeoutMs ?? 0}ms`
-        : timedOut && result.timeoutMs !== undefined
-          ? `Prompt execution timed out after ${result.timeoutMs}ms`
-          : "Prompt execution was aborted";
-      logger.warn("graph-workflow.implementer.turn_aborted", {
-        sessionName: input.session.sessionName,
-        conversationId: input.conversationId,
-        contextId: input.contextId,
-        backend: input.backend,
-        ...(result.abortReason !== undefined
-          ? { abortReason: result.abortReason }
-          : {}),
-        ...(result.timeoutMs !== undefined
-          ? { timeoutMs: result.timeoutMs }
-          : {}),
-      });
-      throw new AgentTurnFailedError(message, {
-        contextId: input.contextId,
-        engine: input.backend,
-        cause: stalled ? "stall" : timedOut ? "timeout" : "abort",
-        originalMessage: message,
-      });
+      throw error;
     }
 
     logger.info("graph-workflow.implementer.turn_completed", {
@@ -379,11 +316,11 @@ export function createGraphWorkflowImplementerRunner(
     const conversation = await getConversation(
       input.projectPath,
       input.session.sessionName,
-      result.conversationId,
+      input.conversationId,
     );
 
     return {
-      conversationId: result.conversationId,
+      conversationId: input.conversationId,
       contextTokens: result.contextTokens,
       contextWindowMax: result.contextWindowMax,
       compacted: result.compacted,

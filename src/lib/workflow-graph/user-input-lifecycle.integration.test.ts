@@ -248,10 +248,8 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      sendConversationEvent: (_p, _s, conversationId, event) => {
-        if (event.type === "CLEAR_PENDING_QUESTION") {
-          clearedConversations.push(conversationId);
-        }
+      clearConversationQuestion: async (_p, _s, conversationId) => {
+        clearedConversations.push(conversationId);
         return true;
       },
       now: () => NOW,

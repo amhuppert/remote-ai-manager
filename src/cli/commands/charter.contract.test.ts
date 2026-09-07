@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createAgentAuth } from "@/lib/agent-gateway/token";
 import { createSessionAlignmentAgentRouteHandlers } from "@/lib/session-alignment/agent-route-handlers";
@@ -22,7 +22,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import type { ConversationRuntimeState } from "@/lib/workflows/conversation/runtime-state";
+import type { ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
 
 import { runCli } from "../core";
 import type { CliEnv, CliHost } from "../shared";
@@ -114,11 +114,10 @@ function buildService(): SessionAlignmentService {
   });
 }
 
-function runtimeState(): ConversationRuntimeState {
+function runtimeState(): ActiveConversationTurnDescription {
   return {
-    abortController: new AbortController(),
-    sendToMachine: vi.fn(),
-    streamEmit: vi.fn(),
+    autonomous: false,
+    originMessageId: null,
   };
 }
 
@@ -137,7 +136,7 @@ function makeHost(
         ? { sessionName }
         : null;
     },
-    getRuntime: () => runtimeState(),
+    describeActiveTurn: () => runtimeState(),
     beginDraft: service.beginDraft,
     fillDraft: service.fillDraft,
     proposeDecisions: service.proposeDecisions,

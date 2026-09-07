@@ -185,6 +185,104 @@ export function setPersistenceDeps(deps: ConversationPersistenceDeps): void {
 
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const DEFAULT_DEBOUNCE_MS = 500;
+type SnapshotIdentity = {
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+};
+interface SnapshotWrites {
+  captures: Set<Promise<void>>;
+  writes: Set<Promise<void>>;
+  latest?: () => Promise<void>;
+  pending?: () => Promise<void>;
+  failures: unknown[];
+  capture?: () => void;
+}
+const snapshotWrites = new Map<string, SnapshotWrites>();
+function writesFor(identity: SnapshotIdentity): SnapshotWrites {
+  const key = debounceKey(
+    identity.projectPath,
+    identity.sessionName,
+    identity.conversationId,
+  );
+  let state = snapshotWrites.get(key);
+  if (!state) {
+    state = { captures: new Set(), writes: new Set(), failures: [] };
+    snapshotWrites.set(key, state);
+  }
+  return state;
+}
+function startSnapshotWrite(
+  state: SnapshotWrites,
+  write: () => Promise<void>,
+): Promise<void> {
+  const pending = Promise.resolve().then(write);
+  state.writes.add(pending);
+  void pending.then(
+    () => state.writes.delete(pending),
+    (error) => {
+      state.failures.push(error);
+      state.writes.delete(pending);
+    },
+  );
+  return pending;
+}
+
+/** Flushes captures enrolled by the current macrostep and their latest snapshot. */
+export async function flushConversationSnapshot(
+  identity: SnapshotIdentity,
+): Promise<void> {
+  const state = writesFor(identity);
+  while (state.captures.size) await Promise.allSettled([...state.captures]);
+  const key = debounceKey(
+    identity.projectPath,
+    identity.sessionName,
+    identity.conversationId,
+  );
+  clearTimeout(debounceTimers.get(key));
+  debounceTimers.delete(key);
+  if (state.pending) {
+    const write = state.pending;
+    state.pending = undefined;
+    startSnapshotWrite(state, write);
+  }
+  await Promise.allSettled([...state.writes]);
+  if (state.failures.length) throw state.failures[0];
+}
+
+/** Retry the retained snapshot once without executing another machine transition. */
+export async function reconcileConversationSnapshot(
+  identity: SnapshotIdentity,
+): Promise<void> {
+  const state = writesFor(identity);
+  await Promise.allSettled([...state.captures, ...state.writes]);
+  if (state.failures.length) {
+    if (state.capture) state.capture();
+    else if (state.latest) state.pending = state.latest;
+    state.failures.length = 0;
+  }
+  await flushConversationSnapshot(identity);
+}
+
+export function forgetConversationSnapshot(identity: SnapshotIdentity): void {
+  const key = debounceKey(
+    identity.projectPath,
+    identity.sessionName,
+    identity.conversationId,
+  );
+  const state = snapshotWrites.get(key);
+  if (
+    state &&
+    (state.captures.size ||
+      state.writes.size ||
+      state.pending ||
+      state.failures.length)
+  )
+    throw new Error("Cannot discard unsettled conversation snapshot writes");
+  clearTimeout(debounceTimers.get(key));
+  debounceTimers.delete(key);
+  snapshotWrites.delete(key);
+}
 
 function debounceKey(
   projectPath: string,
@@ -213,8 +311,8 @@ function isTransientSnapshot(snapshot: Snapshot<unknown>): boolean {
 /**
  * Persist a conversation machine snapshot, debounced (500 ms default).
  * Conversation actors are long-lived with zero final states, so there is no
- * terminal flush: the machine's `persistSnapshot` action fires on every
- * durable transition and the debounce collapses bursts into one write.
+ * final state. The machine's `persistSnapshot` action schedules durable
+ * transitions; lifecycle boundaries explicitly flush the latest capture.
  */
 export function persistConversationSnapshot(
   projectPath: string,
@@ -237,9 +335,14 @@ export function persistConversationSnapshot(
     clearTimeout(existing);
   }
 
+  const state = writesFor({ projectPath, sessionName, conversationId });
+  state.latest = () => writeSnapshot(sessionName, conversationId, snapshot);
+  state.pending = state.latest;
   const doWrite = () => {
     debounceTimers.delete(key);
-    void writeSnapshot(sessionName, conversationId, snapshot);
+    const write = state.pending;
+    state.pending = undefined;
+    if (write) startSnapshotWrite(state, write);
   };
 
   debounceTimers.set(key, setTimeout(doWrite, debounceMs));
@@ -267,23 +370,29 @@ export function persistSnapshotAfterTransition(
   actor: { getPersistedSnapshot(): Snapshot<unknown> },
   options?: { debounceMs?: number },
 ): void {
-  queueMicrotask(() => {
-    try {
-      persistConversationSnapshot(
-        identity.projectPath,
-        identity.sessionName,
-        identity.conversationId,
-        actor.getPersistedSnapshot(),
-        options,
-      );
-    } catch (err) {
-      // Fire-and-forget — snapshot persistence must not halt the machine.
+  const state = writesFor(identity);
+  state.capture = () => {
+    persistConversationSnapshot(
+      identity.projectPath,
+      identity.sessionName,
+      identity.conversationId,
+      actor.getPersistedSnapshot(),
+      options,
+    );
+  };
+  const capture = Promise.resolve().then(state.capture);
+  state.captures.add(capture);
+  void capture.then(
+    () => state.captures.delete(capture),
+    (error) => {
+      state.captures.delete(capture);
+      state.failures.push(error);
       logger.warn("conversation-persistence.snapshot_capture_failed", {
         conversationId: identity.conversationId,
-        error: getErrorMessage(err),
+        error: getErrorMessage(error),
       });
-    }
-  });
+    },
+  );
 }
 
 async function writeSnapshot(
@@ -311,6 +420,7 @@ async function writeSnapshot(
       conversationId,
       error: getErrorMessage(err),
     });
+    throw err;
   }
 }
 
@@ -410,5 +520,6 @@ export function _resetForTesting(): void {
     clearTimeout(timer);
   }
   debounceTimers.clear();
+  snapshotWrites.clear();
   _deps = null;
 }

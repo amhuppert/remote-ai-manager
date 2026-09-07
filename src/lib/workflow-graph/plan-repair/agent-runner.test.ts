@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkFsWritePolicy } from "@/lib/agent-backends/fs-write-policy";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
-  ExecuteWorkflowTaskRunInput,
   TaskRunResult,
   TaskRunUsage,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+} from "@/lib/workflows/conversation/turn-result";
 import { createPlanRepairAgentRunner } from "./agent-runner";
 import type { PlanRepairAgentInvocation } from "./supervisor";
 
@@ -132,9 +132,9 @@ describe("plan-repair agent runner", () => {
     expect(Object.keys(schema.properties ?? {})).toEqual(
       expect.arrayContaining(["planningDefect", "diagnosis", "operations"]),
     );
-    expect(call.actorInput?.persistence).toBe("ephemeral");
-    expect(call.actorInput?.conversationScope).toBe("session");
-    expect(call.actorInput?.sessionWorktreePath).toBe(worktreePath);
+    expect(call.binding.kind).toBe("ephemeral");
+    expect(call.binding.address.target.scope).toBe("session");
+    expect(call.binding.worktreePath).toBe(worktreePath);
     expect(call.origin).toMatchObject({ source: "workflow" });
   });
 

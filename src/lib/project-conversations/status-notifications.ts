@@ -1,3 +1,4 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 /**
  * Project-conversation status notification policy.
  *
@@ -8,10 +9,19 @@
  * sentinel-session conversations.
  */
 
-import type { ConversationContext } from "@/lib/workflows/conversation/types";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ProjectConversationNotificationService } from "@/lib/notifications/project-conversation-service";
-import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+
+interface ProjectConversationStatus {
+  readonly projectPath: string;
+  readonly target: ConversationTarget;
+  readonly status: ConversationState["status"];
+  readonly promptCount: number;
+  readonly totals: { readonly totalTurns: number | null };
+  readonly pendingQuestion: { readonly questionId: string } | null;
+  readonly lastError: string | null;
+  readonly lastResult: { readonly error: string | null } | null;
+}
 
 type ProjectConversationStatusNotificationDeps = {
   getProjectConversation(
@@ -54,18 +64,18 @@ async function getProjectConversationStatusNotificationDeps(): Promise<ProjectCo
 }
 
 function isNotifiableProjectConversationStatus(
-  status: ConversationContext["status"],
+  status: ProjectConversationStatus["status"],
 ): status is "awaiting" | "waiting_for_input" {
   return status === "awaiting" || status === "waiting_for_input";
 }
 
 function buildProjectConversationStatusTransitionKey(
-  context: ConversationContext,
+  context: ProjectConversationStatus,
 ): string {
   if (context.status === "waiting_for_input") {
     return [
-      context.projectName,
-      context.conversationId,
+      context.target.projectName,
+      context.target.conversationId,
       context.status,
       `prompt-${context.promptCount}`,
       `question-${context.pendingQuestion?.questionId ?? "unknown"}`,
@@ -73,8 +83,8 @@ function buildProjectConversationStatusTransitionKey(
   }
 
   return [
-    context.projectName,
-    context.conversationId,
+    context.target.projectName,
+    context.target.conversationId,
     context.status,
     `prompt-${context.promptCount}`,
     `turns-${context.totals.totalTurns ?? "unknown"}`,
@@ -82,12 +92,12 @@ function buildProjectConversationStatusTransitionKey(
 }
 
 function buildProjectConversationErrorTransitionKey(
-  context: ConversationContext,
+  context: ProjectConversationStatus,
   errorMessage: string,
 ): string {
   return [
-    context.projectName,
-    context.conversationId,
+    context.target.projectName,
+    context.target.conversationId,
     "error",
     `prompt-${context.promptCount}`,
     `turns-${context.totals.totalTurns ?? "unknown"}`,
@@ -96,9 +106,9 @@ function buildProjectConversationErrorTransitionKey(
 }
 
 export async function notifyProjectConversationStatusFromContext(
-  context: ConversationContext,
+  context: ProjectConversationStatus,
 ): Promise<void> {
-  if (!isProjectSentinel(context.sessionName)) return;
+  if (context.target.scope !== "project") return;
 
   const errorMessage =
     context.status === "awaiting"
@@ -111,14 +121,14 @@ export async function notifyProjectConversationStatusFromContext(
   const deps = await getProjectConversationStatusNotificationDeps();
   const conversation = await deps.getProjectConversation(
     context.projectPath,
-    context.conversationId,
+    context.target.conversationId,
   );
   const conversationName = conversation?.name ?? null;
 
   if (errorMessage) {
     deps.notificationService.handleProjectConversationError({
-      projectName: context.projectName,
-      conversationId: context.conversationId,
+      projectName: context.target.projectName,
+      conversationId: context.target.conversationId,
       conversationName,
       errorMessage,
       transitionKey: buildProjectConversationErrorTransitionKey(
@@ -131,8 +141,8 @@ export async function notifyProjectConversationStatusFromContext(
 
   if (isNotifiableProjectConversationStatus(context.status)) {
     deps.notificationService.handleProjectConversationStatus({
-      projectName: context.projectName,
-      conversationId: context.conversationId,
+      projectName: context.target.projectName,
+      conversationId: context.target.conversationId,
       conversationName,
       status: context.status,
       transitionKey: buildProjectConversationStatusTransitionKey(context),

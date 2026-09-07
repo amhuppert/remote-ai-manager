@@ -2,9 +2,8 @@
  * Delivery watermarks for notepad change notices (R21, D17).
  *
  * A watermark records, per conversation and notepad, the state last presented
- * to the agent. It is written where a reference is actually expanded into an
- * agent-facing message — a notepad becomes tracked for a conversation exactly
- * when its content is delivered there — and read back by prompt assembly to
+ * to the agent. It is written when the backend accepts a message carrying
+ * the reference content, and read back by prompt assembly to
  * decide whether anything has changed since.
  *
  * Everything here is content-free: revisions and comment counts, never notepad
@@ -24,10 +23,11 @@ import type {
 } from "@/lib/state-store/notepad-delivery-watermarks-repo";
 import type { NotepadsRepo } from "@/lib/state-store/notepads-repo";
 
-/** One notepad as it was delivered: the id and the revision the agent saw. */
+/** One notepad as rendered, including the comment activity the message carried. */
 export interface NotepadDeliveryRecord {
   notepadId: string;
   revision: number;
+  openComments: NotepadOpenCommentMarker;
 }
 
 /** One notepad's change-relevant state as it stands today. */
@@ -79,7 +79,10 @@ export interface NotepadDeliveryTracker {
    * conversation. Reads only — the watermarks it names advance in `settle`,
    * once the backend has actually accepted the message carrying the notice.
    */
-  prepare(conversationId: string): Promise<PreparedNotepadChangeNotice>;
+  prepare(
+    conversationId: string,
+    references?: readonly NotepadDeliveryRecord[],
+  ): Promise<PreparedNotepadChangeNotice>;
   /**
    * Advance the watermarks the prepared notice named. Called only after the
    * backend accepts the delivery, so a failure before acceptance leaves the
@@ -220,16 +223,11 @@ export function createNotepadDeliveryTracker(
   return {
     async recordDelivered({ conversationId, notepads }) {
       for (const notepad of notepads) {
-        const state = await deps.readDeliveryState(notepad.notepadId);
-        // The open-comment half of the watermark is only readable from the
-        // notepad's current state; a notepad deleted since expansion has none,
-        // and `record` would refuse it anyway.
-        if (state === null) continue;
         await deps.watermarks.record({
           conversationId,
           notepadId: notepad.notepadId,
           revision: notepad.revision,
-          openComments: state.openComments,
+          openComments: notepad.openComments,
           updatedAt: deps.now(),
         });
       }
@@ -237,11 +235,27 @@ export function createNotepadDeliveryTracker(
 
     listTracked,
 
-    async prepare(conversationId) {
+    async prepare(conversationId, references = []) {
       const changes: NotepadChange[] = [];
       const advances: RecordNotepadDeliveryWatermarkInput[] = [];
       const now = deps.now();
-      for (const { seen, current } of await listTracked(conversationId)) {
+      const tracked = new Map(
+        (await listTracked(conversationId)).map((entry) => [
+          entry.seen.notepadId,
+          entry,
+        ]),
+      );
+      for (const reference of references) {
+        const current =
+          tracked.get(reference.notepadId)?.current ??
+          (await deps.readDeliveryState(reference.notepadId));
+        if (current === null) continue;
+        tracked.set(reference.notepadId, {
+          current,
+          seen: { ...reference, conversationId, updatedAt: now },
+        });
+      }
+      for (const { seen, current } of tracked.values()) {
         // Rename, pin, and archive move none of these, so organization never
         // produces a notice — a read returns exactly what it returned before.
         const contentChanged = current.revision > seen.revision;

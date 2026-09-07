@@ -44,7 +44,7 @@ export const debugHypothesisOutputSchema = {
       items: { type: "string", minLength: 1 },
     },
   },
-} as const;
+} as const satisfies Record<string, unknown>;
 
 export const debugHypothesisOutputZodSchema = z.object({
   hypotheses: z
@@ -143,7 +143,7 @@ export const debugEvidenceAnalysisOutputSchema = {
       items: { type: "string", minLength: 1 },
     },
   },
-} as const;
+} as const satisfies Record<string, unknown>;
 
 /**
  * Zod schema for the evidence analysis phase.
@@ -208,7 +208,7 @@ export const debugCleanupResultSchema = {
     },
     notes: { type: "string" },
   },
-} as const;
+} as const satisfies Record<string, unknown>;
 
 export const debugCleanupResultZodSchema = z.object({
   removedInstrumentation: z.boolean(),

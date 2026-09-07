@@ -1,3 +1,7 @@
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+
+import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
+
 /**
  * R7.2 — the write envelope at the backend-neutral boundary and at the runner.
  *
@@ -102,17 +106,10 @@ import {
   type AgentCallFacadeDeps,
 } from "@/lib/workflows/primitives/agent-call-facade";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import {
-  mapToTaskRunResult,
-  type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import {
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "@/lib/workflows/conversation/actor-implementations";
-import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+
+import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   createValidatorRunner,
   type ValidatorRunResult,
@@ -187,9 +184,7 @@ beforeEach(() => {
   claudeQueryMock.mockImplementation(() => claudeStream());
 });
 
-afterEach(() => {
-  _resetActorDepsForTesting();
-});
+afterEach(() => {});
 
 function realTaskRunner(backend: AgentBackendId): AgentTaskRunner {
   if (backend === "claude") {
@@ -224,52 +219,32 @@ function recordingRunner(backend: AgentBackendId): AgentTaskRunner {
 function productionTaskRun(
   backend: AgentBackendId,
 ): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  setActorDeps(
-    createActorImplementationDepsFixture({
-      getTaskRunner: vi.fn(() => recordingRunner(backend)),
-      executeAgentCall: async (request, facadeDeps) => {
-        neutralCalls.push({
-          request,
-          taskExecution: facadeDeps.taskExecution,
-        });
-        return executeAgentCall(request, facadeDeps);
-      },
-    }),
-  );
+  const actorDependencies = createActorDependenciesFixture({
+    getTaskRunner: vi.fn(() => recordingRunner(backend)),
+    executeAgentCall: async (request, facadeDeps) => {
+      neutralCalls.push({
+        request,
+        taskExecution: facadeDeps.taskExecution,
+      });
+      return executeAgentCall(request, facadeDeps);
+    },
+  });
 
   return async (input) => {
-    const actorResult = await runTaskRunTurnForMachine({
-      executionClass: input.executionClass,
-      executionProfile: input.executionProfile,
-      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
-      persistence: "ephemeral",
-      projectPath: input.projectPath,
-      projectName: "repo",
-      sessionName: input.sessionName,
-      worktreePath: WORKTREE_PATH,
-      conversationId: input.conversationId,
-      agentBackend: backend,
-      backendRef: null,
-      promptText: input.prompt,
-      modelSelection: input.modelSelection ?? null,
-      onModelSelectionResolved: async () => {},
-      ...(input.outputFormat !== undefined
-        ? { outputFormat: input.outputFormat }
-        : {}),
-      ...(input.systemInstructions !== undefined
-        ? { systemInstructions: input.systemInstructions }
-        : {}),
-      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
-      ...(input.fsWritePolicy !== undefined
-        ? { fsWritePolicy: input.fsWritePolicy }
-        : {}),
+    const fixture = await createLifecycleFixture({
+      binding: input.binding,
+      conversation: { agentBackend: backend, backendRef: null },
+      actorDeps: actorDependencies,
     });
-
-    return mapToTaskRunResult(
-      actorResult,
-      actorResult.error,
-      input.outputFormat,
-    );
+    try {
+      return await fixture.executeWorkflowTaskRun({
+        ...input,
+        binding: { ...input.binding, worktreePath: WORKTREE_PATH },
+        resumeRef: input.resumeRef ?? null,
+      });
+    } finally {
+      await fixture.close();
+    }
   };
 }
 
@@ -441,9 +416,18 @@ describe("implementer task runs", () => {
 
     await dispatch({
       executionClass: "governed-execution" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: "implementer-conversation",
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: {
+            scope: "session",
+            projectName: "test-project",
+            sessionName: SESSION_NAME,
+            conversationId: "implementer-conversation",
+          },
+        },
+      },
       kind: "task_run",
       prompt: "implement the task",
       modelSelection: {
@@ -526,3 +510,5 @@ describe.each(["claude", "codex"] as const)(
     });
   },
 );
+
+afterEach(() => resetTaskRuntime());

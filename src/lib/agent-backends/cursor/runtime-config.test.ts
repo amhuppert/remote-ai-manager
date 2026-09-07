@@ -27,7 +27,7 @@ function stubRuntime(
     status,
     modelSelection: MODEL_SELECTION,
     outputFormat: undefined,
-    alignmentVersion: null,
+
     async sendTurn(): Promise<never> {
       throw new Error("not driven in this test");
     },

@@ -1,3 +1,9 @@
+import { conversationStoreIdentity } from "@/lib/conversations/conversation-target";
+import {
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import { createConversationMachineFixture } from "@/lib/workflows/conversation/testing/machine-fixture";
 /**
  * Integration: a stale Codex resume must clear the persisted continuation ref
  * everywhere before the next turn.
@@ -26,7 +32,6 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { conversationMachine } from "./machine";
 import {
   persistSnapshotAfterTransition,
   setPersistenceDeps,
@@ -98,11 +103,21 @@ function toPromptActorResult(
 // ============================================================
 
 const machineInput: ConversationInput = {
+  lastActivityAt: "2026-01-01T00:00:00Z",
+  totalCostUsd: null,
+  totalDurationMs: null,
+  totalTurns: null,
+  contextTokens: null,
+  contextWindowMax: null,
   projectPath: PROJECT_PATH,
-  projectName: PROJECT_NAME,
-  sessionName: SESSION_NAME,
+  target: targetFromStoreSessionName(
+    PROJECT_NAME,
+    SESSION_NAME,
+    CONVERSATION_ID,
+  ),
+
   worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-  conversationId: CONVERSATION_ID,
+
   createdAt: "2026-01-01T00:00:00Z",
   forkedFrom: null,
   role: null,
@@ -195,7 +210,7 @@ describe("stale Codex resume clears the continuation ref end-to-end", () => {
   });
 
   function makeProvidedMachine(promptResult: PromptActorResult) {
-    return conversationMachine.provide({
+    return createConversationMachineFixture().provide({
       actors: {
         prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
           async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
@@ -208,14 +223,18 @@ describe("stale Codex resume clears the continuation ref end-to-end", () => {
         // Production persistence (shadow codec + post-macrostep capture)
         // over the real store; debounceMs 0 keeps the test deterministic.
         persistSnapshot: ({ context, self }) => {
-          persistSnapshotAfterTransition(context, self, { debounceMs: 0 });
+          persistSnapshotAfterTransition(
+            conversationStoreIdentity(context),
+            self,
+            { debounceMs: 0 },
+          );
         },
         syncDerivedFields: ({ context }) => {
           syncWrites.push(
             fixture.deps.mutateConversation(
               context.projectPath,
-              context.sessionName,
-              context.conversationId,
+              conversationTargetStoreSessionName(context.target),
+              context.target.conversationId,
               "test.syncDerived",
               (c) => applySyncDerivedFields(context, c),
             ),
@@ -343,7 +362,12 @@ describe("stale Codex resume clears the continuation ref end-to-end", () => {
       {
         input: {
           ...machineInput,
-          conversationId,
+          target: targetFromStoreSessionName(
+            machineInput.target.projectName,
+            conversationTargetStoreSessionName(machineInput.target),
+            conversationId,
+          ),
+
           transcriptPath: "/tmp/claude-pump-transcript.jsonl",
           agentBackend: "claude",
           backendRef: STALE_CLAUDE_RESUME_REF,

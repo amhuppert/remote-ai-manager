@@ -1,3 +1,4 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Compaction generation service (docs/design/conversation-compaction/README.md
  * §7.1, §7.2): self-contained background execution — the artifact row is the
@@ -38,10 +39,8 @@ import type {
   TranscriptEntriesResult,
   TranscriptEntryWithSeq,
 } from "@/lib/prompt/transcript";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import {
   buildCompactionPrompt,
   COMPACTION_JSON_SCHEMA,
@@ -484,9 +483,6 @@ export function createCompactionService(
     const laneSessionName =
       input.sessionName ?? PROJECT_CONVERSATION_SESSION_SENTINEL;
     const result = await deps.executeTaskRun({
-      projectPath: input.projectPath,
-      sessionName: laneSessionName,
-      conversationId: `compaction-${artifactId}`,
       kind: "task_run",
       executionClass: "nongoverned-task",
       executionProfile: "standard",
@@ -494,28 +490,27 @@ export function createCompactionService(
       outputFormat: { type: "json_schema", schema: COMPACTION_JSON_SCHEMA },
       timeoutMs: resolveConfiguredTimeoutMs(config.timeoutMs),
       modelSelection,
-      actorInput: {
+      binding: {
         // The compaction lane inherits the scope of the conversation it
         // compacts — a project conversation has no session name, which is why
         // the store name above falls back to the sentinel.
-        conversationScope: input.sessionName === null ? "project" : "session",
-        projectName: input.projectName,
-        sessionWorktreePath: input.projectPath,
+        address: {
+          projectPath: input.projectPath,
+          target: targetFromStoreSessionName(
+            input.projectName,
+            laneSessionName,
+            `compaction-${artifactId}`,
+          ),
+        },
         // No ConversationState record exists for this synthetic lane, so the
         // ephemeral persistence adapter makes every durable side effect inert:
         // derived-field sync, snapshot persistence, and read/unread transitions
         // all no-op instead of failing `Conversation not found in session`.
-        persistence: "ephemeral",
-        conversation: {
-          createdAt: deps.now(),
-          forkedFrom: null,
-          role: null,
-          transcriptPath: null,
-          agentBackend: config.backend,
-          backendRef: null,
-          promptCount: 0,
-          debugMode: null,
-        },
+        kind: "ephemeral",
+        worktreePath: input.projectPath,
+        backend: config.backend,
+        role: null,
+        transcriptPath: null,
       },
     });
 

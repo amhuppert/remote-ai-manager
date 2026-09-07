@@ -147,8 +147,8 @@ export function createBackgroundTasksLostHandler(
       entry: TranscriptEntry,
     ): Promise<void>;
   },
-): (info: BackgroundTasksLostInfo) => void {
-  return (info: BackgroundTasksLostInfo): void => {
+): (info: BackgroundTasksLostInfo) => Promise<void> {
+  return async (info: BackgroundTasksLostInfo): Promise<void> => {
     const summary = info.tasks
       .map((t) => (t.description ? `${t.taskId} (${t.description})` : t.taskId))
       .join(", ");
@@ -158,7 +158,7 @@ export function createBackgroundTasksLostHandler(
       reason: info.reason,
       taskCount: info.tasks.length,
     });
-    void input.appendTranscriptEntry(input.conversationId, {
+    const transcript = input.appendTranscriptEntry(input.conversationId, {
       timestamp: new Date().toISOString(),
       type: "notice",
       role: "notice",
@@ -169,9 +169,12 @@ export function createBackgroundTasksLostHandler(
         },
       ],
     });
-    if (input.isProjectConversation) return;
+    if (input.isProjectConversation) {
+      await transcript;
+      return;
+    }
     const reminder = `Your previous agent session ended (${info.reason}) while ${info.tasks.length} background task(s) were still running: ${summary}. Those processes were terminated with the session — their completion notifications will never arrive. Do not wait for them; check any output files on disk and re-run whatever is still needed.`;
-    void appendPendingAgentNotice(
+    const notice = appendPendingAgentNotice(
       deps,
       {
         projectPath: input.projectPath,
@@ -187,5 +190,6 @@ export function createBackgroundTasksLostHandler(
         error: getErrorMessage(err),
       });
     });
+    await Promise.all([transcript, notice]);
   };
 }

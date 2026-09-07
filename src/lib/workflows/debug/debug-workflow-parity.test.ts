@@ -1,3 +1,9 @@
+import { type VerifyCleanupOutput } from "@/lib/workflows/debug/cleanup-verification";
+import {
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import { createConversationMachineFixture } from "@/lib/workflows/conversation/testing/machine-fixture";
 /**
  * Debug workflow external-interface parity suite (Phase 2.3 pin).
  *
@@ -12,7 +18,7 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createActor, fromPromise, waitFor, type AnyActorRef } from "xstate";
-import { conversationMachine } from "@/lib/workflows/conversation/machine";
+
 import {
   createDebugAdapter,
   type DebugAdapter,
@@ -24,7 +30,6 @@ import type {
   PrepareTurnInput,
   PrepareTurnOutput,
   PromptActorResult,
-  VerifyCleanupOutput,
 } from "@/lib/workflows/conversation/types";
 
 // ============================================================
@@ -92,11 +97,17 @@ function successResult(
 }
 
 const defaultInput: ConversationInput = {
+  lastActivityAt: "2024-01-01T00:00:00Z",
+  totalCostUsd: null,
+  totalDurationMs: null,
+  totalTurns: null,
+  contextTokens: null,
+  contextWindowMax: null,
   projectPath: "/repo",
-  projectName: "my-project",
-  sessionName: "sess-1",
+  target: targetFromStoreSessionName("my-project", "sess-1", "conv-123"),
+
   worktreePath: "/repo/.worktrees/sess-1",
-  conversationId: "conv-123",
+
   createdAt: "2024-01-01T00:00:00Z",
   forkedFrom: null,
   role: null,
@@ -109,8 +120,8 @@ const defaultInput: ConversationInput = {
 
 const TARGET = {
   projectPath: defaultInput.projectPath,
-  sessionName: defaultInput.sessionName,
-  conversationId: defaultInput.conversationId,
+  sessionName: conversationTargetStoreSessionName(defaultInput.target),
+  conversationId: defaultInput.target.conversationId,
 };
 
 // ============================================================
@@ -186,7 +197,7 @@ function makeHarness(opts: {
       };
     });
 
-  const machine = conversationMachine.provide({
+  const machine = createConversationMachineFixture().provide({
     actors: {
       prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
         async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
@@ -218,7 +229,7 @@ function makeHarness(opts: {
         void runDebugCleanupVerification(
           {
             worktreePath: context.worktreePath,
-            conversationId: context.conversationId,
+            conversationId: context.target.conversationId,
             structuredOutput: context.lastResult?.structuredOutput,
             debugSessionId:
               context.debugMode?.debugSessionId ?? "debug-session-test",
@@ -239,9 +250,16 @@ function makeHarness(opts: {
   activeActors.push(actor);
 
   const adapter = createDebugAdapter({
-    sendConversationEvent: (_p, _s, _c, event) => {
+    executeCommand: async (_target, command) => {
+      const event = { type: "DEBUG_COMMAND" as const, command };
+      if (!actor.getSnapshot().can(event))
+        return {
+          kind: "refused",
+          code: "invalid_state",
+          message: "Invalid command",
+        };
       actor.send(event);
-      return true;
+      return { kind: "applied" };
     },
     publishSSE: () => ({ delivered: true, subscriberCount: 1 }),
   });
@@ -321,13 +339,13 @@ function makeCleanupHarness(
 }
 
 async function advanceToCleanupPhase(h: Harness): Promise<void> {
-  h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+  await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
   submitPrompt(h, "Investigate");
   await h.settled();
-  h.adapter.markReproduced(TARGET);
+  await h.adapter.markReproduced(TARGET);
   submitPrompt(h, "Analyze");
   await h.settled();
-  h.adapter.markFixVerified(TARGET);
+  await h.adapter.markFixVerified(TARGET);
   expect(h.ctx().debugMode?.phase).toBe("cleanup_instrumentation");
 }
 
@@ -336,10 +354,12 @@ async function advanceToCleanupPhase(h: Harness): Promise<void> {
 // ============================================================
 
 describe("debug workflow parity (external interface)", () => {
-  it("enterDebugMode initializes debugMode context and broadcasts debug-mode status", () => {
+  it("enterDebugMode initializes debugMode context and broadcasts debug-mode status", async () => {
     const h = makeHarness({ turnResults: [{}] });
 
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/.debug/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, {
+      logFilePath: "/tmp/.debug/logs.jsonl",
+    });
 
     const ctx = h.ctx();
     expect(ctx.debugMode).toMatchObject({
@@ -354,11 +374,11 @@ describe("debug workflow parity (external interface)", () => {
     expect(h.debugModeStatusBroadcasts()).toBe(1);
   });
 
-  it("exitDebugMode clears debugMode and broadcasts", () => {
+  it("exitDebugMode clears debugMode and broadcasts", async () => {
     const h = makeHarness({ turnResults: [{}] });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
-    h.adapter.exitDebugMode(TARGET);
+    await h.adapter.exitDebugMode(TARGET);
 
     expect(h.ctx().debugMode).toBeNull();
     expect(h.debugModeStatusBroadcasts()).toBe(2);
@@ -368,7 +388,7 @@ describe("debug workflow parity (external interface)", () => {
     const h = makeHarness({
       turnResults: [{ structuredOutput: HYPOTHESIS_PAYLOAD }],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
     submitPrompt(h, "Investigate the bug");
     await h.settled();
@@ -395,7 +415,7 @@ describe("debug workflow parity (external interface)", () => {
     const h = makeHarness({
       turnResults: [{ structuredOutput: HYPOTHESIS_PAYLOAD }],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
     submitPrompt(h, "Investigate");
     await h.settled();
@@ -403,7 +423,7 @@ describe("debug workflow parity (external interface)", () => {
     expect(h.executedInputs).toHaveLength(1);
     // Deep equality, not identity: the machine resolves through the default
     // adapter singleton while the harness holds its own injected instance.
-    expect(h.executedInputs[0]!.outputFormat).toStrictEqual(
+    expect(h.executedInputs[0]!.turn.outputFormat).toStrictEqual(
       h.adapter.resolveOutputFormat("hypothesizing"),
     );
   });
@@ -412,17 +432,17 @@ describe("debug workflow parity (external interface)", () => {
     const h = makeHarness({
       turnResults: [{ structuredOutput: HYPOTHESIS_PAYLOAD }],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
     // Illegal in hypothesizing — ignored.
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("hypothesizing");
 
     submitPrompt(h, "Investigate");
     await h.settled();
     expect(h.ctx().debugMode?.phase).toBe("awaiting_reproduction");
 
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("analyzing_evidence");
   });
 
@@ -433,10 +453,10 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: FIX_APPLIED_PAYLOAD },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
 
     submitPrompt(h, "Analyze evidence");
     await h.settled();
@@ -455,10 +475,10 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: MORE_INSTRUMENTATION_PAYLOAD },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
 
     submitPrompt(h, "Analyze evidence");
     await h.settled();
@@ -482,13 +502,13 @@ describe("debug workflow parity (external interface)", () => {
       ],
       cleanupVerify: { ok: true },
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     submitPrompt(h, "Analyze");
     await h.settled();
-    h.adapter.markFixVerified(TARGET);
+    await h.adapter.markFixVerified(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("cleanup_instrumentation");
 
     submitPrompt(h, "Clean up instrumentation");
@@ -512,13 +532,13 @@ describe("debug workflow parity (external interface)", () => {
         remediationPrompt: "Probe P1 still present in src/a.ts",
       },
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     submitPrompt(h, "Analyze");
     await h.settled();
-    h.adapter.markFixVerified(TARGET);
+    await h.adapter.markFixVerified(TARGET);
 
     submitPrompt(h, "Clean up instrumentation");
     await h.settled();
@@ -606,7 +626,7 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: HYPOTHESIS_PAYLOAD },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
     submitPrompt(h, "Investigate");
     await h.settled();
@@ -621,12 +641,12 @@ describe("debug workflow parity (external interface)", () => {
     );
     expect(ctx.activeTurn).toMatchObject({ promptText: "Investigate" });
 
-    h.adapter.retryDebugTurn(TARGET);
+    await h.adapter.retryDebugTurn(TARGET);
     await h.settled();
 
     ctx = h.ctx();
     expect(h.executedInputs).toHaveLength(2);
-    expect(h.executedInputs[1]!.promptText).toBe("Investigate");
+    expect(h.executedInputs[1]!.turn.promptText).toBe("Investigate");
     expect(ctx.debugMode).toMatchObject({
       phase: "awaiting_reproduction",
       lastTurnFailed: false,
@@ -640,7 +660,7 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: HYPOTHESIS_PAYLOAD },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
     expect(h.ctx().debugMode?.lastTurnFailed).toBe(true);
@@ -649,7 +669,7 @@ describe("debug workflow parity (external interface)", () => {
     await h.settled();
 
     const ctx = h.ctx();
-    expect(h.executedInputs[1]!.promptText).toBe("Try a different angle");
+    expect(h.executedInputs[1]!.turn.promptText).toBe("Try a different angle");
     expect(ctx.debugMode).toMatchObject({
       phase: "awaiting_reproduction",
       lastTurnFailed: false,
@@ -663,14 +683,14 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: FIX_APPLIED_PAYLOAD },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     submitPrompt(h, "Analyze");
     await h.settled();
 
-    h.adapter.markFixFailed(TARGET);
+    await h.adapter.markFixFailed(TARGET);
 
     expect(h.ctx().debugMode).toMatchObject({
       phase: "hypothesizing",
@@ -686,28 +706,28 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: FIX_APPLIED_PAYLOAD },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("analyzing_evidence");
 
-    h.adapter.revertToAwaitingReproduction(TARGET);
+    await h.adapter.revertToAwaitingReproduction(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("awaiting_reproduction");
 
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     submitPrompt(h, "Analyze");
     await h.settled();
-    h.adapter.markFixVerified(TARGET);
+    await h.adapter.markFixVerified(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("cleanup_instrumentation");
 
-    h.adapter.revertToAwaitingVerification(TARGET);
+    await h.adapter.revertToAwaitingVerification(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("awaiting_verification");
 
     // From hypothesizing (after markFixFailed) revert restores verification.
-    h.adapter.markFixFailed(TARGET);
+    await h.adapter.markFixFailed(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("hypothesizing");
-    h.adapter.revertToAwaitingVerification(TARGET);
+    await h.adapter.revertToAwaitingVerification(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("awaiting_verification");
   });
 
@@ -718,7 +738,7 @@ describe("debug workflow parity (external interface)", () => {
         { structuredOutput: undefined },
       ],
     });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
     expect(h.ctx().debugMode?.phase).toBe("awaiting_reproduction");
@@ -735,21 +755,21 @@ describe("debug workflow parity (external interface)", () => {
     expect(ctx.promptCount).toBe(2);
   });
 
-  it("setRecording toggles the flag and broadcasts each time", () => {
+  it("setRecording toggles the flag and broadcasts each time", async () => {
     const h = makeHarness({ turnResults: [{}] });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
-    h.adapter.setRecording(TARGET, false);
+    await h.adapter.setRecording(TARGET, false);
     expect(h.ctx().debugMode?.recording).toBe(false);
-    h.adapter.setRecording(TARGET, true);
+    await h.adapter.setRecording(TARGET, true);
     expect(h.ctx().debugMode?.recording).toBe(true);
     // enter + 2 recording toggles
     expect(h.debugModeStatusBroadcasts()).toBe(3);
   });
 
-  it("ignores SUBMIT_TASK_RUN while debug mode is active", () => {
+  it("ignores SUBMIT_TASK_RUN while debug mode is active", async () => {
     const h = makeHarness({ turnResults: [{}] });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
     h.send({ type: "SUBMIT_TASK_RUN", promptText: "run task" });
 
@@ -757,9 +777,9 @@ describe("debug workflow parity (external interface)", () => {
     expect(h.ctx().status).not.toBe("running");
   });
 
-  it("ignores EXTERNAL_TURN_STARTED while debug mode is active", () => {
+  it("ignores EXTERNAL_TURN_STARTED while debug mode is active", async () => {
     const h = makeHarness({ turnResults: [{}] });
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
 
     h.send({ type: "EXTERNAL_TURN_STARTED" });
 
@@ -773,18 +793,18 @@ describe("debug workflow parity (external interface)", () => {
     // Startup idle entry drains once.
     expect(h.drainCalls()).toBe(1);
 
-    h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
+    await h.adapter.enterDebugMode(TARGET, { logFilePath: "/tmp/logs.jsonl" });
     submitPrompt(h, "Investigate");
     await h.settled();
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     // No settle-point drain fired while debug mode was active.
     expect(h.drainCalls()).toBe(1);
 
-    h.adapter.exitDebugMode(TARGET);
+    await h.adapter.exitDebugMode(TARGET);
     expect(h.drainCalls()).toBe(2);
   });
 
-  it("restores persisted debugMode from input and keeps operating in the restored phase", () => {
+  it("restores persisted debugMode from input and keeps operating in the restored phase", async () => {
     const h = makeHarness({
       turnResults: [{}],
       input: {
@@ -808,17 +828,17 @@ describe("debug workflow parity (external interface)", () => {
     });
 
     expect(h.ctx().debugMode?.phase).toBe("awaiting_reproduction");
-    h.adapter.markReproduced(TARGET);
+    await h.adapter.markReproduced(TARGET);
     expect(h.ctx().debugMode?.phase).toBe("analyzing_evidence");
   });
 
-  it("adapter methods are ignored when debug mode is not active", () => {
+  it("adapter methods are ignored when debug mode is not active", async () => {
     const h = makeHarness({ turnResults: [{}] });
 
-    h.adapter.markReproduced(TARGET);
-    h.adapter.markFixVerified(TARGET);
-    h.adapter.exitDebugMode(TARGET);
-    h.adapter.setRecording(TARGET, false);
+    await h.adapter.markReproduced(TARGET);
+    await h.adapter.markFixVerified(TARGET);
+    await h.adapter.exitDebugMode(TARGET);
+    await h.adapter.setRecording(TARGET, false);
 
     expect(h.ctx().debugMode).toBeNull();
     expect(h.ctx().status).toBe("new");

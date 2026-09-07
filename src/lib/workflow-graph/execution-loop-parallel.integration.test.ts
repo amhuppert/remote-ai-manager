@@ -1,3 +1,4 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -1399,29 +1400,19 @@ describe("execution loop — parallel integration", () => {
     const synthesisInputs: unknown[] = [];
 
     const implementerRunner = createGraphWorkflowImplementerRunner({
-      executePromptStream: async (
-        _projectPath,
-        _session,
-        promptText,
-        _emit,
-        conversationId,
-        _model,
-        _images,
-        options,
-      ) => {
+      executeConversationTurn: async (submission) => {
+        const options = { ...submission.turn, ...submission.executionContext };
+        const promptText = submission.turn.promptText;
+
         const contextId = options?.workflowContext?.contextId;
         if (contextId && options.fsWritePolicy) {
           capturedPolicies.set(contextId, options.fsWritePolicy);
           capturedPrompts.set(contextId, promptText);
         }
-        return {
-          conversationId: conversationId ?? "conversation",
-          contextTokens: null,
-          contextWindowMax: null,
+        return settledConversationTurn({
+          usage: {},
           compacted: false,
-          error: null,
-          aborted: false,
-        } as never;
+        }) as never;
       },
       getConversation: (async () => null) as never,
       mintLaneCapability: () => null,

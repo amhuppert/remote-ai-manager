@@ -1,3 +1,4 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Server-owned `/ticket` creation: an awaited structured task-run turn in the
  * originating conversation supplies judgment (title, description, work type),
@@ -22,10 +23,8 @@ import type {
   TranscriptEntriesResult,
 } from "@/lib/prompt/transcript";
 import type { TicketsRepo } from "@/lib/state-store/tickets-repo";
-import type {
-  ExecuteWorkflowTaskRunInput,
-  TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import type {
   EnsureConversationCompactionInput,
@@ -359,9 +358,17 @@ export function createTicketCommandRunner(
     const startedAt = performance.now();
     try {
       const result = await deps.executeWorkflowTaskRun({
-        projectPath: input.projectPath,
-        sessionName: scopeSessionName,
-        conversationId: input.conversationId,
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: input.projectPath,
+            target: targetFromStoreSessionName(
+              input.projectName,
+              scopeSessionName,
+              input.conversationId,
+            ),
+          },
+        },
         kind: "task_run",
         executionClass: "nongoverned-task",
         executionProfile: "standard",

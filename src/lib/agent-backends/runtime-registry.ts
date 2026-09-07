@@ -22,28 +22,13 @@ export function getRuntime(
   return runtimes.get(conversationId);
 }
 
-export function unregisterRuntime(conversationId: string): void {
+export function unregisterRuntime(
+  conversationId: string,
+  expected: ConversationBackendRuntime,
+): void {
+  if (runtimes.get(conversationId) !== expected) return;
   runtimes.delete(conversationId);
   logger.debug("runtime.unregistered", { conversationId });
-}
-
-export async function closeAllRuntimes(): Promise<void> {
-  const count = runtimes.size;
-  logger.info("runtime.close_all", { count });
-  const closings = [...runtimes].map(async ([conversationId, runtime]) => {
-    try {
-      await runtime.close();
-    } catch (err) {
-      logger.error("runtime.close_error", {
-        conversationId,
-        error: String(err),
-      });
-    }
-  });
-  // Each teardown owns its own failure, so one runtime that cannot shut down
-  // never strands the rest half-closed.
-  await Promise.allSettled(closings);
-  runtimes.clear();
 }
 
 /** Reset state for testing */

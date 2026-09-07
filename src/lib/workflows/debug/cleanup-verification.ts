@@ -12,11 +12,8 @@
  */
 
 import { createLogger } from "@/lib/logging";
-import { debugCleanupResultZodSchema } from "@/lib/workflows/conversation/debug-schemas";
-import type {
-  VerifyCleanupInput,
-  VerifyCleanupOutput,
-} from "@/lib/workflows/conversation/types";
+import { debugCleanupResultZodSchema } from "@/lib/workflows/debug/schemas";
+
 import type { DebugCommand } from "./commands";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -27,12 +24,6 @@ export interface DebugCleanupVerificationDeps {
     input: VerifyCleanupInput,
     signal?: AbortSignal,
   ): Promise<VerifyCleanupOutput>;
-}
-
-async function defaultDeps(): Promise<DebugCleanupVerificationDeps> {
-  const { verifyCleanupForMachine } =
-    await import("@/lib/workflows/conversation/actor-implementations");
-  return { verifyCleanup: verifyCleanupForMachine };
 }
 
 export interface DebugCleanupVerificationRequest {
@@ -71,7 +62,7 @@ export async function runDebugCleanupVerification(
       };
 
   try {
-    const resolved = deps ?? (await defaultDeps());
+    const resolved = deps ?? { verifyCleanup: verifyDebugCleanup };
     const output = await resolved.verifyCleanup(
       {
         worktreePath: request.worktreePath,
@@ -125,4 +116,58 @@ export async function runDebugCleanupVerification(
       attempt: request.attempt,
     };
   }
+}
+
+export interface VerifyCleanupInput {
+  worktreePath: string;
+  conversationId: string;
+  cleanup: import("./schemas").DebugCleanupResultOutput;
+}
+export type VerifyCleanupOutput =
+  import("@/lib/debug-log/service").CleanupVerificationResult;
+export interface CleanupManifestDeps {
+  verifyCleanupAgainstManifest(
+    worktreePath: string,
+    conversationId: string,
+    cleanup: VerifyCleanupInput["cleanup"],
+  ): VerifyCleanupOutput | Promise<VerifyCleanupOutput>;
+  deleteManifest(
+    worktreePath: string,
+    conversationId: string,
+  ): void | Promise<void>;
+}
+
+/**
+ * Cross-checks the agent's cleanup result against the persisted manifest.
+ * On a passing verification the manifest is deleted; on failure the
+ * structured remediation prompt is returned so the machine can route to
+ * `debug.error` and let the user re-run cleanup.
+ */
+export async function verifyDebugCleanup(
+  input: VerifyCleanupInput,
+  signal?: AbortSignal,
+  deps?: CleanupManifestDeps,
+): Promise<VerifyCleanupOutput> {
+  if (signal?.aborted) throw new Error("Cleanup verification aborted");
+  const resolved = deps ?? (await import("@/lib/debug-log/service"));
+  if (signal?.aborted) throw new Error("Cleanup verification aborted");
+  const verification = await resolved.verifyCleanupAgainstManifest(
+    input.worktreePath,
+    input.conversationId,
+    input.cleanup,
+  );
+  if (signal?.aborted) throw new Error("Cleanup verification aborted");
+  if (!verification.ok) {
+    logger.warn("debug.cleanup_verification_failed", {
+      conversationId: input.conversationId,
+      failedConditions: verification.failedConditions,
+      missingFiles: verification.missingFiles,
+    });
+    return verification;
+  }
+  await resolved.deleteManifest(input.worktreePath, input.conversationId);
+  logger.info("debug.cleanup_verified", {
+    conversationId: input.conversationId,
+  });
+  return verification;
 }

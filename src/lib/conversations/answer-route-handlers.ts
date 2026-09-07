@@ -65,9 +65,8 @@ import {
 import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import {
   ensureConversationActorAndDrain,
-  sendConversationEvent,
+  clearConversationQuestion,
 } from "@/lib/workflows/conversation/manager";
-import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ApiError } from "@/lib/api/errors";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
@@ -104,12 +103,12 @@ const LANE_ANSWER_ROLES = new Set<ConversationRole>(["iteration", "validator"]);
  * log line here can report it as a session identity (R1.3).
  */
 export interface AnswerDeliveryDeps {
-  sendConversationEvent(
+  clearConversationQuestion(
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    event: ConversationEvent,
-  ): boolean;
+    question: { questionId: string },
+  ): Promise<boolean>;
   queueMessage(
     params: QueueMessageParams & { consumePendingQuestionId: string },
   ): Promise<QueueMessageResult | null>;
@@ -251,9 +250,14 @@ async function deliverAnswers(
   // question too, so finalizingTurn settles to idle instead of
   // waitingForInput. Refusal is fine — a waitingForInput actor clears the
   // question when the queued answer claims its turn.
-  deps.sendConversationEvent(projectPath, storeSessionName, conversationId, {
-    type: "CLEAR_PENDING_QUESTION",
-  });
+  await deps.clearConversationQuestion(
+    projectPath,
+    storeSessionName,
+    conversationId,
+    {
+      questionId: body.questionId,
+    },
+  );
 
   // Deliver now when no turn is running (idle/waiting drains immediately);
   // otherwise the row waits FIFO for the running turn to settle.
@@ -352,9 +356,14 @@ export function createAnswerHandlers(deps: AnswerRouteDeps) {
         conversationId,
         questionBatchId: body.questionId,
       });
-      deps.sendConversationEvent(projectPath, sessionName, conversationId, {
-        type: "CLEAR_PENDING_QUESTION",
-      });
+      await deps.clearConversationQuestion(
+        projectPath,
+        sessionName,
+        conversationId,
+        {
+          questionId: body.questionId,
+        },
+      );
 
       deps.log.info("answer.lane_recorded", {
         conversationId,
@@ -431,14 +440,14 @@ const userInputGateService = createUserInputGateService({
   publishUserInputPending: eventPublisher.publishUserInputPending,
   publishUserInputResolved: eventPublisher.publishUserInputResolved,
   deliver: eventPublisher.deliver,
-  sendConversationEvent,
+  clearConversationQuestion,
   now: () => new Date().toISOString(),
 });
 
 const defaultHandlers = createAnswerHandlers({
   resolveProjectPath,
   getConversation,
-  sendConversationEvent,
+  clearConversationQuestion,
   queueMessage,
   ensureConversationActorAndDrain,
   recordLaneAnswers: userInputGateService.recordAnswers,
@@ -470,7 +479,7 @@ export const submitConversationAnswer = withTracing(defaultHandlers.POST);
 const defaultProjectHandlers = createProjectAnswerHandlers({
   resolveProjectPath,
   getProjectConversation,
-  sendConversationEvent,
+  clearConversationQuestion,
   queueMessage,
   ensureConversationActorAndDrain,
   readConfig,

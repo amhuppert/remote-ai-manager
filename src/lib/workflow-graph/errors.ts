@@ -1,3 +1,4 @@
+import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
@@ -8,6 +9,7 @@ export type DirtyPath = {
 };
 
 type AgentTurnFailedInit = {
+  failure?: AgentFailureClassification;
   contextId: string;
   engine: AgentBackendId;
   cause: "sdk_error" | "abort" | "timeout" | "stall" | "unknown";
@@ -15,6 +17,7 @@ type AgentTurnFailedInit = {
 };
 
 export class AgentTurnFailedError extends Error {
+  readonly failure?: AgentFailureClassification;
   readonly contextId: string;
   readonly engine: AgentBackendId;
   readonly cause: "sdk_error" | "abort" | "timeout" | "stall" | "unknown";
@@ -23,6 +26,7 @@ export class AgentTurnFailedError extends Error {
   constructor(message: string, init: AgentTurnFailedInit) {
     super(message);
     this.name = "AgentTurnFailedError";
+    this.failure = init.failure;
     this.contextId = init.contextId;
     this.engine = init.engine;
     this.cause = init.cause;

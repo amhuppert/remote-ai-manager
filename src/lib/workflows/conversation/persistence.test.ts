@@ -1,9 +1,13 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createConversationMachineFixture } from "@/lib/workflows/conversation/testing/machine-fixture";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { z } from "zod";
 import { createActor, fromPromise, setup } from "xstate";
 import {
   persistConversationSnapshot,
   persistSnapshotAfterTransition,
+  flushConversationSnapshot,
+  reconcileConversationSnapshot,
   restoreConversationSnapshot,
   validateRestoredSnapshot,
   clearConversationSnapshot,
@@ -11,7 +15,7 @@ import {
   type ConversationPersistenceDeps,
   _resetForTesting,
 } from "./persistence";
-import { conversationMachine } from "./machine";
+
 import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
 import type {
   ConversationInput,
@@ -116,6 +120,36 @@ describe("conversation persistence", () => {
   afterEach(() => {
     _resetForTesting();
     fixture.close();
+  });
+
+  it("retains a failed deferred capture for explicit reconciliation", async () => {
+    const actor = createActor(
+      setup({}).createMachine({ initial: "idle", states: { idle: {} } }),
+    );
+    actor.start();
+    let captures = 0;
+    const identity = {
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    };
+    try {
+      persistSnapshotAfterTransition(identity, {
+        getPersistedSnapshot() {
+          if (++captures === 1) throw new Error("Snapshot capture unavailable");
+          return actor.getPersistedSnapshot();
+        },
+      });
+      await expect(flushConversationSnapshot(identity)).rejects.toThrow(
+        "Snapshot capture unavailable",
+      );
+      expect(reloadSnapshot()).toBeNull();
+      await reconcileConversationSnapshot(identity);
+      expect(captures).toBe(2);
+      expect(reloadSnapshot()).toMatchObject({ value: "idle" });
+    } finally {
+      actor.stop();
+    }
   });
 
   describe("persistConversationSnapshot", () => {
@@ -325,7 +359,7 @@ describe("conversation persistence", () => {
     // projection drops the XState `children` subtree, so a mid-turn snapshot's
     // persisted form carries the root context ref and no children at all.
     it("persists canonical root refs and drops the active child snapshot subtree", async () => {
-      const machine = conversationMachine.provide({
+      const machine = createConversationMachineFixture().provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
             async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
@@ -338,11 +372,21 @@ describe("conversation persistence", () => {
         },
       });
       const input: ConversationInput = {
+        lastActivityAt: "2024-01-01T00:00:00Z",
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        contextTokens: null,
+        contextWindowMax: null,
         projectPath: PROJECT_PATH,
-        projectName: "my-project",
-        sessionName: SESSION_NAME,
+        target: targetFromStoreSessionName(
+          "my-project",
+          SESSION_NAME,
+          CONVERSATION_ID,
+        ),
+
         worktreePath: "/repo/.worktrees/sess-1",
-        conversationId: CONVERSATION_ID,
+
         createdAt: "2024-01-01T00:00:00Z",
         forkedFrom: {
           sourceConversationId: "parent-conv",
@@ -630,7 +674,7 @@ describe("conversation persistence", () => {
       // actor holding the raw stored JSON, with no `.can` and no `.context`.
       // Rehydration registers that actor as live, and every later caller either
       // crashes on `getSnapshot().can(...)` or on `getSnapshot().context`.
-      const machine = conversationMachine.provide({
+      const machine = createConversationMachineFixture().provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
             async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
@@ -638,11 +682,21 @@ describe("conversation persistence", () => {
         },
       });
       const input: ConversationInput = {
+        lastActivityAt: "2024-01-01T00:00:00Z",
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        contextTokens: null,
+        contextWindowMax: null,
         projectPath: PROJECT_PATH,
-        projectName: "my-project",
-        sessionName: SESSION_NAME,
+        target: targetFromStoreSessionName(
+          "my-project",
+          SESSION_NAME,
+          CONVERSATION_ID,
+        ),
+
         worktreePath: "/repo/.worktrees/sess-1",
-        conversationId: CONVERSATION_ID,
+
         createdAt: "2024-01-01T00:00:00Z",
         forkedFrom: null,
         role: null,
@@ -672,7 +726,7 @@ describe("conversation persistence", () => {
       const snapshot = revived.getSnapshot();
 
       expect(typeof (snapshot as { can?: unknown }).can).toBe("function");
-      expect(snapshot.context.conversationId).toBe(CONVERSATION_ID);
+      expect(snapshot.context.target.conversationId).toBe(CONVERSATION_ID);
       revived.stop();
     });
 

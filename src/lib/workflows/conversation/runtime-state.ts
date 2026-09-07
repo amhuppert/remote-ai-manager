@@ -15,19 +15,34 @@
  *   work and releasing locks
  */
 
-import type {
-  ConversationBackendRuntime,
-  WorkflowLaneIdentity,
-} from "@/lib/agent-backends/conversation";
+import type { WorkflowLaneIdentity } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
+import { ManagedConversationRuntime } from "./runtime-binding";
+import type { TurnAttempt } from "./turn-attempt";
 import type { ConversationEvent } from "./types";
 
 export interface ConversationRuntimeState {
+  attempt?: TurnAttempt;
+  stopping?: Promise<void>;
+  stopFailure?: unknown;
+  disposing?: boolean;
+  command?: Promise<unknown>;
+  reconciliation?: Promise<void>;
+  durabilityFailure?: {
+    context: import("./types").ConversationContext;
+    error: unknown;
+    attempt?: TurnAttempt;
+  };
+  admission?: {
+    token: symbol;
+    settled: Promise<void>;
+    cancelled: boolean;
+    cancel(): void;
+    release(): void;
+  };
+
   /** AbortController for cancelling in-flight SDK queries. */
   abortController: AbortController;
-
-  /** Settles only when an invoked prompt can no longer dispatch or write. */
-  turnCompletion?: Promise<void>;
 
   /** Release function for the per-conversation single-flight lock. */
   releaseConversationLock?: () => void;
@@ -35,8 +50,8 @@ export interface ConversationRuntimeState {
   /** Release function for the global query slot semaphore. */
   releaseQuerySlot?: () => void;
 
-  /** Active backend runtime instance (reused across prompts). */
-  backendRuntime?: ConversationBackendRuntime;
+  /** Backend lifetime owned by this host. */
+  managed: ManagedConversationRuntime;
 
   /** SSE stream emit callback for the current HTTP prompt-stream response. */
   streamEmit?: (event: string, data: unknown) => void;
@@ -53,9 +68,6 @@ export interface ConversationRuntimeState {
   /** Graph-workflow lane identity injected by the workflow engine for implementer-lane conversations. Threaded into the session env on backend runtime creation so cctl lane commands resolve their execution/context from env. */
   workflowContext?: WorkflowLaneIdentity;
 
-  /** When true, prepareTurnForMachine skips conversation lock acquisition. Used by validator agents whose runtime lifetime is owned by a parent conversation. */
-  skipConversationLock?: boolean;
-
   /** When true, the current turn was started in autonomous mode; interactive
    * ceremonies that need a human in the loop (e.g. session-alignment draft
    * authoring) are denied for the turn. */
@@ -64,21 +76,26 @@ export interface ConversationRuntimeState {
   /** Stable id of the visible user message that produced the current turn. */
   currentTurnMessageId?: string;
 
+  debugVerificationWork?: Set<Promise<unknown>>;
+
   /** Cleanup verification owned by the currently active debug session. */
   debugCleanupVerification?: {
     debugSessionId: string;
     controller: AbortController;
+    completion?: Promise<unknown>;
   };
 }
 
 const GLOBAL_KEY = "__cc_conversation_runtime_state" as const;
 
 function getRegistry(): Map<string, ConversationRuntimeState> {
-  const g = globalThis as unknown as Record<string, unknown>;
+  const g = globalThis as typeof globalThis & {
+    [GLOBAL_KEY]?: Map<string, ConversationRuntimeState>;
+  };
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = new Map<string, ConversationRuntimeState>();
   }
-  return g[GLOBAL_KEY] as Map<string, ConversationRuntimeState>;
+  return g[GLOBAL_KEY];
 }
 
 /** Build a consistent key for a conversation runtime instance. */
@@ -121,16 +138,6 @@ export function cleanupConversationRuntime(key: string): void {
 }
 
 /** Check if a conversation has active runtime state. */
-export function hasConversationRuntime(key: string): boolean {
-  return getRegistry().has(key);
-}
-
-/** Get all registered conversation runtime keys (for diagnostics). */
-export function getRegisteredConversationKeys(): string[] {
-  return [...getRegistry().keys()];
-}
-
-/** Reset state for testing — do not use in production. */
 export function _resetForTesting(): void {
   getRegistry().clear();
 }

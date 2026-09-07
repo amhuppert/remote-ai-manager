@@ -1,3 +1,4 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 /**
  * R6.1/R6.2 — the implementer write envelope along the REAL dispatch path.
  *
@@ -128,26 +129,13 @@ async function runIterationCapturingOptions(
   let captured: { fsWritePolicy?: FsWritePolicy } | undefined;
   let prompt = "";
   const runner = createGraphWorkflowImplementerRunner({
-    executePromptStream: async (
-      _projectPath,
-      _session,
-      promptText,
-      _emit,
-      conversationId,
-      _model,
-      _images,
-      options,
-    ) => {
+    executeConversationTurn: async (submission) => {
+      const options = { ...submission.turn, ...submission.executionContext };
+      const promptText = submission.turn.promptText;
+
       captured = options as { fsWritePolicy?: FsWritePolicy };
       prompt = promptText;
-      return {
-        conversationId: conversationId ?? "conversation-1",
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-        error: null,
-        aborted: false,
-      } as never;
+      return settledConversationTurn({ usage: {}, compacted: false }) as never;
     },
     getConversation: (async () => null) as never,
     mintLaneCapability: () => null,
@@ -320,7 +308,7 @@ describe("the implementer dispatch path composes the envelope before dispatching
     let dispatched = false;
     let composed = false;
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream: (async () => {
+      executeConversationTurn: (async () => {
         dispatched = true;
         throw new Error("dispatched to a backend that cannot confine writes");
       }) as never,
@@ -362,7 +350,7 @@ describe("the implementer dispatch path composes the envelope before dispatching
   it("dispatches a read-only turn only on a backend that declares enforced confinement", async () => {
     let dispatched = false;
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream: (async () => {
+      executeConversationTurn: (async () => {
         dispatched = true;
         throw new Error("dispatched to a backend that cannot confine writes");
       }) as never,
@@ -397,7 +385,7 @@ describe("the implementer dispatch path composes the envelope before dispatching
     it(`fails the turn as an infrastructure outcome when the envelope cannot be composed (${backend})`, async () => {
       let dispatched = false;
       const runner = createGraphWorkflowImplementerRunner({
-        executePromptStream: (async () => {
+        executeConversationTurn: (async () => {
           dispatched = true;
           throw new Error("dispatched despite an unestablishable envelope");
         }) as never,

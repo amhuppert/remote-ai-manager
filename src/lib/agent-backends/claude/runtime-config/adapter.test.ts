@@ -30,7 +30,7 @@ function fakeRuntime(input: {
       parameters: { effort: "high" },
     },
     outputFormat: undefined,
-    alignmentVersion: null,
+
     appliedConfigs,
     async sendTurn() {
       throw new Error("not used in this test");

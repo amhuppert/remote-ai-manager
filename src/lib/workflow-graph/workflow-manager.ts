@@ -106,7 +106,7 @@ import {
   createUserInputGateService,
   type UserInputGateService,
 } from "@/lib/workflow-graph/user-input-gate";
-import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
+import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowPlanIssue } from "@/lib/workflows/plan-validation";
 import { lintCommittedSourceLocators as defaultLintCommittedSourceLocators } from "@/lib/workflows/committed-source-locator-lint";
@@ -1352,7 +1352,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      sendConversationEvent,
+      clearConversationQuestion,
       now: () => getNow(deps),
     });
 
@@ -4907,9 +4907,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     if (withdrawnQuestion !== null) {
       const question: { conversationId: string; questionBatchId: string } =
         withdrawnQuestion;
-      sendConversationEvent(projectPath, sessionName, question.conversationId, {
-        type: "CLEAR_PENDING_QUESTION",
-      });
+      await clearConversationQuestion(
+        projectPath,
+        sessionName,
+        question.conversationId,
+        {
+          questionId: question.questionBatchId,
+        },
+      );
       eventPublisher.deliver(
         eventPublisher.publishUserInputResolved({
           projectPath,

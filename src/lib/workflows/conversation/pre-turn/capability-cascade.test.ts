@@ -1,3 +1,7 @@
+import {
+  createActorDependenciesFixture,
+  groupActorFixtureDependencies,
+} from "../testing/actor-deps-fixture";
 import { afterAll, beforeAll, describe, it, expect, vi } from "vitest";
 import {
   conversationStateSchema,
@@ -172,7 +176,12 @@ describe("seedRuntimeCapabilityState", () => {
     };
     const seed: AgentCapabilityRuntimeApplicationState = { cascades: {} };
 
-    await seedRuntimeCapabilityState(deps, makeCtx(), seed);
+    await seedRuntimeCapabilityState(
+      groupActorFixtureDependencies(createActorDependenciesFixture(deps))
+        .policy,
+      makeCtx(),
+      seed,
+    );
 
     expect(conversation.agentCapabilitiesRuntime).toBe(seed);
   });

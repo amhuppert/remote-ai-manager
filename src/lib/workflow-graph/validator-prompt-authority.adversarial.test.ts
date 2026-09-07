@@ -1,3 +1,7 @@
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+
+import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
+
 /**
  * R10.2 — the adversarial prompt-authority suite, mechanical half.
  *
@@ -55,17 +59,10 @@ import {
 } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import type { ResolvedAgentProfile } from "@/lib/agent-profiles/schemas";
-import {
-  mapToTaskRunResult,
-  type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import {
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "@/lib/workflows/conversation/actor-implementations";
-import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+
+import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import {
   assignmentProfileBlockOptions,
   VALIDATOR_MANDATE_HEADING,
@@ -320,45 +317,25 @@ function contextFor(
 function productionTaskRun(
   backend: AgentBackendId,
 ): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  setActorDeps(
-    createActorImplementationDepsFixture({
-      getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
-    }),
-  );
+  const actorDependencies = createActorDependenciesFixture({
+    getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
+  });
 
   return async (input) => {
-    const actorResult = await runTaskRunTurnForMachine({
-      executionClass: input.executionClass,
-      executionProfile: input.executionProfile,
-      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
-      persistence: "ephemeral",
-      projectPath: input.projectPath,
-      projectName: "repo",
-      sessionName: input.sessionName,
-      worktreePath: WORKTREE_PATH,
-      conversationId: input.conversationId,
-      agentBackend: backend,
-      backendRef: null,
-      promptText: input.prompt,
-      modelSelection: input.modelSelection ?? null,
-      onModelSelectionResolved: async () => {},
-      ...(input.outputFormat !== undefined
-        ? { outputFormat: input.outputFormat }
-        : {}),
-      ...(input.systemInstructions !== undefined
-        ? { systemInstructions: input.systemInstructions }
-        : {}),
-      ...(input.fsWritePolicy !== undefined
-        ? { fsWritePolicy: input.fsWritePolicy }
-        : {}),
-      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    const fixture = await createLifecycleFixture({
+      binding: input.binding,
+      conversation: { agentBackend: backend, backendRef: null },
+      actorDeps: actorDependencies,
     });
-
-    return mapToTaskRunResult(
-      actorResult,
-      actorResult.error,
-      input.outputFormat,
-    );
+    try {
+      return await fixture.executeWorkflowTaskRun({
+        ...input,
+        binding: { ...input.binding, worktreePath: WORKTREE_PATH },
+        resumeRef: input.resumeRef ?? null,
+      });
+    } finally {
+      await fixture.close();
+    }
   };
 }
 
@@ -439,9 +416,7 @@ beforeEach(() => {
   scriptedVerdictText = CONFORMING_VERDICT;
 });
 
-afterEach(() => {
-  _resetActorDepsForTesting();
-});
+afterEach(() => {});
 
 describe.each(["claude", "codex"] as const)(
   "validator prompt authority under adversarial input — %s (R10.2)",
@@ -460,7 +435,10 @@ describe.each(["claude", "codex"] as const)(
         });
 
       it("lands the demands in the layer its authoring surface owns, below the role contract", async () => {
-        await runAdversary();
+        const run = await runAdversary();
+        expect(run.result, JSON.stringify(run.result)).toMatchObject({
+          kind: "pass",
+        });
 
         const payload = privilegedPayload(backend);
         const contractAt = payload.indexOf(WORKFLOW_ROLE_CONTRACT_HEADING);
@@ -791,3 +769,5 @@ describe("prompt-authority containment refusals (R10.2)", () => {
     expect(DEMANDS).toContain(JSON.stringify(ADVERSARY_REPLACEMENT_VERDICT)); // verdict-schema replacement
   });
 });
+
+afterEach(() => resetTaskRuntime());

@@ -1,3 +1,36 @@
+import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createMcpRuntimeApplicationStore } from "@/lib/mcp/runtime-apply";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    loadActors: async () => conversationActors,
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+      queue: {
+        submitTurn: (...args) => currentQueueDependencies().submitTurn(...args),
+        claimNextTurnBatch: (...args) =>
+          currentQueueDependencies().claimNextTurnBatch(...args),
+        markPending: (...args) =>
+          currentQueueDependencies().markPending(...args),
+        markDelivered: (...args) =>
+          currentQueueDependencies().markDelivered(...args),
+        markFailed: (...args) => currentQueueDependencies().markFailed(...args),
+        recoverAbandonedDeliveries: (...args) =>
+          currentQueueDependencies().recoverAbandonedDeliveries(...args),
+        runConversationCommand: (...args) =>
+          currentQueueDependencies().runConversationCommand(...args),
+      },
+    },
+  });
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import type { ActorFixtureDependencies } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Consumer-locality behavioral half (design Blocker 4, D-B4.4 §2).
  *
@@ -35,7 +68,6 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fromPromise } from "xstate";
 
 import { agentSessionRefSchema } from "@/lib/shared/schemas";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
@@ -49,10 +81,10 @@ import {
 } from "@/lib/agent-capabilities/schemas";
 import {
   applyRuntimeConfigToConversationRuntime,
-  createCapabilityConfigComposer,
   createConversationStartCapabilityComposer,
   type ConversationStartCapabilityComposerDeps,
 } from "@/lib/agent-capabilities/default-deps";
+import { createCapabilityConfigComposer } from "@/lib/agent-capabilities/runtime-seed";
 import {
   composeConversationStartRuntime,
   ownedCascadesForBackend,
@@ -85,38 +117,12 @@ import {
 import { executeAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
-import {
-  executePromptForMachine,
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-  type ActorImplementationDeps,
-} from "@/lib/workflows/conversation/actor-implementations";
 import type { ExecutePromptInput } from "@/lib/workflows/conversation/types";
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
   _resetForTesting as resetConversationRuntimeState,
 } from "@/lib/workflows/conversation/runtime-state";
-
-import { conversationMachine } from "@/lib/workflows/conversation/machine";
-import {
-  setMachineFactory,
-  _resetMachineFactoryForTesting,
-  setEnsureConversationActorDeps,
-  _resetEnsureConversationActorDepsForTesting,
-  _resetForTesting as resetConversationActors,
-} from "@/lib/workflows/conversation/manager";
-import {
-  executeWorkflowTaskRun,
-  _resetExecuteWorkflowTaskRunForTesting,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type {
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  PromptActorResult,
-  RunTaskRunInput,
-} from "@/lib/workflows/conversation/types";
 
 import { createExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { createMcpRuntimeApplyService } from "@/lib/mcp/runtime-apply";
@@ -193,7 +199,7 @@ function makeConversationRecord(
 }
 
 interface InMemoryActorHarness {
-  deps: ActorImplementationDeps;
+  deps: ActorFixtureDependencies;
   transcript: TranscriptEntry[];
   conversation: ConversationState;
   /** Every cascade kind production composition asked a discovery provider
@@ -228,7 +234,7 @@ function createInMemoryCapabilityComposer(
 }
 
 /**
- * Fully in-memory `ActorImplementationDeps`: transcript appends land in an
+ * Fully in-memory `ActorFixtureDependencies`: transcript appends land in an
  * array, conversation mutations hit a plain typed record, and backend
  * resolution goes through the REAL registry (populated with the testfake
  * descriptor) so the drive proves the registry path, not a test shortcut.
@@ -243,7 +249,7 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     createInMemoryCapabilityComposer(capabilityDiscoveryLookups),
   );
 
-  const deps: ActorImplementationDeps = {
+  const deps: ActorFixtureDependencies = {
     log: createCapturingLogger(),
     acquireConversationLock: () => () => {},
     acquireQuerySlot: async () => () => {},
@@ -308,8 +314,6 @@ function createInMemoryActorDeps(conversationId: string): InMemoryActorHarness {
     getReferenceDocuments: async () => [],
     fileExists: () => false,
     readConversationMessages: async () => [],
-    registerAbortController: () => {},
-    unregisterAbortController: () => {},
     composePortableMcpForConversation: async () => ({ servers: [] }),
     applyMcpAtTurnStart: async (input) => ({
       conversationId: input.conversationId,
@@ -492,45 +496,57 @@ describe("E1: executeAgentCall is parametric in the backend id", () => {
 
 describe("E2: executePromptForMachine drives a testfake turn end-to-end", () => {
   afterEach(() => {
-    _resetActorDepsForTesting();
     resetConversationRuntimeState();
   });
 
   it("completes the turn, persists byte-identical testfake frames, and reads the disposition from the result", async () => {
     const harness = createInMemoryActorDeps("conv-e2");
-    setActorDeps(harness.deps);
+    conversationActors = createTestActorImplementations(harness.deps);
 
     const input: ExecutePromptInput = {
+      turn: {
+        kind: "conversation_turn",
+        backend: TESTFAKE_BACKEND_ID,
+        promptText: "hello testfake",
+        images: [],
+        modelSelection: TESTFAKE_MODEL_SELECTION,
+        autonomous: false,
+      },
       persistence: "durable",
       projectPath: PROJECT_PATH,
-      projectName: PROJECT_NAME,
-      sessionName: SESSION_NAME,
+      target: targetFromStoreSessionName(PROJECT_NAME, SESSION_NAME, "conv-e2"),
+
       worktreePath: WORKTREE_PATH,
-      conversationId: "conv-e2",
+
       transcriptPath: "/inmemory/conv-e2.jsonl",
       agentBackend: TESTFAKE_BACKEND_ID,
       backendRef: null,
       promptCount: 0,
       forkedFrom: null,
       role: null,
-      promptText: "hello testfake",
-      images: [],
       streamId: "stream-e2",
-      modelSelection: TESTFAKE_MODEL_SELECTION,
       onModelSelectionResolved: async () => {},
-      autonomous: false,
       debugMode: null,
     };
     registerConversationRuntime(
       conversationRuntimeKey(
         input.projectPath,
-        input.sessionName,
-        input.conversationId,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
       ),
-      { abortController: new AbortController() },
+      {
+        managed: createManagedRuntimeFixture(
+          conversationRuntimeKey(
+            input.projectPath,
+            conversationTargetStoreSessionName(input.target),
+            input.target.conversationId,
+          ),
+        ),
+        abortController: new AbortController(),
+      },
     );
 
-    const result = await executePromptForMachine(input);
+    const result = await conversationActors.executePromptForMachine(input);
 
     expect(result.error).toBeNull();
     expect(result.backendRef).toEqual({
@@ -641,72 +657,37 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
         claimNextTurnBatch: async () => null,
         recoverAbandonedDeliveries: async () => 0,
       });
-      resetConversationActors();
+      managerFixture.dispose();
       resetConversationRuntimeState();
-      _resetExecuteWorkflowTaskRunForTesting();
     });
 
     afterEach(() => {
       _resetConversationQueueDepsForTesting();
-      _resetMachineFactoryForTesting();
-      _resetEnsureConversationActorDepsForTesting();
-      _resetActorDepsForTesting();
-      resetConversationActors();
+
+      managerFixture.dispose();
       resetConversationRuntimeState();
     });
 
     it("returns the fake runner's transcript and ref through the real machine + actor turn", async () => {
       const harness = createInMemoryActorDeps("conv-e4");
-      setActorDeps(harness.deps);
+      conversationActors = createTestActorImplementations(harness.deps);
 
-      setMachineFactory(() =>
-        conversationMachine.provide({
-          actors: {
-            prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
-              async () => ({ transcriptPath: "/inmemory/conv-e4.jsonl" }),
-            ),
-            executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
-              ({ input }) => executePromptForMachine(input),
-            ),
-            runTaskRun: fromPromise<PromptActorResult, RunTaskRunInput>(
-              ({ input }) => runTaskRunTurnForMachine(input),
+      const result = await managerFixture.executeWorkflowTaskRun({
+        binding: {
+          kind: "ephemeral",
+          backend: TESTFAKE_BACKEND_ID,
+          role: null,
+          worktreePath: WORKTREE_PATH,
+          address: {
+            projectPath: PROJECT_PATH,
+            target: targetFromStoreSessionName(
+              PROJECT_NAME,
+              SESSION_NAME,
+              "conv-e4",
             ),
           },
-          actions: {
-            persistSnapshot: () => {},
-            syncDerivedFields: () => {},
-            broadcastConversationStatus: () => {},
-            broadcastAskQuestion: () => {},
-            broadcastDebugModeStatus: () => {},
-            releaseResources: () => {},
-            dispatchPushNotification: () => {},
-          },
-        }),
-      );
-      setEnsureConversationActorDeps({
-        loadActorInput: async () => ({
-          conversationScope: "session",
-          projectName: PROJECT_NAME,
-          sessionWorktreePath: WORKTREE_PATH,
-          persistence: "durable",
-          conversation: {
-            createdAt: NOW,
-            forkedFrom: null,
-            role: null,
-            transcriptPath: null,
-            agentBackend: TESTFAKE_BACKEND_ID,
-            backendRef: null,
-            promptCount: 0,
-            debugMode: null,
-          },
-        }),
-      });
-
-      const result = await executeWorkflowTaskRun({
+        },
         executionClass: "nongoverned-task" as const,
-        projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: "conv-e4",
         kind: "task_run",
         prompt: "validate something",
         modelSelection: TESTFAKE_MODEL_SELECTION,
@@ -772,7 +753,7 @@ describe("E5: applyAfterOverrideChange stages per the descriptor's betweenTurnAp
       expect(runtime.isTurnActive).toBe(true);
 
       const service = createMcpRuntimeApplyService({
-        stateManager: fixture.store,
+        applicationState: createMcpRuntimeApplicationStore(fixture.store),
         getRuntime: () => runtime,
         resolvePortableForConversation: async () => ({
           portable: {
@@ -841,7 +822,7 @@ describe("E5: applyAtTurnStart derives its disposition from the fake runtime", (
       );
       let resolvedBackend: string | undefined;
       const service = createMcpRuntimeApplyService({
-        stateManager: fixture.store,
+        applicationState: createMcpRuntimeApplicationStore(fixture.store),
         getRuntime: () => runtime,
         resolvePortableForConversation: async (input) => {
           resolvedBackend = input.backend;
@@ -1191,13 +1172,18 @@ describe("E3: lane modules", () => {
 describe("E6: graph runners", () => {
   it("preserves the registered backend id in turn-failure classification", async () => {
     const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream: async () => ({
-        conversationId: "conv-e6",
-        contextTokens: null,
-        contextWindowMax: null,
-        compacted: false,
-        error: "backend exploded",
-      }),
+      executeConversationTurn: async () =>
+        settledConversationTurn({
+          backend: TESTFAKE_BACKEND_ID,
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: TESTFAKE_BACKEND_ID,
+              failureKind: "backend_error",
+              message: "backend exploded",
+            },
+          },
+        }),
       getConversation: async () => null,
     });
 

@@ -152,7 +152,13 @@ describe("a capture is an ordinary user write (R23.3)", () => {
     // capture, which is exactly the state a notice exists to close.
     await tracker.recordDelivered({
       conversationId: CONVERSATION_ID,
-      notepads: [{ notepadId, revision: 1 }],
+      notepads: [
+        {
+          notepadId,
+          revision: 1,
+          openComments: { count: 0, latestCreatedAt: null },
+        },
+      ],
     });
 
     await captureThroughRoute(notepadId);
@@ -171,7 +177,13 @@ describe("a capture is an ordinary user write (R23.3)", () => {
     await captureThroughRoute(notepadId);
     await tracker.recordDelivered({
       conversationId: CONVERSATION_ID,
-      notepads: [{ notepadId, revision: 2 }],
+      notepads: [
+        {
+          notepadId,
+          revision: 2,
+          openComments: { count: 0, latestCreatedAt: null },
+        },
+      ],
     });
 
     expect((await tracker.prepare(CONVERSATION_ID)).block).toBeNull();

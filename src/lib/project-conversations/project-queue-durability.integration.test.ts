@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createQueueAdmissionFixture } from "@/lib/workflows/conversation/testing/queue-admission-fixture";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
@@ -5,7 +7,6 @@ import { createMessageQueueService } from "@/lib/conversations/message-queue-ser
 import {
   drainConversationQueue,
   type ConversationQueueDeps,
-  type DrainSelf,
 } from "@/lib/conversations/message-queue-drain";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -212,11 +213,17 @@ describe("project message queue durability", () => {
     });
     const svc = queueService(restarted);
     const dispatched: ConversationEvent[] = [];
-    const self: DrainSelf = {
-      getSnapshot: () => ({ can: () => true }),
-      send: (event) => dispatched.push(event),
-    };
+
     const deps: ConversationQueueDeps = {
+      submitTurn: createQueueAdmissionFixture((input) => {
+        if (input.turn.kind === "task_run")
+          throw new Error("Expected queued conversation turn");
+        dispatched.push({
+          ...input.turn,
+          type: "SUBMIT_PROMPT",
+          streamId: input.transport?.streamId ?? null,
+        });
+      }),
       claimNextTurnBatch: (input) => svc.claimNextTurnBatch(input),
       markPending: (input) => svc.markPending(input),
       markDelivered: (input) => svc.markDelivered(input),
@@ -229,14 +236,17 @@ describe("project message queue durability", () => {
     };
 
     await drainConversationQueue(
-      self,
       {
         projectPath: PROJECT_PATH,
-        projectName: "cc",
+        target: targetFromStoreSessionName(
+          "cc",
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+          CONVERSATION_ID,
+        ),
+
         // The session-keyed storage name: the sentinel routes the drain to the
         // project-conversations table.
-        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
-        conversationId: CONVERSATION_ID,
+
         transient: false,
       },
       deps,

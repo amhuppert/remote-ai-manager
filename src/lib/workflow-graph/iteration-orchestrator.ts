@@ -979,7 +979,7 @@ export function createGraphWorkflowIterationOrchestrator(
       deliver: eventPublisher.deliver,
       // Withdraw-only concern; the orchestrator never calls `withdrawAll`, so a
       // no-op refusal (actor treated as not live) is correct on the park path.
-      sendConversationEvent: () => false,
+      clearConversationQuestion: async () => false,
       now: () => getNow(deps),
     });
   const readLaneConversation =

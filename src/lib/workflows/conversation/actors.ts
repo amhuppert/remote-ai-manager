@@ -1,14 +1,5 @@
-/**
- * Conversation machine actor stubs.
- *
- * Each actor is a `fromPromise` stub that lazy-imports the production
- * implementation. Override via `.provide()` in tests.
- */
-
-import {
-  conversationRuntimeKey,
-  getConversationRuntime,
-} from "./runtime-state";
+import { conversationTargetStoreSessionName } from "@/lib/conversations/conversation-target";
+import { conversationRuntimeKey } from "./runtime-state";
 import { fromPromise } from "xstate";
 import type {
   PrepareTurnInput,
@@ -17,64 +8,184 @@ import type {
   PromptActorResult,
   RunTaskRunInput,
 } from "./types";
+import type { ConversationMachineDependencies } from "./actor-host";
+import type { ConversationPersistenceAdapter } from "./persistence-adapter";
 
-/**
- * Acquire session lock, query slot, and initialize transcript path.
- */
 export const prepareTurnActor = fromPromise<
   PrepareTurnOutput,
   PrepareTurnInput
->(async ({ input }) => {
-  const { prepareTurnForMachine } = await import("./actor-implementations");
-  return prepareTurnForMachine(input);
+>(() => {
+  throw new Error("Conversation prepare actor is not configured");
 });
-
-/**
- * Execute a prompt via the Claude Agent SDK.
- * Handles QuerySession reuse, system prompt construction, SDK streaming,
- * transcript writes, and structured output for debug phases.
- */
 export const executePromptActor = fromPromise<
   PromptActorResult,
   ExecutePromptInput
->(async ({ input, signal }) => {
-  const runtime = getConversationRuntime(
-    conversationRuntimeKey(
-      input.projectPath,
-      input.sessionName,
-      input.conversationId,
-    ),
-  );
-  const execution = (async () => {
-    const { executePromptForMachine } = await import("./actor-implementations");
-    return executePromptForMachine(input, signal);
-  })();
-  if (runtime)
-    runtime.turnCompletion = execution.then(
-      () => {},
-      () => {},
-    );
-  return execution;
+>(() => {
+  throw new Error("Conversation execution actor is not configured");
 });
-
-/**
- * Execute a single-shot task run via the shared AgentCall primitive.
- * Non-streaming variant: invokes `executeAgentCall` once, persists one final
- * TranscriptMessage, broadcasts `message-appended` exactly once.
- */
 export const runTaskRunActor = fromPromise<PromptActorResult, RunTaskRunInput>(
-  async ({ input }) => {
-    const { runTaskRunTurnForMachine } =
-      await import("./actor-implementations");
-    return runTaskRunTurnForMachine(input);
+  () => {
+    throw new Error("Conversation task actor is not configured");
   },
 );
-
-export const finalizeQueuedDeliveryActor = fromPromise<
-  void,
-  import("./types").FinalizeQueuedDeliveryInput
->(async ({ input }) => {
-  const { finalizeQueuedDeliveryForMachine } =
-    await import("./actor-implementations");
-  await finalizeQueuedDeliveryForMachine(input);
+export const settleTurnActor = fromPromise<
+  PromptActorResult | null,
+  import("./types").SettleTurnInput
+>(() => {
+  throw new Error("Conversation settlement actor is not configured");
 });
+
+export function createConversationActors(
+  deps: ConversationMachineDependencies,
+  adapter: ConversationPersistenceAdapter,
+) {
+  /**
+   * Acquire session lock, query slot, and initialize transcript path.
+   */
+  const prepareTurnActor = fromPromise<PrepareTurnOutput, PrepareTurnInput>(
+    async ({ input, signal }) => {
+      const runtime = deps.getRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
+        ),
+      );
+      const run = async () => {
+        const { prepareTurnForMachine } = await deps.loadActors(input);
+        return prepareTurnForMachine(
+          input,
+          runtime?.attempt?.controller.signal ?? signal,
+        );
+      };
+      return runtime?.attempt ? runtime.attempt.track(run, signal) : run();
+    },
+  );
+
+  /**
+   * Execute a prompt via the Claude Agent SDK.
+   * Handles QuerySession reuse, system prompt construction, SDK streaming,
+   * transcript writes, and structured output for debug phases.
+   */
+  const executePromptActor = fromPromise<PromptActorResult, ExecutePromptInput>(
+    async ({ input, signal }) => {
+      const runtime = deps.getRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
+        ),
+      );
+      const attempt = runtime?.attempt;
+      const run = async () => {
+        const { executePromptForMachine } = await deps.loadActors(input);
+        const result = await executePromptForMachine(
+          input,
+          attempt?.controller.signal ?? signal,
+        );
+        if (attempt) attempt.projectedResult = result;
+        return result;
+      };
+      return attempt ? attempt.track(run, signal) : run();
+    },
+  );
+
+  /**
+   * Execute a single-shot task run via the shared AgentCall primitive.
+   * Non-streaming variant: invokes `executeAgentCall` once, persists one final
+   * TranscriptMessage, broadcasts `message-appended` exactly once.
+   */
+  const runTaskRunActor = fromPromise<PromptActorResult, RunTaskRunInput>(
+    async ({ input, signal }) => {
+      const runtime = deps.getRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          conversationTargetStoreSessionName(input.target),
+          input.target.conversationId,
+        ),
+      );
+      const attempt = runtime?.attempt;
+      const run = async () => {
+        const { runTaskRunTurnForMachine } = await deps.loadActors(input);
+        const result = await runTaskRunTurnForMachine(
+          input,
+          attempt?.controller.signal ?? signal,
+        );
+        if (attempt) attempt.projectedResult = result;
+        return result;
+      };
+      return attempt ? attempt.track(run, signal) : run();
+    },
+  );
+
+  const settleTurnActor = fromPromise<
+    PromptActorResult | null,
+    import("./types").SettleTurnInput
+  >(async ({ input }) => {
+    const runtime = deps.getRuntime(
+      conversationRuntimeKey(
+        input.projectPath,
+        conversationTargetStoreSessionName(input.target),
+        input.target.conversationId,
+      ),
+    );
+    const attempt = runtime?.attempt;
+    const finishQueue = async () => {
+      if (!input.queuedDelivery) return;
+      const { finalizeQueuedDeliveryForMachine } = await deps.loadActors(input);
+      await finalizeQueuedDeliveryForMachine({
+        ...input,
+        queuedDelivery: input.queuedDelivery,
+      });
+    };
+    if (!attempt) {
+      await finishQueue();
+      return null;
+    }
+    attempt.ownReceipt(finishQueue);
+    await attempt.settle();
+    return attempt.projectedResult ?? null;
+  });
+
+  function completeTurnForMachine(
+    context: import("./types").ConversationContext,
+  ): void {
+    const runtime = deps.getRuntime(
+      conversationRuntimeKey(
+        context.projectPath,
+        conversationTargetStoreSessionName(context.target),
+        context.target.conversationId,
+      ),
+    );
+    const attempt = runtime?.attempt;
+    if (!runtime || !attempt?.isCurrent()) return;
+    void Promise.resolve().then(async () => {
+      try {
+        await adapter.whenDurable(context);
+      } catch (error) {
+        runtime.durabilityFailure = { context, error };
+        attempt.failSettlement("persistence", error);
+      }
+      if (attempt.hasUnreconciledWork) {
+        runtime.durabilityFailure = {
+          context,
+          error: runtime.durabilityFailure?.error ?? attempt.settlementError,
+          attempt,
+        };
+      }
+      attempt.complete(context);
+      if (runtime.attempt !== attempt) return;
+      runtime.streamEmit = undefined;
+      runtime.attempt = undefined;
+    });
+  }
+  return {
+    actors: {
+      prepareTurn: prepareTurnActor,
+      executePrompt: executePromptActor,
+      runTaskRun: runTaskRunActor,
+      settleTurn: settleTurnActor,
+    },
+    completeTurn: completeTurnForMachine,
+  };
+}

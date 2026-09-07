@@ -1,3 +1,28 @@
+import {
+  conversationTargetStoreSessionName,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+
+let machineFactory: NonNullable<
+  Parameters<typeof createConversationManagerFixture>[0]
+>["machine"];
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    machine: (adapter, deps) =>
+      machineFactory
+        ? machineFactory(adapter, deps)
+        : managerFixture.providedMachine(adapter),
+    dependencies: {
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+    },
+  });
+import {
+  getConversationRuntime,
+  conversationRuntimeKey,
+} from "@/lib/workflows/conversation/runtime-state";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fromPromise } from "xstate";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
@@ -6,17 +31,8 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { conversationMachine } from "@/lib/workflows/conversation/machine";
 import { applySyncDerivedFields } from "@/lib/workflows/conversation/persistence-adapter";
-import {
-  sendConversationEvent,
-  setMachineFactory,
-  startConversationActor,
-  _resetForTesting,
-  _resetMachineFactoryForTesting,
-} from "@/lib/workflows/conversation/manager";
-import {
-  abortConversation,
-  registerAbortController,
-} from "@/lib/conversations/abort-registry";
+
+import { registerAbortController } from "@/lib/conversations/abort-registry";
 import { _resetAbortRegistryForTesting } from "@/lib/shared/abort-registry";
 import type {
   ExecutePromptInput,
@@ -78,7 +94,7 @@ describe("project conversation stop settles and clears durably", () => {
     // open) and PRODUCTION persistence: `applySyncDerivedFields` is the real
     // function the durable adapter calls, writing through the real store, which
     // routes the sentinel key to the project-conversations table.
-    setMachineFactory(() =>
+    machineFactory = () =>
       conversationMachine.provide({
         actors: {
           prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
@@ -93,8 +109,8 @@ describe("project conversation stop settles and clears durably", () => {
             syncWrites.push(
               fixture.deps.mutateConversation(
                 context.projectPath,
-                context.sessionName,
-                context.conversationId,
+                conversationTargetStoreSessionName(context.target),
+                context.target.conversationId,
                 "test.syncDerived",
                 (c) => applySyncDerivedFields(context, c),
               ),
@@ -111,13 +127,12 @@ describe("project conversation stop settles and clears durably", () => {
           markReadOnUserTurnStart: () => {},
           drainPendingQueue: () => {},
         },
-      }),
-    );
+      });
   });
 
   afterEach(() => {
-    _resetForTesting();
-    _resetMachineFactoryForTesting();
+    managerFixture.dispose();
+
     _resetAbortRegistryForTesting();
     fixture.close();
   });
@@ -141,7 +156,8 @@ describe("project conversation stop settles and clears durably", () => {
         return PROJECT_PATH;
       },
       getProjectConversation: fixture.store.getProjectConversation,
-      sendConversationEvent,
+      registerConversationQuestion:
+        managerFixture.manager.registerConversationQuestion,
       generateQuestionBatchId: () => "q_durable1",
       log: createCapturingLogger(),
     });
@@ -153,22 +169,29 @@ describe("project conversation stop settles and clears durably", () => {
         return PROJECT_PATH;
       },
       getProjectConversation: fixture.store.getProjectConversation,
-      // The real conversation-keyed registry and the real machine seam — the
-      // point of this test is that the project route reaches both unchanged.
-      abortConversation,
-      sendConversationEvent,
+      requestConversationStop: managerFixture.manager.requestConversationStop,
       log: createCapturingLogger(),
     });
   }
 
   /** Start a live project-scope turn — keyed by the sentinel, as production is. */
   async function startProjectTurn(conversationId: string) {
-    const actor = startConversationActor({
+    const actor = managerFixture.host.start({
+      lastActivityAt: ts,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       projectPath: PROJECT_PATH,
-      projectName: "cc",
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      target: targetFromStoreSessionName(
+        "cc",
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        conversationId,
+      ),
+
       worktreePath: PROJECT_PATH,
-      conversationId,
+
       createdAt: ts,
       forkedFrom: null,
       role: null,
@@ -190,7 +213,13 @@ describe("project conversation stop settles and clears durably", () => {
    * `executePromptStream`, which the stubbed prompt actor does not run.
    */
   function registerTurnHandle(conversationId: string): AbortController {
-    const controller = new AbortController();
+    const controller = getConversationRuntime(
+      conversationRuntimeKey(
+        PROJECT_PATH,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        conversationId,
+      ),
+    )!.abortController;
     registerAbortController(conversationId, controller);
     return controller;
   }
@@ -331,7 +360,7 @@ describe("project conversation stop settles and clears durably", () => {
 
     const { request, context } = abortRequest(STOPPED);
     const res = await abortHandlers().POST(request, context);
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(200);
 
     await vi.waitFor(async () => {
       expect((await reload(STOPPED))?.pendingQuestionId).toBeNull();

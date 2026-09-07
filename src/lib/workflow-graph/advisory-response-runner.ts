@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { getProjectDisplayName as getConversationProjectName } from "@/lib/projects/resolver";
 /**
  * Dispatches the one advisory-response turn a passing round with fresh
  * advisories owes the implementer (D6/D7).
@@ -48,8 +50,8 @@ import type {
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 
 const logger = createLogger("graph-workflow-advisory-response");
 
@@ -181,9 +183,20 @@ export function createGraphWorkflowAdvisoryResponseRunner(
       });
 
       const result = await executeWorkflowTaskRun({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: input.projectPath,
+            target: targetFromStoreSessionName(
+              getConversationProjectName(input.projectPath),
+              input.sessionName,
+              input.conversationId,
+            ),
+          },
+          ...(input.executionTarget
+            ? { worktreePath: input.executionTarget.worktreePath }
+            : {}),
+        },
         kind: "task_run",
         executionClass: "governed-execution",
         executionProfile: "standard",
@@ -194,9 +207,6 @@ export function createGraphWorkflowAdvisoryResponseRunner(
           ? { fsWritePolicy: writeEnvelope.policy }
           : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        ...(input.executionTarget !== undefined
-          ? { worktreePath: input.executionTarget.worktreePath }
-          : {}),
         origin: {
           source: "workflow",
           workflow: {

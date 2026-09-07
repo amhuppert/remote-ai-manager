@@ -42,7 +42,8 @@ import {
   validationFixLoopError,
 } from "../validation-fix/actors";
 import { createConflictResolver } from "@/lib/sessions/conflict-resolution";
-import { mapToTaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { toTaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 
 // ============================================================
 // Typed Actor Helpers
@@ -1184,16 +1185,25 @@ describe("mergeMachine", () => {
       // by the real resolver into the machine's halt reason. The join reads
       // exactly this halt reason to decide whether its one clean retry is
       // worth spending.
-      const timedOutTurn = mapToTaskRunResult(
-        null,
-        "executeWorkflowTaskRun: timed out after 900000ms (conversation conv-1)",
-        undefined,
-        (error) => ({
-          kind: "timeout",
-          message: String(error),
-          retryable: false,
-        }),
-      );
+      const timedOutTurn = toTaskRunResult({
+        kind: "call_result",
+        result: {
+          backend: "claude",
+          backendRef: null,
+          capabilities: capabilityViewForBackend("claude"),
+          usage: {},
+          artifacts: [],
+          outcome: {
+            kind: "failed",
+            error: {
+              backend: "claude",
+              failureKind: "timeout",
+              message: "The provider deadline expired",
+              retryable: false,
+            },
+          },
+        },
+      });
       const machine = createTestMachine({
         mergeMain: mockMergeMain(async () => ({
           status: "conflicts",

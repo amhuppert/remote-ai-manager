@@ -6,7 +6,7 @@
  * store and assert on state READ BACK through the real repo.
  */
 import { NextRequest } from "next/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
@@ -29,11 +29,7 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import {
-  _resetForTesting as resetRuntimeRegistry,
-  conversationRuntimeKey,
-  type ConversationRuntimeState,
-} from "@/lib/workflows/conversation/runtime-state";
+import { type ActiveConversationTurnDescription } from "@/lib/workflows/conversation/manager";
 
 import {
   createSessionAlignmentAgentRouteHandlers,
@@ -45,11 +41,6 @@ const PROJECT_PATH = "/projects/test";
 const SESSION_NAME = "test-session";
 const WORKTREE_PATH = "/projects/test/.worktrees/test-session";
 const CONVERSATION_ID = "conv-1";
-const runtimeKey = conversationRuntimeKey(
-  PROJECT_PATH,
-  SESSION_NAME,
-  CONVERSATION_ID,
-);
 
 /** Auth that accepts only the exact bearer token, mirroring the real gate. */
 function tokenAuth(expected: string): AgentAuth {
@@ -71,12 +62,11 @@ function tokenAuth(expected: string): AgentAuth {
 }
 
 function createRuntimeState(
-  overrides: Partial<ConversationRuntimeState> = {},
-): ConversationRuntimeState {
+  overrides: Partial<ActiveConversationTurnDescription> = {},
+): ActiveConversationTurnDescription {
   return {
-    abortController: new AbortController(),
-    sendToMachine: vi.fn(),
-    streamEmit: vi.fn(),
+    autonomous: false,
+    originMessageId: null,
     ...overrides,
   };
 }
@@ -140,7 +130,7 @@ function makeRealService(fixture: PersistenceFixture): {
 
 function makeAgentDeps(
   service: SessionAlignmentService,
-  runtime: ConversationRuntimeState | undefined,
+  runtime: ActiveConversationTurnDescription | undefined,
   overrides: Partial<SessionAlignmentAgentRouteDeps> = {},
 ): SessionAlignmentAgentRouteDeps {
   return {
@@ -151,7 +141,13 @@ function makeAgentDeps(
       projectPath === PROJECT_PATH && sessionName === SESSION_NAME
         ? { sessionName }
         : null,
-    getRuntime: (key) => (key === runtimeKey ? runtime : undefined),
+    describeActiveTurn: (address) =>
+      address.projectPath === PROJECT_PATH &&
+      address.target.scope === "session" &&
+      address.target.sessionName === SESSION_NAME &&
+      address.target.conversationId === CONVERSATION_ID
+        ? (runtime ?? null)
+        : null,
     beginDraft: service.beginDraft,
     fillDraft: service.fillDraft,
     proposeDecisions: service.proposeDecisions,
@@ -181,13 +177,11 @@ describe("session-alignment agent route handlers", () => {
   let fixture: PersistenceFixture;
 
   beforeEach(() => {
-    resetRuntimeRegistry();
     fixture = createPersistenceFixture();
     fixture.seedProject(PROJECT_PATH);
     fixture.seedSession(PROJECT_PATH, SESSION_NAME, { creationMode: "normal" });
   });
   afterEach(() => {
-    resetRuntimeRegistry();
     fixture.close();
   });
 
@@ -366,10 +360,7 @@ describe("session-alignment agent route handlers", () => {
     it("refuses an autonomous turn with 403 and does no work", async () => {
       const { service, repo } = makeRealService(fixture);
       const handlers = createSessionAlignmentAgentRouteHandlers(
-        makeAgentDeps(
-          service,
-          createRuntimeState({ currentTurnAutonomous: true }),
-        ),
+        makeAgentDeps(service, createRuntimeState({ autonomous: true })),
       );
       const response = await handlers.writeCharter(
         makeRequest({ conversationId: CONVERSATION_ID, content: "x" }),
@@ -454,7 +445,7 @@ describe("session-alignment agent route handlers", () => {
     it("persists the current turn message id as the proposal source", async () => {
       const { service, repo } = makeRealService(fixture);
       const runtime = createRuntimeState({
-        currentTurnMessageId: "msg-turn-1",
+        originMessageId: "msg-turn-1",
       });
       const handlers = createSessionAlignmentAgentRouteHandlers(
         makeAgentDeps(service, runtime),
@@ -494,10 +485,7 @@ describe("session-alignment agent route handlers", () => {
     it("refuses an autonomous turn with 403 and does no work", async () => {
       const { service, repo } = makeRealService(fixture);
       const handlers = createSessionAlignmentAgentRouteHandlers(
-        makeAgentDeps(
-          service,
-          createRuntimeState({ currentTurnAutonomous: true }),
-        ),
+        makeAgentDeps(service, createRuntimeState({ autonomous: true })),
       );
       const response = await handlers.proposeDecisions(
         makeRequest({

@@ -16,7 +16,6 @@ import type {
   AgentCapabilityRuntimeApplicationState,
 } from "@/lib/agent-capabilities/schemas";
 import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
-import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { backendHasIdleLiveCapability } from "@/lib/agent-backends/conversation-policy";
@@ -25,9 +24,9 @@ import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-t
 const logger = createLogger("conversation-actor");
 
 export type CapabilitySeed =
-  import("@/lib/agent-capabilities/default-deps").ComposedCapabilitySeed;
+  import("@/lib/agent-capabilities/runtime-seed").ComposedCapabilitySeed;
 export type ProjectCapabilitySeed =
-  import("@/lib/agent-capabilities/default-deps").ComposedProjectConversationCapabilitySeed;
+  import("@/lib/agent-capabilities/runtime-seed").ComposedProjectConversationCapabilitySeed;
 export type RuntimeProjectCapabilitySeed = Exclude<
   ProjectCapabilitySeed,
   { kind: "diagnostics-only" }
@@ -53,17 +52,13 @@ export interface CapabilityCascadeDeps {
     backend: AgentBackendId;
   }): Promise<CapabilitySeed | undefined>;
   composeCapabilityConfigForProjectConversation(input: {
+    backend: AgentBackendId;
+    worktreePath: string;
     projectPath: string;
     projectName: string;
     conversationId: string;
   }): Promise<ProjectCapabilitySeed | undefined>;
-  mutateConversation(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-    label: string,
-    mutate: (conversation: ConversationState) => void,
-  ): Promise<void>;
+  state: import("../policy-state").ConversationPolicyState;
 }
 
 export interface CapabilityTurnContext {
@@ -146,6 +141,8 @@ async function composeProjectConversationCapabilitySeed(
 ): Promise<ProjectCapabilitySeed | undefined> {
   try {
     return await deps.composeCapabilityConfigForProjectConversation({
+      backend: ctx.backend,
+      worktreePath: ctx.worktreePath,
       projectPath: ctx.projectPath,
       projectName: ctx.projectName,
       conversationId: ctx.conversationId,
@@ -223,22 +220,11 @@ export async function resolveCapabilitySeedForNewRuntime(
  * subsequent mutations against the state the runtime was seeded with.
  */
 export async function seedRuntimeCapabilityState(
-  deps: Pick<CapabilityCascadeDeps, "mutateConversation">,
-  ctx: Pick<
-    CapabilityTurnContext,
-    "projectPath" | "sessionName" | "conversationId" | "backend"
-  >,
+  deps: Pick<CapabilityCascadeDeps, "state">,
+  ctx: CapabilityTurnContext,
   seed: AgentCapabilityRuntimeApplicationState,
 ): Promise<void> {
-  await deps.mutateConversation(
-    ctx.projectPath,
-    ctx.sessionName,
-    ctx.conversationId,
-    "prompt.seedCapabilityRuntime",
-    (conversation) => {
-      conversation.agentCapabilitiesRuntime = seed;
-    },
-  );
+  await deps.state.writeCapabilities(buildCapabilityApplyInput(ctx), seed);
   logger.info("prompt.capability_runtime_seeded", {
     ...scopeRefFromStoreSessionName(ctx.sessionName),
     backend: ctx.backend,

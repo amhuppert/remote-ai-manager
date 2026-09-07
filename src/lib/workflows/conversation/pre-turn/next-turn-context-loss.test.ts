@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import {
+  PROJECT_CC_CONTEXT,
+  PROJECT_SPAWN_INSTRUCTIONS,
+} from "@/lib/project-conversations/system-prompt";
+import { readRuntimeInstructions } from "../runtime-instructions";
+import { createActorDependenciesFixture } from "../testing/actor-deps-fixture";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { runtimeConfigurationFixture } from "../testing/runtime-configuration-fixture";
+import { describe, expect, it, vi } from "vitest";
 
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
 import {
@@ -46,21 +55,67 @@ function makeDeps(overrides: {
         ? CONTINUING
         : overrides.conversation;
     },
-    getRuntime() {
+    getRuntimeConfiguration() {
       return overrides.runtime;
     },
-    async getSessionCreationMode() {
-      return overrides.creationMode ?? "normal";
-    },
-    async getActiveAlignmentVersion() {
-      return overrides.activeAlignmentVersion ?? null;
+    async readDesiredRuntimeConfiguration(conversationId, current) {
+      const conversation = overrides.conversation ?? CONTINUING;
+      const fixture = createActorDependenciesFixture();
+      vi.mocked(fixture.getSessionState).mockResolvedValue(
+        sessionStateSchema.parse({
+          sessionName: "feature-x",
+          worktreePath: "/repo/worktree",
+          branchName: "feature-x",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lastActivityAt: "2026-01-01T00:00:00.000Z",
+          creationMode: overrides.creationMode ?? "normal",
+          tddEnabled: false,
+        }),
+      );
+      vi.mocked(fixture.getActiveAlignmentInjection).mockResolvedValue(
+        overrides.activeAlignmentVersion == null
+          ? null
+          : {
+              version: overrides.activeAlignmentVersion,
+              text: "charter",
+              contentHash: "fixture-charter",
+            },
+      );
+      const projection = await readRuntimeInstructions(
+        { execution: fixture, context: fixture },
+        {
+          projectPath: conversation.projectPath,
+          worktreePath: "/repo/worktree",
+          target: targetFromStoreSessionName(
+            "repo",
+            conversation.sessionName ?? "__project__",
+            conversationId,
+          ),
+          turn: current.instructionSelection,
+        },
+        undefined,
+      );
+      return {
+        ...current,
+        alignmentVersion: projection.alignmentVersion,
+        repeatableInstructions: projection.repeatableInstructions,
+      };
     },
   };
 }
 
 /** A live runtime that started under alignment charter version `version`. */
 function aliveRuntime(version: number | null): RecreateRuntimeSnapshot {
-  return { status: "alive", modelSelection: MODEL, alignmentVersion: version };
+  return {
+    ...runtimeConfigurationFixture(),
+    status: "alive",
+    modelSelection: MODEL,
+    alignmentVersion: version,
+    repeatableInstructions: [
+      ...runtimeConfigurationFixture().repeatableInstructions,
+      ...(version === null ? [] : ["charter"]),
+    ],
+  };
 }
 
 describe("readNextTurnContextLoss", () => {
@@ -134,7 +189,14 @@ describe("readNextTurnContextLoss", () => {
     const loss = await readNextTurnContextLoss(
       makeDeps({
         conversation: { ...CONTINUING, sessionName: null },
-        runtime: aliveRuntime(null),
+        runtime: {
+          ...aliveRuntime(null),
+          repeatableInstructions: [
+            PROJECT_CC_CONTEXT,
+            ...runtimeConfigurationFixture().repeatableInstructions.slice(1),
+            PROJECT_SPAWN_INSTRUCTIONS,
+          ],
+        },
         activeAlignmentVersion: 7,
       }),
       CONVERSATION,
@@ -154,6 +216,7 @@ describe("readNextTurnContextLoss", () => {
     const loss = await readNextTurnContextLoss(
       makeDeps({
         runtime: {
+          ...aliveRuntime(4),
           status: "alive",
           modelSelection: MODEL,
           alignmentVersion: 4,
@@ -221,6 +284,7 @@ const DISPATCH_SUPPLIED_DRIFT: readonly {
     dimension: "a model named on the next submission",
     runtime: aliveRuntime(4),
     nextDispatch: {
+      ...aliveRuntime(4),
       modelSelection: { modelId: "claude-sonnet-5", parameters: {} },
       alignmentVersion: 4,
     },
@@ -229,6 +293,7 @@ const DISPATCH_SUPPLIED_DRIFT: readonly {
     dimension: "a structured-output schema the next request carries",
     runtime: aliveRuntime(4),
     nextDispatch: {
+      ...aliveRuntime(4),
       modelSelection: MODEL,
       alignmentVersion: 4,
       outputFormat: {
@@ -248,6 +313,7 @@ const DISPATCH_SUPPLIED_DRIFT: readonly {
       },
     },
     nextDispatch: {
+      ...aliveRuntime(4),
       modelSelection: MODEL,
       alignmentVersion: 4,
       fsWritePolicy: {
@@ -282,13 +348,15 @@ describe("the dispatch-supplied boundary", () => {
       // drifted, so it is closed and rebuilt, and with no resume handle that
       // rebuild is a context loss.
       expect(
-        shouldRecreateRuntime(
-          runtime,
-          nextDispatch.modelSelection,
-          nextDispatch.outputFormat,
-          nextDispatch.alignmentVersion,
-          nextDispatch.fsWritePolicy,
-        ),
+        shouldRecreateRuntime({
+          current: { ...runtimeConfigurationFixture(), ...runtime },
+          desired: runtimeConfigurationFixture({
+            modelSelection: nextDispatch.modelSelection,
+            outputFormat: nextDispatch.outputFormat,
+            alignmentVersion: nextDispatch.alignmentVersion,
+            fsWritePolicy: nextDispatch.fsWritePolicy,
+          }),
+        }),
       ).toBe(true);
       const willCreateRuntime = willNextTurnCreateRuntime({
         runtime,

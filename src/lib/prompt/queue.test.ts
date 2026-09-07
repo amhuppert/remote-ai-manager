@@ -781,6 +781,7 @@ describe("queueMessage notepad injection", () => {
                 id: "np-1",
                 name: "Design Notes",
                 revision: 4,
+                openComments: { count: 0, latestCreatedAt: null },
                 writeMode: "read-only" as const,
                 content: `Canonical body.\n\n[Image: img-a]\n\n${NESTED_REF}`,
               }
@@ -863,6 +864,30 @@ describe("queueMessage notepad injection", () => {
     expect(deliveredText(queueUserInputMock)).toBe("plain message");
   });
 
+  it("does not record references when in-turn delivery rejects", async () => {
+    getRuntimeMock.mockReturnValue({
+      queueUserInput: vi.fn().mockRejectedValue(new Error("not consumed")),
+    });
+    await queueMessage({
+      ...baseParams,
+      text: NOTEPAD_REF,
+      backend: "claude",
+      deps: {
+        ...deps,
+        readNotepadForInjection: async () => ({
+          id: "np-1",
+          name: "Notes",
+          revision: 4,
+          writeMode: "read-only",
+          content: "Rendered",
+          openComments: { count: 0, latestCreatedAt: null },
+        }),
+      },
+    });
+    expect(recordNotepadDeliveriesMock).not.toHaveBeenCalled();
+    expect(markPendingMock).toHaveBeenCalled();
+  });
+
   it("records the notepad as delivered to the conversation whose reference it expanded", async () => {
     const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
     getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
@@ -879,6 +904,7 @@ describe("queueMessage notepad injection", () => {
                 id: "np-1",
                 name: "Design Notes",
                 revision: 4,
+                openComments: { count: 0, latestCreatedAt: null },
                 writeMode: "read-only" as const,
                 content: "Canonical body.",
               }
@@ -889,7 +915,13 @@ describe("queueMessage notepad injection", () => {
 
     expect(recordNotepadDeliveriesMock).toHaveBeenCalledWith({
       conversationId: baseParams.conversationId,
-      notepads: [{ notepadId: "np-1", revision: 4 }],
+      notepads: [
+        {
+          notepadId: "np-1",
+          revision: 4,
+          openComments: { count: 0, latestCreatedAt: null },
+        },
+      ],
     });
   });
 
@@ -1094,6 +1126,7 @@ describe("queueMessage notepad injection", () => {
           id: "np-1",
           name: "Design Notes",
           revision: 4,
+          openComments: { count: 0, latestCreatedAt: null },
           writeMode: "read-only" as const,
           content: "Canonical body.",
         })),

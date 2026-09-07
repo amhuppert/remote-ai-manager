@@ -87,7 +87,6 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/state-store/setters.ts", "internal-adapter"],
   ["lib/prompt/sdk-driver.ts", "internal-adapter"],
   ["lib/conversations/message-queue-drain.ts", "internal-adapter"],
-  ["lib/workflows/conversation/actor-implementations.ts", "internal-adapter"],
   // The session-keyed actor materialization seam: it reads the store key to
   // decide WHICH repository holds the conversation (project vs session) and
   // emits nothing — no URL, key, payload, label, or log field.
@@ -97,14 +96,13 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/workflows/conversation/rehydration.ts", "internal-adapter"],
   ["lib/project-conversations/route-handlers.ts", "internal-adapter"],
   ["lib/project-conversations/prompt-entry.ts", "internal-adapter"],
-  ["lib/project-conversations/status-notifications.ts", "internal-adapter"],
   ["lib/context-artifacts/service.ts", "internal-adapter"],
   ["lib/tickets/slash-command.ts", "internal-adapter"],
   ["lib/documents/session-index.ts", "internal-adapter"],
   ["lib/agent-capabilities/sse-invalidation.ts", "internal-adapter"],
   // NOTE: `lib/conversations/ask-route-handlers.ts` deliberately does NOT import
   // the sentinel. It carries a `ConversationScopeRef` and materializes the store
-  // key at the `sendConversationEvent` call via `storeSessionNameFromScopeRef`.
+  // key at the `clearConversationQuestion` call via `storeSessionNameFromScopeRef`.
   // While it held the sentinel in a local `sessionName`, four log sites emitted
   // it as a session identity — an R1.3 leak that being classified an
   // "internal-adapter" here did not catch, because this test reads imports, not
@@ -129,7 +127,6 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // conversation's queue events have no `sessionName` field at all.
   ["lib/conversations/message-queue-service.ts", "scope-derivation"],
   ["lib/prompt/transcript.ts", "scope-derivation"],
-  ["lib/workflows/conversation/manager.ts", "scope-derivation"],
   // Lifts a store session key into the listed conversation's public scope
   // variant, so a sentinel-keyed row is listed as `scope: "project"` with no
   // `sessionName` field at all.

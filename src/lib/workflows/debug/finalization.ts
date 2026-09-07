@@ -13,7 +13,7 @@ import type { RuntimeDebugModeState } from "@/lib/debug-log/schemas";
 import {
   debugEvidenceAnalysisSchema,
   debugHypothesisOutputZodSchema,
-} from "@/lib/workflows/conversation/debug-schemas";
+} from "@/lib/workflows/debug/schemas";
 
 /** The slice of a turn result the finalization policy consumes. */
 export interface DebugTurnOutcome {

@@ -1,39 +1,82 @@
+import { ephemeralConversationPersistence } from "./persistence-adapter";
+import { createConversationManagerFixture } from "@/lib/workflows/conversation/testing/manager-fixture";
+import type { ConversationManagerDependencies } from "@/lib/workflows/conversation/manager";
+import type { EnsureActorInputData } from "@/lib/workflows/conversation/actor-input-loader";
+let machineFactory: NonNullable<
+  Parameters<typeof createConversationManagerFixture>[0]
+>["machine"];
+let actorInputLoader: ConversationManagerDependencies["loadActorInput"] =
+  async () => {
+    throw new Error("Fixture actor loader is not configured");
+  };
+let admissionReader: ConversationManagerDependencies["readAdmissionState"] =
+  async () => ({ found: true, requiresQueueReview: false });
+import { getConversationQueueDeps as currentQueueDependencies } from "@/lib/conversations/message-queue-drain";
+import { admitConversationProfileForTurn as admitFixtureProfile } from "@/lib/conversations/profile-admission";
+const managerFixture: ReturnType<typeof createConversationManagerFixture> =
+  createConversationManagerFixture({
+    loadActors: async () => conversationActors,
+    machine: (adapter, deps) =>
+      machineFactory
+        ? machineFactory(adapter, deps)
+        : managerFixture.providedMachine(adapter),
+    dependencies: {
+      persistence: () => ephemeralConversationPersistence,
+      forgetPersistence: () => {},
+      admitProfileForTurn: (identity) => admitFixtureProfile(identity),
+      loadActorInput: (...args) => actorInputLoader(...args),
+      readAdmissionState: (...args) => admissionReader(...args),
+      queue: {
+        submitTurn: (...args) => currentQueueDependencies().submitTurn(...args),
+        claimNextTurnBatch: (...args) =>
+          currentQueueDependencies().claimNextTurnBatch(...args),
+        markPending: (...args) =>
+          currentQueueDependencies().markPending(...args),
+        markDelivered: (...args) =>
+          currentQueueDependencies().markDelivered(...args),
+        markFailed: (...args) => currentQueueDependencies().markFailed(...args),
+        recoverAbandonedDeliveries: (...args) =>
+          currentQueueDependencies().recoverAbandonedDeliveries(...args),
+        runConversationCommand: (...args) =>
+          currentQueueDependencies().runConversationCommand(...args),
+      },
+    },
+  });
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import { classifyFailureForBackend } from "./failure-classification";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "@/lib/conversations/profile-admission";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import {
+  setConversationQueueDeps,
+  _resetConversationQueueDepsForTesting,
+} from "@/lib/conversations/message-queue-drain";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 /**
  * Tests for `executeWorkflowTaskRun` — the named entrypoint that routes
  * workflow callers through the conversation actor for `task_run` turns.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { fromPromise } from "xstate";
-import { conversationMachine } from "./machine";
+
+import type { PromptActorResult } from "./types";
+
+import {
+  _resetForTesting as resetRuntime,
+  getConversationRuntime,
+  conversationRuntimeKey,
+} from "./runtime-state";
+
+import { createActorDependenciesFixture } from "./testing/actor-deps-fixture";
 import type {
-  PrepareTurnInput,
-  PrepareTurnOutput,
-  ExecutePromptInput,
-  PromptActorResult,
-  RunTaskRunInput,
-} from "./types";
-import {
-  setMachineFactory,
-  _resetMachineFactoryForTesting,
-  _resetForTesting as resetActors,
-  getConversationActor,
-  setEnsureConversationActorDeps,
-  _resetEnsureConversationActorDepsForTesting,
-  type EnsureActorInputData,
-} from "./manager";
-import { _resetForTesting as resetRuntime } from "./runtime-state";
-import {
-  executeWorkflowTaskRun,
-  mapToTaskRunResult,
-  _getExecuteWorkflowTaskRunInFlightCountForTesting,
-  _resetExecuteWorkflowTaskRunForTesting,
-  type TaskRunFailureClassifier,
-} from "./execute-workflow-task-run";
-import {
-  registerAbortController,
-  unregisterAbortController,
-} from "@/lib/conversations/abort-registry";
+  AgentTaskRequest,
+  AgentTaskResult,
+} from "@/lib/agent-backends/task";
+
 import { createConflictResolver } from "@/lib/sessions/conflict-resolution";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -51,76 +94,102 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-// ---------------------------------------------------------------------------
-// Controllable test machine — runTaskRun is a fromPromise we can resolve
-// on demand to assert serialization, structured-output mapping, etc.
-// ---------------------------------------------------------------------------
-
-type RunTaskRunResolver = (result: PromptActorResult) => void;
 type RunTaskRunInvocation = {
-  input: RunTaskRunInput;
-  resolve: RunTaskRunResolver;
-  promise: Promise<PromptActorResult>;
+  input: AgentTaskRequest;
+  resolve(result: PromptActorResult): void;
 };
 
 let pendingRunTaskRunInvocations: RunTaskRunInvocation[] = [];
 
-function nextPendingInvocation(): Promise<RunTaskRunInvocation> {
+async function nextPendingInvocation(): Promise<RunTaskRunInvocation> {
+  await vi.waitFor(() =>
+    expect(pendingRunTaskRunInvocations.length).toBeGreaterThan(0),
+  );
+  return pendingRunTaskRunInvocations.shift()!;
+}
+
+function runTask(
+  input: AgentTaskRequest,
+  backend: AgentBackendId,
+): Promise<AgentTaskResult> {
   return new Promise((resolve) => {
-    const tick = (): void => {
-      const next = pendingRunTaskRunInvocations.shift();
-      if (next) {
-        resolve(next);
-        return;
-      }
-      setTimeout(tick, 1);
-    };
-    tick();
+    const abort = () =>
+      resolve({
+        text: "",
+        usage: {},
+        error:
+          input.signal?.reason === "timeout"
+            ? `task_run timed out after ${input.timeoutMs}ms`
+            : "Aborted",
+        timedOut: input.signal?.reason === "timeout",
+        failure: {
+          kind: input.signal?.reason === "timeout" ? "timeout" : "aborted",
+          message:
+            input.signal?.reason === "timeout"
+              ? `task_run timed out after ${input.timeoutMs}ms`
+              : "Aborted",
+          retryable: false,
+        },
+        continuationDisposition: "retain",
+      });
+    input.signal?.addEventListener("abort", abort, { once: true });
+    pendingRunTaskRunInvocations.push({
+      input,
+      resolve(result) {
+        input.signal?.removeEventListener("abort", abort);
+        resolve({
+          text: result.contentBlocks
+            .filter((b) => b.type === "text")
+            .map((b) => b.text)
+            .join(""),
+          usage: {
+            ...(result.costUsd !== null ? { costUsd: result.costUsd } : {}),
+            ...(result.durationMs !== null
+              ? { durationMs: result.durationMs }
+              : {}),
+            ...(result.contextTokens !== null
+              ? { contextTokens: result.contextTokens }
+              : {}),
+            ...(result.contextWindow !== null
+              ? { contextWindowMax: result.contextWindow }
+              : {}),
+          },
+          error: result.error,
+          timedOut: result.abortReason === "timeout",
+          ...(result.structuredOutput !== undefined
+            ? { structuredOutput: result.structuredOutput }
+            : {}),
+          ...(result.transcript ? { transcript: result.transcript } : {}),
+          ...(result.backendRef ? { backendRef: result.backendRef } : {}),
+          failure:
+            result.failure ??
+            (result.aborted
+              ? {
+                  kind: "aborted",
+                  message: result.error ?? "Aborted",
+                  retryable: false,
+                }
+              : result.error
+                ? classifyFailureForBackend(backend, result.error)
+                : null),
+          continuationDisposition: result.continuationDisposition,
+        });
+      },
+    });
+    if (input.signal?.aborted) abort();
   });
 }
 
-function createTestMachine() {
-  return conversationMachine.provide({
-    actors: {
-      prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
-        async () => ({ transcriptPath: "/test.jsonl" }),
-      ),
-      executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
-        async () => ({
-          backendRef: null,
-          costUsd: null,
-          durationMs: null,
-          numTurns: null,
-          contextTokens: null,
-          contextWindow: null,
-          inputTokens: null,
-          outputTokens: null,
-          cachedInputTokens: null,
-          contentBlocks: [],
-          aborted: false,
-          compacted: false,
-          error: null,
-          continuationDisposition: "retain",
-        }),
-      ),
-      runTaskRun: fromPromise<PromptActorResult, RunTaskRunInput>(
-        ({ input }) => {
-          let resolve!: RunTaskRunResolver;
-          const promise = new Promise<PromptActorResult>((res) => {
-            resolve = res;
-          });
-          pendingRunTaskRunInvocations.push({ input, resolve, promise });
-          return promise;
-        },
-      ),
-    },
+function createTestMachine(
+  adapter: import("./persistence-adapter").ConversationPersistenceAdapter,
+) {
+  return managerFixture.providedMachine(adapter).provide({
     actions: {
       persistSnapshot: () => {},
       syncDerivedFields: () => {},
       broadcastConversationStatus: () => {},
       broadcastAskQuestion: () => {},
       broadcastDebugModeStatus: () => {},
-      releaseResources: () => {},
       dispatchPushNotification: () => {},
     },
   });
@@ -131,10 +200,16 @@ function makeActorInputData(
 ): EnsureActorInputData {
   return {
     conversationScope: "session",
-    projectName: "test-project",
+    projectName: "project",
     sessionWorktreePath: "/test/project/.worktrees/test-session",
-    persistence: "ephemeral",
+    persistence: "durable",
     conversation: {
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      contextTokens: null,
+      contextWindowMax: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       forkedFrom: null,
       role: null,
@@ -177,79 +252,146 @@ function defaultResult(
 describe("executeWorkflowTaskRun", () => {
   beforeEach(() => {
     pendingRunTaskRunInvocations = [];
-    resetActors();
+    managerFixture.dispose();
     resetRuntime();
-    _resetExecuteWorkflowTaskRunForTesting();
-    setMachineFactory(createTestMachine);
-    setEnsureConversationActorDeps({
-      loadActorInput: async () => makeActorInputData(),
+
+    machineFactory = createTestMachine;
+    setConversationProfileAdmissionDeps({
+      mutateConversation: async (_p, _s, _c, _l, mutate) =>
+        mutate(
+          conversationStateSchema.parse({
+            id: CONVERSATION_ID,
+            name: "test",
+            transcriptPath: "/test.jsonl",
+            status: "new",
+            promptCount: 0,
+            lastActivityAt: "2026-01-01T00:00:00.000Z",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
     });
+    setConversationQueueDeps({
+      submitTurn: async () => ({
+        kind: "refused",
+        code: "busy",
+        message: "test",
+      }),
+      claimNextTurnBatch: async () => null,
+      markPending: async () => {},
+      markDelivered: async () => {},
+      markFailed: async () => {},
+      recoverAbandonedDeliveries: async () => 0,
+      runConversationCommand: async () => {
+        throw new Error("No command expected");
+      },
+    });
+    admissionReader = async () => ({ found: true, requiresQueueReview: false });
+    conversationActors = createTestActorImplementations(
+      createActorDependenciesFixture({
+        getTaskRunner: (backend) => ({
+          backend,
+          run: (input) => runTask(input, backend),
+        }),
+      }),
+    );
+    actorInputLoader = async () => makeActorInputData();
   });
 
   afterEach(() => {
-    _resetMachineFactoryForTesting();
-    _resetEnsureConversationActorDepsForTesting();
+    _resetConversationProfileAdmissionDepsForTesting();
+    _resetConversationQueueDepsForTesting();
+
+    managerFixture.dispose();
+    resetRuntime();
+
     vi.clearAllMocks();
   });
 
   it("creates the conversation actor on first call and resolves a text task_run", async () => {
     expect(
-      getConversationActor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
+      managerFixture.actor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
     ).toBeUndefined();
 
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "say hi",
       timeoutMs: 5000,
     });
 
     const invocation = await nextPendingInvocation();
-    expect(invocation.input.promptText).toBe("say hi");
+    expect(invocation.input.prompt).toBe("say hi");
     invocation.resolve(defaultResult());
 
     const result = await callPromise;
 
-    expect(result.kind).toBe("text");
+    expect(result).toMatchObject({ kind: "text" });
     if (result.kind === "text") {
       expect(result.text).toBe("hello world");
       expect(result.usage.costUsd).toBe(0.0123);
-      expect(result.usage.durationMs).toBe(456);
+      expect(result.usage.durationMs).toBeNull();
     }
     expect(
-      getConversationActor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
+      managerFixture.actor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
     ).toBeDefined();
   });
 
-  it("releases a settled conversation chain from the in-flight registry", async () => {
-    const call = executeWorkflowTaskRun({
+  it("releases the admitted attempt after the task settles", async () => {
+    const call = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "one turn",
       timeoutMs: 5000,
     });
 
-    expect(_getExecuteWorkflowTaskRunInFlightCountForTesting()).toBe(1);
     const invocation = await nextPendingInvocation();
     invocation.resolve(defaultResult());
     await call;
     await Promise.resolve();
 
-    expect(_getExecuteWorkflowTaskRunInFlightCountForTesting()).toBe(0);
+    expect(
+      getConversationRuntime(
+        conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
+      )?.attempt,
+    ).toBeUndefined();
   });
 
   it("reuses the existing actor on a second call with the same identifiers", async () => {
-    const first = executeWorkflowTaskRun({
+    const first = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "first",
       timeoutMs: 5000,
@@ -260,18 +402,26 @@ describe("executeWorkflowTaskRun", () => {
     );
     await first;
 
-    const actorAfterFirst = getConversationActor(
+    const actorAfterFirst = managerFixture.actor(
       PROJECT_PATH,
       SESSION_NAME,
       CONVERSATION_ID,
     );
     expect(actorAfterFirst).toBeDefined();
 
-    const second = executeWorkflowTaskRun({
+    const second = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "second",
       timeoutMs: 5000,
@@ -283,7 +433,7 @@ describe("executeWorkflowTaskRun", () => {
     await second;
 
     expect(
-      getConversationActor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
+      managerFixture.actor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID),
     ).toBe(actorAfterFirst);
   });
 
@@ -293,11 +443,19 @@ describe("executeWorkflowTaskRun", () => {
     // abort mid-run-2 must not surface run 1's result as run 2's outcome —
     // for a validator turn that would report a stale PASS for a validation
     // that never ran.
-    const first = executeWorkflowTaskRun({
+    const first = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "first",
       timeoutMs: 5000,
@@ -309,18 +467,26 @@ describe("executeWorkflowTaskRun", () => {
     const firstResult = await first;
     expect(firstResult.kind).toBe("text");
 
-    const second = executeWorkflowTaskRun({
+    const second = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "second",
       timeoutMs: 5000,
     });
     // Wait until run 2 is genuinely in flight, then abort it.
     await nextPendingInvocation();
-    const actor = getConversationActor(
+    const actor = managerFixture.actor(
       PROJECT_PATH,
       SESSION_NAME,
       CONVERSATION_ID,
@@ -337,11 +503,19 @@ describe("executeWorkflowTaskRun", () => {
 
   it("cancels the in-flight turn and reports it as aborted when the caller's signal fires", async () => {
     const controller = new AbortController();
-    const call = executeWorkflowTaskRun({
+    const call = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "long resolution",
       timeoutMs: 5000,
@@ -367,11 +541,19 @@ describe("executeWorkflowTaskRun", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const result = await executeWorkflowTaskRun({
+    const result = await managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "already stopped",
       timeoutMs: 5000,
@@ -388,11 +570,19 @@ describe("executeWorkflowTaskRun", () => {
   it("returns the parsed structured output when outputFormat is set", async () => {
     const structured = { answer: 42, label: "the-meaning" };
 
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "compute",
       outputFormat: {
@@ -406,7 +596,10 @@ describe("executeWorkflowTaskRun", () => {
     });
 
     const invocation = await nextPendingInvocation();
-    expect(invocation.input.outputFormat?.type).toBe("json_schema");
+    expect(invocation.input.outputSchema).toEqual({
+      type: "object",
+      properties: { answer: { type: "number" }, label: { type: "string" } },
+    });
     invocation.resolve(
       defaultResult({
         contentBlocks: [],
@@ -422,18 +615,26 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("returns the raw final text when outputFormat is omitted", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "echo",
       timeoutMs: 5000,
     });
 
     const invocation = await nextPendingInvocation();
-    expect(invocation.input.outputFormat).toBeUndefined();
+    expect(invocation.input.outputSchema).toBeUndefined();
     invocation.resolve(
       defaultResult({
         contentBlocks: [
@@ -451,11 +652,19 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("forwards timeoutMs through SUBMIT_TASK_RUN into the runTaskRun input", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "with-timeout",
       timeoutMs: 12_345,
@@ -479,11 +688,19 @@ describe("executeWorkflowTaskRun", () => {
       denyWrite: ["/private/repo/worktree"],
     };
 
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "governed-execution" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "restricted turn",
       timeoutMs: 5000,
@@ -502,11 +719,19 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("leaves the runTaskRun input unrestricted when no fsWritePolicy is supplied", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "implementer turn",
       timeoutMs: 5000,
@@ -520,11 +745,19 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("forwards the structured-output transcript field into the runTaskRun input", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "generate message",
       outputFormat: {
@@ -536,7 +769,11 @@ describe("executeWorkflowTaskRun", () => {
     });
 
     const invocation = await nextPendingInvocation();
-    expect(invocation.input.structuredOutputTextField).toBe("message");
+    expect(
+      managerFixture
+        .actor(PROJECT_PATH, SESSION_NAME, CONVERSATION_ID)
+        ?.getSnapshot().context.activeTurn,
+    ).toMatchObject({ structuredOutputTextField: "message" });
     invocation.resolve(
       defaultResult({
         contentBlocks: [{ type: "text", text: "Readable message" }],
@@ -552,48 +789,59 @@ describe("executeWorkflowTaskRun", () => {
     // The timeout is what bounds a conflict resolver holding a worktree
     // mid-merge. Returning without cancelling would leave that agent editing
     // the tree while the caller's retry merges and dispatches into it again.
-    const controller = new AbortController();
-    registerAbortController(CONVERSATION_ID, controller);
 
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "will-time-out",
       timeoutMs: 25,
     });
 
-    await nextPendingInvocation();
+    const invocation = await nextPendingInvocation();
     const result = await callPromise;
 
     expect(result.kind).toBe("error");
-    expect(controller.signal.aborted).toBe(true);
-    const actor = getConversationActor(
+    expect(invocation.input.signal?.aborted).toBe(true);
+    const actor = managerFixture.actor(
       PROJECT_PATH,
       SESSION_NAME,
       CONVERSATION_ID,
     );
     expect(actor?.getSnapshot().context.activeTurn).toBeNull();
-
-    unregisterAbortController(CONVERSATION_ID, controller);
   });
 
   it("resolves to an error TaskRunResult when the entrypoint timer fires", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "will-time-out",
       timeoutMs: 25,
     });
 
-    // Pop the invocation off the queue but never resolve it — the local
-    // timer must win and the entrypoint must surface the timeout as a
-    // TaskRunResult error variant (not a thrown/rejected error).
+    // The runner unwinds on cancellation; the entrypoint must surface the
+    // timeout as a TaskRunResult error after that work settles.
     const invocation = await nextPendingInvocation();
     expect(invocation.input.timeoutMs).toBe(25);
 
@@ -610,7 +858,9 @@ describe("executeWorkflowTaskRun", () => {
   // real conversation actor behind the entrypoint, so the arming of the timer
   // and the resolver's reading of the result are proven together here.
   it("bounds a resolver turn that never returns, and the resolver calls it retryable", async () => {
-    const resolution = createConflictResolver({}).resolveConflicts({
+    const resolution = createConflictResolver({
+      executeWorkflowTaskRun: managerFixture.executeWorkflowTaskRun,
+    }).resolveConflicts({
       worktreePath: "/test/project/.worktrees/test-session",
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
@@ -637,11 +887,19 @@ describe("executeWorkflowTaskRun", () => {
         raw: { type: "assistant", text: "partial analysis" },
       },
     ];
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "will-error",
       timeoutMs: 5000,
@@ -665,11 +923,19 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("preserves the adapter continuation verdict on failed task_run results", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "will-error-with-viable-session",
       timeoutMs: 5000,
@@ -695,14 +961,22 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("pins the conversation actor to the provided worktreePath instead of the session worktree", async () => {
-    const callPromise = executeWorkflowTaskRun({
+    const callPromise = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+        worktreePath: "/test/project/.worktrees/lane-feature",
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "resolve conflicts",
-      worktreePath: "/test/project/.worktrees/lane-feature",
       timeoutMs: 5000,
     });
 
@@ -710,7 +984,7 @@ describe("executeWorkflowTaskRun", () => {
     invocation.resolve(defaultResult());
     await callPromise;
 
-    const actor = getConversationActor(
+    const actor = managerFixture.actor(
       PROJECT_PATH,
       SESSION_NAME,
       CONVERSATION_ID,
@@ -722,11 +996,19 @@ describe("executeWorkflowTaskRun", () => {
   });
 
   it("rebinds an existing idle actor bound elsewhere to the requested worktreePath", async () => {
-    const first = executeWorkflowTaskRun({
+    const first = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "first",
       timeoutMs: 5000,
@@ -735,7 +1017,7 @@ describe("executeWorkflowTaskRun", () => {
     inv1.resolve(defaultResult());
     await first;
 
-    const actorAfterFirst = getConversationActor(
+    const actorAfterFirst = managerFixture.actor(
       PROJECT_PATH,
       SESSION_NAME,
       CONVERSATION_ID,
@@ -744,21 +1026,29 @@ describe("executeWorkflowTaskRun", () => {
       "/test/project/.worktrees/test-session",
     );
 
-    const second = executeWorkflowTaskRun({
+    const second = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+        worktreePath: "/test/project/.worktrees/lane-feature",
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "second",
-      worktreePath: "/test/project/.worktrees/lane-feature",
       timeoutMs: 5000,
     });
     const inv2 = await nextPendingInvocation();
     inv2.resolve(defaultResult());
     await second;
 
-    const actorAfterSecond = getConversationActor(
+    const actorAfterSecond = managerFixture.actor(
       PROJECT_PATH,
       SESSION_NAME,
       CONVERSATION_ID,
@@ -772,30 +1062,48 @@ describe("executeWorkflowTaskRun", () => {
   it("serializes concurrent calls so a second call only starts after the first finalizes", async () => {
     let firstSettled = false;
 
-    const first = executeWorkflowTaskRun({
-      executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      kind: "task_run",
-      prompt: "first",
-      timeoutMs: 5000,
-    }).then((res) => {
-      firstSettled = true;
-      return res;
-    });
+    const first = managerFixture
+      .executeWorkflowTaskRun({
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: PROJECT_PATH,
+            target: targetFromStoreSessionName(
+              "project",
+              SESSION_NAME,
+              CONVERSATION_ID,
+            ),
+          },
+        },
+        executionClass: "nongoverned-task" as const,
+        kind: "task_run",
+        prompt: "first",
+        timeoutMs: 5000,
+      })
+      .then((res) => {
+        firstSettled = true;
+        return res;
+      });
 
     const inv1 = await nextPendingInvocation();
-    expect(inv1.input.promptText).toBe("first");
+    expect(inv1.input.prompt).toBe("first");
 
     // Second call is started while the first turn is in flight. It must not
     // dispatch its SUBMIT_TASK_RUN until the first finalizes, so no new
     // runTaskRun invocation should be observable yet.
-    const second = executeWorkflowTaskRun({
+    const second = managerFixture.executeWorkflowTaskRun({
+      binding: {
+        kind: "durable",
+        address: {
+          projectPath: PROJECT_PATH,
+          target: targetFromStoreSessionName(
+            "project",
+            SESSION_NAME,
+            CONVERSATION_ID,
+          ),
+        },
+      },
       executionClass: "nongoverned-task" as const,
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
       kind: "task_run",
       prompt: "second",
       timeoutMs: 5000,
@@ -816,7 +1124,7 @@ describe("executeWorkflowTaskRun", () => {
     expect(firstResult.kind).toBe("text");
 
     const inv2 = await nextPendingInvocation();
-    expect(inv2.input.promptText).toBe("second");
+    expect(inv2.input.prompt).toBe("second");
     inv2.resolve(
       defaultResult({ contentBlocks: [{ type: "text", text: "B" }] }),
     );
@@ -839,27 +1147,39 @@ describe("executeWorkflowTaskRun", () => {
       result: Partial<PromptActorResult>,
       backend: "claude" | "codex",
     ) {
-      setEnsureConversationActorDeps({
-        loadActorInput: async () =>
-          makeActorInputData({
-            conversation: {
-              createdAt: "2026-01-01T00:00:00.000Z",
-              forkedFrom: null,
-              role: null,
-              transcriptPath: null,
-              agentBackend: backend,
-              backendRef: null,
-              promptCount: 0,
-              debugMode: null,
-            },
-          }),
-      });
+      actorInputLoader = async () =>
+        makeActorInputData({
+          conversation: {
+            lastActivityAt: "2026-01-01T00:00:00.000Z",
+            totalCostUsd: null,
+            totalDurationMs: null,
+            totalTurns: null,
+            contextTokens: null,
+            contextWindowMax: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            forkedFrom: null,
+            role: null,
+            transcriptPath: null,
+            agentBackend: backend,
+            backendRef: null,
+            promptCount: 0,
+            debugMode: null,
+          },
+        });
 
-      const call = executeWorkflowTaskRun({
+      const call = managerFixture.executeWorkflowTaskRun({
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: PROJECT_PATH,
+            target: targetFromStoreSessionName(
+              "project",
+              SESSION_NAME,
+              CONVERSATION_ID,
+            ),
+          },
+        },
         executionClass: "nongoverned-task" as const,
-        projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: CONVERSATION_ID,
         kind: "task_run",
         prompt: "resolve conflicts",
         timeoutMs: 5000,
@@ -916,11 +1236,19 @@ describe("executeWorkflowTaskRun", () => {
     });
 
     it("classifies the entrypoint timeout as a timeout failure", async () => {
-      const callPromise = executeWorkflowTaskRun({
+      const callPromise = managerFixture.executeWorkflowTaskRun({
+        binding: {
+          kind: "durable",
+          address: {
+            projectPath: PROJECT_PATH,
+            target: targetFromStoreSessionName(
+              "project",
+              SESSION_NAME,
+              CONVERSATION_ID,
+            ),
+          },
+        },
         executionClass: "nongoverned-task" as const,
-        projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        conversationId: CONVERSATION_ID,
         kind: "task_run",
         prompt: "will-time-out",
         timeoutMs: 25,
@@ -933,75 +1261,6 @@ describe("executeWorkflowTaskRun", () => {
       expect(result.failure?.kind).toBe("timeout");
       expect(result.failure?.retryable).toBe(false);
     });
-
-    it("classifies a turn that produced no result at all", async () => {
-      const mapped = mapToTaskRunResult(null, null, undefined, (error) => ({
-        kind: "backend_error",
-        message: String(error),
-        retryable: false,
-      }));
-
-      expect(mapped.kind).toBe("error");
-      if (mapped.kind !== "error") return;
-      expect(mapped.failure).toEqual({
-        kind: "backend_error",
-        message: "task_run produced no result",
-        retryable: false,
-      });
-    });
-
-    // Retryability of a session death is decided by the error OBJECT (an
-    // undelivered prompt is safe to re-dispatch, a mid-turn death is not), and
-    // that fact is gone by the time the failure is prose. When the turn already
-    // carries the classification, re-reading the string would downgrade a
-    // retryable transient into a halt.
-    it("keeps the classification the turn recorded instead of re-reading its prose", () => {
-      const undelivered = "QuerySession ended before the turn completed";
-      // Mirrors the Claude classifier's prose verdict for this string
-      // (non-retryable session death — pinned in
-      // agent-backends/claude/failure-classifier.test.ts): a re-read of the
-      // prose would downgrade the recorded retryable transient.
-      const proseClassify: TaskRunFailureClassifier = (error) => ({
-        kind: "session_died",
-        message: String(error),
-        retryable: false,
-      });
-
-      const mapped = mapToTaskRunResult(
-        defaultResult({
-          contentBlocks: [],
-          error: undelivered,
-          failure: {
-            kind: "session_died",
-            message: undelivered,
-            retryable: true,
-          },
-        }),
-        null,
-        undefined,
-        proseClassify,
-      );
-
-      expect(mapped.kind).toBe("error");
-      if (mapped.kind !== "error") return;
-      expect(mapped.failure).toEqual({
-        kind: "session_died",
-        message: undelivered,
-        retryable: true,
-      });
-    });
-
-    it("leaves the classification absent for callers that supply no classifier", () => {
-      const mapped = mapToTaskRunResult(
-        null,
-        "actor rejected the turn",
-        undefined,
-      );
-
-      expect(mapped.kind).toBe("error");
-      if (mapped.kind !== "error") return;
-      expect(mapped.failure).toBeUndefined();
-    });
   });
 
   // Project compaction and ticket generation both address this entrypoint with
@@ -1009,20 +1268,26 @@ describe("executeWorkflowTaskRun", () => {
   // events reported that key as a session identity (R1.3).
   describe("project-scope diagnostics", () => {
     async function runProjectTaskRun(log: CapturingLogger) {
-      setEnsureConversationActorDeps({
-        loadActorInput: async () =>
-          makeActorInputData({
-            conversationScope: "project",
-            sessionWorktreePath: PROJECT_PATH,
-          }),
-      });
+      actorInputLoader = async () =>
+        makeActorInputData({
+          conversationScope: "project",
+          sessionWorktreePath: PROJECT_PATH,
+        });
 
-      const call = executeWorkflowTaskRun(
+      const call = managerFixture.executeWorkflowTaskRun(
         {
+          binding: {
+            kind: "durable",
+            address: {
+              projectPath: PROJECT_PATH,
+              target: targetFromStoreSessionName(
+                "project",
+                PROJECT_CONVERSATION_SESSION_SENTINEL,
+                CONVERSATION_ID,
+              ),
+            },
+          },
           executionClass: "nongoverned-task" as const,
-          projectPath: PROJECT_PATH,
-          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
-          conversationId: CONVERSATION_ID,
           kind: "task_run",
           prompt: "summarize",
           timeoutMs: 5000,
@@ -1060,12 +1325,20 @@ describe("executeWorkflowTaskRun", () => {
 
     it("still names the real session for a session-scoped task run", async () => {
       const log = createCapturingLogger();
-      const call = executeWorkflowTaskRun(
+      const call = managerFixture.executeWorkflowTaskRun(
         {
+          binding: {
+            kind: "durable",
+            address: {
+              projectPath: PROJECT_PATH,
+              target: targetFromStoreSessionName(
+                "project",
+                SESSION_NAME,
+                CONVERSATION_ID,
+              ),
+            },
+          },
           executionClass: "nongoverned-task" as const,
-          projectPath: PROJECT_PATH,
-          sessionName: SESSION_NAME,
-          conversationId: CONVERSATION_ID,
           kind: "task_run",
           prompt: "summarize",
           timeoutMs: 5000,

@@ -92,7 +92,7 @@ export function getNotepadDeliveryWatermarksRepo(): NotepadDeliveryWatermarksRep
 
 /**
  * Owner of what each conversation has been shown of each notepad (D17). Written
- * at the reference-expansion seams, read by prompt assembly.
+ * after accepted reference delivery, read by prompt assembly.
  */
 export function getNotepadDeliveryTracker(): NotepadDeliveryTracker {
   return getGlobalSingleton("__cc_notepad_delivery_tracker", () =>
@@ -148,7 +148,10 @@ export function getNotepadService(): NotepadService {
  * service, so it is built per call rather than held as a singleton.
  */
 export function getNotepadInjectionReader(): NotepadInjectionReader {
-  return createNotepadInjectionReader(getNotepadService());
+  return createNotepadInjectionReader(
+    getNotepadService(),
+    getNotepadCommentsRepo(),
+  );
 }
 
 /**

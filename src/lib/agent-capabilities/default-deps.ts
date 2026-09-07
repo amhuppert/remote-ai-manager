@@ -1,3 +1,9 @@
+import {
+  createCapabilityConfigComposer,
+  promoteSeededRuntimeState,
+  projectConversationDiagnosticsSeed,
+  type ComposedProjectConversationCapabilitySeed,
+} from "./runtime-seed";
 /**
  * Production dependency wiring for the capability runtime apply service.
  *
@@ -32,7 +38,6 @@ import {
   decodeCascadeKind,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityCascadeLayer,
-  type AgentCapabilityDiagnostic,
   type AgentCapabilityOverrides,
   type AgentCapabilityRuntimeApplicationState,
   type AgentCapabilityScopeContext,
@@ -62,7 +67,7 @@ import {
   type ApplyConversationIdentity,
   type CapabilityRuntimeApplyService,
 } from "./apply";
-import { applyTimingForCascade } from "./metadata";
+
 import {
   createCapabilityMutationService,
   type CapabilityMutationService,
@@ -372,8 +377,8 @@ function logDiscoveryFailure(
   });
 }
 
-const defaultComposeForConversation = createConversationStartCapabilityComposer(
-  {
+export const defaultComposeForConversation =
+  createConversationStartCapabilityComposer({
     readGlobalOverrides: () => defaultGlobalCapabilityOverrideStore.read(),
     getProjectAgentCapabilityOverrides: (projectPath) =>
       stateManager.getProjectAgentCapabilityOverrides(projectPath),
@@ -394,8 +399,7 @@ const defaultComposeForConversation = createConversationStartCapabilityComposer(
         error: input.error,
       });
     },
-  },
-);
+  });
 
 interface RuntimeSnapshot {
   status: "alive" | "dead";
@@ -875,79 +879,6 @@ export async function applyRuntimeConfigToConversationRuntime(input: {
   return adapter.apply({ runtime, resolved: input.resolved });
 }
 
-/** @public Referenced via `import("...").ComposedCapabilitySeed` in actor-implementations. */
-export interface ComposedCapabilitySeed {
-  /**
-   * Backend-neutral resolved cascade the actor seeds onto the backend factory
-   * via `tooling.capabilities`; the factory translates it into its provider
-   * payload internally at `createRuntime`.
-   */
-  capabilities: ResolvedCapabilityCascade;
-  diagnostics?: readonly AgentCapabilityDiagnostic[];
-  /**
-   * Initial capability runtime apply state for the new conversation. Kinds
-   * delivered at session creation are recorded as `applied`; next-turn kinds
-   * stay `staged-next-turn` until the turn-start apply promotes them. The
-   * actor must persist this state via `mutateConversation` so the apply
-   * service can compare subsequent mutations against this baseline.
-   */
-  runtimeState: AgentCapabilityRuntimeApplicationState;
-}
-
-export interface ComposedProjectConversationDiagnosticsSeed {
-  kind: "diagnostics-only";
-  backend: AgentBackendId;
-  diagnostics: readonly AgentCapabilityDiagnostic[];
-}
-
-/**
- * Promote composer-seeded cascades whose payload the backend receives at
- * session creation from `staged-next-turn` to `applied`. Next-turn kinds
- * (per the descriptor's declared apply timing) keep the staged state until
- * the turn-start apply service pushes the config into the runtime and
- * records the promotion.
- */
-function promoteSeededRuntimeState(
-  state: AgentCapabilityRuntimeApplicationState,
-): AgentCapabilityRuntimeApplicationState {
-  const out: AgentCapabilityRuntimeApplicationState = { cascades: {} };
-  for (const [rawKind, cascade] of Object.entries(state.cascades)) {
-    if (!cascade) continue;
-    const cascadeKind = rawKind as AgentCapabilityCascadeKind;
-    if (
-      cascade.pendingHash !== undefined &&
-      applyTimingForCascade(cascadeKind) !== "next_turn"
-    ) {
-      out.cascades[cascadeKind] = {
-        appliedHash: cascade.pendingHash,
-        lastApplyStatus: "applied",
-      };
-    } else {
-      out.cascades[cascadeKind] = cascade;
-    }
-  }
-  return out;
-}
-
-export type ComposedProjectConversationCapabilitySeed =
-  | ({
-      kind?: "runtime";
-      backend: AgentBackendId;
-    } & ComposedCapabilitySeed)
-  | ComposedProjectConversationDiagnosticsSeed;
-
-function projectConversationDiagnosticsSeed(
-  backend: AgentBackendId,
-  result: ComposeConversationStartResult,
-): ComposedProjectConversationDiagnosticsSeed | undefined {
-  if (result.diagnostics.length === 0) return undefined;
-  return {
-    kind: "diagnostics-only",
-    backend,
-    diagnostics: result.diagnostics,
-  };
-}
-
 export interface ProjectConversationCapabilityConfigComposerDeps {
   getProjectConversation(
     projectPath: string,
@@ -1024,33 +955,6 @@ const defaultProjectConversationCapabilityConfigComposer =
 /** @public Accessed by project-conversation prompt runtime wiring. */
 export const composeCapabilityConfigForProjectConversation =
   defaultProjectConversationCapabilityConfigComposer;
-
-/**
- * Compose the neutral capability cascade + initial apply state for a new
- * conversation. The actor seeds `tooling.capabilities` on the backend factory
- * with the returned cascade and writes `runtimeState` to
- * `conversation.agentCapabilitiesRuntime` so the apply service can promote /
- * compare against this baseline on subsequent mutations. The factory form
- * exists so tests can run the same seed projection over a composer built
- * with injected deps instead of the module-level store wiring.
- */
-export function createCapabilityConfigComposer(
-  composeForConversation: (
-    input: SessionConversationStartCapabilityComposerInput,
-  ) => Promise<ComposeConversationStartResult>,
-): (
-  input: SessionConversationStartCapabilityComposerInput,
-) => Promise<ComposedCapabilitySeed | undefined> {
-  return async function composeCapabilityConfig(input) {
-    const result = await composeForConversation(input);
-    if (result.capabilities.kinds.length === 0) return undefined;
-    return {
-      capabilities: result.capabilities,
-      diagnostics: result.diagnostics,
-      runtimeState: promoteSeededRuntimeState(result.runtimeState),
-    };
-  };
-}
 
 /** @public Accessed via dynamic `import()` in actor-implementations. */
 export const composeCapabilityConfigForConversation =

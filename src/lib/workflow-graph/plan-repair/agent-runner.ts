@@ -26,9 +26,10 @@ import {
 import {
   executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
   type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
-import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import {
   decodePlanRepairAgentOutput,
@@ -50,27 +51,26 @@ export interface PlanRepairAgentRunnerDeps {
   composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
 }
 
-function buildRepairActorInput(
+function buildRepairBinding(
   invocation: PlanRepairAgentInvocation,
   projectName: string,
-): EnsureActorInputData {
+): ConversationBinding {
   return {
-    conversationScope: "session",
-    projectName,
-    sessionWorktreePath: invocation.worktreePath,
     // A synthetic repair lane has no persisted ConversationState record, so it
     // runs the ephemeral persistence adapter (validator-runner precedent).
-    persistence: "ephemeral",
-    conversation: {
-      createdAt: new Date().toISOString(),
-      forkedFrom: null,
-      role: null,
-      transcriptPath: null,
-      agentBackend: invocation.agent.backend,
-      backendRef: null,
-      promptCount: 0,
-      debugMode: null,
+    kind: "ephemeral",
+    address: {
+      projectPath: invocation.projectPath,
+      target: sessionConversationTarget(
+        projectName,
+        invocation.sessionName,
+        invocation.conversationId,
+      ),
     },
+    worktreePath: invocation.worktreePath,
+    backend: invocation.agent.backend,
+    role: null,
+    transcriptPath: null,
   };
 }
 
@@ -117,9 +117,6 @@ export function createPlanRepairAgentRunner(
 
     const result = await executeWorkflowTaskRun({
       fsWritePolicy: writeEnvelope.policy,
-      projectPath: invocation.projectPath,
-      sessionName: invocation.sessionName,
-      conversationId: invocation.conversationId,
       kind: "task_run",
       executionClass: "governed-execution",
       executionProfile: "standard",
@@ -130,7 +127,7 @@ export function createPlanRepairAgentRunner(
       },
       timeoutMs: invocation.timeoutMs,
       modelSelection: invocation.agent.modelSelection,
-      actorInput: buildRepairActorInput(invocation, projectName),
+      binding: buildRepairBinding(invocation, projectName),
       origin: {
         source: "workflow",
         workflow: {

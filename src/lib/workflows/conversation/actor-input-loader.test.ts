@@ -1,8 +1,16 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-import { loadActorInput } from "./actor-input-loader";
+import {
+  loadActorInput,
+  conversationAggregateFields,
+} from "./actor-input-loader";
+import { createActor, fromPromise, waitFor } from "xstate";
+import type { PromptActorResult, ExecutePromptInput } from "./types";
+import { conversationMachine } from "./machine";
+import { applySyncDerivedFields } from "./persistence-adapter";
 
 /**
  * The shared actor input loader is the seam every out-of-band actor
@@ -50,6 +58,116 @@ describe("loadActorInput (R4.3 / D5)", () => {
       ...overrides,
     });
   }
+
+  it.each(["session", "project"] as const)(
+    "preserves %s row accounting through construction and synchronization",
+    async (scope) => {
+      const stored = conversation({
+        scope,
+        promptCount: 7,
+        totalCostUsd: 1.25,
+        totalDurationMs: 1200,
+        totalTurns: 11,
+        contextTokens: 800,
+        contextWindowMax: 200000,
+        lastActivityAt: "2026-02-01T00:00:00.000Z",
+      });
+      const sessionName =
+        scope === "project"
+          ? PROJECT_CONVERSATION_SESSION_SENTINEL
+          : "csm/feature";
+      if (scope === "project") {
+        await fixture.seedProjectConversation(PROJECT_PATH, stored);
+      } else {
+        fixture.seedSession(PROJECT_PATH, sessionName);
+        await fixture.seedConversation(PROJECT_PATH, sessionName, stored);
+      }
+      const loaded = await loadActorInput(
+        deps(),
+        PROJECT_PATH,
+        sessionName,
+        stored.id,
+      );
+      const actor = createActor(
+        conversationMachine.provide({
+          actors: {
+            prepareTurn: fromPromise(async () => ({
+              transcriptPath: "/test/transcript.jsonl",
+            })),
+            executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
+              async () => ({
+                backendRef: null,
+                costUsd: 0.75,
+                durationMs: 300,
+                numTurns: 2,
+                contextTokens: 900,
+                contextWindow: 200000,
+                inputTokens: null,
+                outputTokens: null,
+                cachedInputTokens: null,
+                contentBlocks: [],
+                aborted: false,
+                compacted: false,
+                error: null,
+                continuationDisposition: "retain",
+              }),
+            ),
+          },
+        }),
+        {
+          input: {
+            ...loaded.conversation,
+            target: targetFromStoreSessionName(
+              loaded.projectName,
+              sessionName,
+              stored.id,
+            ),
+
+            projectPath: PROJECT_PATH,
+
+            worktreePath: loaded.sessionWorktreePath,
+
+            persistence: loaded.persistence,
+          },
+        },
+      );
+      const context = actor.getSnapshot().context;
+      expect(Object.keys(context.totals).sort()).toEqual(
+        [...conversationAggregateFields].sort(),
+      );
+      const synchronized = structuredClone(stored);
+      applySyncDerivedFields(context, synchronized);
+      for (const field of [
+        "totalCostUsd",
+        "totalDurationMs",
+        "totalTurns",
+        "contextTokens",
+        "contextWindowMax",
+        "promptCount",
+        "lastActivityAt",
+      ] as const) {
+        expect(synchronized[field], field).toBe(stored[field]);
+      }
+      expect(context.lastActivityAt).toBe(stored.lastActivityAt);
+      actor.start();
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "next turn",
+        streamId: "next",
+      });
+      await waitFor(actor, (snapshot) => snapshot.context.promptCount === 8);
+      applySyncDerivedFields(actor.getSnapshot().context, synchronized);
+      expect(synchronized).toMatchObject({
+        totalCostUsd: 2,
+        totalDurationMs: 1500,
+        totalTurns: 13,
+        contextTokens: 900,
+        contextWindowMax: 200000,
+        promptCount: 8,
+      });
+      actor.stop();
+    },
+  );
 
   describe("session scope", () => {
     beforeEach(async () => {

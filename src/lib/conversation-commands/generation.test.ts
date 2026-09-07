@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   TaskRunResult,
   TaskRunUsage,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
+} from "@/lib/workflows/conversation/turn-result";
 import {
   COMMIT_MESSAGE_JSON_SCHEMA,
   MERGE_MESSAGE_JSON_SCHEMA,

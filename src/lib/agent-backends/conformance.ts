@@ -641,7 +641,7 @@ export function describeBackendConformance(
           parameters: {},
         },
         outputFormat: undefined,
-        alignmentVersion: null,
+
         async sendTurn(): Promise<never> {
           throw new Error("not used by conformance");
         },

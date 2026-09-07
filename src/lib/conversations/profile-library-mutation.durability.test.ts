@@ -1,3 +1,7 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+let conversationActors: ReturnType<typeof createTestActorImplementations>;
+import { createManagedRuntimeFixture } from "@/lib/workflows/conversation/testing/runtime-binding-fixture";
 /**
  * R6.1 — a conversation is immune to the library record it was created from.
  *
@@ -27,14 +31,10 @@ import {
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
 import { PROFILE_LAYER_HEADING } from "@/lib/agent-profiles/composer";
 import {
-  createActorImplementationDepsFixture,
+  createActorDependenciesFixture,
   createMockBackendRuntime,
 } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
-import {
-  executePromptForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "@/lib/workflows/conversation/actor-implementations";
+
 import {
   conversationRuntimeKey,
   registerConversationRuntime,
@@ -89,7 +89,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  _resetActorDepsForTesting();
   resetRuntimeRegistry();
   fixture.close();
   await rm(configDir, { recursive: true, force: true });
@@ -124,8 +123,8 @@ async function runTurnAfterRestart(
   const restarted = fixture.recreateStore();
   const created: ConversationBackendCreateInput[] = [];
 
-  setActorDeps(
-    createActorImplementationDepsFixture({
+  conversationActors = createTestActorImplementations(
+    createActorDependenciesFixture({
       getConversation: (projectPath, sessionName, id) =>
         restarted.getConversation(projectPath, sessionName, id),
       getConversationBackendFactory: () => ({
@@ -142,36 +141,49 @@ async function runTurnAfterRestart(
   );
 
   const input: ExecutePromptInput = {
+    turn: {
+      kind: "conversation_turn",
+      backend: "claude",
+      promptText: "Hello",
+      images: [],
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+      autonomous: false,
+    },
     persistence: "durable",
     projectPath: PROJECT_PATH,
-    projectName: PROJECT_NAME,
-    sessionName: SESSION_NAME,
+    target: targetFromStoreSessionName(
+      PROJECT_NAME,
+      SESSION_NAME,
+      conversationId,
+    ),
+
     worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
-    conversationId,
+
     transcriptPath: `/transcripts/${conversationId}.jsonl`,
     agentBackend: "claude",
     backendRef: null,
     promptCount: 0,
     forkedFrom: null,
     role: null,
-    promptText: "Hello",
-    images: [],
     streamId: "stream-1",
-    modelSelection: {
-      modelId: "opus",
-      parameters: { effort: "high" },
-    },
     onModelSelectionResolved: async () => {},
-    autonomous: false,
     debugMode: null,
   };
 
   registerConversationRuntime(
     conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, conversationId),
-    { abortController: new AbortController() },
+    {
+      managed: createManagedRuntimeFixture(
+        conversationRuntimeKey(PROJECT_PATH, SESSION_NAME, conversationId),
+      ),
+      abortController: new AbortController(),
+    },
   );
 
-  await executePromptForMachine(input);
+  await conversationActors.executePromptForMachine(input);
 
   expect(created).toHaveLength(1);
   return created[0]!;

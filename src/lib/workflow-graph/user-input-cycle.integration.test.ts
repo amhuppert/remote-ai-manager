@@ -208,7 +208,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       publishUserInputPending: eventPublisher.publishUserInputPending,
       publishUserInputResolved: eventPublisher.publishUserInputResolved,
       deliver: eventPublisher.deliver,
-      sendConversationEvent: () => true,
+      clearConversationQuestion: async () => true,
       now: () => NOW,
     });
   }

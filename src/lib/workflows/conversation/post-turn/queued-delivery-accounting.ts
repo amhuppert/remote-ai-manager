@@ -13,7 +13,7 @@
 
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
-import type { QueuedDeliveryMetadata } from "../types";
+import type { QueuedDeliveryMetadata } from "../turn-spec";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("conversation-actor");
@@ -65,6 +65,7 @@ export function createQueuedDeliveryAccounting(
   // separate facts. Retain ownership until both have completed.
   let queuedUserEntryAppended = false;
   let deliveryRecorded = false;
+  let acceptance: Promise<void> | undefined;
 
   return {
     async appendUserEntryAtDispatch(): Promise<void> {
@@ -72,26 +73,33 @@ export function createQueuedDeliveryAccounting(
       await input.appendUserEntry();
     },
 
-    async handleInputAccepted(): Promise<void> {
-      if (!input.queuedDelivery || deliveryRecorded) return;
-      if (!queuedUserEntryAppended) {
-        await input.appendUserEntry();
-        queuedUserEntryAppended = true;
-      }
-      await deps.markQueuedDelivered({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        ids: input.queuedDelivery.messageIds,
-        deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+    handleInputAccepted(): Promise<void> {
+      if (acceptance) return acceptance;
+      acceptance = (async () => {
+        if (!input.queuedDelivery || deliveryRecorded) return;
+        if (!queuedUserEntryAppended) {
+          await input.appendUserEntry();
+          queuedUserEntryAppended = true;
+        }
+        await deps.markQueuedDelivered({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          ids: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        });
+        deliveryRecorded = true;
+        logger.info("queue.accepted", {
+          ...scopeRefFromStoreSessionName(input.sessionName),
+          conversationId: input.conversationId,
+          messageIds: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        });
+      })();
+      void acceptance.catch(() => {
+        acceptance = undefined;
       });
-      deliveryRecorded = true;
-      logger.info("queue.accepted", {
-        ...scopeRefFromStoreSessionName(input.sessionName),
-        conversationId: input.conversationId,
-        messageIds: input.queuedDelivery.messageIds,
-        deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
-      });
+      return acceptance;
     },
 
     async settleAfterTurn(): Promise<void> {

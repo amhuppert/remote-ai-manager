@@ -6,7 +6,7 @@ import {
   type DebugCleanupResultOutput,
   type DebugEvidenceAnalysisOutput,
   type DebugHypothesisOutput,
-} from "@/lib/workflows/conversation/debug-schemas";
+} from "@/lib/workflows/debug/schemas";
 
 interface Props {
   phase: DebugModePhase;

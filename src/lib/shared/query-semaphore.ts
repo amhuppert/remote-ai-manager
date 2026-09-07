@@ -14,6 +14,17 @@ import { getGlobalSingleton } from "./global-singleton";
 
 const logger = createLogger("query-semaphore");
 
+export interface QuerySemaphoreDeps {
+  readConfig(): Promise<{ maxConcurrentQueries?: number }>;
+}
+let deps: QuerySemaphoreDeps = { readConfig };
+export function setQuerySemaphoreDeps(value: QuerySemaphoreDeps): void {
+  deps = value;
+}
+export function resetQuerySemaphoreDeps(): void {
+  deps = { readConfig };
+}
+
 const DEFAULT_MAX_CONCURRENT = 2;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -41,21 +52,6 @@ export class QuerySlotAdmissionTimeoutError extends Error {
     );
     this.name = "QuerySlotAdmissionTimeoutError";
   }
-}
-
-/**
- * Whether a failure is an admission timeout, given either the thrown value or
- * just the message text that survived from it.
- */
-export function isQuerySlotAdmissionTimeout(value: unknown): boolean {
-  if (value instanceof QuerySlotAdmissionTimeoutError) return true;
-  if (typeof value === "string") {
-    return value.includes(QUERY_SLOT_ADMISSION_TIMEOUT_CODE);
-  }
-  if (value instanceof Error) {
-    return value.message.includes(QUERY_SLOT_ADMISSION_TIMEOUT_CODE);
-  }
-  return false;
 }
 
 interface Waiter {
@@ -91,11 +87,17 @@ function getState(): SemaphoreState {
  *
  * @param label - Descriptive label for logging (e.g. "prompt:sessionName")
  */
-export async function acquireQuerySlot(label: string): Promise<() => void> {
+export async function acquireQuerySlot(
+  label: string,
+  options?: { signal?: AbortSignal },
+): Promise<() => void> {
+  const signal = options?.signal;
+  signal?.throwIfAborted();
   const state = getState();
 
   // Lazy-load limit from config on first call
   await refreshLimit();
+  signal?.throwIfAborted();
 
   if (state.active < state.limit) {
     state.active++;
@@ -116,24 +118,43 @@ export async function acquireQuerySlot(label: string): Promise<() => void> {
     waiting: state.queue.length + 1,
   });
 
-  return new Promise<() => void>((resolve, reject) => {
+  const release = await new Promise<() => void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      const index = state.queue.indexOf(waiter);
+      if (index !== -1) state.queue.splice(index, 1);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const cancel = () => {
+      logger.info("semaphore.cancelled", {
+        label,
+        active: state.active,
+        waiting: state.queue.length,
+      });
+      fail(new DOMException("Query slot acquisition cancelled", "AbortError"));
+    };
     const timer = setTimeout(() => {
       // Remove from queue on timeout
-      const idx = state.queue.findIndex((w) => w.timer === timer);
-      if (idx !== -1) state.queue.splice(idx, 1);
       logger.error("semaphore.timeout", {
         label,
         active: state.active,
         waiting: state.queue.length,
       });
-      reject(
-        new QuerySlotAdmissionTimeoutError(label, DEFAULT_QUEUE_TIMEOUT_MS),
-      );
+      fail(new QuerySlotAdmissionTimeoutError(label, DEFAULT_QUEUE_TIMEOUT_MS));
     }, DEFAULT_QUEUE_TIMEOUT_MS);
 
     const waiter: Waiter = {
       resolve: () => {
-        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        cleanup();
         state.active++;
         logger.info("semaphore.acquired_from_queue", {
           label,
@@ -143,13 +164,19 @@ export async function acquireQuerySlot(label: string): Promise<() => void> {
         });
         resolve(createRelease(label));
       },
-      reject,
+      reject: fail,
       timer,
       label,
     };
-
     state.queue.push(waiter);
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
   });
+  if (signal?.aborted) {
+    release();
+    signal.throwIfAborted();
+  }
+  return release;
 }
 
 function createRelease(label: string): () => void {
@@ -186,7 +213,7 @@ function createRelease(label: string): () => void {
  */
 export async function getConfiguredQueryConcurrency(): Promise<number> {
   try {
-    const config = await readConfig();
+    const config = await deps.readConfig();
     return config.maxConcurrentQueries ?? DEFAULT_MAX_CONCURRENT;
   } catch {
     return DEFAULT_MAX_CONCURRENT;
@@ -196,7 +223,7 @@ export async function getConfiguredQueryConcurrency(): Promise<number> {
 /** Read the configured limit from config (lazy, best-effort). */
 async function refreshLimit(): Promise<void> {
   try {
-    const config = await readConfig();
+    const config = await deps.readConfig();
     const state = getState();
     state.limit = config.maxConcurrentQueries ?? DEFAULT_MAX_CONCURRENT;
   } catch {

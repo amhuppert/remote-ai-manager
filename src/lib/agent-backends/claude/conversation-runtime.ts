@@ -192,7 +192,7 @@ class ClaudeConversationRuntime
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
-  readonly alignmentVersion: number | null;
+
   /** The write envelope this session was established under; undefined when unrestricted. */
   readonly fsWritePolicy: FsWritePolicy | undefined;
 
@@ -210,7 +210,7 @@ class ClaudeConversationRuntime
     opts: {
       resolvedModelSelection: ResolvedClaudeModelSelection;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
-      alignmentVersion?: number | null;
+
       fsWritePolicy?: FsWritePolicy;
       onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
       /**
@@ -228,7 +228,7 @@ class ClaudeConversationRuntime
     this.querySession = querySession;
     this.modelSelection = opts.resolvedModelSelection.modelSelection;
     this.outputFormat = opts.outputFormat;
-    this.alignmentVersion = opts.alignmentVersion ?? null;
+
     this.fsWritePolicy = opts.fsWritePolicy;
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
     this.onCapabilityConfigApplied =
@@ -958,7 +958,7 @@ const claudeConversationBackendFactory = {
     const runtime = new ClaudeConversationRuntime(querySession, {
       resolvedModelSelection,
       outputFormat: input.outputFormat,
-      alignmentVersion: input.alignmentVersion ?? null,
+
       ...(input.fsWritePolicy !== undefined
         ? { fsWritePolicy: input.fsWritePolicy }
         : {}),

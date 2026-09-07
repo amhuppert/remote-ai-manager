@@ -70,13 +70,13 @@ describe("PROJECT_SPAWN_INSTRUCTIONS", () => {
 describe("spawn instructions are project-conversation-only", () => {
   it("is injected into the system prompt only behind the isProjectConversation gate", () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    const actorSrc = readFileSync(
-      resolve(here, "../workflows/conversation/actor-implementations.ts"),
+    const instructionSrc = readFileSync(
+      resolve(here, "../workflows/conversation/runtime-instructions.ts"),
       "utf8",
     );
     // The constant flows into `sessionInstructions` exclusively through the
     // project gate; a session agent (CC_CONTEXT branch) never receives it.
-    expect(actorSrc).toMatch(
+    expect(instructionSrc).toMatch(
       /isProjectConversation\s*\?\s*PROJECT_SPAWN_INSTRUCTIONS\s*:\s*null/,
     );
   });

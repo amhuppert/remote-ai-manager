@@ -1,3 +1,5 @@
+import { runtimeConfigurationFixture } from "@/lib/workflows/conversation/testing/runtime-configuration-fixture";
+import { createConversationMachineFixture } from "@/lib/workflows/conversation/testing/machine-fixture";
 /**
  * R6.1 — the write policy survives every hop of the conversation dispatch path.
  *
@@ -14,7 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createActor, fromPromise } from "xstate";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import { executePromptStream, type PromptDeps } from "@/lib/prompt/sdk-driver";
-import { conversationMachine } from "@/lib/workflows/conversation/machine";
+
 import type {
   ExecutePromptInput,
   PromptActorResult,
@@ -58,23 +60,18 @@ describe("hop 1 — prompt options to the conversation lifecycle's turn request"
       }),
       createConversation: async () => ({ id: "conversation-1" }),
       setConversationBackend: async () => {},
-      getProjectDisplayName: async () => "repo",
+      getProjectDisplayName: () => "repo",
       readConfig: async () => ({ projects: [] }),
       getConversationBackendFactory: () => ({ backend: "claude" }),
       ensureConversationLifecycle: async () => {},
-      executeConversationTurn: async (input: {
+      submitConversationTurn: async (input: {
         turn: { fsWritePolicy?: FsWritePolicy };
       }) => {
         turn = input.turn;
         return {
-          status: "completed" as const,
-          result: {
-            contextTokens: null,
-            contextWindowMax: null,
-            aborted: false,
-            compacted: false,
-            error: null,
-          },
+          kind: "refused",
+          code: "busy",
+          message: "Captured submission",
         };
       },
     } as unknown as PromptDeps;
@@ -110,7 +107,7 @@ describe("hop 2 — the machine's turn claim and the executePrompt actor input",
     fsWritePolicy: FsWritePolicy | undefined,
   ): Promise<ExecutePromptInput> {
     let captured: ExecutePromptInput | undefined;
-    const machine = conversationMachine.provide({
+    const machine = createConversationMachineFixture().provide({
       actors: {
         prepareTurn: fromPromise(async () => ({
           transcriptPath: "/repo/.cc/transcript.jsonl",
@@ -147,10 +144,13 @@ describe("hop 2 — the machine's turn claim and the executePrompt actor input",
     const actor = createActor(machine, {
       input: {
         projectPath: "/repo",
-        projectName: "repo",
-        sessionName: "envelope-session",
+        target: {
+          scope: "session",
+          projectName: "repo",
+          sessionName: "envelope-session",
+          conversationId: "conversation-1",
+        },
         worktreePath: "/repo",
-        conversationId: "conversation-1",
         agentBackend: "claude",
         transient: false,
         persistence: "ephemeral",
@@ -176,11 +176,13 @@ describe("hop 2 — the machine's turn claim and the executePrompt actor input",
   }
 
   it("claims the policy onto the active turn and hands it to the executing actor", async () => {
-    expect((await claimAndExecute(POLICY)).fsWritePolicy).toEqual(POLICY);
+    expect((await claimAndExecute(POLICY)).turn.fsWritePolicy).toEqual(POLICY);
   });
 
   it("leaves the field absent for an ordinary turn", async () => {
-    expect((await claimAndExecute(undefined)).fsWritePolicy).toBeUndefined();
+    expect(
+      (await claimAndExecute(undefined)).turn.fsWritePolicy,
+    ).toBeUndefined();
   });
 });
 
@@ -195,7 +197,15 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
     // The drop that matters most: reusing the unrestricted session would run
     // the confined turn outside its envelope, and nothing downstream could tell.
     expect(
-      shouldRecreateRuntime(alive, selection, undefined, null, POLICY),
+      shouldRecreateRuntime({
+        current: { ...runtimeConfigurationFixture(), ...alive },
+        desired: runtimeConfigurationFixture({
+          modelSelection: selection,
+          outputFormat: undefined,
+          alignmentVersion: null,
+          fsWritePolicy: POLICY,
+        }),
+      }),
     ).toBe(true);
   });
 
@@ -206,25 +216,35 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
     };
 
     expect(
-      shouldRecreateRuntime(
-        { ...alive, fsWritePolicy: POLICY },
-        selection,
-        undefined,
-        null,
-        widened,
-      ),
+      shouldRecreateRuntime({
+        current: {
+          ...runtimeConfigurationFixture(),
+          ...{ ...alive, fsWritePolicy: POLICY },
+        },
+        desired: runtimeConfigurationFixture({
+          modelSelection: selection,
+          outputFormat: undefined,
+          alignmentVersion: null,
+          fsWritePolicy: widened,
+        }),
+      }),
     ).toBe(true);
   });
 
   it("rebuilds a confined runtime when the turn is no longer confined", () => {
     expect(
-      shouldRecreateRuntime(
-        { ...alive, fsWritePolicy: POLICY },
-        selection,
-        undefined,
-        null,
-        undefined,
-      ),
+      shouldRecreateRuntime({
+        current: {
+          ...runtimeConfigurationFixture(),
+          ...{ ...alive, fsWritePolicy: POLICY },
+        },
+        desired: runtimeConfigurationFixture({
+          modelSelection: selection,
+          outputFormat: undefined,
+          alignmentVersion: null,
+          fsWritePolicy: undefined,
+        }),
+      }),
     ).toBe(true);
   });
 
@@ -232,13 +252,18 @@ describe("hop 3 — a live runtime whose envelope is not this turn's", () => {
     // The composer builds a new object per turn, so identity comparison would
     // recreate the backend session on every single iteration.
     expect(
-      shouldRecreateRuntime(
-        { ...alive, fsWritePolicy: POLICY },
-        selection,
-        undefined,
-        null,
-        { ...POLICY, allowWrite: [...POLICY.allowWrite] },
-      ),
+      shouldRecreateRuntime({
+        current: {
+          ...runtimeConfigurationFixture(),
+          ...{ ...alive, fsWritePolicy: POLICY },
+        },
+        desired: runtimeConfigurationFixture({
+          modelSelection: selection,
+          outputFormat: undefined,
+          alignmentVersion: null,
+          fsWritePolicy: { ...POLICY, allowWrite: [...POLICY.allowWrite] },
+        }),
+      }),
     ).toBe(false);
   });
 });

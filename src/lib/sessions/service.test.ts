@@ -1,3 +1,5 @@
+import { createHostedBackendFixture } from "@/lib/workflows/conversation/testing/hosted-backend-fixture";
+let hosted: ReturnType<typeof createHostedBackendFixture>;
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 const logger = vi.hoisted(() => ({
@@ -28,10 +30,7 @@ import type {
 import { createTicketProjectOperationGate } from "../tickets/project-operation-gate";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createSessionLifecycleGate } from "./lifecycle-gate";
-import {
-  registerRuntime,
-  _resetForTesting as _resetRuntimeRegistryForTesting,
-} from "@/lib/agent-backends/runtime-registry";
+import { _resetForTesting as _resetRuntimeRegistryForTesting } from "@/lib/agent-backends/runtime-registry";
 import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import {
@@ -46,6 +45,8 @@ import {
 // ---------------------------------------------------------------------------
 
 function createTestDeps() {
+  hosted?.dispose();
+  hosted = createHostedBackendFixture("/projects/repo", "to-delete");
   const lifecycleGate = createSessionLifecycleGate();
   const gitMock = vi.fn().mockResolvedValue({ stdout: "", stderr: "" });
   const readStateMock = vi.fn().mockResolvedValue(emptyState());
@@ -70,6 +71,8 @@ function createTestDeps() {
   const prepareManagedSkillsCheckoutMock = vi.fn().mockResolvedValue(undefined);
 
   const deps: SessionDeps = {
+    stopConversationActor: (...args) =>
+      hosted.manager.stopConversationActor(...args),
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
     rm: vi.fn().mockResolvedValue(undefined),
     execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],
@@ -1386,7 +1389,7 @@ describe("deleteSession", () => {
     const teardown = new Promise<void>((resolve) => {
       releaseClose = resolve;
     });
-    registerRuntime("conv-live", {
+    await hosted.install("conv-live", {
       backend: "claude",
       status: "alive",
       modelSelection: {
@@ -1394,7 +1397,7 @@ describe("deleteSession", () => {
         parameters: { effort: "high" },
       },
       outputFormat: undefined,
-      alignmentVersion: null,
+
       sendTurn: async () => {
         throw new Error("sendTurn is not exercised by session deletion");
       },
@@ -1421,7 +1424,7 @@ describe("deleteSession", () => {
     }
   });
 
-  it("still deletes the session when a runtime teardown rejects", async () => {
+  it("preserves the session and worktree when runtime teardown rejects", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "to-delete", {
         conversations: [{ id: "conv-broken", transcriptPath: null }],
@@ -1430,7 +1433,7 @@ describe("deleteSession", () => {
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
-    registerRuntime("conv-broken", {
+    await hosted.install("conv-broken", {
       backend: "claude",
       status: "alive",
       modelSelection: {
@@ -1438,7 +1441,7 @@ describe("deleteSession", () => {
         parameters: { effort: "high" },
       },
       outputFormat: undefined,
-      alignmentVersion: null,
+
       sendTurn: async () => {
         throw new Error("sendTurn is not exercised by session deletion");
       },
@@ -1448,8 +1451,9 @@ describe("deleteSession", () => {
     try {
       await expect(
         service.deleteSession("/projects/repo", "to-delete"),
-      ).resolves.toMatchObject({ worktreeRemoved: true });
-      expect(fastRemoveWorktreeMock).toHaveBeenCalled();
+      ).rejects.toThrow("teardown failed");
+      expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
+      expect(writeStateMock).not.toHaveBeenCalled();
     } finally {
       _resetRuntimeRegistryForTesting();
     }

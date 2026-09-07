@@ -1,8 +1,12 @@
+import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type {
-  ExecutionIntent,
-  ExecutionClass,
-  TaskExecutionProfile,
-} from "@/lib/agent-backends/execution-admission";
+  ConversationTurnSpec,
+  TaskTurnSpec,
+  ConversationTurnRequest,
+  TaskTurnRequest,
+  QueuedDeliveryMetadata,
+} from "./turn-spec";
+import type { ConversationDurableSeed } from "./actor-input-loader";
 /**
  * Conversation machine types.
  *
@@ -10,9 +14,7 @@ import type {
  * for the conversation XState machine.
  */
 
-import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type {
   AgentFailureClassification,
@@ -26,125 +28,33 @@ import type {
   ForkedFrom,
   AskQuestionItem,
   MessageContentBlock,
-  TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
-import type {
-  DocumentFeedbackPayload,
-  NotepadFeedbackPayload,
-} from "@/lib/conversations/message-content-schemas";
 import type {
   DebugModeState,
   RuntimeDebugModeState,
 } from "@/lib/debug-log/schemas";
-import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
 import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { DebugCleanupResultOutput } from "./debug-schemas";
-
-// ============================================================
-// Context
-// ============================================================
-
-/** Structured-output contract attached to a turn (JSON Schema transported by
- *  the backend adapter and enforced by the shared post-turn gate). Shared by
- *  both ActiveTurn variants so callers don't have to branch on `kind` when only
- *  the output format matters. */
-export interface StructuredOutputFormat {
-  type: "json_schema";
-  schema: Record<string, unknown>;
-}
-
-/** Marks a turn as a queued next-turn delivery: the claimed queue rows it
- *  delivers and the delivery attempt that claimed them, so the executor can
- *  confirm acceptance and mark those rows delivered under the same attempt. */
-export interface QueuedDeliveryMetadata {
-  messageIds: string[];
-  deliveryAttemptId: string;
-}
 
 /** Streaming conversation turn: a user-initiated SUBMIT_PROMPT that flows
  *  through the SDK and emits assistant messages live. `outputFormat` is set
  *  on this variant during Debug Mode phases that require a JSON response. */
-export interface ConversationTurnActive {
+export interface ConversationTurnActive extends ConversationTurnSpec {
   kind: "conversation_turn";
-  promptText: string;
-  images: ImagePayload[];
-  backend: AgentBackendId;
-  modelSelection: BackendModelSelection | null;
-  autonomous: boolean;
   startedAt: string | null;
   /** Correlates actor reports to one execution attempt. Rotated on retry. */
   executionAttemptId?: string;
   streamId: string | null;
-  outputFormat?: StructuredOutputFormat;
-  /**
-   * Opt-in: hold this turn open until its in-flight waitable background tasks
-   * settle (or the wait times out). Set only by the graph-workflow implementer
-   * runner; unset for every other turn so behavior is unchanged.
-   */
-  waitForBackgroundTasks?: boolean;
-  /** Set only for auto-drained queued next-turn deliveries; unset for normal
-   *  user-initiated turns. */
-  queuedDelivery?: QueuedDeliveryMetadata;
-  /** Structured document-review feedback carried with this turn. When set, the
-   *  user-turn transcript records a `document_feedback` block and the
-   *  agent-facing prompt text is derived from it when no explicit text was
-   *  supplied. Unset for every non-feedback turn. */
-  documentFeedback?: DocumentFeedbackPayload;
-  /** Notepad comment dispatches carried with this turn, one per notepad. Each
-   *  records its own `notepad_feedback` transcript block and contributes its
-   *  derived prose when no explicit text was supplied. Unset otherwise. */
-  notepadFeedback?: readonly NotepadFeedbackPayload[];
-  /** Effective ask-user-questions availability for this turn (resolved toggle
-   *  AND lane-can-ask). Set only by graph-workflow runners; selects the enabled
-   *  asking-questions session-instruction variant. Unset for every other turn. */
-  askUserQuestionsEnabled?: boolean;
-  /**
-   * Server-derived filesystem-write envelope for this implementer turn, composed
-   * by the graph-workflow implementer runner from the context's authored
-   * placement. Claimed onto the active turn rather than re-read from the event
-   * at dispatch, for the same reason {@link TaskRunActive.fsWritePolicy} is: a
-   * turn that lost its policy between claim and dispatch would run
-   * unrestricted. Absent for every turn outside an owning or read-only
-   * graph-workflow context.
-   */
-  fsWritePolicy?: FsWritePolicy;
 }
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
  *  by a downstream workflow context. */
-export interface TaskRunActive extends ExecutionIntent {
-  executionProfile?: TaskExecutionProfile;
+export interface TaskRunActive extends TaskTurnSpec {
   kind: "task_run";
-  promptText: string;
-  backend: AgentBackendId;
-  modelSelection: BackendModelSelection | null;
   startedAt: string | null;
   /** See {@link ConversationTurnActive.executionAttemptId}. */
   executionAttemptId?: string;
-  outputFormat?: StructuredOutputFormat;
-  systemInstructions?: string;
-  tooling?: PortableMcpConfig;
-  timeoutMs?: number;
-  /**
-   * Server-derived filesystem-write envelope for the turn. Its PRESENCE is what
-   * marks the turn as a write-restricted (validator) lane at the dispatch site,
-   * so it is claimed onto the active turn rather than read from the event
-   * later — a turn that lost it between claim and dispatch would run
-   * unrestricted.
-   */
-  fsWritePolicy?: FsWritePolicy;
-  /** When set, persist this validated structured-output string field as the
-   *  visible assistant text instead of the backend's schema transport text. */
-  structuredOutputTextField?: string;
-  /**
-   * Provenance stamp forwarded onto the persisted assistant TranscriptMessage.
-   * Workflow callers set `source: "workflow"` so a single JSONL transcript can
-   * distinguish workflow-driven turns from user-driven turns without forking
-   * the file. Omit on user-driven turns.
-   */
-  origin?: TranscriptMessageOrigin;
 }
 
 export type ActiveTurn = ConversationTurnActive | TaskRunActive;
@@ -163,12 +73,11 @@ export interface ConversationContext {
   _schemaVersion: 1;
 
   // Identity
-  conversationScope: "session" | "project";
+  target: ConversationTarget;
+
   projectPath: string;
-  projectName: string;
-  sessionName: string;
+
   worktreePath: string;
-  conversationId: string;
 
   // Lifecycle
   createdAt: string;
@@ -221,48 +130,22 @@ export interface ConversationContext {
 // ============================================================
 
 export type ConversationEvent =
-  | {
+  | ({
       type: "SUBMIT_PROMPT";
-      promptText: string;
-      images?: ImagePayload[];
-      backend?: AgentBackendId;
-      modelSelection?: BackendModelSelection;
-      autonomous?: boolean;
-      streamId: string;
-      outputFormat?: StructuredOutputFormat;
-      waitForBackgroundTasks?: boolean;
-      queuedDelivery?: QueuedDeliveryMetadata;
-      documentFeedback?: DocumentFeedbackPayload;
-      notepadFeedback?: readonly NotepadFeedbackPayload[];
-      askUserQuestionsEnabled?: boolean;
-      /** See {@link ConversationTurnActive.fsWritePolicy}. */
-      fsWritePolicy?: FsWritePolicy;
-    }
+      streamId: string | null;
+      executionAttemptId?: string;
+    } & ConversationTurnRequest)
+  | ({ type: "SUBMIT_TASK_RUN"; executionAttemptId?: string } & TaskTurnRequest)
   | {
-      type: "SUBMIT_TASK_RUN";
-      executionClass: ExecutionClass;
-      executionProfile?: TaskExecutionProfile;
-      requiresPrivilegedInstructions?: boolean;
-      promptText: string;
-      backend?: AgentBackendId;
-      modelSelection?: BackendModelSelection;
-      outputFormat?: StructuredOutputFormat;
-      systemInstructions?: string;
-      tooling?: PortableMcpConfig;
-      timeoutMs?: number;
-      /** See {@link TaskRunActive.fsWritePolicy}. */
-      fsWritePolicy?: FsWritePolicy;
-      structuredOutputTextField?: string;
-      origin?: TranscriptMessageOrigin;
+      type: "BACKEND_INIT";
+      backendRef: AgentSessionRef;
+      executionAttemptId?: string;
     }
-  | { type: "BACKEND_INIT"; backendRef: AgentSessionRef }
   | { type: "ASK_QUESTION"; questionId: string; questions: AskQuestionItem[] }
   // Sent by the answer route when a pending question is consumed (answered)
   // while the asking turn is still running, so finalizingTurn's guard sees
   // null and settles to idle instead of waitingForInput.
-  | { type: "CLEAR_PENDING_QUESTION" }
-  | { type: "PROMPT_COMPLETED"; result: PromptActorResult }
-  | { type: "PROMPT_FAILED"; error: string }
+  | { type: "CLEAR_PENDING_QUESTION"; questionId: string }
   | {
       type: "MODEL_SELECTION_RESOLVED";
       modelSelection: BackendModelSelection;
@@ -270,7 +153,11 @@ export type ConversationEvent =
       acknowledge(): void;
       reject(error: Error): void;
     }
-  | { type: "ABORT_TURN"; reason: "timeout" | "user" | "shutdown" }
+  | {
+      type: "ABORT_TURN";
+      reason: import("./turn-spec").TurnCancelReason;
+      executionAttemptId?: string;
+    }
   // The debug workflow's single machine entry point: the debug adapter maps
   // its lifecycle methods onto commands, and the machine applies them with
   // the pure reducer in `@/lib/workflows/debug/commands`.
@@ -282,20 +169,16 @@ export type ConversationEvent =
 // Input / Output
 // ============================================================
 
-export interface ConversationInput {
-  conversationScope?: "session" | "project";
+export interface ConversationInput extends Omit<
+  ConversationDurableSeed,
+  "debugMode"
+> {
+  target: ConversationTarget;
+
   projectPath: string;
-  projectName: string;
-  sessionName: string;
+
   worktreePath: string;
-  conversationId: string;
-  createdAt: string;
-  forkedFrom: ForkedFrom;
-  role: ConversationRole;
-  transcriptPath: string | null;
-  agentBackend: AgentBackendId;
-  backendRef: AgentSessionRef | null;
-  promptCount: number;
+
   /**
    * Required construction-time persistence choice. `ephemeral` marks a
    * synthetic lane with no persisted `ConversationState` record and derives
@@ -409,6 +292,8 @@ export interface PromptActorResult {
 
 /** Input for the executePrompt actor. */
 export interface ExecutePromptInput {
+  executionAttemptId?: string;
+  turn: ConversationTurnSpec;
   /**
    * The runtime's construction-time persistence choice, threaded from
    * {@link ConversationInput.persistence} into every invoked actor so an actor
@@ -417,12 +302,12 @@ export interface ExecutePromptInput {
    * decide, exactly like the runtime constructor.
    */
   persistence: ConversationPersistenceMode;
-  conversationScope?: "session" | "project";
+  target: ConversationTarget;
+
   projectPath: string;
-  projectName: string;
-  sessionName: string;
+
   worktreePath: string;
-  conversationId: string;
+
   transcriptPath: string;
   agentBackend: AgentBackendId;
   backendRef: AgentSessionRef | null;
@@ -432,51 +317,23 @@ export interface ExecutePromptInput {
   promptCount: number;
   forkedFrom: ForkedFrom;
   role: ConversationRole;
-  promptText: string;
-  images: ImagePayload[];
   streamId: string | null;
-  modelSelection: BackendModelSelection | null;
   /** Report the final admitted selection before provider dispatch so the
    *  machine can make restart replay independent of mutable defaults. */
   onModelSelectionResolved(
     modelSelection: BackendModelSelection,
   ): Promise<void>;
-  autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
-  outputFormat?: StructuredOutputFormat;
-  /**
-   * Opt-in: hold this turn open until its in-flight waitable background tasks
-   * settle (or the wait times out). Forwarded to the backend turn input. Set
-   * only by the graph-workflow implementer runner.
-   */
-  waitForBackgroundTasks?: boolean;
-  /** Set only for auto-drained queued next-turn deliveries; forwarded so the
-   *  executor can confirm acceptance and mark the claimed queue rows delivered.
-   *  Unset for normal user-initiated turns. */
-  queuedDelivery?: QueuedDeliveryMetadata;
-  /** Structured document-review feedback for this turn. When set, the user-turn
-   *  transcript records a `document_feedback` block and the agent-facing prompt
-   *  text is derived from it when `promptText` is empty. Unset otherwise. */
-  documentFeedback?: DocumentFeedbackPayload;
-  /** Notepad comment dispatches for this turn, one per notepad. Each records a
-   *  `notepad_feedback` block and contributes derived prose when `promptText`
-   *  is empty. Unset otherwise. */
-  notepadFeedback?: readonly NotepadFeedbackPayload[];
-  /** Effective ask-user-questions availability for this turn (resolved toggle
-   *  AND lane-can-ask). Selects the enabled asking-questions session-instruction
-   *  variant. Set only by graph-workflow runners; unset for every other turn. */
-  askUserQuestionsEnabled?: boolean;
-  /** See {@link ConversationTurnActive.fsWritePolicy}. */
-  fsWritePolicy?: FsWritePolicy;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */
 export interface PrepareTurnInput {
+  executionAttemptId?: string;
   /** Construction-time persistence choice (see {@link ExecutePromptInput.persistence}). */
   persistence: ConversationPersistenceMode;
   projectPath: string;
-  sessionName: string;
-  conversationId: string;
+  target: ConversationTarget;
+
   worktreePath: string;
   transcriptPath: string | null;
 }
@@ -487,59 +344,40 @@ export interface PrepareTurnInput {
  *  primitive's `task_run` request; field set is intentionally narrower than
  *  ExecutePromptInput because there is no SDK streaming, no image flow, and
  *  no debug-mode context. */
-export interface RunTaskRunInput extends ExecutionIntent {
-  executionProfile?: TaskExecutionProfile;
+export interface RunTaskRunInput {
+  executionAttemptId?: string;
+  turn: TaskTurnSpec;
   /** Construction-time persistence choice (see {@link ExecutePromptInput.persistence}). */
   persistence: ConversationPersistenceMode;
   projectPath: string;
-  projectName: string;
-  sessionName: string;
+  target: ConversationTarget;
+
   worktreePath: string;
-  conversationId: string;
+
   agentBackend: AgentBackendId;
   /** Persisted backend session ref captured by prior turns on this actor.
    *  Forwarded to the runner as `resumeRef` to preserve Codex thread
    *  continuity / Claude session continuity across calls. */
   backendRef: AgentSessionRef | null;
-  promptText: string;
-  modelSelection: BackendModelSelection | null;
   /** See {@link ExecutePromptInput.onModelSelectionResolved}. */
   onModelSelectionResolved(
     modelSelection: BackendModelSelection,
   ): Promise<void>;
-  outputFormat?: StructuredOutputFormat;
-  systemInstructions?: string;
-  tooling?: PortableMcpConfig;
-  timeoutMs?: number;
-  /** See {@link TaskRunActive.fsWritePolicy}. */
-  fsWritePolicy?: FsWritePolicy;
-  /** See {@link TaskRunActive.structuredOutputTextField}. */
-  structuredOutputTextField?: string;
-  /** Forwarded onto the appended assistant TranscriptMessage so workflow-driven
-   *  turns are distinguishable from user-driven turns in the shared JSONL. */
-  origin?: TranscriptMessageOrigin;
-}
-
-/** Input for the verifyCleanup actor. */
-export interface VerifyCleanupInput {
-  worktreePath: string;
-  conversationId: string;
-  cleanup: DebugCleanupResultOutput;
-}
-
-/** Output from the verifyCleanup actor. */
-export interface VerifyCleanupOutput {
-  ok: boolean;
-  failedConditions: string[];
-  missingFiles: string[];
-  remediationPrompt: string | null;
 }
 
 /** Attempt-scoped finalization preserves the claim until dispatch has stopped. */
 export interface FinalizeQueuedDeliveryInput {
   projectPath: string;
-  sessionName: string;
-  conversationId: string;
+  target: ConversationTarget;
+
   persistence: ConversationInput["persistence"];
   queuedDelivery: QueuedDeliveryMetadata;
+}
+
+export interface SettleTurnInput extends Omit<
+  FinalizeQueuedDeliveryInput,
+  "queuedDelivery"
+> {
+  executionAttemptId?: string;
+  queuedDelivery?: QueuedDeliveryMetadata;
 }

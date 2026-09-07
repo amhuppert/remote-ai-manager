@@ -1,3 +1,7 @@
+import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
+
+import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
+
 /**
  * R10.1 — the composed payload at the FINAL provider invocation.
  *
@@ -72,17 +76,10 @@ import {
   buildAgentProfileSnapshot,
 } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
-import {
-  mapToTaskRunResult,
-  type ExecuteWorkflowTaskRunInput,
-  type TaskRunResult,
-} from "@/lib/workflows/conversation/execute-workflow-task-run";
-import {
-  runTaskRunTurnForMachine,
-  setActorDeps,
-  _resetActorDepsForTesting,
-} from "@/lib/workflows/conversation/actor-implementations";
-import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import { type ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
+
+import { createActorDependenciesFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import { WORKFLOW_ROLE_CONTRACT_HEADING } from "./role-instructions";
 import { createValidatorRunner } from "./validator-runner";
 import type { ValidatorExecutionStrategy } from "./lane-continuity";
@@ -142,13 +139,12 @@ beforeEach(() => {
   claudeQueryMock.mockImplementation(() => claudeStream());
 });
 
-afterEach(() => {
-  _resetActorDepsForTesting();
-});
+afterEach(() => {});
 
 function taskRunnerFor(backend: AgentBackendId): AgentTaskRunner {
   if (backend === "claude") {
     return createScriptedClaudeTaskRunner({
+      getServerUrl: () => "http://cc-role-transport.test:4312",
       runQuery: (args) => claudeQueryMock(args) as AsyncIterable<never>,
     });
   }
@@ -165,42 +161,25 @@ function taskRunnerFor(backend: AgentBackendId): AgentTaskRunner {
 function productionTaskRun(
   backend: AgentBackendId,
 ): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
-  setActorDeps(
-    createActorImplementationDepsFixture({
-      getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
-    }),
-  );
+  const actorDependencies = createActorDependenciesFixture({
+    getTaskRunner: vi.fn(() => taskRunnerFor(backend)),
+  });
 
   return async (input) => {
-    const actorResult = await runTaskRunTurnForMachine({
-      executionClass: input.executionClass,
-      executionProfile: input.executionProfile,
-      requiresPrivilegedInstructions: input.requiresPrivilegedInstructions,
-      persistence: "ephemeral",
-      projectPath: input.projectPath,
-      projectName: "repo",
-      sessionName: input.sessionName,
-      worktreePath: "/repo",
-      conversationId: input.conversationId,
-      agentBackend: backend,
-      backendRef: null,
-      promptText: input.prompt,
-      modelSelection: input.modelSelection ?? null,
-      onModelSelectionResolved: async () => {},
-      ...(input.outputFormat !== undefined
-        ? { outputFormat: input.outputFormat }
-        : {}),
-      ...(input.systemInstructions !== undefined
-        ? { systemInstructions: input.systemInstructions }
-        : {}),
-      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    const fixture = await createLifecycleFixture({
+      binding: input.binding,
+      conversation: { agentBackend: backend, backendRef: null },
+      actorDeps: actorDependencies,
     });
-
-    return mapToTaskRunResult(
-      actorResult,
-      actorResult.error,
-      input.outputFormat,
-    );
+    try {
+      return await fixture.executeWorkflowTaskRun({
+        ...input,
+        binding: { ...input.binding, worktreePath: WORKTREE_PATH },
+        resumeRef: input.resumeRef ?? null,
+      });
+    } finally {
+      await fixture.close();
+    }
   };
 }
 
@@ -300,7 +279,7 @@ async function runValidator(
 
   // A run that never reached the provider would surface here as an infra error,
   // which would make the channel assertions below vacuous.
-  expect(result.result.kind).toBe("pass");
+  expect(result.result.kind, JSON.stringify(result.result)).toBe("pass");
 }
 
 /** The system-prompt append Claude's SDK was actually handed. */
@@ -374,3 +353,5 @@ describe("validator role-contract transport (R10.1)", () => {
     expect(prompt).toContain("Context Validation");
   });
 });
+
+afterEach(() => resetTaskRuntime());

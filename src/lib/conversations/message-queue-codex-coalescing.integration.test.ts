@@ -1,3 +1,5 @@
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { createQueueAdmissionFixture } from "@/lib/workflows/conversation/testing/queue-admission-fixture";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 
 // Logging is module-load-time infrastructure; mocking it is the sanctioned
@@ -28,7 +30,6 @@ import {
   drainConversationQueue,
   queuedBatchToSubmitPrompt,
   type ConversationQueueDeps,
-  type DrainSelf,
 } from "./message-queue-drain";
 import {
   setConversationProfileAdmissionDeps,
@@ -137,8 +138,20 @@ function makeQueueDeps(store: FakeStore): {
  * queue the enqueues mutated. Only the actor `self` is faked, at the genuine
  * actor-dispatch I/O boundary.
  */
-function makeDrainDeps(service: MessageQueueService): ConversationQueueDeps {
+function makeDrainDeps(
+  service: MessageQueueService,
+  dispatched: ConversationEvent[],
+): ConversationQueueDeps {
   return {
+    submitTurn: createQueueAdmissionFixture((input) => {
+      if (input.turn.kind === "task_run")
+        throw new Error("Expected queued conversation turn");
+      dispatched.push({
+        ...input.turn,
+        type: "SUBMIT_PROMPT",
+        streamId: input.transport?.streamId ?? null,
+      });
+    }),
     claimNextTurnBatch: (input) => service.claimNextTurnBatch(input),
     markPending: (input) => service.markPending(input),
     markDelivered: (input) => service.markDelivered(input),
@@ -151,35 +164,13 @@ function makeDrainDeps(service: MessageQueueService): ConversationQueueDeps {
   };
 }
 
-/**
- * Fake actor `self` that is always able to accept the dispatched event and
- * captures it. This is the only fake at the actor seam; the event it captures
- * is produced by the real drain logic.
- */
-function makeCapturingSelf(): {
-  self: DrainSelf;
-  dispatched: ConversationEvent[];
-} {
-  const dispatched: ConversationEvent[] = [];
-  const self: DrainSelf = {
-    getSnapshot() {
-      return { can: () => true };
-    },
-    send(event) {
-      dispatched.push(event);
-    },
-  };
-  return { self, dispatched };
-}
-
-const DRAIN_CONTEXT: Pick<
-  ConversationContext,
-  "projectPath" | "sessionName" | "conversationId" | "projectName"
-> = {
+const DRAIN_CONTEXT: Pick<ConversationContext, "projectPath" | "target"> = {
   projectPath: KEY.projectPath,
-  sessionName: KEY.sessionName,
-  conversationId: KEY.conversationId,
-  projectName: "my-project",
+  target: targetFromStoreSessionName(
+    "my-project",
+    KEY.sessionName,
+    KEY.conversationId,
+  ),
 };
 
 describe("Codex next-turn coalescing flow (integration)", () => {
@@ -189,8 +180,8 @@ describe("Codex next-turn coalescing flow (integration)", () => {
     const store: FakeStore = { conversation: makeRunningConversation() };
     const { deps, broadcasts } = makeQueueDeps(store);
     const service = createMessageQueueService(deps);
-    const drainDeps = makeDrainDeps(service);
-    const { self, dispatched } = makeCapturingSelf();
+    const dispatched: ConversationEvent[] = [];
+    const drainDeps = makeDrainDeps(service, dispatched);
 
     // --- Step 1: two messages queued during a running Codex turn (req 1.3) ---
     const first = await service.enqueue({
@@ -211,7 +202,7 @@ describe("Codex next-turn coalescing flow (integration)", () => {
     ]);
 
     // --- Step 2: turn finishes → drain runs (req 2.2, 2.3, 3.1, 3.2) ---
-    await drainConversationQueue(self, DRAIN_CONTEXT, drainDeps);
+    await drainConversationQueue(DRAIN_CONTEXT, drainDeps);
 
     // Exactly ONE next turn started.
     expect(dispatched).toHaveLength(1);

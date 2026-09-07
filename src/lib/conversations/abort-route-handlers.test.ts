@@ -1,3 +1,5 @@
+import { conversationTargetStoreSessionName } from "./conversation-target";
+import type { ConversationAddress } from "@/lib/workflows/conversation/turn-spec";
 import { describe, expect, it } from "vitest";
 import {
   createCapturingLogger,
@@ -62,20 +64,20 @@ function recorder(options: { running?: string[]; machineAccepts?: boolean }) {
     signalled,
     sent,
     log,
-    abortConversation(conversationId: string): boolean {
-      if (!running.has(conversationId)) return false;
-      running.delete(conversationId);
-      signalled.push(conversationId);
-      return true;
-    },
-    sendConversationEvent(
-      projectPath: string,
-      sessionName: string,
-      conversationId: string,
-      event: ConversationEvent,
-    ): boolean {
-      sent.push({ projectPath, sessionName, conversationId, event });
-      return options.machineAccepts ?? true;
+    requestConversationStop(address: ConversationAddress) {
+      const conversationId = address.target.conversationId;
+      const requested = running.has(conversationId);
+      if (requested) {
+        running.delete(conversationId);
+        signalled.push(conversationId);
+      }
+      sent.push({
+        projectPath: address.projectPath,
+        sessionName: conversationTargetStoreSessionName(address.target),
+        conversationId,
+        event: { type: "ABORT_TURN", reason: "user" },
+      });
+      return { requested, settled: Promise.resolve() };
     },
   };
 }
@@ -90,8 +92,7 @@ function projectHandlers(rec: ReturnType<typeof recorder>) {
         ? conversation(conversationId)
         : null;
     },
-    abortConversation: rec.abortConversation,
-    sendConversationEvent: rec.sendConversationEvent,
+    requestConversationStop: rec.requestConversationStop,
     log: rec.log,
   });
 }
@@ -204,8 +205,7 @@ describe("session conversation abort keeps its shape", () => {
       async getSession() {
         return { conversations: [conversation(CONV)] };
       },
-      abortConversation: rec.abortConversation,
-      sendConversationEvent: rec.sendConversationEvent,
+      requestConversationStop: rec.requestConversationStop,
       log: rec.log,
     });
   }

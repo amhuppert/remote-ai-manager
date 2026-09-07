@@ -1,10 +1,10 @@
+import type { PromptStreamResult } from "@/lib/workflows/conversation/turn-result";
 import { createLogger } from "@/lib/logging";
 import { readConfig } from "@/lib/config/loader";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import {
   executePromptStream,
   BackendMismatchError,
-  type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
 import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import {
@@ -13,7 +13,8 @@ import {
 } from "@/lib/state-store";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
-import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import type { ConversationBinding } from "@/lib/workflows/conversation/turn-spec";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
@@ -142,7 +143,7 @@ function defaultDeps(): ExecuteProjectPromptStreamDeps {
  * execution target, get-or-creates the project conversation, enforces the
  * backend lock on the project record, synthesizes a sentinel `SessionState`,
  * and delegates the turn to the shared `executePromptStream` — supplying an
- * explicit `actorInput` so the conversation machine binds to the repo-root
+ * explicit durable binding so the conversation machine binds to the repo-root
  * worktree without a host session. Performs NO worktree creation, clean check,
  * init-script, dev-server, or pre-merge flow.
  */
@@ -243,24 +244,17 @@ export function createProjectPromptExecutor(
       lastActivityAt: conversation.lastActivityAt,
     });
 
-    const actorInput: EnsureActorInputData = {
-      conversationScope: "project",
-      projectName: deps.getProjectDisplayName(projectPath),
-      sessionWorktreePath: projectPath,
+    const binding: ConversationBinding = {
       // A real project ConversationState record backs this lane.
-      persistence: "durable",
-      conversation: {
-        createdAt: conversation.createdAt,
-        forkedFrom: conversation.forkedFrom ?? null,
-        role: conversation.role ?? null,
-        transcriptPath: conversation.transcriptPath ?? null,
-        agentBackend: conversation.agentBackend ?? "claude",
-        backendRef: conversation.backendRef ?? null,
-        promptCount: conversation.promptCount ?? 0,
-        debugMode: conversation.debugMode?.active
-          ? conversation.debugMode
-          : null,
+      kind: "durable",
+      address: {
+        projectPath,
+        target: projectConversationTarget(
+          deps.getProjectDisplayName(projectPath),
+          conversation.id,
+        ),
       },
+      worktreePath: projectPath,
     };
 
     return deps.executePromptStream(
@@ -273,7 +267,7 @@ export function createProjectPromptExecutor(
       input.images,
       {
         executionTarget,
-        actorInput,
+        binding,
       },
     );
   }

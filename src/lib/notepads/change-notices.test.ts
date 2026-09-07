@@ -138,12 +138,70 @@ async function addOpenComment(
 }
 
 describe("recording a delivery", () => {
+  it("acknowledges only the comment marker captured for the rendered reference", async () => {
+    const notepad = await createNotepad();
+    const receipt = {
+      notepadId: notepad.id,
+      revision: 1,
+      openComments: await comments.openCommentMarker(notepad.id),
+    };
+    await addOpenComment(notepad.id, "Arrived after expansion");
+    await tracker.recordDelivered({
+      conversationId: "conversation-1",
+      notepads: [receipt],
+    });
+    expect(
+      (await tracker.listTracked("conversation-1"))[0]?.seen.openComments,
+    ).toEqual({ count: 0, latestCreatedAt: null });
+    expect((await tracker.prepare("conversation-1")).block).toContain(
+      "changed: comments",
+    );
+  });
+
+  it("uses prepared references as a local baseline without recording them", async () => {
+    const notepad = await createNotepad();
+    await tracker.recordDelivered({
+      conversationId: "conversation-1",
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: { count: 0, latestCreatedAt: null },
+        },
+      ],
+    });
+    await agentEdit(notepad.id, "Rendered updated content");
+    const references = [
+      {
+        notepadId: notepad.id,
+        revision: 2,
+        openComments: { count: 0, latestCreatedAt: null },
+      },
+    ];
+    expect(
+      (await tracker.prepare("conversation-1", references)).block,
+    ).toBeNull();
+    expect(
+      (await tracker.listTracked("conversation-1"))[0]?.seen.revision,
+    ).toBe(1);
+    await addOpenComment(notepad.id, "After rendered content");
+    expect(
+      (await tracker.prepare("conversation-1", references)).block,
+    ).toContain("changed: comments");
+  });
+
   it("tracks a notepad for the conversation its reference was expanded for", async () => {
     const notepad = await createNotepad();
 
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: notepad.revision }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: notepad.revision,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     const tracked = await tracker.listTracked("conversation-1");
@@ -161,7 +219,13 @@ describe("recording a delivery", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: notepad.revision }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: notepad.revision,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     expect(await tracker.listTracked("conversation-2")).toEqual([]);
@@ -175,7 +239,13 @@ describe("recording a delivery", () => {
 
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     const tracked = await tracker.listTracked("conversation-1");
@@ -189,7 +259,13 @@ describe("recording a delivery", () => {
 
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: notepad.revision }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: notepad.revision,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     expect(
@@ -204,8 +280,16 @@ describe("recording a delivery", () => {
     await tracker.recordDelivered({
       conversationId: "conversation-1",
       notepads: [
-        { notepadId: first.id, revision: 1 },
-        { notepadId: second.id, revision: 1 },
+        {
+          notepadId: first.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(first.id),
+        },
+        {
+          notepadId: second.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(second.id),
+        },
       ],
     });
 
@@ -220,14 +304,26 @@ describe("recording a delivery", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
     await agentEdit(notepad.id, "# Release checklist\n\nRewritten.");
 
     clock = "2026-08-28T11:30:00.000Z";
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 2 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 2,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     const tracked = await tracker.listTracked("conversation-1");
@@ -241,7 +337,13 @@ describe("recording a delivery", () => {
 
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     expect(await tracker.listTracked("conversation-1")).toEqual([]);
@@ -253,7 +355,13 @@ describe("the read seam prompt assembly consumes", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     const reloaded = createNotepadDeliveryTracker({
@@ -274,7 +382,13 @@ describe("the read seam prompt assembly consumes", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
     await agentEdit(
       notepad.id,
@@ -297,7 +411,13 @@ describe("the read seam prompt assembly consumes", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
 
     await notepads.delete(notepad.id);
@@ -310,7 +430,13 @@ describe("preparing the change notice", () => {
   async function deliver(notepadId: string, revision: number) {
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId, revision }],
+      notepads: [
+        {
+          notepadId,
+          revision,
+          openComments: await comments.openCommentMarker(notepadId),
+        },
+      ],
     });
   }
 
@@ -453,8 +579,16 @@ describe("preparing the change notice", () => {
     await tracker.recordDelivered({
       conversationId: "conversation-1",
       notepads: [
-        { notepadId: first.id, revision: 1 },
-        { notepadId: second.id, revision: 1 },
+        {
+          notepadId: first.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(first.id),
+        },
+        {
+          notepadId: second.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(second.id),
+        },
       ],
     });
     await agentEdit(first.id, "First rewritten.");
@@ -473,7 +607,13 @@ describe("settle gating", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
     await agentEdit(notepad.id, "# Release checklist\n\nRewritten.");
     return notepad;
@@ -525,7 +665,13 @@ describe("settle gating", () => {
     const notepad = await createNotepad();
     await tracker.recordDelivered({
       conversationId: "conversation-1",
-      notepads: [{ notepadId: notepad.id, revision: 1 }],
+      notepads: [
+        {
+          notepadId: notepad.id,
+          revision: 1,
+          openComments: await comments.openCommentMarker(notepad.id),
+        },
+      ],
     });
     await addOpenComment(notepad.id, "Name the rollback owner.");
 
