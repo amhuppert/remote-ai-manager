@@ -220,6 +220,89 @@ async function openDetail(hook: string) {
 }
 
 describe("MemoryLibraryPanel — browse", () => {
+  it("sorts by updated date, creation date, or hook and keeps that order through search and review", async () => {
+    const alpha = note({
+      id: "alpha",
+      slug: "alpha",
+      hook: "Alpha shared lesson",
+      updatedAt: "2026-09-02T00:00:00.000Z",
+      createdAt: "2026-08-01T00:00:00.000Z",
+    });
+    const beta = note({
+      id: "beta",
+      slug: "beta",
+      hook: "Beta shared lesson",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    });
+    const zeta = note({
+      id: "zeta",
+      slug: "zeta",
+      hook: "Zeta other lesson",
+      body: "An unrelated detail.",
+      updatedAt: "2026-09-03T00:00:00.000Z",
+      createdAt: "2026-08-02T00:00:00.000Z",
+    });
+    stubList([alpha, beta, zeta]);
+    stubReviewQueue([
+      queueEntry({ note: zeta }),
+      queueEntry({ note: alpha }),
+      queueEntry({ note: beta }),
+    ]);
+    renderPanel();
+    await screen.findByTestId("memory-row-alpha");
+    const order = () =>
+      screen
+        .getAllByRole("button", { name: /^Open memory note / })
+        .map((row) => row.getAttribute("data-testid"));
+    expect(order()).toEqual([
+      "memory-row-zeta",
+      "memory-row-alpha",
+      "memory-row-beta",
+    ]);
+
+    const user = userEvent.setup();
+    async function chooseSort(label: string) {
+      await user.click(
+        screen.getByRole("combobox", { name: "Sort memory notes" }),
+      );
+      await user.click(screen.getByRole("option", { name: label }));
+    }
+    await chooseSort("Newest created");
+    expect(order()).toEqual([
+      "memory-row-beta",
+      "memory-row-zeta",
+      "memory-row-alpha",
+    ]);
+    await chooseSort("Oldest updated");
+    expect(order()).toEqual([
+      "memory-row-beta",
+      "memory-row-alpha",
+      "memory-row-zeta",
+    ]);
+    await chooseSort("Alphabetical");
+    expect(order()).toEqual([
+      "memory-row-alpha",
+      "memory-row-beta",
+      "memory-row-zeta",
+    ]);
+
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search memory notes" }),
+      "shared",
+    );
+    expect(order()).toEqual(["memory-row-alpha", "memory-row-beta"]);
+    await user.clear(
+      screen.getByRole("searchbox", { name: "Search memory notes" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "review" }));
+    expect(order()).toEqual([
+      "memory-row-alpha",
+      "memory-row-beta",
+      "memory-row-zeta",
+    ]);
+  });
+
   it("renders each note's exact hook with its scope, kind, and author", async () => {
     stubList();
     stubReviewQueue();
@@ -1000,6 +1083,12 @@ describe("native-memory disclosure", () => {
     const notice = await screen.findByTestId("native-memory-disclosure");
     for (const exception of exceptions) {
       expect(notice.textContent).toContain(exception.label);
+      const disclosure = within(notice).getByRole("button", {
+        name: `${exception.label} native memory is also active`,
+      });
+      expect(disclosure).toHaveAttribute("aria-expanded", "false");
+      await userEvent.setup().click(disclosure);
+      expect(disclosure).toHaveAttribute("aria-expanded", "true");
       expect(notice.textContent).toContain(exception.reason);
     }
   });

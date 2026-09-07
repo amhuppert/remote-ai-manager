@@ -59,6 +59,74 @@ const due: MemoryNote = {
   reviewAfter: "2026-08-15T00:00:00.000Z",
 };
 
+const libraryNotes: MemoryNote[] = [
+  {
+    ...base,
+    id: "validation",
+    slug: "session-validation-wrapper",
+    hook: "Session validation runs the registered checkout’s scripts with the session worktree as cwd; wrapper edits are only exercised after merging.",
+    indexMode: "always",
+    updatedAt: "2026-09-07T00:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "schema",
+    slug: "build-opens-live-db",
+    hook: "Next.js builds open the live database. A schema version raised on main can break an older branch at an unrelated route.",
+    indexMode: "always",
+    updatedAt: "2026-09-06T22:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "dev-server",
+    slug: "verify-session-server",
+    kind: "procedure",
+    hook: "Run cctl dev ensure before browser verification and use the URL returned for this session.",
+    updatedAt: "2026-09-06T20:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "style",
+    slug: "prefer-early-returns",
+    scope: "global",
+    projectPath: null,
+    kind: "preference",
+    createdBy: "user",
+    hook: "Prefer early returns to nested conditionals so the main path stays easy to read.",
+    updatedAt: "2026-09-06T18:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "env",
+    slug: "macos-process-environment",
+    hook: "macOS ps -E flattens environment records; use sysctl KERN_PROCARGS2 when exact values matter.",
+    indexMode: "search-only",
+    updatedAt: "2026-09-06T15:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "query",
+    slug: "query-survives-remount",
+    hook: "Mount-time query mutations can lose their result on remount and stay pending. Use a query for data the view needs to retain.",
+    updatedAt: "2026-09-06T12:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "tests",
+    slug: "require-matched-tests",
+    kind: "procedure",
+    hook: "Use --require-match when citing a scoped test pass; a successful run can otherwise contain no matching tests.",
+    updatedAt: "2026-09-05T20:00:00.000Z",
+  },
+  {
+    ...base,
+    id: "focus",
+    slug: "store-driven-dialog-focus",
+    hook: "Store-opened dialogs need an explicit return target when the trigger blurs before the focus scope mounts.",
+    updatedAt: "2026-09-05T10:00:00.000Z",
+  },
+];
+
 function Preview(args: ComponentProps<typeof MemoryLibraryPanel>) {
   const [client] = useState(
     () =>
@@ -71,7 +139,10 @@ function Preview(args: ComponentProps<typeof MemoryLibraryPanel>) {
   );
   return (
     <QueryClientProvider client={client}>
-      <div className="flex h-[85vh] min-h-0 flex-col gap-lg bg-bg-void p-xl max-768:p-md">
+      <div
+        className="flex h-screen min-h-0 flex-col gap-lg bg-bg-void p-xl max-768:p-md"
+        style={args.layout === "compact" ? { maxWidth: 420 } : undefined}
+      >
         <h1 className="font-display text-[1.5rem] font-extrabold text-text-primary">
           Memory
         </h1>
@@ -84,7 +155,7 @@ function Preview(args: ComponentProps<typeof MemoryLibraryPanel>) {
 const meta = {
   title: "Memory/Library",
   component: MemoryLibraryPanel,
-  parameters: { layout: "fullscreen" },
+  parameters: { layout: "fullscreen", a11y: { test: "error" } },
   args: {
     projectName: "cc",
     sessionName: null,
@@ -96,7 +167,9 @@ const meta = {
   beforeEach: (context) => {
     const api = installFetchFixture();
     let notes =
-      context.name === "Empty" ? [] : [base, proposal, candidate, due];
+      context.name === "Empty"
+        ? []
+        : [base, proposal, candidate, due, ...libraryNotes];
     api.reply("GET", "/api/agent-backends", {
       json: { backends: listBackendCatalogEntries() },
     });
@@ -270,6 +343,8 @@ export const PromotionCandidates: Story = {
   args: { initialQueue: "candidates" },
 };
 export const ReviewDue: Story = { args: { initialQueue: "review" } };
+export const NeedsAttention: Story = { args: { initialQueue: "attention" } };
+export const Compact: Story = { args: { layout: "compact" } };
 export const Empty: Story = {};
 export const Loading: Story = {};
 export const Error: Story = {};

@@ -15,6 +15,28 @@ import {
   SegmentedControlItem,
 } from "@/components/ui/SegmentedControl";
 import { Button, type ButtonProps } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { FormInput } from "@/components/ui/FormField";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/Collapsible";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
+import {
+  AlertTriangleIcon,
+  ArrowUpRightIcon,
+  ChevronRightIcon,
+  ChevronDownIcon,
+  CheckIcon,
+  SearchIcon,
+} from "@/components/icons";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
 import { useBackendCatalogQuery } from "@/lib/agent-backends/queries";
@@ -28,6 +50,7 @@ import {
 import type { MemoryScopeRef } from "@/lib/memory/query-keys";
 import type {
   MemoryLifecycle,
+  MemoryKind,
   MemoryNote,
   MemoryReviewQueueEntry,
   MemoryScope,
@@ -150,8 +173,8 @@ export default function MemoryLibraryPanel({
   return (
     <div className={PANEL_CLASS} data-testid="memory-library-panel">
       <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-md py-sm">
-        <span className="font-mono text-[0.72rem] font-semibold tracking-[0.05em] text-text-secondary uppercase">
-          Memory
+        <span className="font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase">
+          {layout === "page" ? "Shared memory" : "Memory"}
         </span>
         {layout === "compact" ? (
           <Link
@@ -162,9 +185,10 @@ export default function MemoryLibraryPanel({
                 window.location.assign(`/memory?${expandedHref}`);
               });
             }}
-            className="inline-flex items-center max-768:min-h-[44px] font-mono text-[0.7rem] text-text-primary underline focus-visible:outline-2 focus-visible:outline-cyan"
+            className="inline-flex items-center gap-xs max-768:min-h-[44px] font-mono text-[0.7rem] text-text-primary no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
           >
             Open memory screen
+            <ArrowUpRightIcon size={14} />
           </Link>
         ) : null}
         <SegmentedControl
@@ -210,7 +234,7 @@ export default function MemoryLibraryPanel({
       >
         <div
           className={cn(
-            "min-h-0 min-w-0 flex-col",
+            "@container min-h-0 min-w-0 flex-col",
             openNoteId !== null
               ? layout === "page"
                 ? "flex w-2/5 max-1180:hidden"
@@ -259,7 +283,7 @@ function isPanelView(value: string): value is MemoryPanelView {
  * disable mechanism exists; where none does, the operator is reading a Library
  * that is not the whole story, and has to be told so without going looking.
  *
- * It sits above the view switch rather than inside either view because it is a
+ * It sits outside either view because it is a
  * property of the system, not of a note list or of one conversation's block —
  * and deliberately OUTSIDE the Index Preview's `<pre>`, which relays the
  * composed block verbatim and must keep matching it byte for byte.
@@ -275,20 +299,44 @@ function NativeMemoryDisclosure(): React.JSX.Element | null {
   return (
     <div
       data-testid="native-memory-disclosure"
-      className="shrink-0 border-0 border-b border-solid border-border-subtle bg-amber-glow px-md py-sm font-mono text-[0.72rem] text-amber"
+      className="shrink-0 border-0 border-b border-solid border-border-subtle bg-bg-base font-mono text-[0.7rem] leading-relaxed text-text-secondary"
     >
       {exceptions.map((exception) => (
-        <p key={exception.backend} className="m-0">
-          {exception.label} still runs its own native memory beside this
-          library: {exception.reason}.
-        </p>
+        <Collapsible
+          key={exception.backend}
+          onOpenChange={(open) =>
+            logger.info("memory.library.disclosure_toggled", {
+              backend: exception.backend,
+              open,
+            })
+          }
+        >
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="group flex w-full items-center gap-sm border-0 bg-bg-base px-lg py-sm text-left font-mono text-[0.7rem] text-text-primary hover:bg-bg-surface focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px] max-768:min-h-[44px]"
+            >
+              <span className="shrink-0 text-amber" aria-hidden="true">
+                <AlertTriangleIcon size={16} />
+              </span>
+              <span>{exception.label} native memory is also active</span>
+              <ChevronDownIcon
+                size={14}
+                className="ml-auto shrink-0 text-text-secondary group-data-[state=open]:rotate-180"
+              />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <p className="px-lg pb-md">{exception.reason}.</p>
+          </CollapsibleContent>
+        </Collapsible>
       ))}
     </div>
   );
 }
 
 const PANEL_CLASS =
-  "flex min-h-0 flex-1 flex-col rounded-b-lg border border-solid border-border-subtle bg-bg-surface";
+  "@container flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-solid border-border-default bg-bg-surface";
 
 // ---------------------------------------------------------------------------
 // Browse
@@ -298,6 +346,18 @@ const PANEL_CLASS =
 type MemoryStatusFilter = "active" | "review" | "proposed" | "archived";
 export type MemoryQueue = MemoryStatusFilter | "candidates" | "attention";
 type ScopeFilter = "all" | MemoryScope;
+
+const SORT_OPTIONS = {
+  updated: "Recently updated",
+  created: "Newest created",
+  oldest: "Oldest updated",
+  alphabetical: "Alphabetical",
+} as const;
+type MemorySort = keyof typeof SORT_OPTIONS;
+
+function isMemorySort(value: string): value is MemorySort {
+  return Object.hasOwn(SORT_OPTIONS, value);
+}
 
 interface MemoryBrowseViewProps {
   scopeRef: MemoryScopeRef;
@@ -329,6 +389,7 @@ function MemoryBrowseView({
   );
   const [attention, setAttention] = useState(initialQueue === "attention");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<MemorySort>("updated");
 
   /**
    * The badge is a navigation, not one more filter. Whatever narrowing is in
@@ -344,6 +405,23 @@ function MemoryBrowseView({
     setCandidatesOnly(true);
     setAttention(false);
     onQueueChange("candidates");
+    logger.info("memory.library.queue_selected", {
+      queue: "candidates",
+      projectName: scopeRef.projectName,
+    });
+  }
+
+  function openReviewQueue(next: "proposed" | "review"): void {
+    setSearch("");
+    setScopeFilter("all");
+    setCandidatesOnly(false);
+    setAttention(false);
+    setStatus(next);
+    onQueueChange(next);
+    logger.info("memory.library.queue_selected", {
+      queue: next,
+      projectName: scopeRef.projectName,
+    });
   }
 
   const listFilters = useMemo(
@@ -447,13 +525,23 @@ function MemoryBrowseView({
         ? source.filter((note) => note.scope === scopeFilter)
         : source;
     const needle = search.trim().toLowerCase();
-    if (needle === "") return scoped;
-    return scoped.filter(
+    const filtered = scoped.filter(
       (note) =>
         note.hook.toLowerCase().includes(needle) ||
         note.slug.toLowerCase().includes(needle) ||
         note.body.toLowerCase().includes(needle),
     );
+    return [...filtered].sort((a, b) => {
+      const byHook =
+        a.hook.localeCompare(b.hook, undefined, { sensitivity: "base" }) ||
+        a.slug.localeCompare(b.slug) ||
+        a.id.localeCompare(b.id);
+      if (sort === "alphabetical") return byHook;
+      if (sort === "created")
+        return Date.parse(b.createdAt) - Date.parse(a.createdAt) || byHook;
+      const byUpdated = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+      return (sort === "oldest" ? -byUpdated : byUpdated) || byHook;
+    });
   }, [
     attention,
     page,
@@ -465,6 +553,7 @@ function MemoryBrowseView({
     reviewQuery.data,
     listQuery.data,
     search,
+    sort,
   ]);
 
   const loading = attention
@@ -491,96 +580,158 @@ function MemoryBrowseView({
   return (
     <>
       {page ? (
-        <div className="flex shrink-0 flex-wrap gap-sm border-0 border-b border-solid border-border-subtle p-md">
-          <MemoryQueueChip
-            onClick={() => {
-              setSearch("");
-              setScopeFilter("all");
-              setCandidatesOnly(false);
-              setAttention(false);
-              setStatus("proposed");
-              onQueueChange("proposed");
-            }}
-          >
-            Proposed {proposedQuery.isSuccess ? proposedQuery.data.length : "—"}
-          </MemoryQueueChip>
-          <MemoryQueueChip
-            onClick={() => {
-              setSearch("");
-              setScopeFilter("all");
-              setCandidatesOnly(false);
-              setAttention(false);
-              setStatus("review");
-              onQueueChange("review");
-            }}
-          >
-            Review due{" "}
-            {reviewQuery.isSuccess
-              ? reviewQuery.data.filter((entry) => entry.staleness.length > 0)
-                  .length
-              : "—"}
-          </MemoryQueueChip>
-          {scopeRef.projectName !== null ? (
-            <MemoryQueueChip onClick={openPromotionQueue}>
-              Promotion candidates{" "}
-              {candidatesQuery.isSuccess ? candidates.length : "—"}
-            </MemoryQueueChip>
-          ) : null}
+        <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-lg py-md">
+          <span className="mr-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-secondary uppercase @max-[560px]:hidden">
+            Needs attention
+          </span>
+          <div className="flex min-w-0 flex-wrap gap-sm p-xs [&_button]:shrink-0">
+            <MemoryQueueButton
+              onClick={() => openReviewQueue("proposed")}
+              aria-pressed={status === "proposed" && !attention}
+              count={proposedQuery.isSuccess ? proposedQuery.data.length : null}
+            >
+              Proposed
+            </MemoryQueueButton>
+            <MemoryQueueButton
+              onClick={() => openReviewQueue("review")}
+              aria-pressed={
+                status === "review" && !candidatesOnly && !attention
+              }
+              count={
+                reviewQuery.isSuccess
+                  ? reviewQuery.data.filter(
+                      (entry) => entry.staleness.length > 0,
+                    ).length
+                  : null
+              }
+            >
+              Review due
+            </MemoryQueueButton>
+            {scopeRef.projectName !== null ? (
+              <MemoryQueueButton
+                onClick={openPromotionQueue}
+                aria-pressed={candidatesOnly}
+                count={candidatesQuery.isSuccess ? candidates.length : null}
+              >
+                Promotion candidates
+              </MemoryQueueButton>
+            ) : null}
+          </div>
         </div>
       ) : null}
-      <div className="flex shrink-0 flex-wrap items-center gap-sm border-0 border-b border-solid border-border-subtle px-md py-sm">
-        <SegmentedControl
-          value={scopeFilter}
-          onValueChange={(value) => {
-            if (isScopeFilter(value)) setScopeFilter(value);
-          }}
-          aria-label="Filter by scope"
-        >
-          <SegmentedControlItem value="all">all</SegmentedControlItem>
-          <SegmentedControlItem value="global">global</SegmentedControlItem>
-          {scopeRef.projectName !== null ? (
-            <SegmentedControlItem value="project">project</SegmentedControlItem>
-          ) : null}
-          {scopeRef.sessionName !== null || candidatesOnly ? (
-            <SegmentedControlItem value="session">session</SegmentedControlItem>
-          ) : null}
-        </SegmentedControl>
-        <SegmentedControl
-          value={status}
-          onValueChange={(value) => {
-            if (isStatusFilter(value)) {
+      <div className="flex shrink-0 flex-col gap-md px-lg py-md">
+        <div className="flex flex-wrap items-center gap-sm">
+          <div className="relative min-w-0 flex-1 [&_input]:pl-2xl max-768:[&_input]:min-h-[44px]">
+            <span
+              className="pointer-events-none absolute inset-y-0 left-md flex items-center text-text-tertiary"
+              aria-hidden="true"
+            >
+              <SearchIcon size={16} />
+            </span>
+            <FormInput
+              type="search"
+              aria-label="Search memory notes"
+              placeholder="Search memory…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+          <Select
+            value={sort}
+            onValueChange={(value) => {
+              if (!isMemorySort(value)) return;
+              setSort(value);
+              logger.info("memory.library.sort_selected", {
+                sort: value,
+                projectName: scopeRef.projectName,
+              });
+            }}
+          >
+            <SelectTrigger aria-label="Sort memory notes">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(SORT_OPTIONS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-wrap items-center gap-sm">
+          <MemoryFilterControl
+            value={scopeFilter}
+            onValueChange={(value) => {
+              if (!isScopeFilter(value)) return;
+              setScopeFilter(value);
+              logger.info("memory.library.scope_selected", {
+                scope: value,
+                projectName: scopeRef.projectName,
+              });
+            }}
+            label="Filter by scope"
+            options={[
+              { value: "all", label: "All scopes" },
+              { value: "global", label: "Global" },
+              ...(scopeRef.projectName !== null
+                ? [{ value: "project", label: "Project" }]
+                : []),
+              ...(scopeRef.sessionName !== null || candidatesOnly
+                ? [{ value: "session", label: "Session" }]
+                : []),
+            ]}
+          />
+          <MemoryFilterControl
+            value={status}
+            onValueChange={(value) => {
+              if (!isStatusFilter(value)) return;
               setStatus(value);
               if (scopeRef.sessionName === null && scopeFilter === "session")
                 setScopeFilter("all");
               setCandidatesOnly(false);
               setAttention(false);
               onQueueChange(value);
-            }
-          }}
-          aria-label="Filter by status"
-        >
-          <SegmentedControlItem value="active">active</SegmentedControlItem>
-          <SegmentedControlItem value="review">review</SegmentedControlItem>
-          <SegmentedControlItem value="proposed">proposed</SegmentedControlItem>
-          <SegmentedControlItem value="archived">archived</SegmentedControlItem>
-        </SegmentedControl>
-        <input
-          type="search"
-          aria-label="Search memory notes"
-          placeholder="Search hooks"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          className="max-768:min-h-[44px] min-w-0 basis-full flex-1 rounded-sm border border-solid border-border-default bg-bg-base px-sm py-xs font-mono text-[0.75rem] text-text-primary placeholder:text-text-tertiary focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)] focus:outline-none"
-        />
-        {!page && candidates.length > 0 ? (
-          <MemoryQueueChip
-            onClick={openPromotionQueue}
-            aria-pressed={candidatesOnly}
-          >
-            {candidates.length} promotion{" "}
-            {candidates.length === 1 ? "candidate" : "candidates"}
-          </MemoryQueueChip>
-        ) : null}
+              logger.info("memory.library.status_selected", {
+                status: value,
+                projectName: scopeRef.projectName,
+              });
+            }}
+            label="Filter by status"
+            options={[
+              { value: "active", label: "Active" },
+              { value: "review", label: "Review" },
+              { value: "proposed", label: "Proposed" },
+              { value: "archived", label: "Archived" },
+            ]}
+          />
+          {!page && candidates.length > 0 ? (
+            <MemoryQueueButton
+              onClick={openPromotionQueue}
+              aria-pressed={candidatesOnly}
+              aria-label={`${candidates.length} promotion ${candidates.length === 1 ? "candidate" : "candidates"}`}
+              count={candidates.length}
+            >
+              Promotion candidates
+            </MemoryQueueButton>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-sm border-0 border-y border-solid border-border-subtle bg-bg-base px-lg py-sm font-mono text-[0.7rem] tracking-[0.08em] text-text-secondary uppercase">
+        <span className="font-semibold">
+          {candidatesOnly
+            ? "Promotion candidates"
+            : attention
+              ? "Needs attention"
+              : `${status} notes`}
+        </span>
+        <span aria-live="polite" className="tabular-nums text-text-primary">
+          {loading || failed ? "—" : rows.length}
+        </span>
+        <span className="ml-auto mr-2xl @max-[560px]:hidden">
+          {sort === "created" ? "Created" : "Updated"}
+        </span>
       </div>
 
       {loading ? (
@@ -593,20 +744,32 @@ function MemoryBrowseView({
         </EmptyState>
       ) : rows.length === 0 ? (
         <EmptyState layoutClassName="min-h-0 flex-1">
-          <EmptyStateTitle>Nothing here</EmptyStateTitle>
+          <EmptyStateTitle>
+            {search.trim() ? "No matching memories" : "Nothing here"}
+          </EmptyStateTitle>
           <EmptyStateDesc>
-            Notes captured by agents and by you appear here, and the Index
-            Preview shows exactly which of them a conversation is told.
+            {search.trim()
+              ? "Try another search or clear it to see this list."
+              : "Notes captured by agents and by you appear here. The Index view shows which notes a conversation receives."}
           </EmptyStateDesc>
+          {search.trim() ? (
+            <Button size="sm" touch onClick={() => setSearch("")}>
+              Clear search
+            </Button>
+          ) : null}
         </EmptyState>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto pb-sm">
+        <div
+          className="@container min-h-0 flex-1 overflow-y-auto p-sm"
+          aria-label="Memory notes"
+        >
           {rows.map((note) => (
             <MemoryRow
               key={note.id}
               note={note}
               freshness={freshnessByNoteId.get(note.id) ?? null}
               now={now}
+              dateField={sort === "created" ? "createdAt" : "updatedAt"}
               selected={selectedId === note.id}
               onOpen={() => onOpenNote(note.id, note)}
             />
@@ -662,17 +825,20 @@ function isStatusFilter(value: string): value is MemoryStatusFilter {
 // Rows
 // ---------------------------------------------------------------------------
 
-const SCOPE_TONE = {
-  global: "neutral",
-  project: "neutral",
-  session: "neutral",
-} as const;
+const KIND_ICON_PATH: Record<MemoryKind, string> = {
+  lesson:
+    "M12 5v15M12 5C9 3 5 3 3 4v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-2-1-6-1-9 1Z",
+  procedure: "M9 5h12M9 12h12M9 19h12M3 4h1v2H3zM3 11h1v2H3zM3 18h1v2H3z",
+  preference: "M3 7h4m6 0h8M3 17h10m6 0h2M7 4h6v6H7zM13 14h6v6h-6z",
+  state: "M3 4h18v16H3zM7 9l3 3-3 3m6 0h4",
+};
 
 interface MemoryRowProps {
   note: MemoryNote;
   /** The engine's verdict for this note, when it holds one. */
   freshness: MemoryReviewQueueEntry | null;
   now: string;
+  dateField: "createdAt" | "updatedAt";
   selected?: boolean;
   onOpen(): void;
 }
@@ -683,7 +849,11 @@ function MemoryRow({
   now,
   onOpen,
   selected,
+  dateField,
 }: MemoryRowProps): React.JSX.Element {
+  const date = note[dateField];
+  const dateLabel = dateField === "createdAt" ? "Created" : "Updated";
+  const age = describeMemoryAge(date, now);
   return (
     <button
       type="button"
@@ -695,57 +865,144 @@ function MemoryRow({
       // no place on this one either.
       aria-label={`Open memory note ${note.hook}`}
       onClick={onOpen}
-      className={cn(
-        "flex w-full min-w-0 cursor-pointer flex-col items-start gap-xs border-0 border-b border-solid border-border-subtle bg-transparent px-md py-sm text-left transition-colors duration-150 ease-[ease] hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]",
-        note.lifecycle === "archived" && "opacity-55",
-        selected && "border-l border-l-cyan bg-bg-raised",
-      )}
+      className="group mb-xs flex w-full min-w-0 cursor-pointer items-start gap-md rounded-md border border-solid px-md py-md text-left transition-colors duration-150 ease-[ease] data-[selected=false]:border-border-subtle data-[selected=false]:bg-bg-base data-[selected=false]:hover:border-border-default data-[selected=false]:hover:bg-bg-surface data-[selected=true]:border-cyan-dim data-[selected=true]:bg-bg-raised data-[selected=true]:hover:bg-bg-elevated focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px]"
     >
-      <span className="w-full font-mono text-[0.78rem] leading-[1.35] font-medium [overflow-wrap:anywhere] text-text-primary">
-        {note.hook}
+      <span
+        aria-hidden="true"
+        className="flex size-9 shrink-0 items-center justify-center rounded-md border border-solid border-border-default bg-bg-base text-text-secondary group-hover:text-text-primary @max-[560px]:hidden"
+      >
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="square"
+          strokeLinejoin="miter"
+        >
+          <path d={KIND_ICON_PATH[note.kind]} />
+        </svg>
       </span>
-      <span className="flex flex-wrap items-center gap-xs">
-        <StatusChip tone={SCOPE_TONE[note.scope]}>{note.scope}</StatusChip>
-        <StatusChip tone="neutral">{note.kind}</StatusChip>
-        {note.sessionName !== null ? (
-          <span className="font-mono text-[0.7rem] text-text-tertiary">
-            {note.sessionName}
-          </span>
-        ) : null}
-        {note.lifecycle === "active" ? null : (
-          <StatusChip
-            tone={note.lifecycle === "proposed" ? "amber" : "neutral"}
-          >
-            {note.lifecycle}
-          </StatusChip>
-        )}
-        {freshness?.expired ? (
-          <StatusChip tone="red">expired</StatusChip>
-        ) : null}
-        {freshness !== null &&
-        !freshness.expired &&
-        (freshness.noteReviewDue || freshness.statusReviewDue) ? (
-          <StatusChip tone="amber">review due</StatusChip>
-        ) : null}
-        {freshness?.promotionCandidate ? (
-          <StatusChip tone="amber">promotion candidate</StatusChip>
-        ) : null}
-        <StatusChip tone="neutral">{note.createdBy}</StatusChip>
-        <span className="font-mono text-[0.7rem] text-text-tertiary">
-          {describeMemoryAge(note.updatedAt, now)}
+      <span className="flex min-w-0 flex-1 flex-col gap-sm">
+        <span className="font-mono text-[0.82rem] leading-[1.6] font-medium [overflow-wrap:anywhere] text-text-primary">
+          {note.hook}
         </span>
+        <span className="flex flex-wrap items-center gap-x-sm gap-y-xs font-mono text-[0.7rem] text-text-secondary">
+          <Badge subtle>{note.kind}</Badge>
+          <span>{note.scope}</span>
+          {note.sessionName !== null ? (
+            <span className="min-w-0 truncate" title={note.sessionName}>
+              {note.sessionName}
+            </span>
+          ) : null}
+          <span aria-hidden="true" className="h-3 w-px bg-border-default" />
+          <span>{note.createdBy}</span>
+          {note.indexMode !== "auto" ? (
+            <span className="text-text-secondary">
+              {note.indexMode === "always" ? "Always in index" : "Search only"}
+            </span>
+          ) : null}
+          {note.lifecycle === "active" ? null : (
+            <StatusChip
+              tone={note.lifecycle === "proposed" ? "amber" : "neutral"}
+            >
+              {note.lifecycle}
+            </StatusChip>
+          )}
+          {freshness?.expired ? (
+            <StatusChip tone="red">expired</StatusChip>
+          ) : null}
+          {freshness !== null &&
+          !freshness.expired &&
+          (freshness.noteReviewDue || freshness.statusReviewDue) ? (
+            <StatusChip tone="amber">review due</StatusChip>
+          ) : null}
+          {freshness?.promotionCandidate ? (
+            <StatusChip tone="amber">promotion candidate</StatusChip>
+          ) : null}
+          <time
+            dateTime={date}
+            title={`${dateLabel} ${new Date(date).toLocaleString()}`}
+            className="hidden @max-[560px]:inline"
+          >
+            {age}
+          </time>
+        </span>
+      </span>
+      <time
+        dateTime={date}
+        title={`${dateLabel} ${new Date(date).toLocaleString()}`}
+        className="mt-xs w-[112px] shrink-0 text-right font-mono text-[0.7rem] leading-relaxed whitespace-nowrap text-text-secondary tabular-nums @max-[560px]:hidden"
+      >
+        {age}
+      </time>
+      <span
+        aria-hidden="true"
+        className="mt-xs shrink-0 text-text-secondary group-hover:text-cyan group-data-[selected=true]:text-cyan"
+      >
+        <ChevronRightIcon size={16} />
       </span>
     </button>
   );
 }
 
-function MemoryQueueChip({
+function MemoryQueueButton({
   children,
+  count,
   ...props
-}: ButtonProps): React.JSX.Element {
+}: ButtonProps & { count: number | null }): React.JSX.Element {
   return (
-    <Button variant="ghost" size="sm" touch {...props}>
-      <StatusChip tone="amber">{children}</StatusChip>
+    <Button size="sm" touch {...props}>
+      {props["aria-pressed"] === true ? <CheckIcon size={14} /> : null}
+      {children}
+      <Badge status={count !== null && count > 0 ? "awaiting" : "idle"}>
+        {count ?? "—"}
+      </Badge>
     </Button>
+  );
+}
+
+function MemoryFilterControl({
+  value,
+  onValueChange,
+  label,
+  options,
+}: {
+  value: string;
+  onValueChange(value: string): void;
+  label: string;
+  options: readonly { value: string; label: string }[];
+}): React.JSX.Element {
+  return (
+    <>
+      <div className="flex @max-[560px]:hidden">
+        <SegmentedControl
+          value={value}
+          onValueChange={onValueChange}
+          aria-label={label}
+        >
+          {options.map((option) => (
+            <SegmentedControlItem key={option.value} value={option.value}>
+              {option.value}
+            </SegmentedControlItem>
+          ))}
+        </SegmentedControl>
+      </div>
+      <div className="hidden @max-[560px]:flex">
+        <Select value={value} onValueChange={onValueChange}>
+          <SelectTrigger aria-label={label}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </>
   );
 }
