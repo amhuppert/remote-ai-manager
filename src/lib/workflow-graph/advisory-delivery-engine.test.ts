@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * The two delivery paths and the exactly-once property, through the REAL engine:
  * the orchestrator's round, the production validation service, and fakes only at
@@ -143,15 +144,17 @@ describe("advisories on a failing round", () => {
 
     await harness.run();
     // The reopened task is complete again, so the second iteration re-validates.
-    await harness.repository.mutateActive("/repo", "session-1", (latest) => {
-      const next = structuredClone(latest);
-      const task = next.taskStates["task-plan-1"];
-      if (task) {
-        task.status = "completed";
-        task.summary = "Redone.";
-      }
-      return next;
-    });
+    await harness.repository
+      .mutateActive("/repo", "session-1", (latest) => {
+        const next = structuredClone(latest);
+        const task = next.taskStates["task-plan-1"];
+        if (task) {
+          task.status = "completed";
+          task.summary = "Redone.";
+        }
+        return changed(next);
+      })
+      .then((mutation) => mutation.execution);
     await harness.run();
 
     const state = harness.contextState();
@@ -252,15 +255,17 @@ describe("the execution-level advisory index", () => {
 
     await harness.run();
     // The reopened task is complete again, so the second iteration re-validates.
-    await harness.repository.mutateActive("/repo", "session-1", (latest) => {
-      const next = structuredClone(latest);
-      const task = next.taskStates["task-plan-1"];
-      if (task) {
-        task.status = "completed";
-        task.summary = "Redone.";
-      }
-      return next;
-    });
+    await harness.repository
+      .mutateActive("/repo", "session-1", (latest) => {
+        const next = structuredClone(latest);
+        const task = next.taskStates["task-plan-1"];
+        if (task) {
+          task.status = "completed";
+          task.summary = "Redone.";
+        }
+        return changed(next);
+      })
+      .then((mutation) => mutation.execution);
     await harness.run();
 
     expect(

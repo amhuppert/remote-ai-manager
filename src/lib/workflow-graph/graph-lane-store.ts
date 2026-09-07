@@ -1,3 +1,9 @@
+import { unchanged } from "./execution-mutation";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * Durable graph-workflow lane store (plan §3.2.3).
  *
@@ -70,11 +76,13 @@ export interface GraphLaneStoreDeps {
    * through the same critical section (and loop fences) as every other
    * execution mutation.
    */
-  mutateActiveExecution(
+  mutateActiveExecution<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
-    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
 }
 
 interface LocatedExecution {
@@ -265,7 +273,7 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
           `graph lane store: no active execution with id "${parsed.workflowId}"`,
         );
       }
-      await deps.mutateActiveExecution(
+      const mutation = await deps.mutateActiveExecution(
         located.projectPath,
         located.sessionName,
         (execution) => {
@@ -281,14 +289,8 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
             contextId,
             existing,
           );
-          logger.debug("graph_lane_store.write", {
-            executionId: execution.id,
-            contextId,
-            lane: identity.lane,
-            assignmentId: identity.assignmentId,
-            backend: parsed.backend,
-          });
-          return {
+
+          return changed({
             ...execution,
             laneStates: {
               ...execution.laneStates,
@@ -297,22 +299,31 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
                 [key]: nextLane,
               },
             },
-          };
+          });
         },
       );
+      if (mutation.kind === "changed") {
+        logger.debug("graph_lane_store.write", {
+          executionId: mutation.execution.id,
+          contextId,
+          lane: identity.lane,
+          assignmentId: identity.assignmentId,
+          backend: parsed.backend,
+        });
+      }
     },
 
     async delete(ref: LaneRef): Promise<void> {
       const { contextId, key, ...identity } = requireLaneId(ref.laneId);
       const located = await locateExecution(ref.workflowId);
       if (!located) return;
-      await deps.mutateActiveExecution(
+      const mutation = await deps.mutateActiveExecution(
         located.projectPath,
         located.sessionName,
         (execution) => {
           const contextLanes = execution.laneStates[contextId];
           if (!contextLanes || !(key in contextLanes)) {
-            return execution;
+            return unchanged();
           }
           const { [key]: _removed, ...remainingLanes } = contextLanes;
           const nextLaneStates = { ...execution.laneStates };
@@ -321,15 +332,18 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
           } else {
             nextLaneStates[contextId] = remainingLanes;
           }
-          logger.debug("graph_lane_store.delete", {
-            executionId: execution.id,
-            contextId,
-            lane: identity.lane,
-            assignmentId: identity.assignmentId,
-          });
-          return { ...execution, laneStates: nextLaneStates };
+
+          return changed({ ...execution, laneStates: nextLaneStates });
         },
       );
+      if (mutation.kind === "changed") {
+        logger.debug("graph_lane_store.delete", {
+          executionId: mutation.execution.id,
+          contextId,
+          lane: identity.lane,
+          assignmentId: identity.assignmentId,
+        });
+      }
     },
 
     async listByWorkflow(workflowId: string): Promise<LaneState[]> {

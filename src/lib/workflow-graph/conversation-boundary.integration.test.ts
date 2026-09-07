@@ -1,3 +1,8 @@
+import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
+import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   ConversationBackendTurnInput,
@@ -17,16 +22,15 @@ import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
-import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+
 import { createGraphWorkflowManager } from "./workflow-manager";
-import {
-  createGraphWorkflowExecutionLoop,
-  _resetActiveLoopsForTesting,
-} from "./execution-loop";
+import { _resetActiveLoopsForTesting } from "./execution-loop";
 import { createUserInputGateService } from "./user-input-gate";
 import { createWorkflowExecution } from "./test-fixtures";
 import { runWithLoopFence, StaleLoopFenceError } from "./loop-fence";
 import { ConversationTurnNotStartedError } from "./conversation-turn-result";
+import { ConversationTurnSettlementError } from "./errors";
+import { setConversationPersistenceAdapterDeps } from "@/lib/workflows/conversation/persistence-adapter";
 
 const P = "/lifecycle-fixture",
   S = "s",
@@ -80,6 +84,9 @@ async function compose(
     now: () => now,
   });
   const repository = createGraphWorkflowExecutionRepository({
+    getGraphWorkflowPendingArtifacts: async () => null,
+    clearGraphWorkflowPendingArtifacts: async () => false,
+
     ensureCcArtifactsExcluded: async () => {},
     getSession: store.getSession,
     getActiveGraphWorkflowExecution: store.getActiveGraphWorkflowExecution,
@@ -104,6 +111,13 @@ async function compose(
   });
   const stops: Promise<unknown>[] = [];
   const manager = createGraphWorkflowManager({
+    abortExecutionLoop: () => {},
+    retireLaneConversation: () => {},
+    getSession: async () => null,
+    stopExecutionLaneDevServers: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: repository,
     loadDefinition: async () => null,
     userInputGateService: gate,
@@ -156,19 +170,25 @@ async function compose(
     },
   };
   await store.mutateActiveGraphWorkflowExecution(P, S, "boundary.seed", () => ({
-    execution: initial,
-    events: [],
+    kind: "commit",
+    value: undefined,
+    ...{
+      execution: initial,
+      events: [],
+    },
   }));
   const reload = async () => {
     const e = await repository.getActive(P, S);
     if (!e) throw new Error("Missing graph execution");
     return e;
   };
+  const runnerLogger = createCapturingLogger();
   const runner = createGraphWorkflowImplementerRunner({
     executeConversationTurn: hosted.manager.executeConversationTurn,
     getConversation: store.getConversation,
     getProjectDisplayName: () => "lifecycle-fixture",
     mintLaneCapability: () => null,
+    logger: runnerLogger,
   });
   const run = async (prompt: string) =>
     runner.runIteration({
@@ -180,15 +200,18 @@ async function compose(
       contextId: CONTEXT,
       backend: "claude",
       modelSelection: { modelId: "opus", parameters: { effort: "high" } },
-      toolServer: { servers: [] },
       placement: { lane: "main", mode: "full" },
       askUserQuestionsEnabled: true,
     });
-  const orchestrator = createGraphWorkflowIterationOrchestrator({
+  const orchestrator = createContextIterationFixture({
+    ...createContextTestCapabilities(),
+    materializeWorkflowDocuments: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: repository,
     findLatestContextValidationEvent: async () => null,
     createConversation: async () => ({ id: C }),
-    createToolServer: () => ({ server: { servers: [] } }),
     runAgentIteration: (input) => run(input.prompt),
     readLaneConversation: async (...args) => {
       const row = await store.getConversation(...args);
@@ -232,15 +255,19 @@ async function compose(
       ...extra,
     });
   const finishTask = () =>
-    repository.mutateActive(P, S, (e) => {
-      e.taskStates["task-plan-1"]!.status = "completed";
-      e.taskStates["task-plan-1"]!.completedAt = now;
-      e.contextStates[CONTEXT]!.completedTaskCount = 1;
-      return e;
-    });
-  const loop = createGraphWorkflowExecutionLoop({
-    workflowManager: {
-      ...manager,
+    repository
+      .mutateActive(P, S, (e) => {
+        e.taskStates["task-plan-1"]!.status = "completed";
+        e.taskStates["task-plan-1"]!.completedAt = now;
+        e.contextStates[CONTEXT]!.completedTaskCount = 1;
+        return changed(e);
+      })
+      .then((mutation) => mutation.execution);
+  const loop = createExecutionLoopFixture({
+    executionContract: createNonParticipatingGraphExecutionContract(),
+    getSessionWorktreeDirtyPaths: async () => [],
+
+    contextScheduler: {
       scheduleEligibleContexts: async () => {
         const execution = await reload();
         if (
@@ -249,13 +276,19 @@ async function compose(
         )
           return { execution, scheduled: { kind: "none" } };
         return {
-          execution: await repository.mutateActive(P, S, (e) => {
-            e.contextStates[CONTEXT]!.status = "running";
-            return e;
-          }),
+          execution: await repository
+            .mutateActive(P, S, (e) => {
+              e.contextStates[CONTEXT]!.status = "running";
+              return changed(e);
+            })
+            .then((mutation) => mutation.execution),
           scheduled: { kind: "solo", contextId: CONTEXT },
         };
       },
+    },
+    executionRepository: repository,
+    workflowManager: {
+      ...manager,
     },
     iterationOrchestrator: orchestrator,
     eventPublisher,
@@ -296,6 +329,7 @@ async function compose(
     manager,
     stops,
     initial,
+    runnerLogger,
     reload,
     run,
     iterate,
@@ -337,10 +371,12 @@ it("pauses an admitted graph waiter, fences the retired loop and resumes only it
   await graph.manager.resume(P, S);
   await expect(
     runWithLoopFence(fence, () =>
-      graph.repository.mutateActive(P, S, (e) => {
-        e.contextStates[CONTEXT]!.consecutiveFailureCount = 99;
-        return e;
-      }),
+      graph.repository
+        .mutateActive(P, S, (e) => {
+          e.contextStates[CONTEXT]!.consecutiveFailureCount = 99;
+          return changed(e);
+        })
+        .then((mutation) => mutation.execution),
     ),
   ).rejects.toBeInstanceOf(StaleLoopFenceError);
   expect(await graph.run("resumed-request")).toMatchObject({
@@ -561,4 +597,158 @@ it("refuses a graph turn requiring queue review without dispatching or spending 
     (await graph.hosted.persistence.store.getConversation(P, S, C))
       ?.totalCostUsd,
   ).toBeNull();
+});
+
+/**
+ * Fails the conversation's final derived-state write after the backend turn
+ * completed, leaving the lifecycle holding retained settlement work exactly as
+ * a crashed commit would.
+ */
+function injectFinalPersistenceFault(
+  store: NonNullable<typeof fixture>["persistence"]["store"],
+) {
+  const fault = { active: true };
+  setConversationPersistenceAdapterDeps({
+    async mutateConversation(p, s, c, label, mutate) {
+      await store.mutateConversation(p, s, c, label, async (row) => {
+        await mutate(row);
+        if (
+          fault.active &&
+          row.promptCount > 0 &&
+          label === "conversation-manager.syncDerived"
+        )
+          throw new Error("Commit unavailable 4471");
+      });
+    },
+    publishSessionStatus: () => ({ delivered: true }),
+    queueAutoName: () => {},
+  });
+  return fault;
+}
+
+function turnFailedWarning(graph: Awaited<ReturnType<typeof compose>>) {
+  return graph.runnerLogger.entries.find(
+    (entry) => entry.message === "graph-workflow.implementer.turn_failed",
+  );
+}
+
+it("surfaces a settlement failure to the graph consumer as a typed error and reconciles without another dispatch", async () => {
+  setQuerySemaphoreDeps({
+    readConfig: async () => ({ maxConcurrentQueries: 10 }),
+  });
+  let dispatches = 0;
+  const graph = await compose(async (input) => {
+    dispatches++;
+    await input.onEvent({ type: "input_accepted" });
+    return completed;
+  });
+  const store = graph.hosted.persistence.store;
+  const fault = injectFinalPersistenceFault(store);
+  try {
+    const thrown = await graph.run("settle me").then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(ConversationTurnSettlementError);
+    if (!(thrown instanceof ConversationTurnSettlementError))
+      throw new Error("unreachable");
+    expect(thrown.outcome.code).toBe("persistence");
+    expect(thrown.outcome.result?.outcome).toMatchObject({
+      kind: "completed",
+      text: "boundary-result",
+    });
+    expect(thrown).toMatchObject({ contextId: CONTEXT, engine: "claude" });
+    expect(dispatches).toBe(1);
+    const warning = turnFailedWarning(graph);
+    expect(warning?.fields).toMatchObject({
+      cause: "settlement_failed",
+      settlementCode: "persistence",
+      attemptId: thrown.attemptId,
+      contextId: CONTEXT,
+      conversationId: C,
+      backend: "claude",
+    });
+    expect(JSON.stringify(graph.runnerLogger.allFieldValues())).not.toContain(
+      "boundary-result",
+    );
+    expect(
+      (await graph.reload()).contextStates[CONTEXT]!.consecutiveFailureCount,
+    ).toBe(0);
+    expect(await store.getConversation(P, S, C)).toMatchObject({
+      promptCount: 0,
+    });
+
+    fault.active = false;
+    await graph.hosted.manager.ensureConversationLifecycle(
+      graph.hosted.binding,
+    );
+    expect(await store.getConversation(P, S, C)).toMatchObject({
+      promptCount: 1,
+      totalTurns: 1,
+      totalCostUsd: 0.1,
+    });
+    expect(dispatches).toBe(1);
+    expect((await graph.reload()).contextStates[CONTEXT]!.status).not.toBe(
+      "completed",
+    );
+  } finally {
+    fault.active = false;
+    await graph.hosted.manager.ensureConversationLifecycle(
+      graph.hosted.binding,
+    );
+  }
+});
+
+it("halts the loop on a settlement failure as an io failure without spending a recovery attempt or a second dispatch", async () => {
+  setQuerySemaphoreDeps({
+    readConfig: async () => ({ maxConcurrentQueries: 10 }),
+  });
+  let dispatches = 0;
+  const graph = await compose(async (input) => {
+    dispatches++;
+    await input.onEvent({ type: "input_accepted" });
+    return completed;
+  });
+  const store = graph.hosted.persistence.store;
+  const fault = injectFinalPersistenceFault(store);
+  try {
+    const result = await graph.runLoop();
+    expect(result.status).toBe("halted");
+    const halted = await graph.reload();
+    expect(halted.haltReason).toEqual({
+      type: "execution_loop_failed",
+      contextId: CONTEXT,
+      cause: "io",
+      message: expect.stringContaining("settlement"),
+    });
+    if (halted.haltReason?.type !== "execution_loop_failed")
+      throw new Error("unreachable");
+    expect(halted.haltReason.message).toContain("persistence");
+    expect(dispatches).toBe(1);
+    expect(halted.contextStates[CONTEXT]!.consecutiveFailureCount).toBe(0);
+    expect(halted.contextStates[CONTEXT]!.status).not.toBe("completed");
+    expect(turnFailedWarning(graph)?.fields).toMatchObject({
+      cause: "settlement_failed",
+      settlementCode: "persistence",
+    });
+
+    fault.active = false;
+    await graph.hosted.manager.ensureConversationLifecycle(
+      graph.hosted.binding,
+    );
+    expect(await store.getConversation(P, S, C)).toMatchObject({
+      promptCount: 1,
+      totalTurns: 1,
+      totalCostUsd: 0.1,
+    });
+    expect(dispatches).toBe(1);
+    expect((await graph.reload()).status).toBe("halted");
+  } finally {
+    fault.active = false;
+    await graph.hosted.manager.ensureConversationLifecycle(
+      graph.hosted.binding,
+    );
+  }
 });

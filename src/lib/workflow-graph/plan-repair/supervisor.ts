@@ -1,3 +1,9 @@
+import { refused, eventsOnly } from "../execution-mutation";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * The plan-repair supervisor (docs/design/cc-cli/08): after an execution loop
  * settles in a retry-exhaustion halt, run one bounded, audited repair round —
@@ -28,11 +34,7 @@ import type {
   GraphWorkflowEventDelivery,
   PublishPlanRepairInput,
 } from "../execution-events";
-import {
-  MutationRefusedError,
-  mutateActiveOrRefuse,
-  type MutateActiveResult,
-} from "../execution-repository";
+import {} from "../execution-repository";
 import type {
   LiveEditApplyOutcome,
   LiveEditApplyRequest,
@@ -83,13 +85,13 @@ export interface PlanRepairSupervisorDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   /** The shared live-edit apply core — the ONLY mutation path for repairs. */
   applyLiveEdits(input: {
     projectPath: string;
@@ -154,27 +156,7 @@ function repairConversationId(
   return `__plan_repair__:${executionId}:${contextId}:${seq}`;
 }
 
-/**
- * Raised INSIDE a concluding reducer when the session's active row is no
- * longer the run this round examined, which aborts the mutation.
- *
- * Returning the row unchanged would not do: the mutation seam stamps its
- * staging fences on every committed write, so a "no-op" settle still advances
- * the successor's `executionStateRevision` — and any event the reducer carried
- * would still land in the successor's ledger. Refusing the write is the fence;
- * writing the same bytes back is not.
- */
-class PlanRepairExecutionFenceError extends MutationRefusedError {
-  constructor(
-    write: string,
-    readonly expectedExecutionId: string,
-    readonly activeExecutionId: string,
-  ) {
-    super(write);
-    this.name = "PlanRepairExecutionFenceError";
-    this.message = `Plan repair ${write} belongs to execution ${expectedExecutionId}, but ${activeExecutionId} holds the session's execution lease`;
-  }
-}
+type RepairMutationRefusal = { code: "superseded"; activeExecutionId?: string };
 
 /**
  * Whether a halt is still the one a round was triggered by. Loop halts key on
@@ -277,50 +259,52 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     // Append the round BEFORE the agent runs (crash-safe accounting, R4). The
     // trigger is re-evaluated inside the serialized mutation: a user resume or
     // abort between the read and this write withdraws without a trace.
-    let appended: PlanRepairRound | null = null;
-    let priorRounds: PlanRepairRound[] = [];
-    await mutateFenced(input, executionId, "append_round", (current) => {
-      const recheck = evaluatePlanRepairTrigger(current);
-      if (
-        !recheck.eligible ||
-        recheck.contextId !== contextId ||
-        recheck.loopGroupId !== loopGroupId
-      ) {
-        // Withdrawn, not merely unchanged: a resume or abort landed between the
-        // trigger read and this write, and the round it authorized no longer
-        // has a subject. Returning `current` would commit for a round that
-        // never starts.
-        throw new MutationRefusedError("append_round");
-      }
-      const next = structuredClone(current);
-      priorRounds = current.planRepairRounds;
-      const seq = (current.planRepairRounds.at(-1)?.seq ?? 0) + 1;
-      appended = {
-        seq,
-        contextId,
-        haltType,
-        loopGroupId,
-        startedAt: deps.now(),
-        settledAt: null,
-        outcome: null,
-        planningDefect: null,
-        diagnosis: null,
-        operationCount: 0,
-        resumed: false,
-        // Filed with the round rather than at settle: the handle is derived
-        // from identity the reducer already holds, and it is the only way to
-        // check the claim that an agent is working — which is a question that
-        // stops mattering the moment the round concludes.
-        conversationId: repairConversationId(executionId, contextId, seq),
-      };
-      next.planRepairRounds = [...next.planRepairRounds, appended];
-      return next;
-    });
-    if (appended === null) {
+    const appendOutcome = await mutateFenced(
+      input,
+      executionId,
+      "append_round",
+      (current) => {
+        const recheck = evaluatePlanRepairTrigger(current);
+        if (
+          !recheck.eligible ||
+          recheck.contextId !== contextId ||
+          recheck.loopGroupId !== loopGroupId
+        ) {
+          // Withdrawn, not merely unchanged: a resume or abort landed between the
+          // trigger read and this write, and the round it authorized no longer
+          // has a subject, so this round must leave no committed trace.
+          return refused({ code: "superseded" });
+        }
+        const next = structuredClone(current);
+        const priorRounds = current.planRepairRounds;
+        const seq = (current.planRepairRounds.at(-1)?.seq ?? 0) + 1;
+        const appended: PlanRepairRound = {
+          seq,
+          contextId,
+          haltType,
+          loopGroupId,
+          startedAt: deps.now(),
+          settledAt: null,
+          outcome: null,
+          planningDefect: null,
+          diagnosis: null,
+          operationCount: 0,
+          resumed: false,
+          // Filed with the round rather than at settle: the handle is derived
+          // from identity the reducer already holds, and it is the only way to
+          // check the claim that an agent is working — which is a question that
+          // stops mattering the moment the round concludes.
+          conversationId: repairConversationId(executionId, contextId, seq),
+        };
+        next.planRepairRounds = [...next.planRepairRounds, appended];
+        return changed(next, { round: appended, priorRounds });
+      },
+    );
+    if (appendOutcome.kind === "refused") {
       logger.info("plan_repair.superseded_before_start", { executionId });
       return { ran: false, reason: "superseded" };
     }
-    const round: PlanRepairRound = appended;
+    const { round, priorRounds } = appendOutcome.value;
 
     // Announced before the turn opens, never after it: the append changes no
     // status, no active context and no halt reason, so this is the only thing
@@ -757,7 +741,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       const index = current.planRepairRounds.findIndex(
         (round) => round.seq === seq,
       );
-      if (index === -1) throw new MutationRefusedError("settle_round");
+      if (index === -1) return refused({ code: "superseded" });
       const next = structuredClone(current);
       const existing = next.planRepairRounds[index]!;
       next.planRepairRounds[index] = {
@@ -765,7 +749,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         ...patch,
         settledAt: existing.settledAt ?? deps.now(),
       };
-      return next;
+      return changed(next);
     });
   }
 
@@ -775,46 +759,37 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
    * turn over between an advisory read and the write it authorizes, and only a
    * check inside the reducer sees the row the commit will actually replace.
    */
-  async function mutateFenced(
+  async function mutateFenced<Value>(
     input: MaybeRunPlanRepairInput,
     executionId: string,
     write: string,
     reduce: (
       current: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution | null> {
-    // Holder rather than a bare `let`: TS flow analysis does not see the
-    // closure assignment, so a local would narrow to `never` at the read below.
-    const fenced: { rejection: PlanRepairExecutionFenceError | null } = {
-      rejection: null,
-    };
-    const written = await mutateActiveOrRefuse(() =>
-      deps.mutateActive(input.projectPath, input.sessionName, (current) => {
-        if (current.id !== executionId) {
-          const rejected = new PlanRepairExecutionFenceError(
-            write,
-            executionId,
-            current.id,
-          );
-          fenced.rejection = rejected;
-          throw rejected;
-        }
+    ) => ExecutionMutationDecision<Value, RepairMutationRefusal>,
+  ): Promise<ExecutionMutationOutcome<Value, RepairMutationRefusal>> {
+    const outcome = await deps.mutateActive<Value, RepairMutationRefusal>(
+      input.projectPath,
+      input.sessionName,
+      (current) => {
+        if (current.id !== executionId)
+          return refused({ code: "superseded", activeExecutionId: current.id });
         return reduce(current);
-      }),
+      },
     );
-    // Logged out here, never in the reducer: `createLogger` appends to disk
-    // synchronously and the reducer runs inside the write queue.
-    const rejection = fenced.rejection;
-    if (rejection !== null) {
+    // Logging appends to disk and belongs outside the write queue.
+    if (
+      outcome.kind === "refused" &&
+      outcome.refusal.activeExecutionId !== undefined
+    ) {
       logger.warn("plan_repair.write_fenced", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         write,
-        expectedExecutionId: rejection.expectedExecutionId,
-        activeExecutionId: rejection.activeExecutionId,
+        expectedExecutionId: executionId,
+        activeExecutionId: outcome.refusal.activeExecutionId,
       });
     }
-    return written;
+    return outcome;
   }
 
   /**
@@ -832,10 +807,10 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
   ): Promise<void> {
     await mutateFenced(input, executionId, "halt_summary", (current) => {
       if (current.status !== "halted" || current.haltReason === null) {
-        throw new MutationRefusedError("halt_summary");
+        return refused({ code: "superseded" });
       }
       if (!haltMatchesSubject(current.haltReason, subject)) {
-        throw new MutationRefusedError("halt_summary");
+        return refused({ code: "superseded" });
       }
       const next = structuredClone(current);
       const nextReason = next.haltReason;
@@ -849,7 +824,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       ) {
         nextReason.summary = summary;
       }
-      return next;
+      return changed(next);
     });
   }
 
@@ -927,15 +902,17 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     conclusion: PlanRepairRoundConclusion,
   ): Promise<void> {
     try {
-      await mutateFenced(input, executionId, "round_event", (current) => ({
-        execution: current,
-        ...deps.publishPlanRepairRound({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          executionId,
-          ...conclusion,
-        }),
-      }));
+      await mutateFenced(input, executionId, "round_event", () =>
+        eventsOnly(
+          undefined,
+          deps.publishPlanRepairRound({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            executionId,
+            ...conclusion,
+          }),
+        ),
+      );
     } catch (error) {
       logger.warn("plan_repair.event_emit_failed", {
         executionId,

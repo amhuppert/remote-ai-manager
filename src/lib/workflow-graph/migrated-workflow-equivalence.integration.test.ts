@@ -1,3 +1,10 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * R3.3 — a pre-existing workflow still behaves the way it did, after the
  * cutover migrated it.
@@ -71,7 +78,7 @@ import {
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { generalizedModelSelection } from "@/lib/state-store/migrations/0035-generalized-model-selection";
-import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
+import { createValidatorCohortRunner } from "@/lib/workflow-graph/validator-cohort-runner";
 import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
 import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
 import { createValidatorRunner } from "@/lib/workflow-graph/validator-runner";
@@ -93,7 +100,7 @@ import {
   buildInitialTaskStates,
 } from "@/lib/workflow-graph/execution-state";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-import { validateResolvedWorkflow } from "@/lib/workflow-graph/validation";
+import { validateResolvedWorkflow } from "@/lib/workflow-graph/definition-validation";
 import { seedAssignmentSnapshots } from "@/lib/workflow-graph/seed-assignment-snapshots";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import {
@@ -391,22 +398,24 @@ function executionOver(
 
 /** The implementer's remediation, so the next round has a candidate to review. */
 async function remediate(harness: Harness): Promise<void> {
-  await harness.repository.mutateActive(PROJECT_PATH, "session-1", (latest) => {
-    const next = structuredClone(latest);
-    next.taskStates[TASK_ID] = {
-      ...next.taskStates[TASK_ID]!,
-      status: "completed",
-      summary: "Addressed the review.",
-      completedAt: "2026-08-04T11:30:00.000Z",
-      failureMessage: null,
-    };
-    next.contextStates[CONTEXT_ID] = {
-      ...next.contextStates[CONTEXT_ID]!,
-      status: "running",
-      completedTaskCount: 1,
-    };
-    return next;
-  });
+  await harness.repository
+    .mutateActive(PROJECT_PATH, "session-1", (latest) => {
+      const next = structuredClone(latest);
+      next.taskStates[TASK_ID] = {
+        ...next.taskStates[TASK_ID]!,
+        status: "completed",
+        summary: "Addressed the review.",
+        completedAt: "2026-08-04T11:30:00.000Z",
+        failureMessage: null,
+      };
+      next.contextStates[CONTEXT_ID] = {
+        ...next.contextStates[CONTEXT_ID]!,
+        status: "running",
+        completedTaskCount: 1,
+      };
+      return changed(next);
+    })
+    .then((mutation) => mutation.execution);
 }
 
 function migratedCohort(
@@ -613,13 +622,13 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
    * queue's critical section.
    */
   function executionRepositoryOver(): {
-    mutateActive(
+    mutateActive<Value = void, Refusal = never>(
       projectPath: string,
       sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
-    ): Promise<GraphWorkflowExecution>;
+      ) => ExecutionMutationDecision<Value, Refusal>,
+    ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   } {
     let queue: Promise<void> = Promise.resolve();
     return {
@@ -633,9 +642,9 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
           await previous;
           const current = repo.getActive(projectPath, sessionName);
           if (!current) throw new Error("no active execution");
-          const next = await fn(current);
-          repo.setActive(projectPath, sessionName, next, NOW);
-          return next;
+          return applyFixtureMutation(current, fn, (next) => {
+            repo.setActive(projectPath, sessionName, next, NOW);
+          });
         } finally {
           release();
         }
@@ -703,6 +712,7 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
     });
 
     const runner = createValidatorRunner({
+      executionContract: createNonParticipatingGraphExecutionContract(),
       async resolveWorktreePath() {
         return "/repo/worktree";
       },
@@ -743,7 +753,7 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
       }),
     });
 
-    const validation = createGraphWorkflowValidationService({
+    const validation = createValidatorCohortRunner({
       runContextValidator: runner.runContextValidator,
     });
 

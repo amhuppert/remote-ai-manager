@@ -1,16 +1,45 @@
+import { accountContextAction } from "./context-accounting";
+
+import { unchanged } from "@/lib/workflow-graph/execution-mutation";
+import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
+
 import { createLogger } from "@/lib/logging";
-import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
+
+import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
+
+import { type GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+
+import { concludeValidationRound } from "@/lib/workflow-graph/validation-round";
+
+import type { GraphWorkflowExecutionContextState } from "@/lib/workflow-graph/schemas";
+
+import { type GraphWorkflowEventDelivery } from "@/lib/workflow-graph/execution-events";
+
+import type { AskQuestionItem } from "@/lib/conversations/schemas";
+
+import {
+  buildLifecycleSnapshot,
+  transitionContextStatus,
+} from "@/lib/workflow-graph/context-transitions";
+
+import type {
+  GraphWorkflowIterationInput,
+  GraphWorkflowIterationResult,
+} from "./context-outcome";
+
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+
 import { parseLaneStateKey } from "@/lib/workflow-graph/lane-identity";
 import { pendingUserInputEntries } from "@/lib/workflow-graph/pending-user-input";
-import { concludeValidationRound } from "@/lib/workflow-graph/validation-round";
+
+import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
+
 import type {
-  AskQuestionAnswer,
-  AskQuestionItem,
-} from "@/lib/conversations/schemas";
-import type { GraphWorkflowEventDelivery } from "@/lib/workflow-graph/execution-events";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionContextState,
   GraphWorkflowLaneKind,
   GraphWorkflowPendingUserInput,
 } from "@/lib/workflow-graph/schemas";
@@ -154,15 +183,13 @@ export interface UserInputGateServiceDeps {
    * gate's `mutateActive` seam). The callback receives a cloned draft; the
    * returned execution is Zod-parsed and persisted in one write-queue section.
    */
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) =>
-      | GraphWorkflowExecution
-      | ({ execution: GraphWorkflowExecution } & GraphWorkflowEventDelivery),
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   /**
    * Derive the pure `graph-workflow-user-input-pending` delivery DATA. The gate
    * returns it from the parking reducer so the mutation seam appends the event
@@ -383,11 +410,13 @@ export function releaseParkedContext(
   contextId: string,
   next: "running" | "ready",
   reason: string,
-): void {
+): boolean {
   const contextState = draft.contextStates[contextId];
-  if (!contextState || contextState.status !== "awaiting_user_input") return;
-  if (Object.keys(contextState.pendingUserInputs).length > 0) return;
+  if (!contextState || contextState.status !== "awaiting_user_input")
+    return false;
+  if (Object.keys(contextState.pendingUserInputs).length > 0) return false;
   transitionContextStatus(draft, contextId, next, { reason });
+  return true;
 }
 
 export function createUserInputGateService(
@@ -451,14 +480,18 @@ export function createUserInputGateService(
     input: EnterAwaitingUserInputInput,
   ): Promise<"parked" | "answers_ready"> {
     const lane = laneKindOf(input.laneKey);
-    let answersReady = false;
-    let alreadyStanding = false;
-    let requestedAt = deps.now();
 
-    const execution = await deps.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (draft) => {
+    const {
+      execution: execution,
+      answersReady,
+      alreadyStanding,
+      requestedAt,
+    } = await deps
+      .mutateActive(input.projectPath, input.sessionName, (draft) => {
+        let answersReady = false;
+        let alreadyStanding = false;
+        let requestedAt = deps.now();
+
         const contextState = draft.contextStates[input.contextId];
         if (!contextState) {
           throw new Error(
@@ -480,7 +513,7 @@ export function createUserInputGateService(
         // parking so the caller proceeds directly with the answer block (5.4).
         if (sameBatch && existing.answers !== null) {
           answersReady = true;
-          return draft;
+          return unchanged({ answersReady, alreadyStanding, requestedAt });
         }
 
         // The same batch, still unanswered: this park RE-asserts a question the
@@ -490,6 +523,8 @@ export function createUserInputGateService(
         // pending event would surface an existing question as a new one.
         alreadyStanding = sameBatch;
         requestedAt = sameBatch ? existing.requestedAt : deps.now();
+        if (sameBatch && contextState.status === "awaiting_user_input")
+          return unchanged({ answersReady, alreadyStanding, requestedAt });
         transitionContextStatus(draft, input.contextId, "awaiting_user_input", {
           reason: "user_input_gate.enter_awaiting_user_input",
         });
@@ -502,7 +537,8 @@ export function createUserInputGateService(
           roundSeq: input.roundSeq ?? null,
           answers: sameBatch ? existing.answers : null,
         };
-        if (alreadyStanding) return draft;
+        if (alreadyStanding)
+          return changed(draft, { answersReady, alreadyStanding, requestedAt });
         const delivery = deps.publishUserInputPending({
           projectPath: input.projectPath,
           sessionName: input.sessionName,
@@ -512,9 +548,16 @@ export function createUserInputGateService(
           questionBatchId: input.questionBatchId,
           requestedAt,
         });
-        return { execution: draft, ...delivery };
-      },
-    );
+        return changed(
+          draft,
+          { answersReady, alreadyStanding, requestedAt },
+          { ...delivery },
+        );
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     if (answersReady) {
       logger.info("gate.enter_skipped_answers_ready", {
@@ -553,14 +596,20 @@ export function createUserInputGateService(
   async function recordAnswers(
     input: RecordAnswersInput,
   ): Promise<RecordAnswersResult> {
-    let guardFailureReason: "already_answered" | "not_found" | null = null;
-    let resolvedContextId: string | null = null;
     const answeredAt = deps.now();
 
-    const execution = await deps.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (draft) => {
+    const {
+      execution: execution,
+      guardFailureReason,
+      resolvedContextId,
+    } = await deps
+      .mutateActive<{
+        guardFailureReason: "already_answered" | "not_found" | null;
+        resolvedContextId: string | null;
+      }>(input.projectPath, input.sessionName, (draft) => {
+        let guardFailureReason: "already_answered" | "not_found" | null = null;
+        let resolvedContextId: string | null = null;
+
         // An answer is routed to the lane that asked, never to a context: the
         // parked record itself names the conversation and the batch, so a
         // standing question is answerable from the record alone.
@@ -580,15 +629,15 @@ export function createUserInputGateService(
             record.roundSeq !== openValidationRoundSeq(contextState)
           ) {
             guardFailureReason = "not_found";
-            return draft;
+            return unchanged({ guardFailureReason, resolvedContextId });
           }
           if (record.answers !== null) {
             guardFailureReason = "already_answered";
-            return draft;
+            return unchanged({ guardFailureReason, resolvedContextId });
           }
           resolvedContextId = parked.contextId;
           record.answers = { byQuestionId: input.answers, answeredAt };
-          return draft;
+          return changed(draft, { guardFailureReason, resolvedContextId });
         }
 
         // Upsert-before-park: no record for this batch, so the answer may have
@@ -599,7 +648,7 @@ export function createUserInputGateService(
         const resolved = findLaneByConversationId(draft, input.conversationId);
         if (!resolved) {
           guardFailureReason = "not_found";
-          return draft;
+          return unchanged({ guardFailureReason, resolvedContextId });
         }
         const contextState = draft.contextStates[resolved.contextId];
         // A record already standing for this lane on ANOTHER batch means this
@@ -611,7 +660,7 @@ export function createUserInputGateService(
             validationRoundIsOver(contextState))
         ) {
           guardFailureReason = "not_found";
-          return draft;
+          return unchanged({ guardFailureReason, resolvedContextId });
         }
         resolvedContextId = resolved.contextId;
         contextState.pendingUserInputs[resolved.laneKey] = {
@@ -629,9 +678,12 @@ export function createUserInputGateService(
             answeredAt,
           },
         };
-        return draft;
-      },
-    );
+        return changed(draft, { guardFailureReason, resolvedContextId });
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     if (guardFailureReason !== null) {
       logger.warn("gate.record_guard_failed", {
@@ -672,12 +724,10 @@ export function createUserInputGateService(
   async function consumeAnswers(
     input: ConsumeAnswersInput,
   ): Promise<ConsumeAnswersResult[]> {
-    const consumed: ConsumeAnswersResult[] = [];
+    const { execution: execution, consumed } = await deps
+      .mutateActive(input.projectPath, input.sessionName, (draft) => {
+        const consumed: ConsumeAnswersResult[] = [];
 
-    const execution = await deps.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (draft) => {
         const contextState = draft.contextStates[input.contextId];
         if (!contextState) {
           throw new Error(
@@ -699,15 +749,19 @@ export function createUserInputGateService(
         // A sibling still waiting keeps the context parked: resuming the
         // iteration now would re-dispatch its lane and throw away the question
         // the human is still looking at.
-        releaseParkedContext(
+        const released = releaseParkedContext(
           draft,
           input.contextId,
           "running",
           "user_input_gate.consume_answers",
         );
-        return draft;
-      },
-    );
+        if (consumed.length === 0 && !released) return unchanged({ consumed });
+        return changed(draft, { consumed });
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     if (consumed.length === 0) return consumed;
 
@@ -764,12 +818,11 @@ export function createUserInputGateService(
   async function withdrawAll(
     input: WithdrawAllInput,
   ): Promise<GraphWorkflowExecution> {
-    const withdrawn: WithdrawnQuestion[] = [];
+    const { execution: execution, withdrawn } = await deps
+      .mutateActive(input.projectPath, input.sessionName, (draft) => {
+        const withdrawn: WithdrawnQuestion[] = [];
+        let modified = false;
 
-    const execution = await deps.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (draft) => {
         for (const [contextId, contextState] of Object.entries(
           draft.contextStates,
         )) {
@@ -781,16 +834,22 @@ export function createUserInputGateService(
             });
             delete contextState.pendingUserInputs[entry.laneKey];
           }
-          releaseParkedContext(
+          const released = releaseParkedContext(
             draft,
             contextId,
             "running",
             "user_input_gate.withdraw_all",
           );
+          modified ||= released;
         }
-        return draft;
-      },
-    );
+        if (withdrawn.length === 0 && !modified)
+          return unchanged({ withdrawn });
+        return changed(draft, { withdrawn });
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     await deliverWithdrawals(input, execution, withdrawn);
 
@@ -806,12 +865,11 @@ export function createUserInputGateService(
   async function withdrawRoundQuestions(
     input: WithdrawRoundQuestionsInput,
   ): Promise<GraphWorkflowExecution> {
-    const withdrawn: WithdrawnQuestion[] = [];
+    const { execution: execution, withdrawn } = await deps
+      .mutateActive(input.projectPath, input.sessionName, (draft) => {
+        const withdrawn: WithdrawnQuestion[] = [];
+        let modified = false;
 
-    const execution = await deps.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (draft) => {
         for (const [contextId, contextState] of Object.entries(
           draft.contextStates,
         )) {
@@ -825,6 +883,7 @@ export function createUserInputGateService(
           // than erased — `seq` is what tells the next round apart from this
           // one, so it has to outlive the round it numbers.
           contextState.validationRound = concludeValidationRound(round, null);
+          modified = true;
           for (const entry of pendingUserInputEntries(contextState)) {
             // Exactly the round's questions. An implementer's park belongs to
             // no round, and neither a pause nor a moved candidate is the
@@ -837,16 +896,22 @@ export function createUserInputGateService(
             });
             delete contextState.pendingUserInputs[entry.laneKey];
           }
-          releaseParkedContext(
+          const released = releaseParkedContext(
             draft,
             contextId,
             input.releaseTo ?? "ready",
             "user_input_gate.withdraw_round_questions",
           );
+          modified ||= released;
         }
-        return draft;
-      },
-    );
+        if (withdrawn.length === 0 && !modified)
+          return unchanged({ withdrawn });
+        return changed(draft, { withdrawn });
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     await deliverWithdrawals(input, execution, withdrawn);
 
@@ -865,5 +930,140 @@ export function createUserInputGateService(
     consumeAnswers,
     withdrawAll,
     withdrawRoundQuestions,
+  };
+}
+
+/**
+ * Shared awaiting-user-input park for both the implementer and context-
+ * validator lanes (design "Park detection"; Req 3.2, 3.3). Hands every asking
+ * lane's batch to the user-input gate, one park per lane: a cohort can have
+ * several validators waiting at once, and a park that named only the first
+ * would strand the rest with questions nobody could answer.
+ *
+ * Returns null when NO lane parked — every batch already had answers recorded
+ * (fast answer), so the caller proceeds. Otherwise it commits the park
+ * mutation — dropping the context from `activeContextIds`, rebuilding the
+ * machine snapshot, and (for the implementer seed increment only) restoring
+ * the pre-seed iteration count so parking consumes no iteration — then
+ * re-reads and returns the parked iteration result. It never touches
+ * `consecutiveFailureCount` or reopens tasks.
+ */
+export async function parkContextForUserInput(
+  deps: {
+    executionRepository: Pick<GraphWorkflowExecutionRepository, "mutateActive">;
+    userInputGateService: Pick<UserInputGateService, "enterAwaitingUserInput">;
+  },
+  params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    /** The asking lanes, in cohort order. */
+    lanes: ReadonlyArray<{
+      laneKey: string;
+      conversationId: string;
+      questionBatchId: string;
+      questions: AskQuestionItem[];
+    }>;
+    /** The round the asking validators are reviewing in; null for the implementer. */
+    roundSeq?: number | null;
+    /** The conversation the parked iteration result reports. */
+    conversationId: string;
+    /** When set, the context's iterationCount is restored to this value. */
+    restoreIterationCount?: number;
+  },
+): Promise<
+  | (Omit<GraphWorkflowIterationResult, "decision"> & {
+      decision: { kind: "await_user_input" };
+    })
+  | null
+> {
+  const {
+    input,
+    execLogger,
+    lanes,
+    roundSeq,
+    conversationId,
+    restoreIterationCount,
+  } = params;
+
+  let parkedCount = 0;
+  for (const lane of lanes) {
+    const outcome = await deps.userInputGateService.enterAwaitingUserInput({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      contextId: input.contextId,
+      laneKey: lane.laneKey,
+      conversationId: lane.conversationId,
+      questionBatchId: lane.questionBatchId,
+      questions: lane.questions,
+      roundSeq: roundSeq ?? null,
+    });
+
+    if (outcome === "answers_ready") {
+      execLogger?.iteration(
+        input.contextId,
+        "iteration.user_input_fast_answer",
+        {
+          laneKey: lane.laneKey,
+          conversationId: lane.conversationId,
+          questionBatchId: lane.questionBatchId,
+        },
+      );
+      logger.info("graph-workflow.iteration.user_input_fast_answer", {
+        contextId: input.contextId,
+        laneKey: lane.laneKey,
+        questionBatchId: lane.questionBatchId,
+      });
+      continue;
+    }
+    parkedCount += 1;
+  }
+
+  if (parkedCount === 0) {
+    return null;
+  }
+
+  const parkedExecution = await deps.executionRepository
+    .mutateActive(input.projectPath, input.sessionName, (latest) => {
+      const next = structuredClone(latest);
+      const parkedContextState = next.contextStates[input.contextId];
+      if (parkedContextState && restoreIterationCount !== undefined) {
+        Object.assign(
+          parkedContextState,
+          accountContextAction(parkedContextState, {
+            kind: "question_parked",
+            restoreIterationCount,
+          }),
+        );
+      }
+      next.activeContextIds = next.activeContextIds.filter(
+        (id) => id !== input.contextId,
+      );
+      next.machineSnapshot = buildLifecycleSnapshot(next, {
+        hasLiveIteration: false,
+      });
+      return changed(next);
+    })
+    .then((mutation) => mutation.execution);
+
+  execLogger?.iteration(
+    input.contextId,
+    "iteration.parked_awaiting_user_input",
+    {
+      laneKeys: lanes.map((lane) => lane.laneKey),
+      parkedCount,
+      roundSeq: roundSeq ?? null,
+    },
+  );
+  logger.info("graph-workflow.iteration.parked_awaiting_user_input", {
+    executionId: parkedExecution.id,
+    contextId: input.contextId,
+    laneKeys: lanes.map((lane) => lane.laneKey),
+    parkedCount,
+  });
+
+  return {
+    conversationId,
+    execution: parkedExecution,
+    decision: { kind: "await_user_input" },
   };
 }

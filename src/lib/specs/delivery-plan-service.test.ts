@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { collectStableAccountabilityContextIds } from "@/lib/workflow-graph/authored-accountability";
 import { locateAuthoredAccountabilityCoverage } from "@/lib/workflow-graph/authored-accountability-coverage";
 import { createMaximalAuthoredWorkflowLaunchFixture } from "@/lib/workflow-graph/testing/maximal-authored-launch";
@@ -51,7 +52,7 @@ import {
   makeLaunchDocument,
 } from "@/lib/workflow-graph/test-fixtures";
 import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
-import { validateCharterSourceAuthoredShapes } from "@/lib/workflow-graph/validation";
+import { validateCharterSourceAuthoredShapes } from "@/lib/workflow-graph/definition-validation";
 import {
   NATIVE_SDD_CLAIMS_SOURCE_ID,
   NATIVE_SDD_PINNED_SPEC_SOURCE_ID,
@@ -1778,7 +1779,11 @@ describe("delivery-plan service v4 lifecycle", () => {
       projectPath: PROJECT_PATH,
       workflowDefinitionId: opened.workflowDefinition.id,
     });
-    const draftEdit = applyDefinitionEdits(draft!, [charterEdit]);
+    const draftEdit = applyDefinitionEdits(
+      draft!,
+      [charterEdit],
+      createNonParticipatingGraphExecutionContract(),
+    );
     expect(draftEdit.ok).toBe(true);
     if (!draftEdit.ok) return;
     expect(draftEdit.record.definition.charter.mission).toBe(
@@ -1799,7 +1804,11 @@ describe("delivery-plan service v4 lifecycle", () => {
       projectPath: PROJECT_PATH,
       workflowDefinitionId: reopened.value.workflowDefinition.id,
     });
-    const cloneEdit = applyDefinitionEdits(clone!, [charterEdit]);
+    const cloneEdit = applyDefinitionEdits(
+      clone!,
+      [charterEdit],
+      createNonParticipatingGraphExecutionContract(),
+    );
     expect(cloneEdit.ok).toBe(true);
     const cloneSourceIds = clone!.definition.charter.sourcesOfTruth.map(
       (source) => source.id,
@@ -1833,9 +1842,11 @@ describe("delivery-plan service v4 lifecycle", () => {
       revision: frozen!.revision,
       definitionHash: workflowDefinitionHash(frozen!),
     });
-    const locked = applyDefinitionEdits(frozen!, [
-      { type: "update-charter", mission: "Too late." },
-    ]);
+    const locked = applyDefinitionEdits(
+      frozen!,
+      [{ type: "update-charter", mission: "Too late." }],
+      createNonParticipatingGraphExecutionContract(),
+    );
     expect(locked.ok).toBe(false);
     if (locked.ok) return;
     expect(locked.issues[0]?.code).toBe("region_locked");
@@ -1866,9 +1877,11 @@ describe("delivery-plan service v4 lifecycle", () => {
       definition?.definition.lockedRegions?.flatMap((lock) => lock.paths),
     ).not.toContain("/charter");
     expect(
-      applyDefinitionEdits(definition!, [
-        { type: "update-charter", mission: "Still authorable." },
-      ]).ok,
+      applyDefinitionEdits(
+        definition!,
+        [{ type: "update-charter", mission: "Still authorable." }],
+        createNonParticipatingGraphExecutionContract(),
+      ).ok,
     ).toBe(true);
   });
 });

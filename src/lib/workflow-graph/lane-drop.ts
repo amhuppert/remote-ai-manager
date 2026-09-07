@@ -38,7 +38,7 @@ import {
   SESSION_LANE_ID,
   SESSION_LANE_NAME,
 } from "./lane-identity";
-import { validateAuthoredDefinition } from "./validation";
+import { validateAuthoredDefinition } from "./definition-validation";
 
 export interface LaneDropInput {
   readonly definition: WorkflowSemanticDefinition;

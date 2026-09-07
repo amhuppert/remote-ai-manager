@@ -1,3 +1,4 @@
+import { initialContextAccounting } from "./context-accounting";
 import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowTaskState,
@@ -37,9 +38,7 @@ export function buildInitialContextState(
     status: "pending",
     totalTaskCount,
     completedTaskCount: 0,
-    iterationCount: 0,
-    consecutiveFailureCount: 0,
-    consecutiveCandidateMismatchCount: 0,
+    ...initialContextAccounting(),
     worktreePath: null,
     branchName: null,
     isolation: "session",

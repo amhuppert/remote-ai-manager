@@ -1,3 +1,12 @@
+import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
 
 import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
@@ -36,7 +45,6 @@ import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-sch
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
-import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
 
 const NOW = "2026-03-27T16:10:00.000Z";
 const RESUMED_BACKEND_REF = {
@@ -123,23 +131,13 @@ function productionTaskRun(
 
 interface Repository {
   getActive(): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
-    fn: (execution: GraphWorkflowExecution) =>
-      | GraphWorkflowExecution
-      | {
-          execution: GraphWorkflowExecution;
-          events: GraphWorkflowExecutionEvent[];
-        }
-      | Promise<
-          | GraphWorkflowExecution
-          | {
-              execution: GraphWorkflowExecution;
-              events: GraphWorkflowExecutionEvent[];
-            }
-        >,
-  ): Promise<GraphWorkflowExecution>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   findLatestContextValidationEvent(
     projectPath: string,
     sessionName: string,
@@ -158,14 +156,10 @@ function createRepository(initial: GraphWorkflowExecution): Repository {
       return active;
     },
     async mutateActive(_projectPath, _sessionName, fn) {
-      const result = await fn(structuredClone(active));
-      if ("execution" in result && "events" in result) {
-        active = result.execution;
-        appendedEvents.push(...result.events);
-      } else {
-        active = result;
-      }
-      return active;
+      return applyFixtureMutation(active, fn, (next, delivery) => {
+        active = next;
+        appendedEvents.push(...delivery.events);
+      });
     },
     async findLatestContextValidationEvent(
       _projectPath,
@@ -219,7 +213,9 @@ function completePlanTask(repository: Repository) {
       ...current.contextStates["context-plan"]!,
       completedTaskCount: 1,
     };
-    await repository.mutateActive("/repo", "session-1", () => current);
+    await repository
+      .mutateActive("/repo", "session-1", () => changed(current))
+      .then((mutation) => mutation.execution);
     return {
       conversationId: "conversation-lane",
       contextTokens: null,
@@ -239,12 +235,16 @@ function buildOrchestrator(
     executeWorkflowTaskRun: productionTaskRun(runner),
   });
 
-  return createGraphWorkflowIterationOrchestrator({
+  return createContextIterationFixture({
+    ...createContextTestCapabilities(),
+    materializeWorkflowDocuments: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: repository,
     findLatestContextValidationEvent:
       repository.findLatestContextValidationEvent,
     createConversation: vi.fn(async () => ({ id: "conversation-lane" })),
-    createToolServer: vi.fn(() => ({ server: {} })),
     runAgentIteration: completePlanTask(repository),
     validationService: {
       validateContextCompletion: vi.fn(async () => ({
@@ -306,7 +306,7 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
     expect(captured?.parse.source).toBe("fenced");
 
     expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
 
     // The declared contract reached the backend verbatim.
     const captureRequest = capture.requests.at(-1);
@@ -394,7 +394,7 @@ describe("context output capture against a fake agent backend (R2.1)", () => {
     expect(persisted.contextStates["context-plan"]?.status).not.toBe(
       "completed",
     );
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(
       persisted.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(1);

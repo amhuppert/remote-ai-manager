@@ -158,7 +158,6 @@ async function runIterationCapturingOptions(
             parameters: { reasoning: "high", fast: "false" },
           }
         : { modelId: "opus", parameters: { effort: "high" } },
-    toolServer: { servers: [] },
     placement,
   });
 
@@ -334,7 +333,6 @@ describe("the implementer dispatch path composes the envelope before dispatching
           modelId: "opus",
           parameters: { effort: "high" },
         },
-        toolServer: { servers: [] },
         placement: {
           lane: "build",
           mode: "owned",
@@ -374,7 +372,6 @@ describe("the implementer dispatch path composes the envelope before dispatching
           modelId: "gpt",
           parameters: { reasoning: "high", fast: "false" },
         },
-        toolServer: { servers: [] },
         placement: { lane: "session", mode: "readOnly" },
       }),
     ).rejects.toThrow(/cannot mechanically confine|fsWriteRestriction/i);
@@ -412,7 +409,6 @@ describe("the implementer dispatch path composes the envelope before dispatching
                   parameters: { reasoning: "high", fast: "false" },
                 }
               : { modelId: "opus", parameters: { effort: "high" } },
-          toolServer: { servers: [] },
           placement: { lane: "build", mode: "owned", ownedPaths: ["src"] },
         }),
       ).rejects.toThrow(/implementer write envelope/i);

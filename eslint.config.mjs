@@ -14,6 +14,7 @@ import {
   SSE_PUBLICATION_SANCTIONED,
   CROSS_FEATURE_ALLOWLIST,
   STATE_STORE_CONSTRUCTION_ALLOWLIST,
+  GRAPH_OWNERSHIP_ALLOWLIST,
 } from "./eslint-rules/seam-allowlists.mjs";
 
 // Surfaces migrated to Tailwind utilities (utility-first BY DESIGN). The Tailwind
@@ -296,6 +297,8 @@ const eslintConfig = defineConfig([
   ...nextTs,
   prettier,
   globalIgnores([
+    ".cc/**",
+    ".config/**",
     ".next/**",
     "out/**",
     "build/**",
@@ -366,6 +369,10 @@ const eslintConfig = defineConfig([
       "architecture-seams/no-backend-deep-import": [
         "error",
         { allowlist: BACKEND_SEAM_ALLOWLIST },
+      ],
+      "architecture-seams/no-graph-ownership-violation": [
+        "error",
+        { allowlist: GRAPH_OWNERSHIP_ALLOWLIST },
       ],
       "architecture-seams/no-raw-broadcaster-import": [
         "error",

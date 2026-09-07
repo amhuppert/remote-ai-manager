@@ -1,3 +1,14 @@
+import { StaleLoopFenceError } from "./loop-fence";
+import {
+  ExecutionTurnoverError,
+  LaneBindingTurnoverError,
+} from "./principal-fence";
+import { refused as refuseMutation } from "./execution-mutation";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * Runtime graph expansion (D4 R6/R7) — the one agent-facing path that grows a
  * RUNNING execution's graph.
@@ -51,7 +62,7 @@ import type {
   PublishGraphExpansionInput,
   PublishLiveEditAppliedInput,
 } from "./execution-events";
-import type { MutateActiveResult } from "./execution-repository";
+
 import {
   compileGeneratedChildConfig,
   generatedChildConfigOverrideSchema,
@@ -89,10 +100,7 @@ import type {
   GraphWorkflowExpansionAcceptanceReceipt,
   GraphWorkflowExpansionRefusalReceipt,
 } from "./schemas";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "./execution-contract-port";
+import { type GraphExecutionContract } from "./execution-contract-port";
 
 const logger = createLogger("graph-workflow-expansion");
 
@@ -769,15 +777,15 @@ export interface GraphWorkflowExpansionServiceDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
   /** Resolve every assignment introduced by the compiled batch before mutation. */
   prepareAssignmentSnapshots?(
     projectPath: string,
@@ -846,32 +854,15 @@ function refusalKindFor(code: string | undefined): ExpansionRefusalKind {
 }
 
 /**
- * A refusal decided inside the reducer. Thrown so the mutation aborts and
- * nothing persists — the same shape the live-edit apply pipeline uses.
+ * A preparation or admission refusal that leaves execution state untouched.
  */
-class ExpansionRefusalSignal extends Error {
-  constructor(
-    readonly kind: ExpansionRefusalKind,
-    readonly issues: WorkflowGraphValidationError[],
-  ) {
-    super(issues[0]?.message ?? "graph expansion refused");
-    this.name = "ExpansionRefusalSignal";
-  }
-}
-
-/**
- * The active execution was replaced between validating an attempt and
- * committing its refusal receipt. Thrown inside the reducer to abort the write
- * rather than file the receipt against an execution it does not describe.
- */
-class ExpansionExecutionSwapped extends Error {
-  constructor(readonly activeExecutionId: string) {
-    super(
-      `The active execution changed to "${activeExecutionId}" before the refusal receipt could be committed`,
-    );
-    this.name = "ExpansionExecutionSwapped";
-  }
-}
+type ExpansionMutationRefusal =
+  | { code: "reprepare" }
+  | {
+      code: "refused";
+      kind: ExpansionRefusalKind;
+      issues: WorkflowGraphValidationError[];
+    };
 
 /**
  * How many times a staged batch may be re-prepared before giving up. A
@@ -937,8 +928,7 @@ function recheckVolatileEnvelope(
 export function createGraphWorkflowExpansionService(
   deps: GraphWorkflowExpansionServiceDeps,
 ) {
-  const executionContract =
-    deps.executionContract ?? createRegisteredGraphExecutionContract();
+  const executionContract = deps.executionContract;
 
   function refusalDelivery(
     input: GraphExpansionInput,
@@ -1007,52 +997,52 @@ export function createGraphWorkflowExpansionService(
       refusedAt: deps.now(),
     };
     try {
-      await deps.mutateActive(
+      const mutation = await deps.mutateActive(
         input.projectPath,
         input.sessionName,
         (current) => {
           if (current.id !== input.executionId) {
-            // Throwing aborts the whole mutation: the repository delivers
-            // events only AFTER the transaction commits, so nothing is written
-            // and nothing is published from in here.
-            throw new ExpansionExecutionSwapped(current.id);
+            return refuseMutation({ activeExecutionId: current.id });
           }
           const delivery = refusalDelivery(input, refusalCode);
-          return {
-            execution: {
+          return changed(
+            {
               ...current,
               expansionReceipts: recordExpansionRefusal(
                 current.expansionReceipts,
                 receipt,
               ),
             },
-            events: delivery.events,
-            pushes: delivery.pushes,
-          };
+            undefined,
+            { events: delivery.events, pushes: delivery.pushes },
+          );
         },
       );
-    } catch (error) {
-      if (error instanceof ExpansionExecutionSwapped) {
-        // Expected interleaving, not a fault: the execution this attempt was
-        // validated against is gone, so its receipt has nowhere durable to
-        // live. Losing it is correct — the replacement must treat a repeat as
-        // NEW.
+      if (mutation.kind === "refused") {
+        // The replacement must retain its own receipt ledger.
         logger.warn("graph_expansion.refusal_receipt_execution_swapped", {
           executionId: input.executionId,
-          activeExecutionId: error.activeExecutionId,
+          activeExecutionId: mutation.refusal.activeExecutionId,
           contextId: input.contextId,
           requestId: input.request.requestId,
           refusalCode,
         });
-      } else {
-        logger.error("graph_expansion.refusal_receipt_failed", {
-          executionId: input.executionId,
-          contextId: input.contextId,
-          requestId: input.request.requestId,
-          refusalCode,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        deps.deliver(refusalDelivery(input, refusalCode));
       }
+    } catch (error) {
+      if (
+        error instanceof StaleLoopFenceError ||
+        error instanceof ExecutionTurnoverError ||
+        error instanceof LaneBindingTurnoverError
+      )
+        throw error;
+      logger.error("graph_expansion.refusal_receipt_failed", {
+        executionId: input.executionId,
+        contextId: input.contextId,
+        requestId: input.request.requestId,
+        refusalCode,
+        error: error instanceof Error ? error.message : String(error),
+      });
       deps.deliver(refusalDelivery(input, refusalCode));
     }
 
@@ -1286,112 +1276,109 @@ export function createGraphWorkflowExpansionService(
   ): Promise<
     { kind: "reprepare" } | { kind: "settled"; outcome: GraphExpansionOutcome }
   > {
-    let repreparing = false;
-    let liveRevision = 0;
-    try {
-      await deps.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
-          const stale = recheckVolatileEnvelope(current, {
-            contextId: input.contextId,
-            conversationId: input.conversationId,
-            rejoinContextIds: batch.rejoinContextIds,
+    const mutation = await deps.mutateActive<number, ExpansionMutationRefusal>(
+      input.projectPath,
+      input.sessionName,
+      (current) => {
+        const stale = recheckVolatileEnvelope(current, {
+          contextId: input.contextId,
+          conversationId: input.conversationId,
+          rejoinContextIds: batch.rejoinContextIds,
+        });
+        if (stale.length > 0) {
+          return refuseMutation({
+            code: "refused",
+            kind: refusalKindFor(stale[0]?.code),
+            issues: stale,
           });
-          if (stale.length > 0) {
-            throw new ExpansionRefusalSignal(
-              refusalKindFor(stale[0]?.code),
-              stale,
-            );
+        }
+
+        const finalized = finalizePreparedEdits(current, prepared);
+        if (!finalized.ok) {
+          if (finalized.outcome === "reprepare") {
+            return refuseMutation({ code: "reprepare" });
           }
-
-          const finalized = finalizePreparedEdits(current, prepared);
-          if (!finalized.ok) {
-            if (finalized.outcome === "reprepare") {
-              repreparing = true;
-              throw new ExpansionRefusalSignal("conflict", [
-                issue(
-                  "expansion-reprepare",
-                  `The execution moved under this batch (${finalized.reason.kind})`,
-                ),
-              ]);
-            }
-            throw new ExpansionRefusalSignal("conflict", finalized.issues);
-          }
-
-          // Exactly one increment per accepted mutation (doc 06, D4). The core
-          // never touches `liveRevision`; this entry point owns its bump.
-          liveRevision = finalized.execution.liveRevision + 1;
-          // The PERMANENT receipt lands in the same mutation as the graph
-          // change: it is what a retry replays instead of expanding twice, and
-          // what the cumulative budget is counted from, so an accepted
-          // expansion whose receipt did not commit would be both replayable-as-
-          // new and free of charge.
-          const acceptance: GraphWorkflowExpansionAcceptanceReceipt = {
-            requestId: input.request.requestId,
-            payloadHash,
-            invokerContextId: input.contextId,
-            initiatorConversationId: input.conversationId,
-            rationale: input.request.rationale,
-            addedContextIds: batch.createdContextIds,
-            addedTaskIds: batch.createdTaskIds,
-            rejoinContextIds: batch.rejoinContextIds,
-            liveRevision,
-            acceptedAt: deps.now(),
-          };
-          const bumped: GraphWorkflowExecution = {
-            ...finalized.execution,
-            liveRevision,
-            expansionReceipts: recordExpansionAcceptance(
-              finalized.execution.expansionReceipts,
-              acceptance,
-            ),
-          };
-
-          // Both event receipts ride THIS mutation, so the audit rows and the
-          // graph change commit together or not at all.
-          const liveEdit = deps.publishLiveEditApplied({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            executionId: bumped.id,
-            liveRevision,
-            operationCount: batch.operations.length,
-            affectedContextIds: [...finalized.affectedContextIds],
-            source: "lane-agent",
+          return refuseMutation({
+            code: "refused",
+            kind: "conflict",
+            issues: finalized.issues,
           });
-          const expansion = deps.publishGraphExpansion({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            executionId: bumped.id,
-            invokerContextId: input.contextId,
-            requestId: input.request.requestId,
-            outcome: "accepted",
-            addedContextIds: batch.createdContextIds,
-            addedTaskIds: batch.createdTaskIds,
-            rejoinContextIds: batch.rejoinContextIds,
-            refusalCode: null,
-            occurredAt: deps.now(),
-          });
+        }
 
-          return {
-            execution: bumped,
-            events: [...liveEdit.events, ...expansion.events],
-            pushes: [...liveEdit.pushes, ...expansion.pushes],
-          };
-        },
-      );
-    } catch (error) {
-      if (error instanceof ExpansionRefusalSignal) {
-        // A reprepare is not a refusal: the batch may still be accepted against
-        // fresh state, so it records nothing and re-enters the attempt loop.
-        if (repreparing) return { kind: "reprepare" };
-        return {
-          kind: "settled",
-          outcome: await refused(input, payloadHash, error.kind, error.issues),
+        // Exactly one increment per accepted mutation (doc 06, D4). The core
+        // never touches `liveRevision`; this entry point owns its bump.
+        const liveRevision = finalized.execution.liveRevision + 1;
+        // The PERMANENT receipt lands in the same mutation as the graph
+        // change: it is what a retry replays instead of expanding twice, and
+        // what the cumulative budget is counted from, so an accepted
+        // expansion whose receipt did not commit would be both replayable-as-
+        // new and free of charge.
+        const acceptance: GraphWorkflowExpansionAcceptanceReceipt = {
+          requestId: input.request.requestId,
+          payloadHash,
+          invokerContextId: input.contextId,
+          initiatorConversationId: input.conversationId,
+          rationale: input.request.rationale,
+          addedContextIds: batch.createdContextIds,
+          addedTaskIds: batch.createdTaskIds,
+          rejoinContextIds: batch.rejoinContextIds,
+          liveRevision,
+          acceptedAt: deps.now(),
         };
-      }
-      throw error;
+        const bumped: GraphWorkflowExecution = {
+          ...finalized.execution,
+          liveRevision,
+          expansionReceipts: recordExpansionAcceptance(
+            finalized.execution.expansionReceipts,
+            acceptance,
+          ),
+        };
+
+        // Both event receipts ride THIS mutation, so the audit rows and the
+        // graph change commit together or not at all.
+        const liveEdit = deps.publishLiveEditApplied({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId: bumped.id,
+          liveRevision,
+          operationCount: batch.operations.length,
+          affectedContextIds: [...finalized.affectedContextIds],
+          source: "lane-agent",
+        });
+        const expansion = deps.publishGraphExpansion({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId: bumped.id,
+          invokerContextId: input.contextId,
+          requestId: input.request.requestId,
+          outcome: "accepted",
+          addedContextIds: batch.createdContextIds,
+          addedTaskIds: batch.createdTaskIds,
+          rejoinContextIds: batch.rejoinContextIds,
+          refusalCode: null,
+          occurredAt: deps.now(),
+        });
+
+        return changed(bumped, liveRevision, {
+          events: [...liveEdit.events, ...expansion.events],
+          pushes: [...liveEdit.pushes, ...expansion.pushes],
+        });
+      },
+    );
+    if (mutation.kind === "refused") {
+      const refusal = mutation.refusal;
+      if (refusal.code === "reprepare") return { kind: "reprepare" };
+      return {
+        kind: "settled",
+        outcome: await refused(
+          input,
+          payloadHash,
+          refusal.kind,
+          refusal.issues,
+        ),
+      };
     }
+    const liveRevision = mutation.value;
 
     logger.info("graph_expansion.accepted", {
       executionId: input.executionId,

@@ -1,10 +1,22 @@
+import {
+  orderedContextTaskIds,
+  setTaskOrder,
+  isPermutation,
+  insertTask,
+  removeTask,
+  moveTask,
+  removeContextContent,
+  matchEdgeTargets,
+  resolveEdgeTarget,
+  updateEdgeGuard,
+  removeEdge,
+} from "./document-edit-mechanics";
 import type {
   CharterInvariant,
   SourceOfTruth,
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
 import type {
-  GraphWorkflowContextEdge,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
   WorkflowDefinitionRecord,
@@ -12,12 +24,9 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { mintEdgeId as mintSharedEdgeId } from "./edge-identity";
-import type {
-  DefinitionEditOperation,
-  DefinitionEditTaskPosition,
-} from "@/lib/workflows/edit-schemas";
+import type { DefinitionEditOperation } from "@/lib/workflows/edit-schemas";
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
-import { validateAuthoredDefinition } from "./validation";
+import { validateAuthoredDefinition } from "./definition-validation";
 import { generateWorkflowLayout } from "./layout";
 import {
   findLockedRegionTouch,
@@ -25,10 +34,7 @@ import {
   regionLockedMessage,
   type DefinitionPath,
 } from "./locked-regions";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "./execution-contract-port";
+import { type GraphExecutionContract } from "./execution-contract-port";
 
 /**
  * Apply an ordered batch of targeted edits to a saved workflow definition
@@ -61,7 +67,7 @@ export type DefinitionEditIssue = WorkflowGraphValidationError & {
 export function applyDefinitionEdits(
   record: WorkflowDefinitionRecord,
   operations: DefinitionEditOperation[],
-  executionContract: GraphExecutionContract = createRegisteredGraphExecutionContract(),
+  executionContract: GraphExecutionContract,
 ): ApplyDefinitionEditsResult {
   const next = structuredClone(record);
   const definition = next.definition;
@@ -304,7 +310,7 @@ function definitionEditTouchedPaths(
     case "update-edge":
       return [["edges", operation.edgeId, "when"]];
     case "remove-edge": {
-      const matches = matchRemoveEdgeTargets(definition, operation);
+      const matches = matchEdgeTargets(definition.edges, operation);
       return matches.length > 0
         ? matches.map((edge): DefinitionPath => ["edges", edge.id])
         : [["edges", "unknown"]];
@@ -531,17 +537,7 @@ function applyOperation(
           { contextId: operation.contextId },
         );
       }
-      definition.executionContexts = definition.executionContexts.filter(
-        (entry) => entry.id !== operation.contextId,
-      );
-      definition.tasks = definition.tasks.filter(
-        (task) => task.contextId !== operation.contextId,
-      );
-      definition.edges = definition.edges.filter(
-        (edge) =>
-          edge.sourceContextId !== operation.contextId &&
-          edge.targetContextId !== operation.contextId,
-      );
+      removeContextContent(definition, operation.contextId);
       return null;
     }
 
@@ -571,13 +567,7 @@ function applyOperation(
           : {}),
         source: "user",
       };
-      definition.tasks.push(task);
-      const placed = placeTaskInContext(
-        definition,
-        operation.contextId,
-        operation.id,
-        operation.position,
-      );
+      const placed = insertTask(definition.tasks, task, operation.position);
       if (!placed.ok) {
         return fail("position-target-not-found", placed.message, {
           taskId: operation.id,
@@ -616,11 +606,7 @@ function applyOperation(
           { taskId: operation.taskId },
         );
       }
-      const contextId = task.contextId;
-      definition.tasks = definition.tasks.filter(
-        (entry) => entry.id !== operation.taskId,
-      );
-      resequenceContext(definition, contextId);
+      removeTask(definition.tasks, task);
       return null;
     }
 
@@ -645,30 +631,23 @@ function applyOperation(
           { contextId: targetContextId },
         );
       }
-      task.contextId = targetContextId;
-      const placed = placeTaskInContext(
-        definition,
+      const placed = moveTask(
+        definition.tasks,
+        task,
         targetContextId,
-        operation.taskId,
         operation.position,
       );
       if (!placed.ok) {
-        // Restore the original context before bailing so a rejected batch never
-        // half-moves a task (the caller discards `next`, but stay consistent).
-        task.contextId = sourceContextId;
         return fail("position-target-not-found", placed.message, {
           taskId: operation.taskId,
         });
-      }
-      if (targetContextId !== sourceContextId) {
-        resequenceContext(definition, sourceContextId);
       }
       return null;
     }
 
     case "reorder-tasks": {
       const contextTaskIds = orderedContextTaskIds(
-        definition,
+        definition.tasks,
         operation.contextId,
       );
       if (!isPermutation(contextTaskIds, operation.orderedTaskIds)) {
@@ -678,18 +657,12 @@ function applyOperation(
           { contextId: operation.contextId },
         );
       }
-      setContextOrder(definition, operation.orderedTaskIds);
+      setTaskOrder(definition.tasks, operation.orderedTaskIds);
       return null;
     }
 
     case "add-edge": {
-      if (
-        findEdge(
-          definition,
-          operation.sourceContextId,
-          operation.targetContextId,
-        )
-      ) {
+      if (matchEdgeTargets(definition.edges, operation).length > 0) {
         return fail(
           "edge-already-exists",
           `${operation.sourceContextId} → ${operation.targetContextId}`,
@@ -717,17 +690,15 @@ function applyOperation(
           edgeId: operation.edgeId,
         });
       }
-      applyOptionalBlock(edge, "when", operation.when);
+      updateEdgeGuard(edge, operation.when);
       return null;
     }
 
     case "remove-edge": {
-      const resolved = resolveEditedEdge(definition, operation);
+      const resolved = resolveEdgeTarget(definition.edges, operation);
       if (!resolved.ok)
         return fail(resolved.code, resolved.message, resolved.extra);
-      definition.edges = definition.edges.filter(
-        (entry) => entry.id !== resolved.edge.id,
-      );
+      definition.edges = removeEdge(definition.edges, resolved.edge.id);
       return null;
     }
 
@@ -825,18 +796,6 @@ function findTask(
   return definition.tasks.find((entry) => entry.id === taskId);
 }
 
-function findEdge(
-  definition: WorkflowSemanticDefinition,
-  sourceContextId: string,
-  targetContextId: string,
-) {
-  return definition.edges.find(
-    (edge) =>
-      edge.sourceContextId === sourceContextId &&
-      edge.targetContextId === targetContextId,
-  );
-}
-
 function mintEdgeId(
   definition: WorkflowSemanticDefinition,
   sourceContextId: string,
@@ -847,161 +806,6 @@ function mintEdgeId(
     sourceContextId,
     targetContextId,
   );
-}
-
-type RemoveEdgeOperation = Extract<
-  DefinitionEditOperation,
-  { type: "remove-edge" }
->;
-
-/** Every edge an endpoint- or id-addressed `remove-edge` could mean. */
-function matchRemoveEdgeTargets(
-  definition: WorkflowSemanticDefinition,
-  operation: RemoveEdgeOperation,
-): GraphWorkflowContextEdge[] {
-  if (operation.edgeId !== undefined) {
-    return definition.edges.filter((edge) => edge.id === operation.edgeId);
-  }
-  return definition.edges.filter(
-    (edge) =>
-      edge.sourceContextId === operation.sourceContextId &&
-      edge.targetContextId === operation.targetContextId,
-  );
-}
-
-type ResolvedEdgeTarget =
-  | { ok: true; edge: GraphWorkflowContextEdge }
-  | {
-      ok: false;
-      code: string;
-      message: string;
-      extra: Partial<DefinitionEditIssue>;
-    };
-
-/**
- * Resolve the single edge a `remove-edge` addresses. Endpoint addressing stays
- * supported because it is the only form pre-D4 callers know, but it is
- * first-match by nature: once a definition carries parallel edges between one
- * pair, silently removing whichever came first would delete the wrong guard. So
- * an ambiguous endpoint pair refuses and names the candidate ids, which are the
- * `edgeId` values the caller retries with (D4 decision D2).
- */
-function resolveEditedEdge(
-  definition: WorkflowSemanticDefinition,
-  operation: RemoveEdgeOperation,
-): ResolvedEdgeTarget {
-  const matches = matchRemoveEdgeTargets(definition, operation);
-  const described =
-    operation.edgeId !== undefined
-      ? `"${operation.edgeId}"`
-      : `${operation.sourceContextId} → ${operation.targetContextId}`;
-
-  if (matches.length === 0) {
-    return {
-      ok: false,
-      code: "unknown-edge",
-      message: `no edge ${described}`,
-      extra: operation.edgeId !== undefined ? { edgeId: operation.edgeId } : {},
-    };
-  }
-  if (matches.length > 1) {
-    return {
-      ok: false,
-      code: "ambiguous-edge-endpoints",
-      message: `${matches.length} edges match ${described}; address one by edgeId: ${matches
-        .map((edge) => edge.id)
-        .join(", ")}`,
-      extra: {},
-    };
-  }
-  return { ok: true, edge: matches[0]! };
-}
-
-/** Context task ids in current `order`. */
-function orderedContextTaskIds(
-  definition: WorkflowSemanticDefinition,
-  contextId: string,
-): string[] {
-  return definition.tasks
-    .filter((task) => task.contextId === contextId)
-    .sort((a, b) => a.order - b.order)
-    .map((task) => task.id);
-}
-
-/** Assign dense 1..n `order` to the given task ids in list order. */
-function setContextOrder(
-  definition: WorkflowSemanticDefinition,
-  orderedTaskIds: string[],
-): void {
-  orderedTaskIds.forEach((taskId, position) => {
-    const task = definition.tasks.find((entry) => entry.id === taskId);
-    if (task) task.order = position + 1;
-  });
-}
-
-/** Renumber a context's tasks densely by their current relative order. */
-function resequenceContext(
-  definition: WorkflowSemanticDefinition,
-  contextId: string,
-): void {
-  setContextOrder(definition, orderedContextTaskIds(definition, contextId));
-}
-
-/**
- * Place `taskId` (already assigned to `contextId`) at `position` within its
- * context, then densely renumber the context. `position` is relative — the
- * server owns the numeric `order`, agents never write it. Returns an error when
- * an `after`/`before` anchor is not a sibling task.
- */
-function placeTaskInContext(
-  definition: WorkflowSemanticDefinition,
-  contextId: string,
-  taskId: string,
-  position: DefinitionEditTaskPosition | undefined,
-): { ok: true } | { ok: false; message: string } {
-  const siblings = orderedContextTaskIds(definition, contextId).filter(
-    (id) => id !== taskId,
-  );
-
-  let insertIndex: number;
-  if (position === undefined || "at" in position) {
-    insertIndex = position && position.at === "start" ? 0 : siblings.length;
-  } else if ("after" in position) {
-    const anchor = siblings.indexOf(position.after);
-    if (anchor === -1) {
-      return {
-        ok: false,
-        message: `position anchor task "${position.after}" is not in context "${contextId}"`,
-      };
-    }
-    insertIndex = anchor + 1;
-  } else {
-    const anchor = siblings.indexOf(position.before);
-    if (anchor === -1) {
-      return {
-        ok: false,
-        message: `position anchor task "${position.before}" is not in context "${contextId}"`,
-      };
-    }
-    insertIndex = anchor;
-  }
-
-  siblings.splice(insertIndex, 0, taskId);
-  setContextOrder(definition, siblings);
-  return { ok: true };
-}
-
-function isPermutation(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const counts = new Map<string, number>();
-  for (const value of a) counts.set(value, (counts.get(value) ?? 0) + 1);
-  for (const value of b) {
-    const count = counts.get(value);
-    if (count === undefined) return false;
-    if (count === 1) counts.delete(value);
-    else counts.set(value, count - 1);
-  }
-  return counts.size === 0;
 }
 
 /**

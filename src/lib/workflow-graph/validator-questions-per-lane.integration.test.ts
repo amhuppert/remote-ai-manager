@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * R9.1: several validators of one cohort waiting on the human at once.
  *
@@ -753,11 +754,13 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
     await harness.resumeHalt();
     // The scheduler owns ready -> running; this harness drives the iteration
     // directly, so it stands in for that one transition.
-    await harness.repository.mutateActive("/repo", "session-1", (latest) => {
-      const next = structuredClone(latest);
-      next.contextStates[CONTEXT_ID]!.status = "running";
-      return next;
-    });
+    await harness.repository
+      .mutateActive("/repo", "session-1", (latest) => {
+        const next = structuredClone(latest);
+        next.contextStates[CONTEXT_ID]!.status = "running";
+        return changed(next);
+      })
+      .then((mutation) => mutation.execution);
     await harness.run();
 
     contextState = harness.contextState()!;

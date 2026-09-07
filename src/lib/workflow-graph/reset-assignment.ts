@@ -28,7 +28,13 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 
 export class ResetAssignmentError extends Error {
-  constructor(message: string) {
+  constructor(
+    readonly code:
+      | "invalid_execution_status"
+      | "context_missing"
+      | "assignment_missing",
+    message: string,
+  ) {
     super(message);
     this.name = "ResetAssignmentError";
   }
@@ -75,6 +81,7 @@ export function resetExecutionContextAssignment(
 
   if (!RESET_ELIGIBLE_STATUSES.has(execution.status)) {
     throw new ResetAssignmentError(
+      "invalid_execution_status",
       `Resetting a validator assignment is only allowed when the workflow is paused or halted (current status: ${execution.status}).`,
     );
   }
@@ -84,6 +91,7 @@ export function resetExecutionContextAssignment(
   );
   if (!context) {
     throw new ResetAssignmentError(
+      "context_missing",
       `Execution context "${contextId}" not found.`,
     );
   }
@@ -95,6 +103,7 @@ export function resetExecutionContextAssignment(
   );
   if (!configured) {
     throw new ResetAssignmentError(
+      "assignment_missing",
       `Validator assignment "${assignmentId}" is not configured on execution context "${contextId}".`,
     );
   }

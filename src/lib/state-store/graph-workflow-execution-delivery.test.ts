@@ -79,6 +79,9 @@ function makeRepository(options?: {
     deliverResultRecorded: options?.deliverResultRecorded,
   });
   const repo = createGraphWorkflowExecutionRepository({
+    getGraphWorkflowPendingArtifacts: async () => null,
+    clearGraphWorkflowPendingArtifacts: async () => false,
+
     // No git worktree in this harness; the real exclusion would shell out.
     ensureCcArtifactsExcluded: async () => {},
     async getSession() {
@@ -109,7 +112,7 @@ async function seedActiveExecution(
     PROJECT_PATH,
     SESSION_NAME,
     "seed",
-    () => ({ execution, events: [] }),
+    () => ({ kind: "commit", value: undefined, ...{ execution, events: [] } }),
   );
 }
 
@@ -172,6 +175,7 @@ describe("graph-workflow execution mutation seam — post-commit delivery", () =
           label,
           (current) => {
             const result = mutate(current);
+            if (result.kind === "no_commit") return result;
             return { ...result, events: [poisoned] };
           },
         );

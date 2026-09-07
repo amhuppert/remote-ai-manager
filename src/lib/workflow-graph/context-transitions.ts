@@ -26,7 +26,7 @@ import type {
  * `mergedSourceLaneIds` can never disagree. Lane CREATION stays with the
  * scheduler that provisions the worktree.
  *
- * EXECUTION-level status stays hand-rolled in workflow-manager by design
+ * EXECUTION-level status is owned by execution-transitions
  * (decision D4: the post-RCA design is already single-owner and carries
  * persistence-layer fencing).
  *

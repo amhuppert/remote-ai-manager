@@ -1,3 +1,5 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "./execution-contract-port";
 import { describe, expect, it } from "vitest";
 import {
   createInMemoryLeaseReservation,
@@ -7,7 +9,7 @@ import {
 } from "./test-fixtures";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
-import { getEligibleContextIds } from "./validation";
+import { getEligibleContextIds } from "./lane-readiness";
 import {
   classifyExpansionPayloadRefusal,
   compileExpansionBatch,
@@ -221,6 +223,9 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
   // The REAL repository, so `executionStateRevision` / `structuralRevision` are
   // stamped by the code the staging fence actually reads.
   const repository = createGraphWorkflowExecutionRepository({
+    getGraphWorkflowPendingArtifacts: async () => null,
+    clearGraphWorkflowPendingArtifacts: async () => false,
+
     // No git worktree in this harness; the real exclusion would shell out.
     ensureCcArtifactsExcluded: async () => {},
     getSession: () =>
@@ -239,9 +244,17 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
       } finally {
         insideMutation = false;
       }
+      if (result.kind === "no_commit")
+        return {
+          kind: "not_committed" as const,
+          execution,
+          value: result.value,
+        };
       execution = result.execution;
       committedRows.push(...result.events.map((row) => row.event));
       return {
+        kind: "committed" as const,
+        value: result.value,
         execution,
         delivery: { events: result.events, pushes: result.pushes ?? [] },
       };
@@ -267,6 +280,7 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
     committed: () => committedRows,
     snapshotPreparationInsideMutation,
     deps: {
+      executionContract: createNonParticipatingGraphExecutionContract(),
       getActiveExecution: () => Promise.resolve(execution),
       mutateActive: repository.mutateActive,
       buildLiveEditDeps: () => Promise.resolve(LIVE_EDIT_DEPS),
@@ -912,6 +926,8 @@ describe("graph expansion — inherited core refusals", () => {
     const service = createGraphWorkflowExpansionService({
       ...harness.deps,
       executionContract: {
+        loadPromptProjection: async () => null,
+
         validateDefinition: () => ({ ok: true as const }),
         loadLiveEdit: () => ({
           validateOperation: () => ({
@@ -1256,9 +1272,11 @@ describe("graph expansion — placement (lwp R10.1)", () => {
       mutateActive: async (projectPath, sessionName, fn) => {
         if (!planned) {
           planned = true;
-          await harness.deps.mutateActive(projectPath, sessionName, (draft) =>
-            appendPendingJoin(draft, SHARED_LANE_JOIN),
-          );
+          await harness.deps
+            .mutateActive(projectPath, sessionName, (draft) =>
+              changed(appendPendingJoin(draft, SHARED_LANE_JOIN)),
+            )
+            .then((mutation) => mutation.execution);
         }
         return harness.deps.mutateActive(projectPath, sessionName, fn);
       },

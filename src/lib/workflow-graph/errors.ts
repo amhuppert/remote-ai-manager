@@ -2,6 +2,8 @@ import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
+import type { TurnExecutionOutcome } from "@/lib/workflows/conversation/turn-result";
+import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 export type DirtyPath = {
   path: string;
   statusCode: string;
@@ -34,6 +36,36 @@ export class AgentTurnFailedError extends Error {
   }
 }
 
+type ConversationTurnSettlementInit = {
+  outcome: Extract<TurnExecutionOutcome, { kind: "settlement_failed" }>;
+  attemptId: string;
+  contextId: string;
+  engine: AgentBackendId;
+};
+
+/**
+ * The conversation lifecycle ran the backend turn but could not finish its
+ * settlement protocol (receipt delivery, final persistence, or runtime close).
+ * The provider may have completed and incurred usage, so this is neither an
+ * agent failure nor proof that no turn started; the retained outcome is kept
+ * whole so nothing downstream has to reconstruct it from prose.
+ */
+export class ConversationTurnSettlementError extends Error {
+  readonly outcome: ConversationTurnSettlementInit["outcome"];
+  readonly attemptId: string;
+  readonly contextId: string;
+  readonly engine: AgentBackendId;
+
+  constructor(init: ConversationTurnSettlementInit) {
+    super(init.outcome.message);
+    this.name = "ConversationTurnSettlementError";
+    this.outcome = init.outcome;
+    this.attemptId = init.attemptId;
+    this.contextId = init.contextId;
+    this.engine = init.engine;
+  }
+}
+
 type WorktreeCreationDirtyInit = {
   worktreePath: string;
   branchName: string;
@@ -56,9 +88,14 @@ export class WorktreeCreationDirty extends Error {
 
 export function isTypedWorkflowError(
   err: unknown,
-): err is AgentTurnFailedError | WorktreeCreationDirty {
+): err is
+  | AgentTurnFailedError
+  | ConversationTurnSettlementError
+  | WorktreeCreationDirty {
   return (
-    err instanceof AgentTurnFailedError || err instanceof WorktreeCreationDirty
+    err instanceof AgentTurnFailedError ||
+    err instanceof ConversationTurnSettlementError ||
+    err instanceof WorktreeCreationDirty
   );
 }
 
@@ -80,6 +117,18 @@ export function toHaltReason(
       engine: err.engine,
       cause: err.cause,
       message: err.originalMessage,
+    };
+  }
+  // The orchestrator wraps a mid-iteration failure once earlier turns
+  // completed; the settlement identity lives on the retained original.
+  const settlement =
+    err instanceof IterationFailureWithProgressError ? err.originalError : err;
+  if (settlement instanceof ConversationTurnSettlementError) {
+    return {
+      type: "execution_loop_failed",
+      contextId: settlement.contextId,
+      message: `Conversation turn settlement failed (${settlement.outcome.code}) for attempt ${settlement.attemptId}: ${settlement.message}`,
+      cause: "io",
     };
   }
   if (err instanceof WorktreeCreationDirty) {

@@ -1,3 +1,8 @@
+import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { type ExecutionLoopFixtureDeps } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ExecutionTarget,
@@ -9,7 +14,7 @@ import {
   applyJoinProgress,
   transitionContextStatus,
 } from "@/lib/workflow-graph/context-transitions";
-import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { getEligibleContextIds } from "@/lib/workflow-graph/lane-readiness";
 import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
@@ -36,10 +41,8 @@ import {
 } from "./user-input-gate";
 import {
   abortExecutionLoop,
-  createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
   _resetActiveLoopsForTesting,
-  type GraphWorkflowExecutionLoopDeps,
   type GraphWorkflowExecutionLoopWorkflowManager,
 } from "./execution-loop";
 import type { LaneDriftAuditInput, LaneDriftAuditor } from "./lane-drift";
@@ -49,11 +52,9 @@ import { evaluatePlanRepairTrigger } from "./plan-repair/trigger";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import { AgentTurnFailedError } from "./errors";
 import { assertLoopFence, StaleLoopFenceError } from "./loop-fence";
-import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
-import type {
-  RecordPendingHaltReasonResult,
-  ScheduleEligibleContextsResult,
-} from "./workflow-manager";
+import type { GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
+import type { RecordPendingHaltReasonResult } from "./workflow-manager";
+import type { ScheduleEligibleContextsResult } from "@/lib/workflow-graph/context-scheduler";
 import {
   registerExecutionLogger,
   unregisterExecutionLogger,
@@ -574,7 +575,7 @@ function makeStubSession(): SessionState {
 }
 
 interface LoopHarness {
-  deps: GraphWorkflowExecutionLoopDeps;
+  deps: ExecutionLoopFixtureDeps;
   getCurrent: () => GraphWorkflowExecution;
   setCurrent: (execution: GraphWorkflowExecution) => void;
   appendedEvents: GraphWorkflowExecutionEvent[];
@@ -586,31 +587,31 @@ interface LoopHarness {
 
 interface BuildHarnessInput {
   initialExecution: GraphWorkflowExecution;
-  iterationOrchestrator: GraphWorkflowExecutionLoopDeps["iterationOrchestrator"];
+  iterationOrchestrator: ExecutionLoopFixtureDeps["iterationOrchestrator"];
   recoverRetryableIterationError?: GraphWorkflowExecutionLoopWorkflowManager["recoverRetryableIterationError"];
-  runCircuitBreakerGate?: GraphWorkflowExecutionLoopDeps["runCircuitBreakerGate"];
-  scheduleEligibleContexts?: GraphWorkflowExecutionLoopWorkflowManager["scheduleEligibleContexts"];
+  runCircuitBreakerGate?: ExecutionLoopFixtureDeps["runCircuitBreakerGate"];
+  scheduleEligibleContexts?: ExecutionLoopFixtureDeps["contextScheduler"]["scheduleEligibleContexts"];
   executionTargetResolver?: ExecutionTargetResolver;
   parallelWorktrees?: ParallelWorktrees;
   mergeMutex?: PerSessionMergeMutex;
   sessionGitLock?: SessionGitLock;
   mergeRunner?: GraphMergeRunner;
   joinRunner?: JoinRunner;
-  soloContextCommitter?: GraphWorkflowExecutionLoopDeps["soloContextCommitter"];
-  laneCommitter?: GraphWorkflowExecutionLoopDeps["laneCommitter"];
-  getSession?: GraphWorkflowExecutionLoopDeps["getSession"];
-  waitForCollaborationProgress?: GraphWorkflowExecutionLoopDeps["waitForCollaborationProgress"];
-  waitForApprovalProgress?: GraphWorkflowExecutionLoopDeps["waitForApprovalProgress"];
-  waitForUserInputProgress?: GraphWorkflowExecutionLoopDeps["waitForUserInputProgress"];
-  userInputGateService?: GraphWorkflowExecutionLoopDeps["userInputGateService"];
-  isConversationBusy?: GraphWorkflowExecutionLoopDeps["isConversationBusy"];
-  acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
-  eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
-  getMaxConcurrentQueries?: GraphWorkflowExecutionLoopDeps["getMaxConcurrentQueries"];
-  readRepoConfig?: GraphWorkflowExecutionLoopDeps["readRepoConfig"];
-  landingEvidenceProber?: GraphWorkflowExecutionLoopDeps["landingEvidenceProber"];
-  laneDriftAuditor?: GraphWorkflowExecutionLoopDeps["laneDriftAuditor"];
-  resyncSharedIndex?: GraphWorkflowExecutionLoopDeps["resyncSharedIndex"];
+  soloContextCommitter?: ExecutionLoopFixtureDeps["soloContextCommitter"];
+  laneCommitter?: ExecutionLoopFixtureDeps["laneCommitter"];
+  getSession?: ExecutionLoopFixtureDeps["getSession"];
+  waitForCollaborationProgress?: ExecutionLoopFixtureDeps["waitForCollaborationProgress"];
+  waitForApprovalProgress?: ExecutionLoopFixtureDeps["waitForApprovalProgress"];
+  waitForUserInputProgress?: ExecutionLoopFixtureDeps["waitForUserInputProgress"];
+  userInputGateService?: ExecutionLoopFixtureDeps["userInputGateService"];
+  isConversationBusy?: ExecutionLoopFixtureDeps["isConversationBusy"];
+  acquireConversationLock?: ExecutionLoopFixtureDeps["acquireConversationLock"];
+  eventPublisher?: ExecutionLoopFixtureDeps["eventPublisher"];
+  getMaxConcurrentQueries?: ExecutionLoopFixtureDeps["getMaxConcurrentQueries"];
+  readRepoConfig?: ExecutionLoopFixtureDeps["readRepoConfig"];
+  landingEvidenceProber?: ExecutionLoopFixtureDeps["landingEvidenceProber"];
+  laneDriftAuditor?: ExecutionLoopFixtureDeps["laneDriftAuditor"];
+  resyncSharedIndex?: ExecutionLoopFixtureDeps["resyncSharedIndex"];
 }
 
 /**
@@ -651,9 +652,9 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
   };
 
   const defaultScheduleEligibleContexts = async ({
-    excludedContextIds,
+    excludedContextIds = [],
   }: Parameters<
-    GraphWorkflowExecutionLoopWorkflowManager["scheduleEligibleContexts"]
+    ExecutionLoopFixtureDeps["contextScheduler"]["scheduleEligibleContexts"]
   >[0]): Promise<ScheduleEligibleContextsResult> => {
     const e = getCurrent();
     if (e.status !== "running") {
@@ -744,35 +745,23 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     return next;
   });
 
-  const mutateActive: GraphWorkflowExecutionLoopWorkflowManager["mutateActive"] =
+  const mutateActive: ExecutionLoopFixtureDeps["executionRepository"]["mutateActive"] =
     async (_p, _s, fn) => {
-      const result = fn(getCurrent());
-      if ("execution" in result && "events" in result) {
-        setCurrent(result.execution);
-        appendedEvents.push(...result.events);
-        // Mirror the repository-level mutation seam: commit the rows, then
-        // perform delivery post-commit through the injected event publisher so
-        // the reducer's derived events reach the broadcast spy.
-        input.eventPublisher?.deliver({
-          events: result.events,
-          pushes: result.pushes,
-        });
-        return result.execution;
-      }
-      setCurrent(result);
-      return result;
+      return applyFixtureMutation(getCurrent(), fn, (next, delivery) => {
+        setCurrent(next);
+        appendedEvents.push(...delivery.events);
+        // Delivery follows the fake commit, through the injected publisher.
+        input.eventPublisher?.deliver(delivery);
+      });
     };
 
-  const getActive: GraphWorkflowExecutionLoopWorkflowManager["getActive"] =
+  const getActive: ExecutionLoopFixtureDeps["executionRepository"]["getActive"] =
     async () => getCurrent();
 
   const workflowManager: GraphWorkflowExecutionLoopWorkflowManager = {
-    scheduleEligibleContexts: scheduleEligibleContextsSpy,
     send: sendSpy,
     recordPendingHaltReason: recordPendingHaltReasonSpy,
     drainAndHalt: drainAndHaltSpy,
-    mutateActive,
-    getActive,
     recoverRetryableIterationError: input.recoverRetryableIterationError,
   };
 
@@ -813,20 +802,22 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
   const joinRunner: JoinRunner = input.joinRunner ?? {
     async run({ joinId, mutateActive }) {
       await mutateActive((e) =>
-        applyJoinProgress(e, joinId, new Date().toISOString(), {
-          status: "succeeded",
-        }),
-      );
+        changed(
+          applyJoinProgress(e, joinId, new Date().toISOString(), {
+            status: "succeeded",
+          }),
+        ),
+      ).then((mutation) => mutation.execution);
       return { status: "succeeded" };
     },
   };
 
-  const soloContextCommitter: GraphWorkflowExecutionLoopDeps["soloContextCommitter"] =
+  const soloContextCommitter: ExecutionLoopFixtureDeps["soloContextCommitter"] =
     input.soloContextCommitter ?? {
       commit: async () => ({ status: "skipped" }),
     };
 
-  const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] =
+  const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] =
     input.laneCommitter ?? {
       commit: async () => ({ status: "skipped" }),
       resolveHead: async () => null,
@@ -834,7 +825,12 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
 
   const getSession = input.getSession ?? (async () => makeStubSession());
 
-  const deps: GraphWorkflowExecutionLoopDeps = {
+  const deps: ExecutionLoopFixtureDeps = {
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
+    getSessionWorktreeDirtyPaths: async () => [],
+    contextScheduler: { scheduleEligibleContexts: scheduleEligibleContextsSpy },
+    executionRepository: { mutateActive, getActive },
     workflowManager,
     iterationOrchestrator: input.iterationOrchestrator,
     parallelWorktrees,
@@ -898,13 +894,13 @@ describe("execution loop", () => {
           return {
             conversationId: `conv-${next.contextStates["ctx-1"]!.iterationCount}`,
             execution: next,
-            shouldContinueInContext: true,
+            decision: { kind: "continue", reason: "tasks_remaining" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -932,6 +928,54 @@ describe("execution loop", () => {
     expect(harness.drainAndHaltSpy).toHaveBeenCalled();
   });
 
+  it.each(["ready_to_land", "await_approval"] as const)(
+    "enforces the returned iteration limit before %s handling",
+    async (kind) => {
+      const definition = createSingleContextDefinition(2);
+      const initial = createRunningExecution(definition);
+      const soloCommit = vi.fn(async () => ({
+        status: "skipped" as const,
+        reason: "no_changes" as const,
+      }));
+      const harness = buildHarness({
+        initialExecution: initial,
+        soloContextCommitter: { commit: soloCommit },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            const next = structuredClone(harness.getCurrent());
+            const context = next.contextStates["ctx-1"];
+            const task = next.taskStates["task-1"];
+            if (!context || !task)
+              throw new Error("Missing limit fixture state");
+            context.iterationCount = 2;
+            context.status =
+              kind === "ready_to_land" ? "completed" : "awaiting_approval";
+            context.completedTaskCount = 1;
+            task.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-limit",
+              execution: next,
+              decision: { kind },
+            };
+          },
+        },
+      });
+      const result = await createExecutionLoopFixture(harness.deps).run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+      expect(result.haltReason).toMatchObject({
+        type: "max_iterations",
+        iterationCount: 2,
+      });
+      expect(soloCommit).not.toHaveBeenCalled();
+    },
+  );
+
   it("completes normally when tasks finish before maxIterations", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition);
@@ -949,13 +993,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -992,13 +1036,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1142,7 +1186,7 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-fast",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           }
 
@@ -1165,14 +1209,14 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-parked",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "await_approval" },
           };
         },
       },
     });
 
     try {
-      const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      const runPromise = createExecutionLoopFixture(harness.deps).run({
         projectPath: "/repo",
         projectName: "test",
         sessionName: "session-1",
@@ -1228,7 +1272,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1316,7 +1360,7 @@ describe("execution loop", () => {
         },
       });
 
-      const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+      const result = await createExecutionLoopFixture(harness.deps).run({
         projectPath: "/repo",
         projectName: "test",
         sessionName: "session-1",
@@ -1393,13 +1437,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1438,7 +1482,7 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
@@ -1447,7 +1491,7 @@ describe("execution loop", () => {
     _resetActiveLoopsForTesting();
     expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1482,13 +1526,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
     _resetActiveLoopsForTesting();
-    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+    const runPromise = createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -1525,14 +1569,14 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
     _resetActiveLoopsForTesting();
-    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+    const runPromise = createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -1643,13 +1687,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1761,13 +1805,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1839,7 +1883,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -1953,13 +1997,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2023,7 +2067,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2098,7 +2142,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2204,13 +2248,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2330,13 +2374,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2442,13 +2486,13 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-2",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -2514,7 +2558,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2605,13 +2649,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-3",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2666,13 +2710,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: true,
+            decision: { kind: "continue", reason: "tasks_remaining" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2748,13 +2792,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: true,
+            decision: { kind: "continue", reason: "tasks_remaining" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2813,7 +2857,7 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: true,
+              decision: { kind: "continue", reason: "tasks_remaining" },
             };
           }
 
@@ -2826,13 +2870,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-2",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2912,13 +2956,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: true,
+            decision: { kind: "continue", reason: "tasks_remaining" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -2988,13 +3032,13 @@ describe("execution loop", () => {
           return {
             conversationId: `conv-${iterationCallCount}`,
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -3005,6 +3049,18 @@ describe("execution loop", () => {
     expect(runCircuitBreakerGate).toHaveBeenCalled();
     expect(result.status).toBe("completed");
     expect(result.haltReason).toBeNull();
+  });
+
+  it("rejects construction without worktree inspection", () => {
+    const initial = createRunningExecution(createSingleContextDefinition(5));
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration: vi.fn() },
+    });
+    Reflect.deleteProperty(harness.deps, "getSessionWorktreeDirtyPaths");
+    expect(() => createExecutionLoopFixture(harness.deps)).toThrow(
+      "Worktree inspection is required",
+    );
   });
 
   it("halts with merge_precondition_failed via preflight when session worktree is dirty", async () => {
@@ -3047,7 +3103,7 @@ describe("execution loop", () => {
       { path: "src/app.ts", statusCode: " M", tracked: true },
     ]);
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -3069,6 +3125,72 @@ describe("execution loop", () => {
     expect(harness.drainAndHaltSpy).toHaveBeenCalled();
     expect(result.status).toBe("halted");
     expect(result.haltReason?.type).toBe("merge_precondition_failed");
+  });
+
+  it("halts without scheduling or charging work when worktree inspection fails", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      contextStates: {
+        "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
+          pendingApproval: null,
+          pendingUserInputs: {},
+          contextId: "ctx-1",
+          status: "pending",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          consecutiveCandidateMismatchCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "worktree",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "pending",
+          cleanupStatus: "pending",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    const runIterationSpy = vi.fn();
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: { runIteration: runIterationSpy },
+    });
+
+    harness.deps.getSessionWorktreeDirtyPaths = vi.fn(async () => {
+      throw new Error("worktree inspection unavailable");
+    });
+
+    const loop = createExecutionLoopFixture(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(runIterationSpy).not.toHaveBeenCalled();
+    expect(harness.scheduleEligibleContextsSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledTimes(1);
+    const recordedReason =
+      harness.recordPendingHaltReasonSpy.mock.calls[0]?.[0].reason;
+    expect(recordedReason).toMatchObject({
+      type: "execution_loop_failed",
+      cause: "io",
+    });
+    expect(result.contextStates["ctx-1"]?.consecutiveFailureCount).toBe(0);
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toMatchObject({
+      type: "execution_loop_failed",
+      cause: "io",
+    });
   });
 
   it("processes pendingMergeRetry, clears the entry on success, and completes", async () => {
@@ -3152,7 +3274,7 @@ describe("execution loop", () => {
       parallelWorktrees,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -3241,13 +3363,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: haltedExecution,
-            shouldContinueInContext: false,
+            decision: { kind: "execution_stopped" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -3319,7 +3441,7 @@ describe("execution loop", () => {
       run: vi.fn(),
     };
 
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async (commitInput) => ({
         status: "committed" as const,
         snapshot: {
@@ -3348,13 +3470,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -3466,13 +3588,13 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -3520,7 +3642,7 @@ describe("execution loop", () => {
       iterationOrchestrator: { runIteration },
     });
 
-    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+    const result = await createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -3618,7 +3740,7 @@ describe("execution loop", () => {
       initial.workingDefinition.executionContexts[0]!.planRepair =
         DEFAULT_PLAN_REPAIR_POLICY;
 
-      const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+      const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
         commit: vi.fn(async (commitInput) => ({
           status: "committed" as const,
           snapshot: {
@@ -3648,13 +3770,13 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -3793,13 +3915,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+    const result = await createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -3862,7 +3984,7 @@ describe("execution loop", () => {
 
     const mergeRunner: GraphMergeRunner = { run: vi.fn() };
 
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       resolveHead: vi.fn(async () => "head-before-turn"),
       commit: vi.fn(async (commitInput) =>
         commitInput.preTurnHeadSha === "head-before-turn"
@@ -3895,13 +4017,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -3996,7 +4118,7 @@ describe("execution loop", () => {
         return { status: "committed" as const, hash: `${input.contextId}-sha` };
       }),
     };
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
       resolveHead: vi.fn(async () => "session-head-0"),
     };
@@ -4022,13 +4144,13 @@ describe("execution loop", () => {
           return {
             conversationId: `conv-${input.contextId}`,
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4065,7 +4187,7 @@ describe("execution loop", () => {
         hash: "solo-commit-sha",
       })),
     };
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
       resolveHead: vi.fn(async () => "session-head-0"),
     };
@@ -4086,13 +4208,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4120,7 +4242,7 @@ describe("execution loop", () => {
       .fn<(worktreePath: string) => Promise<string | null>>()
       .mockResolvedValueOnce("session-head-0")
       .mockResolvedValue("session-head-after-selfcommit");
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
       resolveHead,
     };
@@ -4141,13 +4263,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4174,7 +4296,7 @@ describe("execution loop", () => {
     const soloContextCommitter = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
     };
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
       resolveHead: vi.fn(async () => "session-head-0"),
     };
@@ -4195,13 +4317,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4264,7 +4386,7 @@ describe("execution loop", () => {
       laneId: "lane-plan",
     };
 
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       resolveHead: vi.fn(async () => {
         throw new Error("rev-parse failed");
       }),
@@ -4287,13 +4409,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4364,7 +4486,7 @@ describe("execution loop", () => {
 
     const mergeRunner: GraphMergeRunner = { run: vi.fn() };
 
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({ status: "skipped" as const })),
       resolveHead: async () => null,
     };
@@ -4386,13 +4508,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4463,7 +4585,7 @@ describe("execution loop", () => {
 
     const mergeRunner: GraphMergeRunner = { run: vi.fn() };
 
-    const laneCommitter: GraphWorkflowExecutionLoopDeps["laneCommitter"] = {
+    const laneCommitter: ExecutionLoopFixtureDeps["laneCommitter"] = {
       commit: vi.fn(async () => ({
         status: "failed" as const,
         errorMessage: "git commit failed on lane",
@@ -4488,13 +4610,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4563,14 +4685,18 @@ describe("execution loop", () => {
       ): ReturnType<JoinRunner["run"]> => {
         callOrder.push("join-runner");
         expect(harness.getCurrent().executionLanes.__session__).toBeUndefined();
-        await runInput.mutateActive((execution) =>
-          applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T11:55:00.000Z",
-            { status: "succeeded" },
-          ),
-        );
+        await runInput
+          .mutateActive((execution) =>
+            changed(
+              applyJoinProgress(
+                execution,
+                runInput.joinId,
+                "2026-03-27T11:55:00.000Z",
+                { status: "succeeded" },
+              ),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -4661,13 +4787,13 @@ describe("execution loop", () => {
           return {
             conversationId: `conv-${contextId}`,
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -4720,9 +4846,9 @@ describe("execution loop", () => {
       },
     });
 
-    const mutateActive = harness.deps.workflowManager.mutateActive;
+    const mutateActive = harness.deps.executionRepository.mutateActive;
     let lifecycleChanged = false;
-    harness.deps.workflowManager.mutateActive = async (
+    harness.deps.executionRepository.mutateActive = async (
       projectPath,
       sessionName,
       mutator,
@@ -4736,7 +4862,7 @@ describe("execution loop", () => {
       return mutateActive(projectPath, sessionName, mutator);
     };
 
-    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+    const result = await createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -4839,8 +4965,8 @@ describe("execution loop", () => {
       },
     });
 
-    const mutateActive = harness.deps.workflowManager.mutateActive;
-    harness.deps.workflowManager.mutateActive = async (
+    const mutateActive = harness.deps.executionRepository.mutateActive;
+    harness.deps.executionRepository.mutateActive = async (
       projectPath,
       sessionName,
       mutator,
@@ -4856,7 +4982,7 @@ describe("execution loop", () => {
     };
 
     try {
-      await createGraphWorkflowExecutionLoop(harness.deps).run({
+      await createExecutionLoopFixture(harness.deps).run({
         projectPath: "/repo",
         projectName: "test",
         sessionName: "session-1",
@@ -4957,16 +5083,18 @@ describe("execution loop", () => {
       ): ReturnType<JoinRunner["run"]> => {
         callOrder.push("join");
         expect(runInput.joinId).toBe("join-original");
-        await runInput.mutateActive((execution) => {
-          const next = applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T12:00:00.000Z",
-            { status: "succeeded" },
-          );
-          next.status = "aborted";
-          return next;
-        });
+        await runInput
+          .mutateActive((execution) => {
+            const next = applyJoinProgress(
+              execution,
+              runInput.joinId,
+              "2026-03-27T12:00:00.000Z",
+              { status: "succeeded" },
+            );
+            next.status = "aborted";
+            return changed(next);
+          })
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -5013,13 +5141,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-busy-owner",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+    const runPromise = createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -5072,16 +5200,18 @@ describe("execution loop", () => {
           "running",
         );
         signalJoinStarted();
-        await runInput.mutateActive((execution) => {
-          const next = applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T12:00:00.000Z",
-            { status: "succeeded" },
-          );
-          next.status = "aborted";
-          return next;
-        });
+        await runInput
+          .mutateActive((execution) => {
+            const next = applyJoinProgress(
+              execution,
+              runInput.joinId,
+              "2026-03-27T12:00:00.000Z",
+              { status: "succeeded" },
+            );
+            next.status = "aborted";
+            return changed(next);
+          })
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -5120,13 +5250,13 @@ describe("execution loop", () => {
           return {
             conversationId: `conv-${contextId}`,
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+    const runPromise = createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -5167,22 +5297,26 @@ describe("execution loop", () => {
         expect(harness.getCurrent().contextStates.unrelated?.status).toBe(
           "running",
         );
-        await runInput.mutateActive((execution) =>
-          applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T12:00:00.000Z",
-            {
-              status: "failed",
-              errorMessage: "merge conflict in ticket-detail.ts",
-              conflicts: {
-                files: ["ticket-detail.ts"],
-                message: "merge conflict in ticket-detail.ts",
-                analysis: null,
-              },
-            },
-          ),
-        );
+        await runInput
+          .mutateActive((execution) =>
+            changed(
+              applyJoinProgress(
+                execution,
+                runInput.joinId,
+                "2026-03-27T12:00:00.000Z",
+                {
+                  status: "failed",
+                  errorMessage: "merge conflict in ticket-detail.ts",
+                  conflicts: {
+                    files: ["ticket-detail.ts"],
+                    message: "merge conflict in ticket-detail.ts",
+                    analysis: null,
+                  },
+                },
+              ),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return {
           status: "failed",
           message: "merge conflict in ticket-detail.ts",
@@ -5197,7 +5331,7 @@ describe("execution loop", () => {
       async ({
         contextId,
       }: Parameters<
-        GraphWorkflowExecutionLoopDeps["iterationOrchestrator"]["runIteration"]
+        ExecutionLoopFixtureDeps["iterationOrchestrator"]["runIteration"]
       >[0]): Promise<GraphWorkflowIterationResult> => {
         startedContextIds.add(contextId);
         if (startedContextIds.size === 2) signalBothStarted();
@@ -5209,7 +5343,7 @@ describe("execution loop", () => {
         return {
           conversationId: `conv-${contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     );
@@ -5236,7 +5370,7 @@ describe("execution loop", () => {
       iterationOrchestrator: { runIteration: runIterationSpy },
     });
 
-    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+    const runPromise = createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -5258,11 +5392,7 @@ describe("execution loop", () => {
       message: "merge conflict in ticket-detail.ts",
       conflictFiles: ["ticket-detail.ts"],
     };
-    expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledWith({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      reason: expectedReason,
-    });
+    expect(harness.getCurrent().pendingHaltReason).toEqual(expectedReason);
     expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
     expect(harness.scheduleEligibleContextsSpy).toHaveBeenCalledTimes(1);
     expect(harness.getCurrent().contextStates.unrelated?.status).toBe(
@@ -5382,16 +5512,18 @@ describe("execution loop", () => {
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
         callOrder.push("join");
-        await runInput.mutateActive((execution) => {
-          const next = applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T12:00:00.000Z",
-            { status: "succeeded" },
-          );
-          next.status = "aborted";
-          return next;
-        });
+        await runInput
+          .mutateActive((execution) => {
+            const next = applyJoinProgress(
+              execution,
+              runInput.joinId,
+              "2026-03-27T12:00:00.000Z",
+              { status: "succeeded" },
+            );
+            next.status = "aborted";
+            return changed(next);
+          })
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -5452,7 +5584,7 @@ describe("execution loop", () => {
       },
     });
 
-    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+    const runPromise = createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -5506,14 +5638,18 @@ describe("execution loop", () => {
             setTimeout(resolve, 1);
           });
           callOrder.push("join-finished");
-          await runInput.mutateActive((execution) =>
-            applyJoinProgress(
-              execution,
-              runInput.joinId,
-              "2026-03-27T12:00:00.000Z",
-              { status: "succeeded" },
-            ),
-          );
+          await runInput
+            .mutateActive((execution) =>
+              changed(
+                applyJoinProgress(
+                  execution,
+                  runInput.joinId,
+                  "2026-03-27T12:00:00.000Z",
+                  { status: "succeeded" },
+                ),
+              ),
+            )
+            .then((mutation) => mutation.execution);
           return { status: "succeeded" };
         },
       );
@@ -5572,7 +5708,7 @@ describe("execution loop", () => {
         },
       });
 
-      const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      const runPromise = createExecutionLoopFixture(harness.deps).run({
         projectPath: "/repo",
         projectName: "test",
         sessionName: "session-1",
@@ -5676,14 +5812,18 @@ describe("execution loop", () => {
           expect(join?.contextId).toBe("terminal");
           callOrder.push("context-merge");
         }
-        await runInput.mutateActive((execution) =>
-          applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T12:00:00.000Z",
-            { status: "succeeded" },
-          ),
-        );
+        await runInput
+          .mutateActive((execution) =>
+            changed(
+              applyJoinProgress(
+                execution,
+                runInput.joinId,
+                "2026-03-27T12:00:00.000Z",
+                { status: "succeeded" },
+              ),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -5733,13 +5873,13 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-terminal",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
 
-    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+    const result = await createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -5820,11 +5960,15 @@ describe("execution loop", () => {
       async (
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
-        await runInput.mutateActive((e) =>
-          applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
-            status: "succeeded",
-          }),
-        );
+        await runInput
+          .mutateActive((e) =>
+            changed(
+              applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
+                status: "succeeded",
+              }),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -5841,7 +5985,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -5925,14 +6069,18 @@ describe("execution loop", () => {
       async (
         input: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
-        await input.mutateActive((execution) =>
-          applyJoinProgress(
-            execution,
-            input.joinId,
-            "2026-08-21T00:22:00.000Z",
-            { status: "succeeded" },
-          ),
-        );
+        await input
+          .mutateActive((execution) =>
+            changed(
+              applyJoinProgress(
+                execution,
+                input.joinId,
+                "2026-08-21T00:22:00.000Z",
+                { status: "succeeded" },
+              ),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -5946,7 +6094,7 @@ describe("execution loop", () => {
       },
     });
 
-    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+    const result = await createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -6020,11 +6168,15 @@ describe("execution loop", () => {
       async (
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
-        await runInput.mutateActive((e) =>
-          applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
-            status: "succeeded",
-          }),
-        );
+        await runInput
+          .mutateActive((e) =>
+            changed(
+              applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
+                status: "succeeded",
+              }),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -6039,7 +6191,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -6103,17 +6255,21 @@ describe("execution loop", () => {
       async (
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
-        await runInput.mutateActive((e) =>
-          applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
-            status: "failed",
-            errorMessage: "merge conflict in shared.ts",
-            conflicts: {
-              files: ["shared.ts"],
-              message: "merge conflict in shared.ts",
-              analysis: null,
-            },
-          }),
-        );
+        await runInput
+          .mutateActive((e) =>
+            changed(
+              applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
+                status: "failed",
+                errorMessage: "merge conflict in shared.ts",
+                conflicts: {
+                  files: ["shared.ts"],
+                  message: "merge conflict in shared.ts",
+                  analysis: null,
+                },
+              }),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return {
           status: "failed",
           message: "Delivery gate refused merge",
@@ -6147,7 +6303,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -6248,11 +6404,15 @@ describe("execution loop", () => {
       async (
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
-        await runInput.mutateActive((e) =>
-          applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
-            status: "succeeded",
-          }),
-        );
+        await runInput
+          .mutateActive((e) =>
+            changed(
+              applyJoinProgress(e, runInput.joinId, new Date().toISOString(), {
+                status: "succeeded",
+              }),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -6267,7 +6427,7 @@ describe("execution loop", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -6295,13 +6455,13 @@ describe("execution loop", () => {
     };
 
     interface ParkingHarnessInput {
-      waitForApprovalProgress: GraphWorkflowExecutionLoopDeps["waitForApprovalProgress"];
-      soloCommit: GraphWorkflowExecutionLoopDeps["soloContextCommitter"]["commit"];
+      waitForApprovalProgress: ExecutionLoopFixtureDeps["waitForApprovalProgress"];
+      soloCommit: ExecutionLoopFixtureDeps["soloContextCommitter"]["commit"];
       initialExecution: GraphWorkflowExecution;
       onIteration?: () => void;
-      isConversationBusy?: GraphWorkflowExecutionLoopDeps["isConversationBusy"];
-      acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
-      eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
+      isConversationBusy?: ExecutionLoopFixtureDeps["isConversationBusy"];
+      acquireConversationLock?: ExecutionLoopFixtureDeps["acquireConversationLock"];
+      eventPublisher?: ExecutionLoopFixtureDeps["eventPublisher"];
     }
 
     function buildParkingHarness(input: ParkingHarnessInput): LoopHarness {
@@ -6329,7 +6489,7 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "await_approval" },
             };
           },
         },
@@ -6366,7 +6526,7 @@ describe("execution loop", () => {
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const runPromise = loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -6434,7 +6594,7 @@ describe("execution loop", () => {
           },
         });
 
-        const loop = createGraphWorkflowExecutionLoop(harness.deps);
+        const loop = createExecutionLoopFixture(harness.deps);
         const result = await loop.run({
           projectPath: "/repo",
           projectName: "test",
@@ -6516,7 +6676,7 @@ describe("execution loop", () => {
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -6629,13 +6789,16 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision:
+                iterationCallCount === 1
+                  ? { kind: "await_approval" }
+                  : { kind: "ready_to_land" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -6728,7 +6891,7 @@ describe("execution loop", () => {
         acquireConversationLock,
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -6795,7 +6958,7 @@ describe("execution loop", () => {
           }),
         });
 
-        const loop = createGraphWorkflowExecutionLoop(harness.deps);
+        const loop = createExecutionLoopFixture(harness.deps);
         const result = await loop.run({
           projectPath: "/repo",
           projectName: "test",
@@ -6866,7 +7029,7 @@ describe("execution loop", () => {
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -6943,13 +7106,13 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "await_approval" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7054,7 +7217,7 @@ describe("execution loop", () => {
         iterationOrchestrator: { runIteration },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7168,13 +7331,13 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7286,13 +7449,13 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-2",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "await_approval" },
             };
           },
         },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7349,7 +7512,7 @@ describe("execution loop", () => {
         iterationOrchestrator: { runIteration },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7415,7 +7578,7 @@ describe("execution loop", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       );
@@ -7433,7 +7596,7 @@ describe("execution loop", () => {
         iterationOrchestrator: { runIteration },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7502,7 +7665,7 @@ describe("execution loop", () => {
         iterationOrchestrator: { runIteration },
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const runPromise = loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7611,13 +7774,11 @@ describe("execution loop", () => {
           if (overrides.enforceLoopFence) {
             assertLoopFence(projectPath, sessionName, harness.getCurrent());
           }
-          const result = await fn(structuredClone(harness.getCurrent()));
-          const next =
-            "execution" in result && "events" in result
-              ? result.execution
-              : result;
-          harness.setCurrent(next);
-          return next;
+          return applyFixtureMutation(
+            harness.getCurrent(),
+            fn,
+            harness.setCurrent,
+          );
         },
         publishUserInputPending: () => ({ events: [], pushes: [] }),
         publishUserInputResolved: (input) => ({
@@ -7720,7 +7881,7 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
@@ -7728,7 +7889,7 @@ describe("execution loop", () => {
       const gate = buildRealGate(harness);
       harness.deps.userInputGateService = gate;
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7806,7 +7967,7 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-ask",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
@@ -7814,7 +7975,7 @@ describe("execution loop", () => {
       const gate = buildRealGate(harness);
       harness.deps.userInputGateService = gate;
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7889,7 +8050,10 @@ describe("execution loop", () => {
               return {
                 conversationId: "conv-validator",
                 execution: next,
-                shouldContinueInContext: false,
+                decision: {
+                  kind: "deliver_validator_answers",
+                  laneKeys: ["context_validator:security"],
+                },
               };
             }
             cs.completedTaskCount = 1;
@@ -7900,7 +8064,7 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-validator",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
@@ -7908,7 +8072,7 @@ describe("execution loop", () => {
       const gate = buildRealGate(harness);
       harness.deps.userInputGateService = gate;
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -7966,7 +8130,7 @@ describe("execution loop", () => {
       });
       harness.deps.userInputGateService = buildRealGate(harness);
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const runPromise = loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -8071,14 +8235,14 @@ describe("execution loop", () => {
             return {
               conversationId: `conv-${input.contextId}`,
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
       });
       harness.deps.userInputGateService = buildRealGate(harness);
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const runPromise = loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -8149,7 +8313,7 @@ describe("execution loop", () => {
       });
       harness.deps.userInputGateService = buildRealGate(harness);
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const runPromise = loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -8214,14 +8378,14 @@ describe("execution loop", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
       });
       harness.deps.userInputGateService = buildRealGate(harness);
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const result = await loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -8272,7 +8436,7 @@ describe("execution loop", () => {
         enforceLoopFence: true,
       });
 
-      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const loop = createExecutionLoopFixture(harness.deps);
       const runPromise = loop.run({
         projectPath: "/repo",
         projectName: "test",
@@ -8330,14 +8494,18 @@ describe("execution loop generation fencing", () => {
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
         harness.setCurrent(structuredClone(successor));
-        await runInput.mutateActive((execution) =>
-          applyJoinProgress(
-            execution,
-            runInput.joinId,
-            "2026-03-27T12:00:00.000Z",
-            { status: "succeeded" },
-          ),
-        );
+        await runInput
+          .mutateActive((execution) =>
+            changed(
+              applyJoinProgress(
+                execution,
+                runInput.joinId,
+                "2026-03-27T12:00:00.000Z",
+                { status: "succeeded" },
+              ),
+            ),
+          )
+          .then((mutation) => mutation.execution);
         return { status: "succeeded" };
       },
     );
@@ -8345,7 +8513,7 @@ describe("execution loop generation fencing", () => {
       async ({
         contextId,
       }: Parameters<
-        GraphWorkflowExecutionLoopDeps["iterationOrchestrator"]["runIteration"]
+        ExecutionLoopFixtureDeps["iterationOrchestrator"]["runIteration"]
       >[0]): Promise<GraphWorkflowIterationResult> => {
         startedContextIds.add(contextId);
         if (startedContextIds.size === 2) signalBothStarted();
@@ -8360,7 +8528,7 @@ describe("execution loop generation fencing", () => {
           return {
             conversationId: "conv-unrelated",
             execution: staleResult,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         }
 
@@ -8369,7 +8537,7 @@ describe("execution loop generation fencing", () => {
         return {
           conversationId: `conv-${contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     );
@@ -8396,8 +8564,8 @@ describe("execution loop generation fencing", () => {
       },
       iterationOrchestrator: { runIteration: runIterationSpy },
     });
-    const mutateActive = harness.deps.workflowManager.mutateActive;
-    harness.deps.workflowManager.mutateActive = async (
+    const mutateActive = harness.deps.executionRepository.mutateActive;
+    harness.deps.executionRepository.mutateActive = async (
       projectPath,
       sessionName,
       mutator,
@@ -8417,7 +8585,7 @@ describe("execution loop generation fencing", () => {
       return mutateActive(projectPath, sessionName, mutator);
     };
 
-    const result = await createGraphWorkflowExecutionLoop(harness.deps).run({
+    const result = await createExecutionLoopFixture(harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -8468,7 +8636,7 @@ describe("execution loop generation fencing", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -8504,7 +8672,7 @@ describe("execution loop generation fencing", () => {
           return {
             conversationId: "conv-1",
             execution: finished,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         }
         // A second call means the loop kept driving work — for whichever
@@ -8517,7 +8685,7 @@ describe("execution loop generation fencing", () => {
         return {
           conversationId: "conv-2",
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     );
@@ -8526,7 +8694,7 @@ describe("execution loop generation fencing", () => {
       iterationOrchestrator: { runIteration },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -8566,7 +8734,7 @@ describe("execution loop generation fencing", () => {
           return {
             conversationId: "conv-1",
             execution: finished,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         }
         const next = structuredClone(harness.getCurrent());
@@ -8577,7 +8745,7 @@ describe("execution loop generation fencing", () => {
         return {
           conversationId: "conv-2",
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     );
@@ -8586,7 +8754,7 @@ describe("execution loop generation fencing", () => {
       iterationOrchestrator: { runIteration },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -8636,7 +8804,7 @@ describe("execution loop generation fencing", () => {
             return {
               conversationId: "conv-1",
               execution: next,
-              shouldContinueInContext: false,
+              decision: { kind: "ready_to_land" },
             };
           },
         },
@@ -8647,7 +8815,7 @@ describe("execution loop generation fencing", () => {
     const first = buildGatedHarness();
     const second = buildGatedHarness();
 
-    const firstRun = createGraphWorkflowExecutionLoop(first.harness.deps).run({
+    const firstRun = createExecutionLoopFixture(first.harness.deps).run({
       projectPath: "/repo",
       projectName: "test",
       sessionName: "session-1",
@@ -8657,14 +8825,12 @@ describe("execution loop generation fencing", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
 
-    const secondRun = createGraphWorkflowExecutionLoop(second.harness.deps).run(
-      {
-        projectPath: "/repo",
-        projectName: "test",
-        sessionName: "session-1",
-        execution: second.harness.getCurrent(),
-      },
-    );
+    const secondRun = createExecutionLoopFixture(second.harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: second.harness.getCurrent(),
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // The stale first loop exits while the second is still running.
@@ -8703,7 +8869,7 @@ describe("execution loop generation fencing", () => {
       iterationOrchestrator: { runIteration },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -8738,7 +8904,7 @@ describe("execution loop generation fencing", () => {
       },
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -8779,7 +8945,7 @@ describe("execution loop generation fencing", () => {
       scheduleEligibleContexts,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     const result = await loop.run({
       projectPath: "/repo",
       projectName: "test",
@@ -8901,8 +9067,8 @@ describe("the settlement pass reads landing evidence off the branch (D4 R2.5, de
   }
 
   function runWithProber(
-    prober: GraphWorkflowExecutionLoopDeps["landingEvidenceProber"],
-    soloContextCommitter?: GraphWorkflowExecutionLoopDeps["soloContextCommitter"],
+    prober: ExecutionLoopFixtureDeps["landingEvidenceProber"],
+    soloContextCommitter?: ExecutionLoopFixtureDeps["soloContextCommitter"],
   ): { harness: LoopHarness; run: () => Promise<GraphWorkflowExecution> } {
     const initial = unsettledLandingExecution();
     const harness: LoopHarness = buildHarness({
@@ -8925,12 +9091,12 @@ describe("the settlement pass reads landing evidence off the branch (D4 R2.5, de
           return {
             conversationId: `conv-${contextId}`,
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
     });
-    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const loop = createExecutionLoopFixture(harness.deps);
     return {
       harness,
       run: () =>

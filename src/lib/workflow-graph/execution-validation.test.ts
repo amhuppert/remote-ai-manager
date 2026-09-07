@@ -6,9 +6,9 @@ import {
   seedAssignment,
 } from "./test-fixtures";
 import {
-  createGraphWorkflowValidationService,
+  createValidatorCohortRunner,
   type GraphWorkflowContextValidatorInput,
-} from "./execution-validation";
+} from "./validator-cohort-runner";
 import type { ValidatorCohort } from "./config-schemas";
 import type { GraphWorkflowValidationCandidate } from "./schemas";
 import type { ValidatorRunResult } from "./validator-runner";
@@ -134,7 +134,7 @@ describe("graph workflow execution validation service", () => {
         metadata: emptyMetadata(),
       }),
     );
-    const service = createGraphWorkflowValidationService({
+    const service = createValidatorCohortRunner({
       runContextValidator,
     });
 
@@ -181,7 +181,7 @@ describe("graph workflow execution validation service", () => {
         metadata: emptyMetadata(),
       }),
     );
-    const service = createGraphWorkflowValidationService({
+    const service = createValidatorCohortRunner({
       runContextValidator,
     });
 
@@ -213,7 +213,7 @@ describe("graph workflow execution validation service", () => {
         metadata: emptyMetadata(),
       }),
     );
-    const service = createGraphWorkflowValidationService({
+    const service = createValidatorCohortRunner({
       runContextValidator,
     });
 
@@ -263,7 +263,7 @@ describe("graph workflow execution validation service", () => {
         metadata: emptyMetadata(),
       }),
     );
-    const service = createGraphWorkflowValidationService({
+    const service = createValidatorCohortRunner({
       runContextValidator,
     });
 
@@ -289,7 +289,7 @@ describe("graph workflow execution validation service", () => {
   it("returns kind=pass with disabled feedback when context validation is not enabled", async () => {
     const execution = createWorkflowExecution();
     const runContextValidator = vi.fn();
-    const service = createGraphWorkflowValidationService({
+    const service = createValidatorCohortRunner({
       runContextValidator,
     });
 
@@ -317,7 +317,7 @@ describe("graph workflow execution validation service", () => {
       ],
     });
     const runContextValidator = vi.fn();
-    const service = createGraphWorkflowValidationService({
+    const service = createValidatorCohortRunner({
       runContextValidator,
     });
 
@@ -386,7 +386,7 @@ describe("graph workflow execution validation service", () => {
         }): Promise<ValidatorRunResult> =>
           passingRun(`${input.validator.id} found nothing blocking.`),
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
       });
 
@@ -456,7 +456,7 @@ describe("graph workflow execution validation service", () => {
           };
         },
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
       });
 
@@ -505,7 +505,7 @@ describe("graph workflow execution validation service", () => {
           };
         },
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
       });
 
@@ -567,7 +567,7 @@ describe("graph workflow execution validation service", () => {
           };
         },
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
       });
 
@@ -622,7 +622,7 @@ describe("graph workflow execution validation service", () => {
           };
         },
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
       });
 
@@ -654,7 +654,7 @@ describe("graph workflow execution validation service", () => {
 
     it("stamps a lone reviewer's findings too, so attribution never depends on cohort size", async () => {
       const { execution } = buildExecutionWithContextValidator();
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async (): Promise<ValidatorRunResult> => ({
           result: {
             kind: "fail",
@@ -692,7 +692,7 @@ describe("graph workflow execution validation service", () => {
       const { execution } = buildExecutionWithContextValidator(
         threeSpecialistCohort(),
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async (input): Promise<ValidatorRunResult> => {
           if (input.validator.id === "docs") {
             return passingRun("docs approved.");
@@ -737,7 +737,7 @@ describe("graph workflow execution validation service", () => {
       );
       const assignments = context?.contextValidator.assignments ?? [];
       const answered: Record<string, boolean> = {};
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async (input): Promise<ValidatorRunResult> => {
           answered[input.validator.id] = input.resumeUserInput !== undefined;
           return {
@@ -823,7 +823,7 @@ describe("graph workflow execution validation service", () => {
           metadata: emptyMetadata(),
         }),
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
       });
 
@@ -856,7 +856,7 @@ describe("graph workflow execution validation service", () => {
       const { execution } = buildExecutionWithContextValidator(
         threeSpecialistCohort(),
       );
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async (input) => ({
           result: {
             kind: "pass",
@@ -911,7 +911,7 @@ describe("graph workflow execution validation service", () => {
       });
 
       const received: (string | undefined)[] = [];
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         renderRoundCommonSections,
         runContextValidator: async (input) => {
           received.push(input.roundCommonSections?.diffScopeSection);
@@ -946,7 +946,7 @@ describe("graph workflow execution validation service", () => {
         twoSpecialistCohort(),
       );
       const received: (unknown | undefined)[] = [];
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async (input) => {
           received.push(input.roundCommonSections);
           return {
@@ -1021,7 +1021,7 @@ describe("graph workflow execution validation service", () => {
         assignments: [makeValidatorAssignment({ id: "swapped-in" })],
       });
       const seen: string[] = [];
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: passingRunner(seen),
       });
 
@@ -1040,7 +1040,7 @@ describe("graph workflow execution validation service", () => {
     it("stamps every dispatch with the round's (seq, candidate) token", async () => {
       const { execution } = buildExecutionWithContextValidator();
       const tokens: unknown[] = [];
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async (input) => {
           tokens.push(input.roundToken);
           return {
@@ -1073,7 +1073,7 @@ describe("graph workflow execution validation service", () => {
       // verdict arrives during round 7 against an identical candidate. Only the
       // token tells them apart, so the token is what decides.
       const { execution } = buildExecutionWithContextValidator();
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async () => ({
           result: {
             kind: "fail",
@@ -1115,7 +1115,7 @@ describe("graph workflow execution validation service", () => {
 
     it("rejects a result carrying the right seq but a different candidate", async () => {
       const { execution } = buildExecutionWithContextValidator();
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: async () => ({
           result: {
             kind: "pass",
@@ -1160,7 +1160,7 @@ describe("graph workflow execution validation service", () => {
         metadata: emptyMetadata(),
         roundToken: null,
       }));
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
         renderRoundCommonSections: async () => ({
           diffScopeSection: "## Changes Under Review",
@@ -1201,7 +1201,7 @@ describe("graph workflow execution validation service", () => {
         metadata: emptyMetadata(),
         roundToken: null,
       }));
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator,
         renderRoundCommonSections: async () => ({
           diffScopeSection: "## Changes Under Review\n\nDiff scope unavailable",
@@ -1224,7 +1224,7 @@ describe("graph workflow execution validation service", () => {
     it("proceeds when the rendered diff came from the frozen tree", async () => {
       const { execution } = buildExecutionWithContextValidator();
       const seen: string[] = [];
-      const service = createGraphWorkflowValidationService({
+      const service = createValidatorCohortRunner({
         runContextValidator: passingRunner(seen),
         renderRoundCommonSections: async () => ({
           diffScopeSection: "## Changes Under Review",

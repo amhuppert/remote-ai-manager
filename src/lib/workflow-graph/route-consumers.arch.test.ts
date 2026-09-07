@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 /**
  * Decision D1's enforcement: every RUNTIME consumer reads projection-resolved
@@ -24,22 +25,25 @@ const SEARCH_ROOTS = ["src/lib", "src/components", "src/features", "src/cli"];
 
 /** Files licensed to read the AUTHORED source, each with the reason why. */
 const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
-  // The projection itself and its adapter — where the resolution happens.
+  // Route resolution and authored route-control inputs.
   "src/lib/workflow-graph/route-projection.ts":
     "owns the edge-resolution table; the raw field is its input",
-  "src/lib/workflow-graph/execution-routes.ts":
-    "marshals the execution into the projection",
   "src/lib/workflow-graph/route-control-revision.ts":
     "diffs a source's authored route-control surface",
 
   // Authoring, validation and persistence of the drawn graph.
-  "src/lib/workflow-graph/validation.ts": "structural graph validation",
+  "src/lib/workflow-graph/definition-validation.ts":
+    "structural graph validation",
   "src/lib/workflow-graph/placement-validation.ts":
     "accept-time placement checks over the drawn graph: same-lane ownership disjointness is only required between contexts nothing SEQUENCES, and the authored edge set is the only statement of ordering there is — a declined guard skips its target entirely, so every authored edge is exact, both tiers ask it of the same drawn topology, and no execution exists for the projection to resolve",
   "src/lib/workflow-graph/edge-guard-validation.ts":
     "authoring-time guard validation",
   "src/lib/workflow-graph/edge-identity.ts": "mints and repairs edge ids",
   "src/lib/workflow-graph/definition-edits.ts": "saved-tier structural edits",
+  "src/lib/workflow-graph/document-edit-mechanics.ts":
+    "task and edge edits over the authored definition",
+  "src/lib/workflow-graph/execution-index.ts":
+    "definition-only entry and terminal context queries",
   "src/lib/workflow-graph/runtime-edits.ts": "live-tier structural edits",
   "src/lib/workflow-graph/expansion-service.ts":
     "'downstream of the invoker' is a claim about the graph the PLANNER drew, and an expansion's rejoin targets are unstarted by construction — nothing has resolved for the projection to answer with",
@@ -87,7 +91,6 @@ const RUNTIME_CONSUMERS = [
  * the routing halts all name their subject `sourceContextId(s)` and have no
  * authored edge in sight.
  */
-const RAW_SOURCE_READ = /(\w+)\.sourceContextId\b/g;
 const NON_EDGE_RECEIVERS = new Set([
   "event",
   "reason",
@@ -101,9 +104,27 @@ function read(relPath: string): string {
 }
 
 function readsAuthoredEdgeSource(relPath: string): boolean {
-  return [...read(relPath).matchAll(RAW_SOURCE_READ)].some(
-    (match) => !NON_EDGE_RECEIVERS.has(match[1] ?? ""),
+  const source = ts.createSourceFile(
+    relPath,
+    read(relPath),
+    ts.ScriptTarget.Latest,
+    true,
   );
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      node.name.text === "sourceContextId"
+    ) {
+      const receiver = ts.isPropertyAccessExpression(node.expression)
+        ? node.expression.name.text
+        : node.expression.getText(source);
+      if (!NON_EDGE_RECEIVERS.has(receiver)) found = true;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return found;
 }
 
 function collectSourceFiles(relRoot: string): string[] {

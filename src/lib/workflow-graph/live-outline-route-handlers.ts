@@ -12,7 +12,8 @@ import {
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { projectLiveOutline, type LiveOutlineSelector } from "./live-outline";
+import { projectLiveOutline } from "./live-outline";
+import type { LiveOutlineSelector } from "./live-outline-schemas";
 
 const logger = createLogger("workflow.live-edit");
 

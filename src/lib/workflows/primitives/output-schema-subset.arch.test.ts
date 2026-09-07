@@ -7,7 +7,7 @@ import path from "node:path";
  * possible: the output-schema subset module — descriptor, guidance messages and
  * declaration walker — must stay importable from a `"use client"` component.
  *
- * The definition validator reaches it from `validation.ts`, which the builder
+ * The definition validator reaches it from `definition-validation.ts`, which the builder
  * editor (a client component) imports. If any module on that path pulls a
  * Node-only dependency, the browser bundle breaks — and nothing but
  * `bun run build` reports it, long after the change looks green. So the path is
@@ -27,7 +27,7 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
  */
 const CLIENT_REACHABLE_CHAIN = [
   "src/features/workflows-builder/components/WorkflowBuilderEditor.tsx",
-  "src/lib/workflow-graph/validation.ts",
+  "src/lib/workflow-graph/definition-validation.ts",
   "src/lib/workflow-graph/output-schema-validation.ts",
   "src/components/workflow-config/OutputSchemaField.tsx",
   "src/lib/workflows/primitives/output-schema-subset.ts",

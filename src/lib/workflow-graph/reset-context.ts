@@ -10,7 +10,13 @@ import type {
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 export class ResetExecutionContextError extends Error {
-  constructor(message: string) {
+  constructor(
+    readonly code:
+      | "invalid_execution_status"
+      | "context_missing"
+      | "terminal_context",
+    message: string,
+  ) {
     super(message);
     this.name = "ResetExecutionContextError";
   }
@@ -25,6 +31,7 @@ export function resetExecutionContext(
 ): GraphWorkflowExecution {
   if (!RESET_ELIGIBLE_STATUSES.has(execution.status)) {
     throw new ResetExecutionContextError(
+      "invalid_execution_status",
       `Reset only allowed when the workflow is paused or halted (current status: ${execution.status}).`,
     );
   }
@@ -34,6 +41,7 @@ export function resetExecutionContext(
   );
   if (!contextExists) {
     throw new ResetExecutionContextError(
+      "context_missing",
       `Execution context "${contextId}" not found.`,
     );
   }
@@ -41,8 +49,7 @@ export function resetExecutionContext(
   // The transition owner holds the legality decision (completed and skipped are
   // terminal). It is pure (runs inside a write-queue reducer, so it does no
   // logging); its rejection is translated back into the reset API's error
-  // contract: workflow-manager and respondToManagerError key off
-  // ResetExecutionContextError and this message. The refusing status is named
+  // contract: workflow-manager and the HTTP adapter use the typed reset code. The refusing status is named
   // rather than assumed — a skipped context was never run, and reporting it as
   // completed would misdescribe the branch to the operator.
   let nextContextStates: Record<string, GraphWorkflowExecutionContextState>;
@@ -53,6 +60,7 @@ export function resetExecutionContext(
   } catch (error) {
     if (error instanceof IllegalContextStatusTransitionError) {
       throw new ResetExecutionContextError(
+        "terminal_context",
         `Execution context "${contextId}" is ${error.from} and cannot be reset.`,
       );
     }

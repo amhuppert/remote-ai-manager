@@ -1,3 +1,5 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -185,8 +187,9 @@ function createInMemoryPersist(initial: GraphWorkflowExecution): {
   let current = initial;
   return {
     async mutateActive(mutator) {
-      current = await mutator(current);
-      return current;
+      return applyFixtureMutation(current, mutator, (next) => {
+        current = next;
+      });
     },
     read() {
       return current;
@@ -697,9 +700,11 @@ describe("join-runner", () => {
         ?.validationDebtSourceLaneIds,
     ).toEqual(["lane-b"]);
 
-    await persist.mutateActive((current) =>
-      resetJoinForRetry(current, "join-resume-validation", t0),
-    );
+    await persist
+      .mutateActive((current) =>
+        changed(resetJoinForRetry(current, "join-resume-validation", t0)),
+      )
+      .then((mutation) => mutation.execution);
     const resumed = await runner.run({
       projectPath: "/repo",
       projectName: "repo",

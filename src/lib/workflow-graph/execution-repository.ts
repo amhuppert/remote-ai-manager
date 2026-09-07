@@ -1,5 +1,26 @@
-import { readConfig } from "@/lib/config/loader";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+
 import { createLogger } from "@/lib/logging";
+
+import { assertLoopFence } from "./loop-fence";
+
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import { type GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+
+import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
+
+import { getErrorMessage } from "@/lib/shared/errors";
+
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+  ExecutionMutationValue,
+  GraphWorkflowStorageMutation,
+  GraphWorkflowStorageMutationOutcome,
+} from "./execution-mutation";
+import { GraphWorkflowResourceMissingError } from "./lifecycle-errors";
+import { readConfig } from "@/lib/config/loader";
+
 import { ensureCcArtifactsExcluded } from "@/lib/git/worktree";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowLaunchDocument } from "@/lib/workflow-graph/schemas";
@@ -24,8 +45,6 @@ import {
 } from "./shared-documents";
 import {
   combineEventDeliveries,
-  createGraphWorkflowExecutionEventPublisher,
-  type GraphWorkflowEventDelivery,
   type GraphWorkflowPushInfo,
 } from "./execution-events";
 import {
@@ -59,7 +78,7 @@ import {
   GraphWorkflowValidationError,
   validateResolvedWorkflow,
   validateWorkflowDefinition,
-} from "./validation";
+} from "./definition-validation";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { readRepoConfig } from "@/lib/projects/repo-config";
 import {
@@ -71,27 +90,71 @@ import {
   type ValidationCommandPreflight,
 } from "@/lib/validation/preflight";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowPendingArtifacts,
-} from "@/lib/workflow-graph/schemas";
+
+import type { GraphWorkflowPendingArtifacts } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowArchiveOutcome,
   GraphWorkflowExecutionReservation,
   GraphWorkflowReservationOutcome,
 } from "@/lib/state-store/setters";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
-import {
-  leaseHeldStartGuardError,
-  transitionToNonRunningState,
-} from "./workflow-manager";
-import { getErrorMessage } from "@/lib/shared/errors";
+import { leaseHeldStartGuardError } from "./start-guards";
+import { transitionToNonRunningState } from "./execution-transitions";
+
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import { unregisterExecutionLogger as defaultUnregisterExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-export { GraphWorkflowValidationError } from "./validation";
+export { GraphWorkflowValidationError } from "./definition-validation";
 
 const logger = createLogger("graph-workflow-execution-repository");
+
+export interface GraphWorkflowExecutionRepository {
+  getActive(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null>;
+  /**
+   * `fence` is evaluated inside the reserving transaction and declines by
+   * throwing: it is how a launch checks an admission fact that lives outside
+   * the row (the session-finalizing merge) without the check going stale in the
+   * asynchronous distance between reading it and taking the lease.
+   */
+  create(
+    projectPath: string,
+    sessionName: string,
+    seed: GraphWorkflowExecutionSeed,
+    fence?: () => void,
+  ): Promise<GraphWorkflowExecution>;
+  archiveActive(
+    projectPath: string,
+    sessionName: string,
+    audit?: { reason: string; actor: string | null },
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+    stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
+  ): Promise<GraphWorkflowArchiveOutcome>;
+  mutateActive<Value = void, Refusal = never>(
+    projectPath: string,
+    sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
+  markContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number>;
+  /**
+   * Settle any artifact debt the launch's reserving transaction recorded,
+   * rewriting the charter and seeded documents from durable state. Null when
+   * the run owes nothing, which is every run whose launch completed normally.
+   */
+  ensureArtifactsMaterialized(input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+  }): Promise<GraphWorkflowExecution | null>;
+}
 
 export interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
@@ -158,74 +221,6 @@ export type GraphWorkflowExecutionTransactionAttachment = (input: {
   executionId: string;
 }) => void;
 
-/**
- * A `mutateActive` callback may return the next execution alone (its
- * append-only events are derived from the prev→next diff) or pair it with a
- * pure-DATA delivery it derived directly (e.g. a validation-result or approval
- * event, which no state diff can reconstruct). Both the diff events and these
- * extra events are appended to `graph_workflow_events` in the same write.
- *
- * This is inert data — `events` (append-only rows) and `pushes` (push
- * descriptors), NO callable. The reducer therefore cannot broadcast; the
- * mutation seam derives the full delivery, and the repository performs it only
- * AFTER the transaction commits (Design 3.2, `post-commit-delivery`). A callback
- * that returns only the next execution has no extra events.
- */
-export interface MutateActiveResult extends GraphWorkflowEventDelivery {
-  execution: GraphWorkflowExecution;
-}
-
-/**
- * Thrown from inside a `mutateActive` reducer that has decided to write
- * nothing.
- *
- * A reducer cannot decline by returning the row it was handed. The seam stamps
- * `executionStateRevision` and recomputes `structuralRevision` on every reducer
- * return (`deriveMutateResult`), so an unchanged return still commits, still
- * advances the fence a staged finalize compares against, and still publishes an
- * update for the very run the caller just refused to act on. Race losers and
- * refusals have to be write-free (`reserve-before-side-effects`), and aborting
- * the mutation is the only way a reducer gets that.
- *
- * The refusal DETAIL stays with the caller: this carries only enough to
- * identify the write, because the caller already holds the typed refusal it
- * means to return and knows how to log it outside the write queue.
- */
-export class MutationRefusedError extends Error {
-  constructor(readonly write: string) {
-    super(`Mutation "${write}" was refused by its reducer and wrote nothing`);
-    this.name = "MutationRefusedError";
-  }
-}
-
-/**
- * Run a mutation whose reducer may refuse, resolving to null when it did.
- *
- * Every other failure propagates: a refusal is a decision the caller encoded,
- * while an illegal transition or a stale loop fence is not something to
- * swallow.
- */
-export async function mutateActiveOrRefuse(
-  run: () => Promise<GraphWorkflowExecution>,
-): Promise<GraphWorkflowExecution | null> {
-  try {
-    return await run();
-  } catch (error) {
-    if (error instanceof MutationRefusedError) return null;
-    throw error;
-  }
-}
-
-function isMutateActiveResult(
-  value: MutateActiveResult | GraphWorkflowExecution,
-): value is MutateActiveResult {
-  return (
-    "events" in value &&
-    "execution" in value &&
-    Array.isArray((value as MutateActiveResult).events)
-  );
-}
-
 export interface GraphWorkflowExecutionRepositoryDeps {
   getSession(
     projectPath: string,
@@ -252,19 +247,14 @@ export interface GraphWorkflowExecutionRepositoryDeps {
    * perform post-commit; the seam itself performs no external delivery. Slow
    * callers stage their work around it (reserve/finalize).
    */
-  mutateActiveGraphWorkflowExecution(
+  mutateActiveGraphWorkflowExecution<Value = void>(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (current: GraphWorkflowExecution | null) => {
-      execution: GraphWorkflowExecution;
-      events: GraphWorkflowExecutionEvent[];
-      pushes?: GraphWorkflowPushInfo[];
-    },
-  ): Promise<{
-    execution: GraphWorkflowExecution;
-    delivery: GraphWorkflowEventDelivery;
-  }>;
+    mutate: (
+      current: GraphWorkflowExecution | null,
+    ) => GraphWorkflowStorageMutation<Value>,
+  ): Promise<GraphWorkflowStorageMutationOutcome<Value>>;
   /**
    * THE authoritative lease reservation: read the incumbent, decide admission,
    * and either install the candidate (relocating a lease-free incumbent into
@@ -280,17 +270,16 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   ): Promise<GraphWorkflowReservationOutcome>;
   /**
    * What a reserved execution still owes the filesystem, or null once its
-   * materialization succeeded. Optional so a fixture can hold the record in
-   * memory; production defaults to the state store's own table, which is what
-   * makes a crash-time retry possible at all.
+   * materialization succeeded. Production binds the state store's pending
+   * artifact table so an interrupted materialization can be retried.
    */
-  getGraphWorkflowPendingArtifacts?(
+  getGraphWorkflowPendingArtifacts(
     projectPath: string,
     sessionName: string,
     executionId: string,
   ): Promise<GraphWorkflowPendingArtifacts | null>;
   /** Settle one execution's outstanding-artifact record. */
-  clearGraphWorkflowPendingArtifacts?(executionId: string): Promise<boolean>;
+  clearGraphWorkflowPendingArtifacts(executionId: string): Promise<boolean>;
   /**
    * Move the active execution to the archived-executions table and null the
    * active blob (its events stay in `graph_workflow_events`).
@@ -912,7 +901,6 @@ export function createGraphWorkflowExecutionRepository(
     executionId: string;
   }): Promise<GraphWorkflowExecution | null> {
     const readPending = deps.getGraphWorkflowPendingArtifacts;
-    if (readPending === undefined) return null;
     const pending = await readPending(
       input.projectPath,
       input.sessionName,
@@ -962,13 +950,10 @@ export function createGraphWorkflowExecutionRepository(
         // The shared execution-level transition owner, not a local status
         // write: a second copy of "what halting means" here would drift from
         // every other halt in the engine.
-        return transitionToNonRunningState(
-          execution,
-          "halted",
-          null,
-          haltReason,
+        return changed(
+          transitionToNonRunningState(execution, "halted", null, haltReason),
         );
-      });
+      }).then((mutation) => mutation.execution);
       logger.error("graph-workflow.execution.materialization_failed", {
         projectPath,
         sessionName,
@@ -995,28 +980,7 @@ export function createGraphWorkflowExecutionRepository(
   ): Promise<void> {
     const parsed = graphWorkflowExecutionSchema.parse(execution);
 
-    const { delivery } = await deps.mutateActiveGraphWorkflowExecution(
-      projectPath,
-      sessionName,
-      "graphWorkflowExecution.update",
-      (current) => {
-        if (!current) {
-          throw new Error("No active graph workflow execution");
-        }
-        const diff = eventPublisher.publishExecutionUpdate({
-          projectPath,
-          sessionName,
-          previousExecution: current,
-          nextExecution: parsed,
-        });
-        return {
-          execution: parsed,
-          events: diff.events,
-          pushes: diff.pushes,
-        };
-      },
-    );
-    await eventPublisher.deliver(delivery);
+    await mutateActive(projectPath, sessionName, () => changed(parsed));
   }
 
   /**
@@ -1049,7 +1013,8 @@ export function createGraphWorkflowExecutionRepository(
     }
     assertExecutionPrincipalFence(projectPath, sessionName, current);
     if (!current) {
-      throw new Error(
+      throw new GraphWorkflowResourceMissingError(
+        "execution",
         "Session does not have an active graph workflow execution",
       );
     }
@@ -1071,19 +1036,19 @@ export function createGraphWorkflowExecutionRepository(
    * rejected reducer never reaches this point, so a refused mutation leaves both
    * counters where they were.
    */
-  function deriveMutateResult(
+  function deriveMutateResult<Value>(
     projectPath: string,
     sessionName: string,
     current: GraphWorkflowExecution,
-    result: MutateActiveResult | GraphWorkflowExecution,
+    result: Extract<ExecutionMutationDecision<Value>, { kind: "changed" }>,
   ): {
     execution: GraphWorkflowExecution;
     events: GraphWorkflowExecutionEvent[];
     pushes: GraphWorkflowPushInfo[];
   } {
-    const next = isMutateActiveResult(result) ? result.execution : result;
-    const extraEvents = isMutateActiveResult(result) ? result.events : [];
-    const extraPushes = isMutateActiveResult(result) ? result.pushes : [];
+    const next = result.execution;
+    const extraEvents = result.delivery?.events ?? [];
+    const extraPushes = result.delivery?.pushes ?? [];
     // Parse first: `structuralRevision` compares the committed shape against the
     // committed shape, so schema defaulting and coercion must already have run on
     // both sides or an unchanged tier can read as changed.
@@ -1114,22 +1079,57 @@ export function createGraphWorkflowExecutionRepository(
    * while holding the global lock" unrepresentable here; slow callers use their
    * own staged reserve → work-outside-lock → fenced-finalize protocols.
    */
-  async function mutateActive(
+  async function mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution> {
-    const { execution, delivery } = await deps
-      .mutateActiveGraphWorkflowExecution(
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>> {
+    const result = await deps
+      .mutateActiveGraphWorkflowExecution<
+        ExecutionMutationValue<Value, Refusal>
+      >(
         projectPath,
         sessionName,
         "graphWorkflowExecution.mutateActive",
         (current) => {
           assertMutableActive(projectPath, sessionName, current);
-          const result = fn(structuredClone(current));
-          return deriveMutateResult(projectPath, sessionName, current, result);
+          const decision = fn(structuredClone(current));
+          switch (decision.kind) {
+            case "unchanged":
+            case "refused":
+              return { kind: "no_commit", value: decision };
+            case "events_only": {
+              if (
+                decision.delivery.events.length === 0 &&
+                decision.delivery.pushes.length === 0
+              )
+                throw new Error(
+                  "An events_only mutation requires nonempty delivery",
+                );
+              return {
+                kind: "commit",
+                execution: {
+                  ...current,
+                  executionStateRevision: current.executionStateRevision + 1,
+                },
+                ...decision.delivery,
+                value: { kind: "events_only", value: decision.value },
+              };
+            }
+            case "changed":
+              return {
+                kind: "commit",
+                ...deriveMutateResult(
+                  projectPath,
+                  sessionName,
+                  current,
+                  decision,
+                ),
+                value: { kind: "changed", value: decision.value },
+              };
+          }
         },
       )
       .catch((err: unknown) => {
@@ -1167,10 +1167,13 @@ export function createGraphWorkflowExecutionRepository(
         }
         throw err;
       });
-    // Delivery is performed by the mutation seam post-commit, never by the
-    // reducer (`post-commit-delivery`).
-    await eventPublisher.deliver(delivery);
-    return execution;
+    if (result.execution === null)
+      throw new Error(
+        "An active mutation returned without its authoritative execution",
+      );
+    if (result.kind === "committed")
+      await eventPublisher.deliver(result.delivery);
+    return { ...result.value, execution: result.execution };
   }
 
   /**
@@ -1232,4 +1235,17 @@ export function createGraphWorkflowExecutionRepository(
     archiveActive,
     markContextEventsPreReset,
   };
+}
+
+export async function requireCurrentExecution(
+  repository: Pick<GraphWorkflowExecutionRepository, "getActive">,
+  projectPath: string,
+  sessionName: string,
+): Promise<GraphWorkflowExecution> {
+  const execution = await repository.getActive(projectPath, sessionName);
+  assertLoopFence(projectPath, sessionName, execution);
+  if (!execution) {
+    throw new Error("Session does not have an active graph workflow execution");
+  }
+  return execution;
 }

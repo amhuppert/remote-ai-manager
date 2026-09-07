@@ -1,13 +1,7 @@
-import { z } from "zod";
-import { backendModelSelectionSchema } from "@/lib/agent-backends/schemas";
-import {
-  formatOutputSchemaShape,
-  outputSchemaShapeSchema,
-} from "./workflow-output-schema";
-import {
-  graphWorkflowCommandSelectorSchema,
-  graphWorkflowLaneMergeValidationConfigSchema,
-} from "@/lib/workflow-graph/config-schemas";
+import type { LiveOutlineAssignmentProvenance } from "@/lib/workflow-graph/live-outline-schemas";
+
+import { formatOutputSchemaShape } from "./workflow-output-schema";
+
 import {
   formatAgentModelSelection,
   formatCommandSelector,
@@ -18,234 +12,19 @@ import {
  * CLI-side rendering of the `GET …/graph-workflow/live-outline` projection
  * (docs/design/cc-cli/06 "Read API — live outline"). The endpoint owns the
  * projection AND the editability policy (server-side, D10); the CLI only renders
- * the returned JSON as text. Structural fields parse a deliberately permissive
- * local mirror, so an added field on the projection never breaks the render;
+ * the returned JSON as text. Structural fields parse the shared read
+ * contract, whose unknown-field acceptance preserves navigation annotations;
  * the validation selector blocks parse the foundation schemas from
  * `@/lib/workflow-graph/config-schemas` (charter invariant
  * contracts-from-foundation — selector shapes are never privately redefined).
  */
 
-const agentSummarySchema = z
-  .object({
-    backend: z.string(),
-    modelSelection: backendModelSelectionSchema,
-  })
-  .loose();
-
-/**
- * A live execution's assignments are SEEDED: resolved once at start, replayed
- * verbatim thereafter. The revision and resolved hash are the provenance that
- * says so, and they are what distinguishes this view from the reference-bearing
- * one `cctl workflow get` prints for a saved definition.
- *
- * Every field is REQUIRED. The cutover is hard: a live execution's assignments
- * are seeded, so the projection always carries their provenance, and accepting
- * an outline without it would be an inbound parser for a shape that no longer
- * exists. A body that lacks these fields falls through to the raw-payload
- * fallback rather than being rendered under guessed-at older rules.
- */
-const assignmentProvenanceSchema = z.object({
-  assignmentId: z.string(),
-  profile: z.string(),
-  /** Null when no use-site steer was authored — never absent. */
-  focus: z.string().nullable(),
-  revision: z.number(),
-  resolvedInstructionHash: z.string(),
-});
-
-const implementerSummarySchema = agentSummarySchema.extend(
-  assignmentProvenanceSchema.shape,
-);
-
-const validatorSummarySchema = agentSummarySchema
-  .extend({ strategy: z.string() })
-  .extend(assignmentProvenanceSchema.shape)
-  .loose();
-
-const scriptValidatorSummarySchema = z
-  .object({
-    commands: z.array(z.string()),
-  })
-  .loose();
-
-const contextConfigSchema = z
-  .object({
-    contextId: z.string(),
-    implementer: implementerSummarySchema,
-    /** Whether the cohort dispatches. Required — see the provenance schema. */
-    validatorCohortEnabled: z.boolean(),
-    validators: z.array(validatorSummarySchema),
-    scriptValidator: scriptValidatorSummarySchema,
-    humanApprovalGate: z.boolean(),
-    askUserQuestions: z.boolean(),
-    agentValidation: z
-      .object({
-        // Foundation selector schemas (charter invariant
-        // contracts-from-foundation), never a private mirror.
-        implementer: graphWorkflowCommandSelectorSchema,
-        contextValidator: graphWorkflowCommandSelectorSchema,
-      })
-      .loose()
-      .nullish(),
-  })
-  .loose();
-
-const headerSchema = z
-  .object({
-    executionId: z.string(),
-    liveRevision: z.number(),
-    status: z.string(),
-    seedDefinitionId: z.string(),
-    seedDefinitionRevision: z.number(),
-    editable: z.boolean(),
-    notEditableReason: z.string().optional(),
-    // Absent on outlines from pre-doc-07 servers; render as "never amended".
-    charterAmendmentCount: z.number().default(0),
-    // Absent on outlines from pre-D1 servers; render as "no repair rounds".
-    planRepairRoundCount: z.number().default(0),
-    // The round whose agent has not reported yet. Absent on outlines from a
-    // server that predates it, which reads the same as "nothing is running".
-    openPlanRepairRound: z
-      .object({
-        seq: z.number(),
-        contextId: z.string(),
-        startedAt: z.string(),
-        conversationId: z.string().nullish(),
-      })
-      .nullish(),
-  })
-  .loose();
-
-// Every D4 block below is `nullish()` / defaulted for the same reason the rest
-// of this mirror is permissive: an outline from a pre-D4 server carries none of
-// them, and the CLI must still render its rows rather than fall back to a JSON
-// dump.
-const skipReasonSchema = z
-  .object({
-    at: z.string(),
-    edgeEvaluations: z.array(
-      z.object({ edgeId: z.string(), verdict: z.string() }).loose(),
-    ),
-  })
-  .loose();
-
-const contextLoopSchema = z
-  .object({
-    loopGroupId: z.string(),
-    pass: z.number(),
-    maxPasses: z.number(),
-    activation: z.string(),
-    templateVersion: z.number().nullish(),
-  })
-  .loose();
-
-const contextRowSchema = z
-  .object({
-    id: z.string(),
-    title: z.string(),
-    status: z.string(),
-    editability: z.string(),
-    deps: z.array(z.string()),
-    completedTaskCount: z.number(),
-    totalTaskCount: z.number(),
-    iterationCount: z.number(),
-    maxIterations: z.number(),
-    // Absent on outlines from pre-D2 servers; renders as "declares none".
-    outputSchema: outputSchemaShapeSchema.nullish(),
-    skip: skipReasonSchema.nullish(),
-    loop: contextLoopSchema.nullish(),
-    provenance: z
-      .object({ requestId: z.string(), invokerContextId: z.string() })
-      .loose()
-      .nullish(),
-  })
-  .loose();
-
-const routeRowSchema = z
-  .object({
-    id: z.string(),
-    source: z.string(),
-    effectiveSource: z.string().nullish(),
-    target: z.string(),
-    guard: z.string(),
-    resolution: z.string(),
-  })
-  .loose();
-
-const loopRowSchema = z
-  .object({
-    loopGroupId: z.string(),
-    activation: z.string(),
-    passCount: z.number(),
-    maxPasses: z.number(),
-    loopControlRevision: z.number(),
-    logicalExitContextId: z.string(),
-    concludingExitContextId: z.string().nullish(),
-  })
-  .loose();
-
-const expansionsSchema = z
-  .object({
-    accepted: z
-      .array(
-        z
-          .object({
-            requestId: z.string(),
-            invokerContextId: z.string(),
-            rationale: z.string(),
-            addedContextIds: z.array(z.string()).default([]),
-            addedTaskIds: z.array(z.string()).default([]),
-            rejoinContextIds: z.array(z.string()).default([]),
-            acceptedAt: z.string(),
-          })
-          .loose(),
-      )
-      .default([]),
-    refusals: z
-      .array(
-        z
-          .object({
-            requestId: z.string(),
-            invokerContextId: z.string(),
-            refusalCode: z.string(),
-            refusedAt: z.string(),
-          })
-          .loose(),
-      )
-      .default([]),
-  })
-  .loose();
-
-const taskRowSchema = z
-  .object({
-    contextId: z.string(),
-    order: z.number(),
-    id: z.string(),
-    status: z.string(),
-    title: z.string(),
-    instructionChars: z.number(),
-  })
-  .loose();
-
-export const liveOutlineSchema = z
-  .object({
-    header: headerSchema,
-    contexts: z.array(contextRowSchema),
-    tasks: z.array(taskRowSchema),
-    config: z.array(contextConfigSchema),
-    // The workflow-scope lane-merge snapshot (foundation schema — charter
-    // invariant contracts-from-foundation). `nullish` because pre-selector
-    // servers omit it and legacy executions carry `null`.
-    laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.nullish(),
-    routes: z.array(routeRowSchema).default([]),
-    loops: z.array(loopRowSchema).default([]),
-    expansions: expansionsSchema.default({ accepted: [], refusals: [] }),
-  })
-  .loose();
-
-export type LiveOutlineData = z.infer<typeof liveOutlineSchema>;
-type LiveOutlineContextConfig = z.infer<typeof contextConfigSchema>;
-type LiveOutlineContextRow = z.infer<typeof contextRowSchema>;
+import type {
+  LiveOutline as LiveOutlineData,
+  LiveOutlineContextConfig,
+  LiveOutlineContext as LiveOutlineContextRow,
+  LiveOutputsData,
+} from "@/lib/workflow-graph/live-outline-schemas";
 
 function humanChars(chars: number): string {
   return chars >= 1000
@@ -514,16 +293,14 @@ function staffingBlock(config: LiveOutlineData["config"]): string {
     detail: string;
   }
 
-  const profileOf = (
-    assignment: z.infer<typeof assignmentProvenanceSchema>,
-  ): string => `${assignment.profile}@${assignment.revision}`;
+  const profileOf = (assignment: LiveOutlineAssignmentProvenance): string =>
+    `${assignment.profile}@${assignment.revision}`;
 
-  const hashOf = (
-    assignment: z.infer<typeof assignmentProvenanceSchema>,
-  ): string => shortHash(assignment.resolvedInstructionHash);
+  const hashOf = (assignment: LiveOutlineAssignmentProvenance): string =>
+    shortHash(assignment.resolvedInstructionHash);
 
   const detailOf = (
-    assignment: z.infer<typeof assignmentProvenanceSchema>,
+    assignment: LiveOutlineAssignmentProvenance,
     runtime: string,
   ): string =>
     `${runtime}${assignment.focus ? `  focus "${assignment.focus}"` : ""}`;
@@ -603,43 +380,6 @@ export function renderLiveOutline(outline: LiveOutlineData): string {
 // The `--outputs` view (R7.2)
 // ============================================================
 
-// Only the fields the text view renders are required — `title` and the context
-// `status` ride the projection for `--json` readers, and demanding them here
-// would turn a harmless projection change into a fallback JSON dump.
-const contextOutputSchema = z
-  .object({
-    contextId: z.string(),
-    schema: outputSchemaShapeSchema.nullish(),
-    capture: z.discriminatedUnion("kind", [
-      z
-        .object({
-          kind: z.literal("captured"),
-          value: z.record(z.string(), z.unknown()),
-          capturedAt: z.string(),
-          iteration: z.number(),
-          parse: z
-            .object({
-              source: z.string(),
-              repaired: z.boolean().optional(),
-              repairAttempts: z.number().optional(),
-            })
-            .loose(),
-        })
-        .loose(),
-      z.object({ kind: z.literal("pending") }).loose(),
-      // A not-taken branch owes nothing (D4 R4), so its declared contract
-      // reports `skipped` rather than `pending` — and a union that omitted it
-      // would drop the whole view to a JSON dump the moment a graph routed.
-      z.object({ kind: z.literal("skipped") }).loose(),
-    ]),
-  })
-  .loose();
-
-export const liveOutputsSchema = z
-  .object({ outputs: z.array(contextOutputSchema) })
-  .loose();
-
-export type LiveOutputsData = z.infer<typeof liveOutputsSchema>;
 type LiveContextOutput = LiveOutputsData["outputs"][number];
 
 /** `parse fenced (repaired ×2)` — where the gate found the accepted payload. */

@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { createLifecycleFixture } from "@/lib/workflows/conversation/testing/lifecycle-fixture";
 
 import { _resetForTesting as resetTaskRuntime } from "@/lib/workflows/conversation/runtime-state";
@@ -313,6 +314,7 @@ async function runAdversarialValidator(
   const context = contextFor(validator, execution);
 
   const runner = createValidatorRunner({
+    executionContract: createNonParticipatingGraphExecutionContract(),
     resolveWorktreePath: async () => fixture.worktreePath,
     resolveTimeoutMs: async () => RUN_TIMEOUT_MS,
     executeWorkflowTaskRun: liveTaskRun(backend, fixture.worktreePath),

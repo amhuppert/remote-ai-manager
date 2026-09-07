@@ -1,3 +1,7 @@
+import type {
+  GraphWorkflowStorageMutation,
+  GraphWorkflowStorageMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createLogger, type Logger } from "@/lib/logging";
@@ -95,7 +99,7 @@ export interface GraphWorkflowExecutionReservation {
    * last possible moment: inside the reserving transaction, on the same
    * synchronous section that installs the lease. Returning admits; THROWING the
    * caller's own typed refusal declines, and the transaction commits nothing —
-   * the same write-free decline a reducer gets from `MutationRefusedError`.
+   * the same write-free decline as an explicit non-commit mutation decision.
    *
    * Evaluated here rather than by the caller before it awaits this seam because
    * an out-of-section check is stale by construction: whatever it read can
@@ -1494,25 +1498,15 @@ export function createSetters(
    * not persist can never have told a client it did. The `state.mutate` timing
    * is measured with a pure clock read inside the lock but emitted afterward.
    */
-  async function mutateActiveGraphWorkflowExecution(
+  async function mutateActiveGraphWorkflowExecution<Value = void>(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (current: GraphWorkflowExecution | null) => {
-      execution: GraphWorkflowExecution;
-      events: GraphWorkflowExecutionEvent[];
-      pushes?: GraphWorkflowPushInfo[];
-    },
-  ): Promise<{
-    execution: GraphWorkflowExecution;
-    delivery: GraphWorkflowEventDelivery;
-  }> {
-    let committed:
-      | {
-          execution: GraphWorkflowExecution;
-          delivery: GraphWorkflowEventDelivery;
-        }
-      | undefined;
+    mutate: (
+      current: GraphWorkflowExecution | null,
+    ) => GraphWorkflowStorageMutation<Value>,
+  ): Promise<GraphWorkflowStorageMutationOutcome<Value>> {
+    let committed: GraphWorkflowStorageMutationOutcome<Value>;
     let holdMs = 0;
     let flushRepositoryLogs: () => void = () => {};
     try {
@@ -1531,7 +1525,14 @@ export function createSetters(
               projectPath,
               sessionName,
             );
-            const { execution: reduced, events, pushes } = mutate(current);
+            const decision = mutate(current);
+            if (decision.kind === "no_commit")
+              return {
+                kind: "not_committed" as const,
+                execution: current,
+                value: decision.value,
+              };
+            const { execution: reduced, events, pushes } = decision;
             // Stamp the structural fence HERE, at the durable-write boundary,
             // not only at the execution-repository seam above it. `setActive`
             // skips rewriting `definition_json` whenever this revision has not
@@ -1547,6 +1548,7 @@ export function createSetters(
                 ? reduced
                 : {
                     ...reduced,
+                    executionStateRevision: current.executionStateRevision + 1,
                     structuralRevision: nextStructuralRevision(
                       current,
                       reduced,
@@ -1580,6 +1582,8 @@ export function createSetters(
             });
             txn.immediate();
             return {
+              kind: "committed" as const,
+              value: decision.value,
               execution,
               delivery: {
                 events,

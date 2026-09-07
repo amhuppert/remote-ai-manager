@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * Plan-defect routing, end to end through production parts only.
  *
@@ -123,6 +124,7 @@ function supervisorOver(
     mutateActive: harness.repository.mutateActive,
     applyLiveEdits: (input) =>
       applyLiveEditsToActiveExecution(input, {
+        executionContract: createNonParticipatingGraphExecutionContract(),
         getActiveExecution: () => harness.repository.getActive(),
         mutateActive: harness.repository.mutateActive,
         buildLiveEditDeps: () => Promise.resolve(makeLiveEditDeps()),

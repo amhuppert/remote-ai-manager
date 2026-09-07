@@ -5,6 +5,7 @@ import {
 } from "./test-fixtures";
 import {
   createRegisteredGraphExecutionContract,
+  createNonParticipatingGraphExecutionContract,
   registerGraphExecutionContract,
   resetGraphExecutionContractForTesting,
 } from "./execution-contract-port";
@@ -14,20 +15,34 @@ describe("graph execution contract port", () => {
     resetGraphExecutionContractForTesting();
   });
 
-  it("keeps every contract operation behavior-neutral when no consumer is registered", () => {
+  it("refuses semantic work when mandatory policy is unregistered", async () => {
     const contract = createRegisteredGraphExecutionContract();
     const definition = createWorkflowDefinition();
     const execution = createWorkflowExecution();
-
-    expect(contract.validateDefinition(definition)).toEqual({ ok: true });
-    const liveEdit = contract.loadLiveEdit(execution);
+    const refusal = { ok: false, code: "execution_contract_unregistered" };
+    expect(contract.validateDefinition(definition)).toMatchObject(refusal);
     expect(
-      liveEdit.validateOperation(execution, {
-        type: "move-task",
-        taskId: "task-plan-1",
-        targetContextId: "context-implement",
-      }),
-    ).toEqual({ ok: true });
+      contract.validateTaskCompletion(execution, "task-plan-1"),
+    ).toMatchObject(refusal);
+    expect(contract.deriveContextAcceptanceCriteria(definition)).toMatchObject(
+      refusal,
+    );
+    expect(() => contract.loadLiveEdit(execution)).toThrowError(
+      expect.objectContaining({ code: "execution_contract_unregistered" }),
+    );
+    await expect(
+      contract.loadPromptProjection?.(execution),
+    ).rejects.toMatchObject({ code: "execution_contract_unregistered" });
+  });
+
+  it("allows deliberate non-participation and observes registration after wrapper creation", async () => {
+    const contract = createRegisteredGraphExecutionContract();
+    registerGraphExecutionContract(
+      createNonParticipatingGraphExecutionContract(),
+    );
+    const definition = createWorkflowDefinition();
+    const execution = createWorkflowExecution();
+    expect(contract.validateDefinition(definition)).toEqual({ ok: true });
     expect(contract.validateTaskCompletion(execution, "task-plan-1")).toEqual({
       ok: true,
     });
@@ -35,7 +50,10 @@ describe("graph execution contract port", () => {
       ok: true,
       acceptanceCriteriaByContextId: {},
     });
-    expect(liveEdit.accountabilityCoverageGroups).toEqual([]);
+    expect(
+      contract.loadLiveEdit(execution).accountabilityCoverageGroups,
+    ).toEqual([]);
+    await expect(contract.loadPromptProjection(execution)).resolves.toBeNull();
   });
 
   it("delegates to the currently registered contract", () => {
@@ -43,6 +61,8 @@ describe("graph execution contract port", () => {
     const definition = createWorkflowDefinition();
     const execution = createWorkflowExecution();
     registerGraphExecutionContract({
+      loadPromptProjection: async () => null,
+
       validateDefinition() {
         return {
           ok: false,

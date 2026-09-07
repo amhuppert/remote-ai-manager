@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
@@ -200,6 +201,9 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
     broadcast = vi.fn<(_event: GraphWorkflowSSEEvent) => void>();
     const publisher = createGraphWorkflowExecutionEventPublisher({ broadcast });
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -220,6 +224,7 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       name === "repo" ? PROJECT_PATH : null;
 
     const editDeps: GraphWorkflowRuntimeEditRouteDeps = {
+      executionContract: createNonParticipatingGraphExecutionContract(),
       resolveProjectPath,
       getSession: fixture.store.getSession,
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
@@ -251,7 +256,11 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       PROJECT_PATH,
       SESSION_NAME,
       "seed",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 

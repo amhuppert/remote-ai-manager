@@ -1,3 +1,5 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { declineFixtureAdvisories } from "./testing/advisory-response-fixture";
 /**
  * The event contract a cohort round publishes (R12.2, R6.1).
  *
@@ -575,16 +577,14 @@ describe("non-verdict rounds publish incidents, never verdicts (R6.1)", () => {
       execution: createCohortExecution({ assignmentIds: ["general", "perf"] }),
       runContextValidator: async (input) => {
         if (input.validator.id === "perf") {
-          await harness.repository.mutateActive(
-            "/repo",
-            "session-1",
-            (latest) => {
+          await harness.repository
+            .mutateActive("/repo", "session-1", (latest) => {
               const round =
                 latest.contextStates["context-plan"]?.validationRound;
               if (round) round.seq = 2;
-              return latest;
-            },
-          );
+              return changed(latest);
+            })
+            .then((mutation) => mutation.execution);
         }
         return {
           result: resultFor(input.validator.id),
@@ -689,6 +689,7 @@ describe("advisories on the validation events (R9.1)", () => {
   function advisoryHarness() {
     return createHarness({
       execution: createCohortExecution({ assignments: ADVISORY_COHORT }),
+      advisoryResponse: declineFixtureAdvisories,
       runContextValidator: async (input) => ({
         result:
           input.validator.id === "security"

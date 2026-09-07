@@ -1,3 +1,10 @@
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+
 /**
  * The staged admission protocol end to end, through the real scheduler
  * (decisions D4 and D5).
@@ -39,7 +46,7 @@ import type {
 } from "@/lib/workflow-graph/parallel-worktrees";
 import { classifyContextSchedulability } from "./lane-readiness";
 import { planContextJoin } from "./lane-join";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import { createContextScheduler } from "./context-scheduler";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -93,6 +100,8 @@ function createRepository(initial: GraphWorkflowExecution) {
   let active = initial;
   let lock: Promise<void> = Promise.resolve();
   return {
+    ensureArtifactsMaterialized: async () => null,
+
     read: (): GraphWorkflowExecution => active,
     async getActive(): Promise<GraphWorkflowExecution> {
       return active;
@@ -110,15 +119,13 @@ function createRepository(initial: GraphWorkflowExecution) {
     ): Promise<void> {
       active = execution;
     },
-    async mutateActive(
+    async mutateActive<Value, Refusal>(
       _projectPath: string,
       _sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) =>
-        | GraphWorkflowExecution
-        | { execution: GraphWorkflowExecution; events: unknown[] },
-    ): Promise<GraphWorkflowExecution> {
+      ) => FixtureDecision<Value, Refusal>,
+    ): Promise<FixtureOutcome<Value, Refusal>> {
       const previous = lock;
       let release!: () => void;
       lock = new Promise<void>((resolve) => {
@@ -126,12 +133,9 @@ function createRepository(initial: GraphWorkflowExecution) {
       });
       try {
         await previous;
-        const result = fn(structuredClone(active));
-        active =
-          "execution" in result && "events" in result
-            ? result.execution
-            : (result as GraphWorkflowExecution);
-        return active;
+        return applyFixtureMutation(active, fn, (next) => {
+          active = next;
+        });
       } finally {
         release();
       }
@@ -295,23 +299,20 @@ function makeFixture(input: {
   };
 }
 
-function makeManager(input: {
+function makeScheduler(input: {
   projectPath: string;
   execution: GraphWorkflowExecution;
   worktrees: ParallelWorktrees;
 }) {
   const repository = createRepository(input.execution);
-  const manager = createGraphWorkflowManager({
+  const scheduler = createContextScheduler({
     executionRepository: repository,
-    async loadDefinition() {
-      return null;
-    },
     parallelWorktrees: input.worktrees,
     async getSession() {
       return createSession(input.projectPath);
     },
   });
-  return { manager, repository };
+  return { scheduler, repository };
 }
 
 describe("scheduleEligibleContexts lane admission", () => {
@@ -342,12 +343,12 @@ describe("scheduleEligibleContexts lane admission", () => {
         required: ["approved"],
       };
       if (readerFirst) execution.workingDefinition.executionContexts.reverse();
-      const { manager, repository } = makeManager({
+      const { scheduler, repository } = makeScheduler({
         projectPath,
         execution,
         worktrees: createWorktreesStub(projectPath),
       });
-      await manager.scheduleEligibleContexts({
+      await scheduler.scheduleEligibleContexts({
         projectPath,
         sessionName: SESSION_NAME,
       });
@@ -358,7 +359,7 @@ describe("scheduleEligibleContexts lane admission", () => {
       expect(running[0]?.contextId).toBe(
         readerFirst ? "context-verify" : "context-implement",
       );
-      await manager.scheduleEligibleContexts({
+      await scheduler.scheduleEligibleContexts({
         projectPath,
         sessionName: SESSION_NAME,
       });
@@ -414,28 +415,32 @@ describe("scheduleEligibleContexts lane admission", () => {
           recordedAt: "2026-09-05T10:00:00Z",
           settledAt: null,
         };
-      const { manager, repository } = makeManager({
+      const { scheduler, repository } = makeScheduler({
         projectPath,
         execution,
         worktrees: createWorktreesStub(projectPath),
       });
-      await manager.scheduleEligibleContexts({
+      await scheduler.scheduleEligibleContexts({
         projectPath,
         sessionName: SESSION_NAME,
       });
       expect(
         repository.read().contextStates["context-verify"]?.status,
       ).not.toBe("running");
-      await repository.mutateActive(projectPath, SESSION_NAME, (current) => {
-        current.executionLanes.impl!.includedContextIds.push(writer.contextId);
-        const intent = current.contextStates[writer.contextId]!.landingIntent;
-        if (intent) {
-          intent.state = "landed";
-          intent.settledAt = "2026-09-05T10:01:00Z";
-        }
-        return current;
-      });
-      await manager.scheduleEligibleContexts({
+      await repository
+        .mutateActive(projectPath, SESSION_NAME, (current) => {
+          current.executionLanes.impl!.includedContextIds.push(
+            writer.contextId,
+          );
+          const intent = current.contextStates[writer.contextId]!.landingIntent;
+          if (intent) {
+            intent.state = "landed";
+            intent.settledAt = "2026-09-05T10:01:00Z";
+          }
+          return changed(current);
+        })
+        .then((mutation) => mutation.execution);
+      await scheduler.scheduleEligibleContexts({
         projectPath,
         sessionName: SESSION_NAME,
       });
@@ -462,13 +467,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
       excludedContextIds: ["context-implement"],
@@ -507,13 +512,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -566,13 +571,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -627,13 +632,13 @@ describe("scheduleEligibleContexts lane admission", () => {
         );
       },
     });
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -693,13 +698,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -743,13 +748,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -799,13 +804,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -853,13 +858,13 @@ describe("scheduleEligibleContexts lane admission", () => {
           existingLaneIds: ["impl"],
         });
         const worktrees = createWorktreesStub(projectPath);
-        const { manager, repository } = makeManager({
+        const { scheduler, repository } = makeScheduler({
           projectPath,
           execution,
           worktrees,
         });
 
-        const result = await manager.scheduleEligibleContexts({
+        const result = await scheduler.scheduleEligibleContexts({
           projectPath,
           sessionName: SESSION_NAME,
         });
@@ -905,9 +910,9 @@ describe("scheduleEligibleContexts lane admission", () => {
       existingLaneIds: ["impl"],
     });
     const worktrees = createWorktreesStub(projectPath);
-    const { manager } = makeManager({ projectPath, execution, worktrees });
+    const { scheduler } = makeScheduler({ projectPath, execution, worktrees });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -956,13 +961,13 @@ describe("scheduleEligibleContexts lane admission", () => {
       },
     };
     const worktrees = createWorktreesStub(projectPath);
-    const { manager } = makeManager({
+    const { scheduler } = makeScheduler({
       projectPath,
       execution: withForeignReservation,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
       capacityRemaining: 2,
@@ -1012,13 +1017,13 @@ describe("scheduleEligibleContexts lane admission", () => {
         );
       },
     });
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
-    await manager.scheduleEligibleContexts({
+    await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -1070,19 +1075,19 @@ describe("scheduleEligibleContexts lane admission", () => {
       async onProvision() {
         if (concurrentRan) return;
         concurrentRan = true;
-        await manager.scheduleEligibleContexts({
+        await scheduler.scheduleEligibleContexts({
           projectPath,
           sessionName: SESSION_NAME,
         });
       },
     });
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution: gated,
       worktrees,
     });
 
-    await manager.scheduleEligibleContexts({
+    await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -1117,21 +1122,23 @@ describe("scheduleEligibleContexts lane admission", () => {
       async onProvision() {
         const repo = repositoryRef;
         if (!repo) return;
-        await repo.mutateActive(projectPath, SESSION_NAME, (exec) => {
-          const state = exec.contextStates["context-verify"];
-          if (state) state.reservedByBatchId = "batch-replacement";
-          return exec;
-        });
+        await repo
+          .mutateActive(projectPath, SESSION_NAME, (exec) => {
+            const state = exec.contextStates["context-verify"];
+            if (state) state.reservedByBatchId = "batch-replacement";
+            return changed(exec);
+          })
+          .then((mutation) => mutation.execution);
       },
     });
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
     repositoryRef = repository;
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -1175,21 +1182,23 @@ describe("scheduleEligibleContexts lane admission", () => {
       async onProvision() {
         const repo = repositoryRef;
         if (!repo) return;
-        await repo.mutateActive(projectPath, SESSION_NAME, (exec) => {
-          const claim = exec.laneReservations["impl"];
-          if (claim) claim.batchId = "batch-replacement";
-          return exec;
-        });
+        await repo
+          .mutateActive(projectPath, SESSION_NAME, (exec) => {
+            const claim = exec.laneReservations["impl"];
+            if (claim) claim.batchId = "batch-replacement";
+            return changed(exec);
+          })
+          .then((mutation) => mutation.execution);
       },
     });
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
     repositoryRef = repository;
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -1228,14 +1237,14 @@ describe("scheduleEligibleContexts lane admission", () => {
         if (attempt === 1) throw new Error("git worktree add failed");
       },
     });
-    const { manager, repository } = makeManager({
+    const { scheduler, repository } = makeScheduler({
       projectPath,
       execution,
       worktrees,
     });
 
     await expect(
-      manager.scheduleEligibleContexts({
+      scheduler.scheduleEligibleContexts({
         projectPath,
         sessionName: SESSION_NAME,
       }),
@@ -1251,7 +1260,7 @@ describe("scheduleEligibleContexts lane admission", () => {
       ).toBeNull();
     }
 
-    const retry = await manager.scheduleEligibleContexts({
+    const retry = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });
@@ -1329,13 +1338,13 @@ describe("same-lane visibility (R3.2)", () => {
     };
 
     const worktrees = createWorktreesStub(projectPath);
-    const { manager } = makeManager({
+    const { scheduler } = makeScheduler({
       projectPath,
       execution: chained,
       worktrees,
     });
 
-    const result = await manager.scheduleEligibleContexts({
+    const result = await scheduler.scheduleEligibleContexts({
       projectPath,
       sessionName: SESSION_NAME,
     });

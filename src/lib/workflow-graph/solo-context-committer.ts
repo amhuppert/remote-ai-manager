@@ -9,7 +9,7 @@ import type { GraphWorkflowCanonicalOwnership } from "@/lib/workflow-graph/schem
 
 const logger = createLogger("graph-workflow-solo-commit");
 
-interface SoloContextCommitterInput {
+export interface SoloContextCommitterInput {
   projectPath: string;
   sessionName: string;
   contextId: string;
@@ -28,7 +28,7 @@ interface SoloContextCommitterInput {
   ownership?: GraphWorkflowCanonicalOwnership | null;
 }
 
-type SoloContextCommitterResult =
+export type SoloContextCommitterResult =
   | { status: "committed"; hash: string }
   | { status: "skipped" }
   | { status: "failed"; errorMessage: string };

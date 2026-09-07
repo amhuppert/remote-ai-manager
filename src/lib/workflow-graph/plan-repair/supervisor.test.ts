@@ -1,3 +1,4 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { describe, expect, it } from "vitest";
 import {
   createWorkflowExecution,
@@ -6,7 +7,7 @@ import {
 import { executionFor, workerJudgeDefinition } from "../loop-test-fixtures";
 import type { GraphWorkflowExecution, PlanRepairRound } from "../schemas";
 import type { SeededValidatorAssignment } from "../config-schemas";
-import type { MutateActiveResult } from "../execution-repository";
+
 import type { LiveEditApplyOutcome } from "../live-edit-apply";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { PublishPlanRepairInput } from "../execution-events";
@@ -119,18 +120,11 @@ function makeHarness(options: HarnessOptions) {
           new Error("Session does not have an active graph workflow execution"),
         );
       }
-      const result = fn(execution) as
-        | MutateActiveResult
-        | GraphWorkflowExecution;
-      const next = "execution" in result ? result.execution : result;
-      // The real seam stamps this on EVERY committed mutation, whether or not
-      // the reducer changed a field. Mirrored here so a write the supervisor
-      // should never have made is visible as one.
-      execution = {
-        ...next,
-        executionStateRevision: next.executionStateRevision + 1,
-      };
-      return Promise.resolve(execution);
+      return Promise.resolve(
+        applyFixtureMutation(execution, fn, (next) => {
+          execution = next;
+        }),
+      );
     },
     applyLiveEdits: (input) => {
       applyRequests.push({

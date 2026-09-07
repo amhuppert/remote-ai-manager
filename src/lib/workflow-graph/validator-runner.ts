@@ -1,3 +1,5 @@
+import { changed } from "./execution-mutation";
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
 import { z } from "zod";
 import {
   workflowAdvisoryValidatorResultSchema,
@@ -60,10 +62,7 @@ import {
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "./execution-contract-port";
+import { type GraphExecutionContract } from "./execution-contract-port";
 import { composeGraphRolePrompt } from "./prompt-composer";
 import {
   buildValidationCommandsSection,
@@ -86,7 +85,7 @@ import type {
   RenderRoundCommonSectionsInput,
   ValidationRoundCommonSections,
   ValidationRoundToken,
-} from "./execution-validation";
+} from "./validator-cohort-runner";
 import type {
   ResolveValidatorCallInput,
   ResolvedValidatorCall,
@@ -858,13 +857,10 @@ interface ValidatorContinuityService {
   ): Promise<GraphWorkflowExecution>;
 }
 
-interface ValidatorContinuityRepository {
-  mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
-}
+type ValidatorContinuityRepository = Pick<
+  GraphWorkflowExecutionRepository,
+  "mutateActive"
+>;
 
 export interface ValidatorRunnerDeps {
   resolveWorktreePath(
@@ -937,7 +933,7 @@ export interface ValidatorRunnerDeps {
   composeLaneWriteEnvelope?(
     input: ComposeValidatorLaneWriteEnvelopeInput,
   ): ValidatorLaneWriteEnvelope;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
 }
 
 const validatorLogger = createLogger("graph-workflow-validator");
@@ -1121,8 +1117,7 @@ interface RunValidatorTurnInput {
 }
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
-  const executionContract =
-    deps.executionContract ?? createRegisteredGraphExecutionContract();
+  const executionContract = deps.executionContract;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const getProjectDisplayName =
@@ -1260,11 +1255,11 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     if (!deps.executionRepository) {
       return null;
     }
-    return deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      transform,
-    );
+    return deps.executionRepository
+      .mutateActive(projectPath, sessionName, (latest) =>
+        changed(transform(latest)),
+      )
+      .then((mutation) => mutation.execution);
   }
 
   function buildNoServiceMetadata(): ValidatorExecutionMetadata {

@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { summarizeOutputSchemaShape } from "@/lib/workflow-graph/context-outputs";
 import type { GraphWorkflowOutputSchemaShape } from "@/lib/workflow-graph/context-outputs";
 
@@ -14,19 +13,6 @@ import type { GraphWorkflowOutputSchemaShape } from "@/lib/workflow-graph/contex
  */
 
 export type OutputSchemaShape = GraphWorkflowOutputSchemaShape;
-
-/**
- * The live outline's per-row shape, mirrored permissively like its siblings —
- * and both halves optional on purpose. This annotation is cosmetic, but it sits
- * inside the context row: if a renamed field made the row fail to parse, the
- * WHOLE outline would degrade to a JSON dump over a decoration.
- */
-export const outputSchemaShapeSchema = z
-  .object({
-    type: z.string().nullish(),
-    fieldCount: z.number().nullish(),
-  })
-  .loose();
 
 export { summarizeOutputSchemaShape };
 

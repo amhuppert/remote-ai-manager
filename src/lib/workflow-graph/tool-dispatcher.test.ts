@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { IterationHaltedError } from "./iteration-orchestrator";
+import { IterationHaltedError } from "@/lib/workflow-graph/context-outcome";
 import {
   buildHaltMessage,
   createTurnDispatcher,

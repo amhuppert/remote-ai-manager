@@ -19,7 +19,7 @@ import type {
   CompleteTaskContextLimitStop,
   CompleteTaskResult,
 } from "./execution-tool-context";
-import { IterationHaltedError } from "./iteration-orchestrator";
+import { IterationHaltedError } from "@/lib/workflow-graph/context-outcome";
 import {
   buildHaltMessage,
   type GetPendingToolBlockFn,

@@ -16,9 +16,7 @@ import { describe, expect, it } from "vitest";
 const PRODUCTION_COMPOSITION_ROOTS = [
   "src/lib/conversations/answer-route-handlers.ts",
   "src/lib/conversations/ask-route-handlers.ts",
-  "src/lib/workflow-graph/execution-route-handlers.ts",
   "src/lib/workflow-graph/expansion-production.ts",
-  "src/lib/workflow-graph/lane-tool-context-loader.ts",
   "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
 ];
 
@@ -50,6 +48,20 @@ describe("pending-artifact wiring at the production composition roots", () => {
     },
   );
 
+  it("binds pending-artifact storage through the shared engine constructor", () => {
+    const production = readSource("src/lib/workflow-graph/production.ts");
+    const start = production.indexOf("repository: () => ({");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = production.indexOf("lifecycle:", start);
+    expect(end).toBeGreaterThan(start);
+    const bindings = production.slice(start, end);
+    expect(bindings).toMatch(/getGraphWorkflowPendingArtifacts\b/);
+    expect(bindings).toMatch(/clearGraphWorkflowPendingArtifacts\b/);
+    expect(
+      readSource("src/lib/workflow-graph/engine-composition.ts"),
+    ).toContain("...ports.storage.repository(eventPublisher)");
+  });
+
   it("names every production composition of the repository", () => {
     // The list above is only as good as its coverage, so it is derived from the
     // tree rather than trusted: a new composition root shows up here as a
@@ -62,6 +74,10 @@ describe("pending-artifact wiring at the production composition roots", () => {
       .filter((entry) => entry.endsWith(".ts") || entry.endsWith(".tsx"))
       .filter((entry) => !/\.test\.tsx?$/.test(entry))
       .filter((entry) => !entry.includes("test-fixtures"))
+      .filter(
+        (entry) =>
+          !entry.includes(`workflow-graph${path.sep}testing${path.sep}`),
+      )
       .filter((entry) => !entry.includes(`compat${path.sep}engine-harness`))
       .filter((entry) =>
         readFileSync(path.join(root, entry), "utf-8").includes(CONSTRUCTOR),
@@ -69,6 +85,11 @@ describe("pending-artifact wiring at the production composition roots", () => {
       .map((entry) => path.posix.join("src", entry.split(path.sep).join("/")))
       .sort();
 
-    expect(composers).toEqual([...PRODUCTION_COMPOSITION_ROOTS].sort());
+    expect(composers).toEqual(
+      [
+        ...PRODUCTION_COMPOSITION_ROOTS,
+        "src/lib/workflow-graph/engine-composition.ts",
+      ].sort(),
+    );
   });
 });

@@ -1,3 +1,4 @@
+import { createPersistenceGraphRepository } from "./testing/persistence-repository-fixture";
 /**
  * Loop budgets, exhaustion halts, the execution backstop, and the per-pass gates
  * (D4 R10).
@@ -45,7 +46,7 @@ import {
 } from "./loop-budgets";
 import { settleLoops } from "./loop-settlement";
 import { settleRoutes } from "./route-runtime";
-import { validateWorkflowDefinition } from "./validation";
+import { validateWorkflowDefinition } from "./definition-validation";
 import {
   JUDGE_OUTPUT_SCHEMA,
   NOW,
@@ -94,7 +95,11 @@ describe("loop budgets (R10)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "loop-budgets",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
     const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
       PROJECT_PATH,
@@ -749,19 +754,7 @@ describe("loop budgets (R10)", () => {
 
     it("holds settlement while a LATER pass's exit waits in its approval gate", async () => {
       const approvals = createApprovalGateService({
-        mutateActive: async (projectPath, sessionName, mutate) => {
-          const { execution } =
-            await fixture.store.mutateActiveGraphWorkflowExecution(
-              projectPath,
-              sessionName,
-              "approval",
-              (current) => {
-                if (!current) throw new Error("no active execution");
-                return { execution: mutate(current), events: [] };
-              },
-            );
-          return execution;
-        },
+        mutateActive: createPersistenceGraphRepository(fixture).mutateActive,
         now: () => RESUMED,
       });
 

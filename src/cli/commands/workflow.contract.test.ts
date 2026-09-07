@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import os from "node:os";
 import path from "node:path";
 import nodePath from "node:path";
@@ -184,6 +185,8 @@ function makeExecutionDeps(
   overrides: Partial<GraphWorkflowExecutionRouteDeps>,
 ): GraphWorkflowExecutionRouteDeps {
   return {
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: async () => makeSession(),
     readRepoConfig: async () => null,

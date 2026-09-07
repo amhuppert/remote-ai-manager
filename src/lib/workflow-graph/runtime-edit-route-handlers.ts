@@ -1,3 +1,7 @@
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
 import {
@@ -27,10 +31,7 @@ import {
   type PublishCharterUpdatedInput,
   type PublishLiveEditAppliedInput,
 } from "./execution-events";
-import {
-  createGraphWorkflowExecutionRepository,
-  type MutateActiveResult,
-} from "./execution-repository";
+import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { formatDefinitionEditIssue } from "./definition-edits";
 import {
   applyLiveEditsToActiveExecution,
@@ -78,15 +79,15 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
   prepareAssignmentSnapshots(
     projectPath: string,
     operations: readonly WorkflowLiveEditOperation[],

@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -310,9 +311,11 @@ describe("managed workflow definition service", () => {
     });
     expect(clone.definition.edges).toEqual(edges);
 
-    const removed = applyDefinitionEdits(clone, [
-      { type: "remove-edge", edgeId: "edge-plan-to-implement" },
-    ]);
+    const removed = applyDefinitionEdits(
+      clone,
+      [{ type: "remove-edge", edgeId: "edge-plan-to-implement" }],
+      createNonParticipatingGraphExecutionContract(),
+    );
     expect(removed.ok).toBe(true);
     if (!removed.ok) return;
     expect(removed.record.definition.edges.map((edge) => edge.id)).toEqual([

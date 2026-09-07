@@ -1,3 +1,19 @@
+import { createExecutionInfrastructureFixture } from "../testing/execution-loop-fixture";
+import { readRepoConfig } from "@/lib/projects/repo-config";
+import { createGraphWorkflowExecutionToolContext } from "../execution-tool-context";
+import { createGraphWorkflowRuntimeEditService } from "../runtime-edits";
+import { createGraphWorkflowSharedDocumentRegistryService } from "../shared-documents";
+import { resolveBoundConversationId } from "../lane-binding";
+import type { GraphExecutionContract } from "../execution-contract-port";
+import { unchanged } from "../execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import type {
+  GraphWorkflowAdvisoryResponseInput,
+  GraphWorkflowAdvisoryResponseOutcome,
+} from "../advisory-response-runner";
+import type { DirtyPath } from "../errors";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createGraphWorkflowEngine } from "../engine-composition";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
@@ -9,28 +25,21 @@ import type { ValidatorAuthority } from "@/lib/workflow-graph/config-schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { StateStore } from "@/lib/state-store/store";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
-import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+
 import { createWorkflowCharterService } from "@/lib/workflow-graph/charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
-import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
-import {
-  _resetActiveLoopsForTesting,
-  createGraphWorkflowExecutionLoop,
-  type GraphWorkflowExecutionLoopDeps,
-  type GraphWorkflowExecutionLoopWorkflowManager,
-} from "@/lib/workflow-graph/execution-loop";
-import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
+
+import { _resetActiveLoopsForTesting } from "@/lib/workflow-graph/execution-loop";
+
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
-import { createGraphLaneStore } from "@/lib/workflow-graph/graph-lane-store";
+
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
-import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
+
 import {
-  createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowIterationInput,
   type GraphWorkflowIterationResult,
-  type GraphWorkflowIterationToolServerInput,
-} from "@/lib/workflow-graph/iteration-orchestrator";
-import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
+} from "@/lib/workflow-graph/context-outcome";
+
 import {
   createJoinRunner,
   type JoinRunner,
@@ -44,7 +53,7 @@ import type {
 } from "@/lib/workflow-graph/parallel-worktrees";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
 import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
-import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { getEligibleContextIds } from "@/lib/workflow-graph/lane-readiness";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
@@ -151,6 +160,9 @@ export interface CompatibilityValidatorSeat {
 }
 
 export interface CompatibilityScenario {
+  advisoryResponse?(
+    input: GraphWorkflowAdvisoryResponseInput,
+  ): Promise<GraphWorkflowAdvisoryResponseOutcome>;
   name: string;
   definition: WorkflowSemanticDefinition;
   /**
@@ -248,6 +260,9 @@ export interface CompatibilityAgentTurnContext {
   prompt: string;
   /** The production repository this run commits through. */
   manager: ReturnType<typeof createGraphWorkflowManager>;
+  repository: ReturnType<
+    typeof createGraphWorkflowEngine
+  >["executionRepository"];
   /** The production typed-event publisher this run broadcasts through. */
   eventPublisher: ReturnType<typeof createGraphWorkflowExecutionEventPublisher>;
 }
@@ -411,6 +426,9 @@ export interface EngineScenarioRun {
   events: TypedEventRecord[];
   /** The production manager, still bound to the open persistence fixture. */
   manager: ReturnType<typeof createGraphWorkflowManager>;
+  repository: ReturnType<
+    typeof createGraphWorkflowEngine
+  >["executionRepository"];
   /**
    * The production typed-event publisher this run broadcasts through. A caller
    * that mutates the settled execution (an operator repair, say) wires it here
@@ -439,7 +457,7 @@ export interface EngineScenarioRun {
    * server comes up with, and the only reader that can tell a durable record
    * from a remembered one.
    *
-   * {@link EngineScenarioRun.manager} answers from the repository that wrote the
+   * {@link EngineScenarioRun.repository} answers from the repository that wrote the
    * run, and that repository keeps a parsed-row cache; a reload through it would
    * happily return state the writing process still holds. This reader shares
    * nothing with it but the database file, so anything it reports — the
@@ -450,6 +468,10 @@ export interface EngineScenarioRun {
 }
 
 interface EngineScenarioHarnessHooks {
+  executionContract?: GraphExecutionContract;
+  getSessionWorktreeDirtyPaths?(input: {
+    sessionWorktreePath: string;
+  }): Promise<DirtyPath[]>;
   /**
    * Validator assignment ids reject NUL at the authored and persisted schemas,
    * so the collision regression maps valid seats at this boundary instead of
@@ -486,77 +508,8 @@ export async function runEngineScenario<T>(
     const now = createDeterministicClock();
     const config = createHarnessConfig();
 
-    const publisher = createGraphWorkflowExecutionEventPublisher({
-      broadcast: (event) => {
-        const projected = projectTypedEvent(event);
-        // This corpus compares its pre-D4 event vocabulary. Events introduced
-        // after that baseline have independent contracts and are excluded.
-        if (POST_D4_OBSERVABILITY_EVENT_TYPES.has(event.type)) return;
-        events.push(projected);
-      },
-      now,
-      dispatchPush: () => {},
-    });
-
     let lastCommitted: GraphWorkflowExecution | null = null;
     let lastEligible: string | null = null;
-
-    const repository = createGraphWorkflowExecutionRepository({
-      // No git worktree in this harness; the real exclusion would shell out.
-      ensureCcArtifactsExcluded: async () => {},
-      getSession: fixture.store.getSession,
-      getActiveGraphWorkflowExecution:
-        fixture.store.getActiveGraphWorkflowExecution,
-      // Every persisted write passes through here, so this is the one place an
-      // observer of the execution can see: status moves are diffed against the
-      // previous COMMITTED snapshot, and the eligibility set is recomputed with
-      // the production predicate on each commit — inside the same critical
-      // section the scheduler classifies in, so no concurrent write can race
-      // the observation.
-      async mutateActiveGraphWorkflowExecution(
-        projectPath,
-        sessionName,
-        label,
-        mutate,
-      ) {
-        const result = await fixture.store.mutateActiveGraphWorkflowExecution(
-          projectPath,
-          sessionName,
-          label,
-          (current) => {
-            const mutated = mutate(current);
-            statusTransitions.push(
-              ...diffContextStatuses(lastCommitted, mutated.execution),
-            );
-            lastCommitted = mutated.execution;
-            const eligible = getEligibleContextIds(
-              mutated.execution.workingDefinition,
-              mutated.execution,
-            );
-            const key = eligible.join(",");
-            if (key !== lastEligible) {
-              lastEligible = key;
-              scheduling.push({ decision: "eligible", contextIds: eligible });
-            }
-            return mutated;
-          },
-        );
-        return result;
-      },
-      reserveActiveGraphWorkflowExecution:
-        fixture.store.reserveActiveGraphWorkflowExecution,
-      archiveActiveGraphWorkflowExecution:
-        fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
-      eventPublisher: publisher,
-      charterService: createWorkflowCharterService({
-        writeFile: async () => {},
-        ensureDir: async () => {},
-        publishCharterRegistered: publisher.publishCharterRegistered,
-      }),
-      readConfig: async () => config,
-    });
 
     const worktrees = createWorktreeStub(scenario.worktreeRoot);
     const getSession = async (
@@ -565,291 +518,23 @@ export async function runEngineScenario<T>(
     ): Promise<SessionState | null> =>
       fixture.store.getSession(projectPath, sessionName);
 
-    const manager = createGraphWorkflowManager({
-      executionRepository: repository,
-      loadDefinition: async () => null,
-      parallelWorktrees: worktrees,
-      getSession,
-      eventPublisher: publisher,
-      now,
-      createExecutionId: () => EXECUTION_ID,
-      createBatchId: createCounter("batch"),
-      readGlobalConfig: async () => config,
-      stopExecutionLaneDevServers: async () => {},
-    });
-
-    await repository.create(PROJECT_PATH, SESSION_NAME, {
-      definition: scenario.definition,
-      source: {
-        kind: "template",
-        definitionId: DEFINITION_ID,
-        definitionRevision: 1,
-        tier: "project",
-      },
-      launchDocument: makeLaunchDocument(scenario.definition),
-      executionId: EXECUTION_ID,
-      startedAt: now(),
-      inputs: {},
-      ownerConversationId: null,
-    });
-
-    const running = await repository.mutateActive(
-      PROJECT_PATH,
-      SESSION_NAME,
-      (execution) => ({ ...execution, status: "running" }),
-    );
-
     // ---------------------------------------------------------------------
     // The scripted agents. These are the only fakes standing between the
     // fixture and the production iteration path: the implementer reaches the
-    // engine exclusively through the lane tool server's `completeTask` (the
-    // same seam the real `cctl workflow task complete` verb drives), and the
+    // engine through the production task-completion operation, with the same
+    // execution/context/conversation binding as the lane command, and the
     // validator returns a verdict through the production validation service.
     // ---------------------------------------------------------------------
     const nextConversationId = createCounter("conversation");
     const knownConversationIds = new Set<string>();
-    const laneToolServers = new Map<
-      string,
-      Pick<GraphWorkflowIterationToolServerInput, "contextId" | "completeTask">
-    >();
     const nextAgentTurn = createOccurrenceCounter();
     const nextValidationAttempt = createPairOccurrenceCounter();
-
-    const laneService = createLaneService({
-      store: createGraphLaneStore({
-        listActiveExecutions: () =>
-          fixture.store.listActiveGraphWorkflowExecutions(),
-        mutateActiveExecution: (projectPath, sessionName, mutate) =>
-          manager.mutateActive(projectPath, sessionName, mutate),
-      }),
-      now,
-    });
 
     const createConversation = async (): Promise<{ id: string }> => {
       const id = nextConversationId();
       knownConversationIds.add(id);
       return { id };
     };
-
-    const continuityService = createGraphLaneContinuity({
-      laneService,
-      executionRepository: manager,
-      createConversation,
-      async getConversation(_projectPath, _sessionName, conversationId) {
-        return knownConversationIds.has(conversationId)
-          ? { id: conversationId }
-          : null;
-      },
-      now,
-    });
-
-    const validationService = createGraphWorkflowValidationService({
-      async runContextValidator(input): Promise<ValidatorRunResult> {
-        // Per SEAT, not per context: two specialists reviewing one candidate
-        // each get their own attempt sequence, exactly as two real lanes would.
-        const attemptIdentity = harnessHooks.validationAttemptIdentity?.({
-          contextId: input.context.id,
-          assignmentId: input.validator.id,
-        }) ?? [input.context.id, input.validator.id];
-        const attempt = nextValidationAttempt(
-          attemptIdentity[0],
-          attemptIdentity[1],
-        );
-        // Loaded per seat, mid-round: a seat's question is what is in front of
-        // it RIGHT NOW, and a snapshot taken after the run settles cannot tell a
-        // candidate that existed during review from one that appeared later.
-        const midRound = await manager.getActive(PROJECT_PATH, SESSION_NAME);
-        if (!midRound) {
-          throw new Error(
-            `Fixture validator ran with no active execution for context "${input.context.id}"`,
-          );
-        }
-        const scripted = scenario.validator?.({
-          contextId: input.context.id,
-          attempt,
-          assignmentId: input.validator.id,
-          authority: input.validator.authority,
-          ...(input.executionTarget === undefined
-            ? {}
-            : { worktreePath: input.executionTarget.worktreePath }),
-          execution: midRound,
-        }) ?? { verdict: "pass" };
-        const metadata = {
-          sessionRef: null,
-          reviewArtifact: null,
-          limitEvaluation: "disabled",
-          rotateBeforeNextTurn: false,
-        } as const;
-        const advisories = (scripted.advisories ?? []).map((advisory) => ({
-          ...advisory,
-        }));
-
-        if (scripted.verdict === "pass") {
-          return {
-            result: {
-              kind: "pass",
-              summary: `${input.validator.id} found "${input.context.id}" satisfied its acceptance criteria`,
-              issues: [],
-              advisories,
-              reopenTaskIds: [],
-            },
-            metadata,
-            roundToken: input.roundToken ?? null,
-          };
-        }
-
-        return {
-          result: {
-            kind: "fail",
-            summary: `${input.validator.id} found "${input.context.id}" did not satisfy its acceptance criteria`,
-            issues: scripted.reopenTaskIds.map((taskId) => ({
-              taskId,
-              title: "Acceptance criteria not evidenced",
-              description: "Record the verification evidence for this task.",
-            })),
-            advisories,
-            reopenTaskIds: [...scripted.reopenTaskIds],
-          },
-          metadata,
-          roundToken: input.roundToken ?? null,
-        };
-      },
-    });
-
-    const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: manager,
-      findLatestContextValidationEvent: (
-        projectPath,
-        sessionName,
-        executionId,
-        contextId,
-      ) =>
-        fixture.store.findLatestGraphWorkflowContextEvent(
-          projectPath,
-          sessionName,
-          executionId,
-          contextId,
-          "graph-workflow-validation-result",
-        ),
-      createConversation,
-      continuityService,
-      validationService,
-      validationRoundService: stubValidationRoundService(),
-      // Wired only when a scenario opts in, so the engine — not the agent turn —
-      // decides when a context's output is captured, and the order between a
-      // cohort round and its context's structured output becomes observable.
-      ...(scenario.outputCapture === undefined
-        ? {}
-        : {
-            outputCaptureService: {
-              async captureContextOutput(input) {
-                captureCalls.push({
-                  contextId: input.contextId,
-                  outputAlreadyBanked:
-                    input.execution.contextOutputs[input.contextId] !==
-                    undefined,
-                });
-                const value = scenario.outputCapture?.({
-                  contextId: input.contextId,
-                  execution: input.execution,
-                  ...(input.executionTarget === undefined
-                    ? {}
-                    : { worktreePath: input.executionTarget.worktreePath }),
-                });
-                if (!value) {
-                  return {
-                    kind: "rejected",
-                    summary: `The scenario refused a payload for "${input.contextId}"`,
-                    issues: [],
-                    rejectedText: null,
-                  };
-                }
-                return {
-                  kind: "captured",
-                  value,
-                  parse: { source: "native" as const },
-                };
-              },
-            },
-          }),
-      eventPublisher: publisher,
-      signalHalt: createGraphWorkflowSignalHaltHandler(manager),
-      // The harness does not materialize workflow documents into its lane targets.
-      materializeWorkflowDocuments: async () => {},
-      createToolServer(input) {
-        laneToolServers.set(input.conversationId, {
-          contextId: input.contextId,
-          completeTask: input.completeTask,
-        });
-        return {
-          server: { servers: [] },
-          close: () => {
-            laneToolServers.delete(input.conversationId);
-          },
-        };
-      },
-      async runAgentIteration(input) {
-        const toolServer = laneToolServers.get(input.conversationId);
-        if (!toolServer) {
-          throw new Error(
-            `Fixture agent ran without a lane tool server for conversation "${input.conversationId}"`,
-          );
-        }
-        if (toolServer.contextId !== input.contextId) {
-          // A lane's conversation and its tool server must describe the same
-          // context; otherwise the fixture agent would complete a sibling
-          // context's task and the recording would pin a fiction.
-          throw new Error(
-            `Lane tool server for conversation "${input.conversationId}" belongs to context "${toolServer.contextId}", not "${input.contextId}"`,
-          );
-        }
-
-        const turn = nextAgentTurn(input.contextId);
-        await scenario.onAgentTurn?.({
-          contextId: input.contextId,
-          turn,
-          executionId: input.executionId,
-          conversationId: input.conversationId,
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          ...(input.executionTarget === undefined
-            ? {}
-            : { worktreePath: input.executionTarget.worktreePath }),
-          prompt: input.prompt,
-          manager,
-          eventPublisher: publisher,
-        });
-        if (
-          scenario.agent({ contextId: input.contextId, turn }) ===
-          "complete-next-task"
-        ) {
-          const execution = await manager.getActive(
-            input.projectPath,
-            input.sessionName,
-          );
-          const taskId = execution
-            ? findNextIncompleteTaskId(execution, input.contextId)
-            : null;
-          if (taskId) {
-            await toolServer.completeTask(taskId, `Completed ${taskId}`);
-            await bankScenarioCapture(input.contextId);
-          }
-        }
-
-        return {
-          conversationId: input.conversationId,
-          contextTokens: null,
-          contextWindowMax: null,
-          compacted: false,
-          sessionRef: null,
-        };
-      },
-      // Every fixture context leaves `askUserQuestions` disabled, so no lane
-      // conversation can end on a pending question batch.
-      readLaneConversation: async () => null,
-      createTaskId: createCounter("task"),
-      now,
-    });
 
     /**
      * Bank the scenario's declared output for a context whose tasks are now all
@@ -865,40 +550,31 @@ export async function runEngineScenario<T>(
       if (scenario.outputCapture !== undefined) return;
       const value = scenario.capture?.({ contextId });
       if (!value) return;
-      await manager.mutateActive(PROJECT_PATH, SESSION_NAME, (current) => {
-        if (current.contextOutputs[contextId]) return current;
-        const remaining = Object.values(current.taskStates).filter(
-          (task) => task.contextId === contextId && task.status !== "completed",
-        );
-        if (remaining.length > 0) return current;
-        return {
-          ...current,
-          contextOutputs: {
-            ...current.contextOutputs,
-            [contextId]: {
-              value,
-              capturedAt: now(),
-              iteration: 1,
-              parse: { source: "native" as const },
+      await repository
+        .mutateActive(PROJECT_PATH, SESSION_NAME, (current) => {
+          if (current.contextOutputs[contextId]) return unchanged();
+          const remaining = Object.values(current.taskStates).filter(
+            (task) =>
+              task.contextId === contextId && task.status !== "completed",
+          );
+          if (remaining.length > 0) return unchanged();
+          return changed({
+            ...current,
+            contextOutputs: {
+              ...current.contextOutputs,
+              [contextId]: {
+                value,
+                capturedAt: now(),
+                iteration: 1,
+                parse: { source: "native" as const },
+              },
             },
-          },
-        };
-      });
+          });
+        })
+        .then((mutation) => mutation.execution);
     }
 
     const nextDispatch = createOccurrenceCounter();
-    const recordingIterationOrchestrator = {
-      async runIteration(
-        input: GraphWorkflowIterationInput,
-      ): Promise<GraphWorkflowIterationResult> {
-        scheduling.push({
-          decision: "dispatched",
-          contextId: input.contextId,
-          iteration: nextDispatch(input.contextId),
-        });
-        return iterationOrchestrator.runIteration(input);
-      },
-    };
 
     const mergeRunner: GraphMergeRunner = {
       async run() {
@@ -934,54 +610,466 @@ export async function runEngineScenario<T>(
         return joinRunner.run(input);
       },
     };
-
-    const recordingManager: GraphWorkflowExecutionLoopWorkflowManager = {
-      ...manager,
-      async scheduleEligibleContexts(input) {
-        const result = await manager.scheduleEligibleContexts(input);
-        scheduling.push({
-          decision: "scheduled",
-          outcome: result.scheduled.kind,
-          contextIds:
-            result.scheduled.kind === "solo"
-              ? [result.scheduled.contextId]
-              : result.scheduled.kind === "parallel"
-                ? result.scheduled.contextIds
-                : [],
-        });
-        return result;
-      },
-    };
-
-    const deps: GraphWorkflowExecutionLoopDeps = {
-      workflowManager: recordingManager,
-      iterationOrchestrator: recordingIterationOrchestrator,
-      parallelWorktrees: worktrees,
-      mergeMutex,
-      sessionGitLock,
-      mergeRunner,
-      joinRunner: recordingJoinRunner,
-      soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
-      laneCommitter: {
-        commit: async () => ({ status: "skipped" }),
-        resolveHead: async () => null,
-      },
-      // Compatibility lane targets are not git worktrees, even when an artifact
-      // proof opts into real temporary directories; production's full-access
-      // index preparation is covered by execution-loop tests.
-      resyncSharedIndex: async () => {},
-      executionTargetResolver: createExecutionTargetResolver(),
-      getSession,
+    const executionContract =
+      harnessHooks.executionContract ??
+      createNonParticipatingGraphExecutionContract();
+    const {
+      executionRepository: repository,
       eventPublisher: publisher,
-      createJobId: createCounter("loop-job"),
-      getMaxConcurrentQueries: async () => 4,
-      getSessionWorktreeDirtyPaths: async () => [],
+      workflowManager: manager,
+      contextScheduler,
+      iterationOrchestrator,
+      executionLoop,
+    } = createGraphWorkflowEngine({
+      clearConversationQuestion: async () => false,
+      executionContract,
+
+      repair: () => null,
+      scheduler: { createBatchId: createCounter("batch") },
+      conversation: {
+        listActiveExecutions: () =>
+          fixture.store.listActiveGraphWorkflowExecutions(),
+        createConversation,
+        async getConversation(_projectPath, _sessionName, conversationId) {
+          return knownConversationIds.has(conversationId)
+            ? { id: conversationId }
+            : null;
+        },
+        now,
+      },
+      storage: {
+        publication: {
+          broadcast: (event) => {
+            const projected = projectTypedEvent(event);
+            // This corpus compares its pre-D4 event vocabulary. Events introduced
+            // after that baseline have independent contracts and are excluded.
+            if (POST_D4_OBSERVABILITY_EVENT_TYPES.has(event.type)) return;
+            events.push(projected);
+          },
+          now,
+          dispatchPush: () => {},
+        },
+        repository: (publisher) => ({
+          getGraphWorkflowPendingArtifacts: async () => null,
+          clearGraphWorkflowPendingArtifacts: async () => false,
+
+          // No git worktree in this harness; the real exclusion would shell out.
+          ensureCcArtifactsExcluded: async () => {},
+          getSession: fixture.store.getSession,
+          getActiveGraphWorkflowExecution:
+            fixture.store.getActiveGraphWorkflowExecution,
+          // Every persisted write passes through here, so this is the one place an
+          // observer of the execution can see: status moves are diffed against the
+          // previous COMMITTED snapshot, and the eligibility set is recomputed with
+          // the production predicate on each commit — inside the same critical
+          // section the scheduler classifies in, so no concurrent write can race
+          // the observation.
+          async mutateActiveGraphWorkflowExecution(
+            projectPath,
+            sessionName,
+            label,
+            mutate,
+          ) {
+            const result =
+              await fixture.store.mutateActiveGraphWorkflowExecution(
+                projectPath,
+                sessionName,
+                label,
+                (current) => {
+                  const mutated = mutate(current);
+                  if (mutated.kind === "no_commit") return mutated;
+                  statusTransitions.push(
+                    ...diffContextStatuses(lastCommitted, mutated.execution),
+                  );
+                  lastCommitted = mutated.execution;
+                  const eligible = getEligibleContextIds(
+                    mutated.execution.workingDefinition,
+                    mutated.execution,
+                  );
+                  const key = eligible.join(",");
+                  if (key !== lastEligible) {
+                    lastEligible = key;
+                    scheduling.push({
+                      decision: "eligible",
+                      contextIds: eligible,
+                    });
+                  }
+                  return mutated;
+                },
+              );
+            return result;
+          },
+          reserveActiveGraphWorkflowExecution:
+            fixture.store.reserveActiveGraphWorkflowExecution,
+          archiveActiveGraphWorkflowExecution:
+            fixture.store.archiveActiveGraphWorkflowExecution,
+          markGraphWorkflowContextEventsPreReset:
+            fixture.store.markGraphWorkflowContextEventsPreReset,
+          charterService: createWorkflowCharterService({
+            writeFile: async () => {},
+            ensureDir: async () => {},
+            publishCharterRegistered: publisher.publishCharterRegistered,
+          }),
+          readConfig: async () => config,
+        }),
+      },
+      lifecycle: {
+        abortConversation: () => {},
+        abortExecutionLoop: () => {},
+        retireLaneConversation: () => {},
+        loadDefinition: async () => null,
+        now,
+        createExecutionId: () => EXECUTION_ID,
+
+        readGlobalConfig: async () => config,
+        stopExecutionLaneDevServers: async () => {},
+      },
+      git: {
+        parallelWorktrees: worktrees,
+        mergeMutex,
+        sessionGitLock,
+        mergeRunner,
+        joinRunner: recordingJoinRunner,
+        soloContextCommitter: { commit: async () => ({ status: "skipped" }) },
+        laneCommitter: {
+          commit: async () => ({ status: "skipped" }),
+          resolveHead: async () => null,
+        },
+        executionTargetResolver: createExecutionTargetResolver(),
+      },
+      execution: {
+        ...createExecutionInfrastructureFixture(),
+        // Compatibility lane targets are not git worktrees, even when an artifact
+        // proof opts into real temporary directories; production's full-access
+        // index preparation is covered by execution-loop tests.
+        resyncSharedIndex: async () => {},
+        getSession,
+        createJobId: createCounter("loop-job"),
+        getMaxConcurrentQueries: async () => 4,
+        getSessionWorktreeDirtyPaths:
+          harnessHooks.getSessionWorktreeDirtyPaths ?? (async () => []),
+      },
+      context({ continuityService }) {
+        return {
+          storage: {
+            findLatestContextValidationEvent: (
+              projectPath,
+              sessionName,
+              executionId,
+              contextId,
+            ) =>
+              fixture.store.findLatestGraphWorkflowContextEvent(
+                projectPath,
+                sessionName,
+                executionId,
+                contextId,
+                "graph-workflow-validation-result",
+              ),
+          },
+          conversation: {
+            outputCaptureService: {
+              captureContextOutput: async () => {
+                throw new Error("Output capture is outside this fixture");
+              },
+            },
+            advisoryResponseService: {
+              runAdvisoryResponse:
+                scenario.advisoryResponse ??
+                (async () => {
+                  throw new Error("Advisory response is outside this fixture");
+                }),
+            },
+
+            createConversation,
+            continuityService,
+            async runAgentIteration(input) {
+              const current = await repository.getActive(
+                input.projectPath,
+                input.sessionName,
+              );
+              if (!current || current.id !== input.executionId)
+                throw new Error(
+                  "Fixture execution was replaced before the agent turn",
+                );
+              const boundConversationId = resolveBoundConversationId(
+                current,
+                input.contextId,
+              );
+              if (boundConversationId !== input.conversationId)
+                throw new Error(
+                  `Conversation "${input.conversationId}" does not drive context "${input.contextId}"`,
+                );
+              const context = current.workingDefinition.executionContexts.find(
+                (context) => context.id === input.contextId,
+              );
+              const session = await getSession(
+                input.projectPath,
+                input.sessionName,
+              );
+              if (!context || !session)
+                throw new Error("Fixture context or session missing");
+              const completion = taskCompletion.create({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                executionId: input.executionId,
+                contextId: input.contextId,
+                conversationId: boundConversationId,
+                executionTarget: createExecutionTargetResolver().resolve({
+                  execution: current,
+                  contextId: input.contextId,
+                  session,
+                }),
+                executionContextTitle: context.title,
+                allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
+                allowAgentCollaboration:
+                  context.collaboration?.enabled.value ?? false,
+              });
+
+              const turn = nextAgentTurn(input.contextId);
+              await scenario.onAgentTurn?.({
+                contextId: input.contextId,
+                turn,
+                executionId: input.executionId,
+                conversationId: input.conversationId,
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                ...(input.executionTarget === undefined
+                  ? {}
+                  : { worktreePath: input.executionTarget.worktreePath }),
+                prompt: input.prompt,
+                manager,
+                repository,
+                eventPublisher: publisher,
+              });
+              if (
+                scenario.agent({ contextId: input.contextId, turn }) ===
+                "complete-next-task"
+              ) {
+                const execution = await repository.getActive(
+                  input.projectPath,
+                  input.sessionName,
+                );
+                const taskId = execution
+                  ? findNextIncompleteTaskId(execution, input.contextId)
+                  : null;
+                if (taskId) {
+                  await completion.completeTask(taskId, `Completed ${taskId}`);
+                  await bankScenarioCapture(input.contextId);
+                }
+              }
+
+              return {
+                conversationId: input.conversationId,
+                contextTokens: null,
+                contextWindowMax: null,
+                compacted: false,
+                sessionRef: null,
+              };
+            },
+            // Wired only when a scenario opts in, so the engine — not the agent turn —
+            // decides when a context's output is captured, and the order between a
+            // cohort round and its context's structured output becomes observable.
+            ...(scenario.outputCapture === undefined
+              ? {}
+              : {
+                  outputCaptureService: {
+                    async captureContextOutput(input) {
+                      captureCalls.push({
+                        contextId: input.contextId,
+                        outputAlreadyBanked:
+                          input.execution.contextOutputs[input.contextId] !==
+                          undefined,
+                      });
+                      const value = scenario.outputCapture?.({
+                        contextId: input.contextId,
+                        execution: input.execution,
+                        ...(input.executionTarget === undefined
+                          ? {}
+                          : {
+                              worktreePath: input.executionTarget.worktreePath,
+                            }),
+                      });
+                      if (!value) {
+                        return {
+                          kind: "rejected",
+                          summary: `The scenario refused a payload for "${input.contextId}"`,
+                          issues: [],
+                          rejectedText: null,
+                        };
+                      }
+                      return {
+                        kind: "captured",
+                        value,
+                        parse: { source: "native" as const },
+                      };
+                    },
+                  },
+                }),
+          },
+          validation: {
+            scriptValidatorService: {
+              runScriptValidator: async () => {
+                throw new Error("Script validation is outside this fixture");
+              },
+            },
+            validationRoundService: stubValidationRoundService(),
+            cohort: {
+              async runContextValidator(input): Promise<ValidatorRunResult> {
+                // Per SEAT, not per context: two specialists reviewing one candidate
+                // each get their own attempt sequence, exactly as two real lanes would.
+                const attemptIdentity =
+                  harnessHooks.validationAttemptIdentity?.({
+                    contextId: input.context.id,
+                    assignmentId: input.validator.id,
+                  }) ?? [input.context.id, input.validator.id];
+                const attempt = nextValidationAttempt(
+                  attemptIdentity[0],
+                  attemptIdentity[1],
+                );
+                // Loaded per seat, mid-round: a seat's question is what is in front of
+                // it RIGHT NOW, and a snapshot taken after the run settles cannot tell a
+                // candidate that existed during review from one that appeared later.
+                const midRound = await repository.getActive(
+                  PROJECT_PATH,
+                  SESSION_NAME,
+                );
+                if (!midRound) {
+                  throw new Error(
+                    `Fixture validator ran with no active execution for context "${input.context.id}"`,
+                  );
+                }
+                const scripted = scenario.validator?.({
+                  contextId: input.context.id,
+                  attempt,
+                  assignmentId: input.validator.id,
+                  authority: input.validator.authority,
+                  ...(input.executionTarget === undefined
+                    ? {}
+                    : { worktreePath: input.executionTarget.worktreePath }),
+                  execution: midRound,
+                }) ?? { verdict: "pass" };
+                const metadata = {
+                  sessionRef: null,
+                  reviewArtifact: null,
+                  limitEvaluation: "disabled",
+                  rotateBeforeNextTurn: false,
+                } as const;
+                const advisories = (scripted.advisories ?? []).map(
+                  (advisory) => ({
+                    ...advisory,
+                  }),
+                );
+
+                if (scripted.verdict === "pass") {
+                  return {
+                    result: {
+                      kind: "pass",
+                      summary: `${input.validator.id} found "${input.context.id}" satisfied its acceptance criteria`,
+                      issues: [],
+                      advisories,
+                      reopenTaskIds: [],
+                    },
+                    metadata,
+                    roundToken: input.roundToken ?? null,
+                  };
+                }
+
+                return {
+                  result: {
+                    kind: "fail",
+                    summary: `${input.validator.id} found "${input.context.id}" did not satisfy its acceptance criteria`,
+                    issues: scripted.reopenTaskIds.map((taskId) => ({
+                      taskId,
+                      title: "Acceptance criteria not evidenced",
+                      description:
+                        "Record the verification evidence for this task.",
+                    })),
+                    advisories,
+                    reopenTaskIds: [...scripted.reopenTaskIds],
+                  },
+                  metadata,
+                  roundToken: input.roundToken ?? null,
+                };
+              },
+            },
+          },
+          policy: {
+            readRepoConfig,
+            // The harness does not materialize workflow documents into its lane targets.
+            materializeWorkflowDocuments: async () => {},
+            // Every fixture context leaves `askUserQuestions` disabled, so no lane
+            // conversation can end on a pending question batch.
+            readLaneConversation: async () => null,
+            createTaskId: createCounter("task"),
+            now,
+          },
+        };
+      },
+    });
+
+    const taskCompletion = createGraphWorkflowExecutionToolContext({
+      executionRepository: repository,
+      runtimeEditService: createGraphWorkflowRuntimeEditService(),
+      sharedDocumentRegistry:
+        createGraphWorkflowSharedDocumentRegistryService(),
+      publishLiveEditApplied: publisher.publishLiveEditApplied,
+      readLiveOccupancy: () => null,
+      executionContract,
+      now,
+    });
+
+    const scheduleEligibleContexts = contextScheduler.scheduleEligibleContexts;
+    contextScheduler.scheduleEligibleContexts = async function (input) {
+      const result = await scheduleEligibleContexts(input);
+      scheduling.push({
+        decision: "scheduled",
+        outcome: result.scheduled.kind,
+        contextIds:
+          result.scheduled.kind === "solo"
+            ? [result.scheduled.contextId]
+            : result.scheduled.kind === "parallel"
+              ? result.scheduled.contextIds
+              : [],
+      });
+      return result;
     };
+    const runIteration = iterationOrchestrator.runIteration;
+    iterationOrchestrator.runIteration = async function (
+      input: GraphWorkflowIterationInput,
+    ): Promise<GraphWorkflowIterationResult> {
+      scheduling.push({
+        decision: "dispatched",
+        contextId: input.contextId,
+        iteration: nextDispatch(input.contextId),
+      });
+      return runIteration(input);
+    };
+
+    await repository.create(PROJECT_PATH, SESSION_NAME, {
+      definition: scenario.definition,
+      source: {
+        kind: "template",
+        definitionId: DEFINITION_ID,
+        definitionRevision: 1,
+        tier: "project",
+      },
+      launchDocument: makeLaunchDocument(scenario.definition),
+      executionId: EXECUTION_ID,
+      startedAt: now(),
+      inputs: {},
+      ownerConversationId: null,
+    });
+
+    const running = await repository
+      .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) =>
+        changed({ ...execution, status: "running" }),
+      )
+      .then((mutation) => mutation.execution);
 
     const runExecutionLoop = (
       execution: GraphWorkflowExecution,
     ): Promise<GraphWorkflowExecution> =>
-      createGraphWorkflowExecutionLoop(deps).run({
+      executionLoop.run({
         projectPath: PROJECT_PATH,
         projectName: PROJECT_NAME,
         sessionName: SESSION_NAME,
@@ -1010,6 +1098,7 @@ export async function runEngineScenario<T>(
       captureCalls,
       events,
       manager,
+      repository,
       eventPublisher: publisher,
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,

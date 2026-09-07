@@ -57,6 +57,8 @@ describe("spec workflow composition", () => {
       mergeAssociation: { resolve },
       mergeDeliveryLifecycle: { markDelivered: mergeMarkDelivered },
       executionContract: {
+        loadPromptProjection: async () => null,
+
         validateDefinition,
         loadLiveEdit: () => ({
           validateOperation: () => ({ ok: true }),

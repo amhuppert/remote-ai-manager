@@ -1,3 +1,8 @@
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "./execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, type Logger } from "@/lib/logging";
@@ -29,11 +34,13 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 const defaultLogger = createLogger("graph-workflow-join-runner");
 
-export type JoinRunnerMutateActive = (
-  mutator: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-) => Promise<GraphWorkflowExecution>;
+export type JoinRunnerMutateActive = <Value = void, Refusal = never>(
+  mutator: (
+    execution: GraphWorkflowExecution,
+  ) => ExecutionMutationDecision<Value, Refusal>,
+) => Promise<ExecutionMutationOutcome<Value, Refusal>>;
 
-interface JoinRunnerRunInput {
+export interface JoinRunnerRunInput {
   projectPath: string;
   projectName: string;
   sessionName: string;
@@ -48,7 +55,7 @@ interface JoinRunnerRunInput {
   lifecycle?(event: string, fields: Record<string, unknown>): void;
 }
 
-type JoinRunResult =
+export type JoinRunResult =
   | { status: "succeeded" }
   | {
       status: "failed";
@@ -162,8 +169,8 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
       } = input;
 
       let execution = await mutateActive((e) =>
-        applyJoinProgress(e, joinId, now(), { status: "running" }),
-      );
+        changed(applyJoinProgress(e, joinId, now(), { status: "running" })),
+      ).then((mutation) => mutation.execution);
 
       let join = execution.joins[joinId];
       if (!join) {
@@ -186,11 +193,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
       if (!targetLane || targetLane.worktreePath === null) {
         const message = `Target lane ${join.targetLaneId} is missing or has no worktree path`;
         execution = await mutateActive((e) =>
-          applyJoinProgress(e, joinId, now(), {
-            status: "failed",
-            errorMessage: message,
-          }),
-        );
+          changed(
+            applyJoinProgress(e, joinId, now(), {
+              status: "failed",
+              errorMessage: message,
+            }),
+          ),
+        ).then((mutation) => mutation.execution);
         logger.error("graph-workflow.join.target_invalid", {
           joinId,
           targetLaneId: join.targetLaneId,
@@ -214,11 +223,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         const remaining = remainingSourceLanes(currentJoin);
         if (remaining.length === 0) {
           execution = await mutateActive((e) =>
-            applyJoinProgress(e, joinId, now(), {
-              status: "succeeded",
-              conflictGuidance: null,
-            }),
-          );
+            changed(
+              applyJoinProgress(e, joinId, now(), {
+                status: "succeeded",
+                conflictGuidance: null,
+              }),
+            ),
+          ).then((mutation) => mutation.execution);
           logger.info("graph-workflow.join.completed", {
             joinId,
             kind: currentJoin.kind,
@@ -233,11 +244,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         if (!sourceLane || sourceLane.worktreePath === null) {
           const message = `Source lane ${sourceLaneId} is missing or has no worktree path`;
           execution = await mutateActive((e) =>
-            applyJoinProgress(e, joinId, now(), {
-              status: "failed",
-              errorMessage: message,
-            }),
-          );
+            changed(
+              applyJoinProgress(e, joinId, now(), {
+                status: "failed",
+                errorMessage: message,
+              }),
+            ),
+          ).then((mutation) => mutation.execution);
           logger.error("graph-workflow.join.source_invalid", {
             joinId,
             sourceLaneId,
@@ -542,32 +555,35 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             conflictFileCount: resolvedConflict?.files.length ?? 0,
           });
           execution = await mutateActive((e) =>
-            applyJoinProgress(e, joinId, now(), {
-              status: "running",
-              addMergedSourceLaneId: sourceLaneId,
-              ...(resolvedConflict
-                ? { addResolvedConflict: resolvedConflict }
-                : {}),
-              ...(completedMergeValidationMode?.mode === "run"
-                ? {
-                    clearValidationDebt: true,
-                    addValidationEvidence: {
-                      sourceLaneIds: [
-                        ...(completedMergeValidationMode.coveredLaneIds ?? []),
-                      ],
-                      contextIds: [
-                        ...(completedMergeValidationMode.coveredContextIds ??
-                          []),
-                      ],
-                      commandIdentity: laneMergeCommandIdentity(
-                        completedMergeValidationMode,
-                      ),
-                      recordedAt: now(),
-                    },
-                  }
-                : { addValidationDebtSourceLaneId: sourceLaneId }),
-            }),
-          );
+            changed(
+              applyJoinProgress(e, joinId, now(), {
+                status: "running",
+                addMergedSourceLaneId: sourceLaneId,
+                ...(resolvedConflict
+                  ? { addResolvedConflict: resolvedConflict }
+                  : {}),
+                ...(completedMergeValidationMode?.mode === "run"
+                  ? {
+                      clearValidationDebt: true,
+                      addValidationEvidence: {
+                        sourceLaneIds: [
+                          ...(completedMergeValidationMode.coveredLaneIds ??
+                            []),
+                        ],
+                        contextIds: [
+                          ...(completedMergeValidationMode.coveredContextIds ??
+                            []),
+                        ],
+                        commandIdentity: laneMergeCommandIdentity(
+                          completedMergeValidationMode,
+                        ),
+                        recordedAt: now(),
+                      },
+                    }
+                  : { addValidationDebtSourceLaneId: sourceLaneId }),
+              }),
+            ),
+          ).then((mutation) => mutation.execution);
           const refreshed = execution.joins[joinId];
           if (!refreshed) {
             const message = `Join ${joinId} disappeared after persisting progress`;
@@ -610,23 +626,25 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                   ? "Join merge was discarded"
                   : "Join merge failed"));
         execution = await mutateActive((e) =>
-          applyJoinProgress(e, joinId, now(), {
-            status: failureStatus,
-            errorMessage: message,
-            // An infrastructure failure never read these files, so recording
-            // them as the join's conflict would blame content nothing
-            // examined. They stay on the result as context for the halt.
-            conflicts:
-              resolutionFailure === null && mergeConflictFiles.length > 0
-                ? {
-                    files: mergeConflictFiles,
-                    message,
-                    analysis: mergeConflictAnalysis,
-                  }
-                : null,
-            conflictGuidance: null,
-          }),
-        );
+          changed(
+            applyJoinProgress(e, joinId, now(), {
+              status: failureStatus,
+              errorMessage: message,
+              // An infrastructure failure never read these files, so recording
+              // them as the join's conflict would blame content nothing
+              // examined. They stay on the result as context for the halt.
+              conflicts:
+                resolutionFailure === null && mergeConflictFiles.length > 0
+                  ? {
+                      files: mergeConflictFiles,
+                      message,
+                      analysis: mergeConflictAnalysis,
+                    }
+                  : null,
+              conflictGuidance: null,
+            }),
+          ),
+        ).then((mutation) => mutation.execution);
         logger.error("graph-workflow.join.source_merge_failed", {
           joinId,
           sourceLaneId,

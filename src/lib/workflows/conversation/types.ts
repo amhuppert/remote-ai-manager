@@ -351,6 +351,7 @@ export interface RunTaskRunInput {
   persistence: ConversationPersistenceMode;
   projectPath: string;
   target: ConversationTarget;
+  role: ConversationRole;
 
   worktreePath: string;
 

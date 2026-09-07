@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
@@ -156,14 +157,24 @@ function createInMemoryRepo(
     ) {
       mutateCalls.push(label);
       const session = getOrCreateSession(projectPath, sessionName);
-      const { execution, events, pushes } = await mutate(
-        session.graphWorkflowExecution,
-      );
+      const decision = mutate(session.graphWorkflowExecution);
+      if (decision.kind === "no_commit")
+        return {
+          kind: "not_committed" as const,
+          execution: session.graphWorkflowExecution,
+          value: decision.value,
+        };
+      const { execution, events, pushes } = decision;
       session.graphWorkflowExecution = execution;
       appendedEvents.push(...events);
       // Mirror the production seam: commit the rows and hand the committed
       // delivery back; the repository performs delivery post-commit.
-      return { execution, delivery: { events, pushes: pushes ?? [] } };
+      return {
+        kind: "committed" as const,
+        value: decision.value,
+        execution,
+        delivery: { events, pushes: pushes ?? [] },
+      };
     },
     async reserveActiveGraphWorkflowExecution(
       projectPath,
@@ -2200,10 +2211,14 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
         loopEpoch: 0,
       },
       () =>
-        harness.repo.mutateActive("/repo", "session-1", (execution) => ({
-          ...execution,
-          activeContextIds: ["context-updated"],
-        })),
+        harness.repo
+          .mutateActive("/repo", "session-1", (execution) =>
+            changed({
+              ...execution,
+              activeContextIds: ["context-updated"],
+            }),
+          )
+          .then((mutation) => mutation.execution),
     );
 
     expect(next.activeContextIds).toEqual(["context-updated"]);
@@ -2218,10 +2233,12 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
     // Persisted execution has been resumed since the loop captured its fence.
     seedActiveExecution(harness, { loopEpoch: 1 });
 
-    const mutator = vi.fn((execution: GraphWorkflowExecution) => ({
-      ...execution,
-      activeContextIds: ["context-stale-write"],
-    }));
+    const mutator = vi.fn((execution: GraphWorkflowExecution) =>
+      changed({
+        ...execution,
+        activeContextIds: ["context-stale-write"],
+      }),
+    );
 
     await expect(
       runWithLoopFence(
@@ -2256,10 +2273,14 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
           loopEpoch: 0,
         },
         () =>
-          harness.repo.mutateActive("/repo", "session-1", (execution) => ({
-            ...execution,
-            activeContextIds: ["context-stale-write"],
-          })),
+          harness.repo
+            .mutateActive("/repo", "session-1", (execution) =>
+              changed({
+                ...execution,
+                activeContextIds: ["context-stale-write"],
+              }),
+            )
+            .then((mutation) => mutation.execution),
       ),
     ).rejects.toThrow(StaleLoopFenceError);
 
@@ -2281,11 +2302,11 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
           loopEpoch: 0,
         },
         () =>
-          harness.repo.mutateActive(
-            "/repo",
-            "session-1",
-            (execution) => execution,
-          ),
+          harness.repo
+            .mutateActive("/repo", "session-1", (execution) =>
+              changed(execution),
+            )
+            .then((mutation) => mutation.execution),
       ),
     ).rejects.toThrow(StaleLoopFenceError);
   });
@@ -2294,14 +2315,14 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
     const harness = createInMemoryRepo();
     seedActiveExecution(harness, { loopEpoch: 7 });
 
-    const next = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({
-        ...execution,
-        activeContextIds: ["context-route-write"],
-      }),
-    );
+    const next = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({
+          ...execution,
+          activeContextIds: ["context-route-write"],
+        }),
+      )
+      .then((mutation) => mutation.execution);
 
     expect(next.activeContextIds).toEqual(["context-route-write"]);
   });
@@ -2341,10 +2362,14 @@ describe("createGraphWorkflowExecutionRepository principal-fence enforcement", (
         principal: ORIGIN_PRINCIPAL,
       },
       () =>
-        harness.repo.mutateActive("/repo", "session-1", (execution) => ({
-          ...execution,
-          activeContextIds: ["context-updated"],
-        })),
+        harness.repo
+          .mutateActive("/repo", "session-1", (execution) =>
+            changed({
+              ...execution,
+              activeContextIds: ["context-updated"],
+            }),
+          )
+          .then((mutation) => mutation.execution),
     );
 
     expect(next.activeContextIds).toEqual(["context-updated"]);
@@ -2355,10 +2380,12 @@ describe("createGraphWorkflowExecutionRepository principal-fence enforcement", (
     // E1 settled and E2 launched between the route's read and this write.
     seedActive(harness, "execution-2");
 
-    const mutator = vi.fn((execution: GraphWorkflowExecution) => ({
-      ...execution,
-      activeContextIds: ["context-successor-write"],
-    }));
+    const mutator = vi.fn((execution: GraphWorkflowExecution) =>
+      changed({
+        ...execution,
+        activeContextIds: ["context-successor-write"],
+      }),
+    );
 
     await expect(
       runWithExecutionPrincipalFence(
@@ -2392,10 +2419,12 @@ describe("createGraphWorkflowExecutionRepository principal-fence enforcement", (
       lastConversationId: "successor-lane-conv",
     };
 
-    const mutator = vi.fn((active: GraphWorkflowExecution) => ({
-      ...active,
-      activeContextIds: ["context-stale-lane-write"],
-    }));
+    const mutator = vi.fn((active: GraphWorkflowExecution) =>
+      changed({
+        ...active,
+        activeContextIds: ["context-stale-lane-write"],
+      }),
+    );
 
     await expect(
       runWithExecutionPrincipalFence(
@@ -2427,11 +2456,11 @@ describe("createGraphWorkflowExecutionRepository principal-fence enforcement", (
     const harness = createInMemoryRepo();
     seedActive(harness, "execution-2");
 
-    const next = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({ ...execution, activeContextIds: ["context-ui-write"] }),
-    );
+    const next = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({ ...execution, activeContextIds: ["context-ui-write"] }),
+      )
+      .then((mutation) => mutation.execution);
 
     expect(next.activeContextIds).toEqual(["context-ui-write"]);
   });
@@ -2465,6 +2494,9 @@ describe("createGraphWorkflowExecutionRepository.create replacement audit", () =
       dispatchPush: () => {},
     });
     return createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
         fixture.store.getActiveGraphWorkflowExecution,
@@ -2498,7 +2530,11 @@ describe("createGraphWorkflowExecutionRepository.create replacement audit", () =
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedActive",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -2617,23 +2653,23 @@ describe("createGraphWorkflowExecutionRepository executionStateRevision fence", 
     const seeded = seedActiveExecution(harness, { executionStateRevision: 4 });
     expect(seeded.executionStateRevision).toBe(4);
 
-    const first = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({ ...execution, activeContextIds: ["context-plan"] }),
-    );
+    const first = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({ ...execution, activeContextIds: ["context-plan"] }),
+      )
+      .then((mutation) => mutation.execution);
     expect(first.executionStateRevision).toBe(5);
 
     // A scheduler-shaped write that touches no live-edit field still moves the
     // fence — `liveRevision` alone would miss it, which is the whole point.
-    const second = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({
-        ...execution,
-        laneStates: {},
-      }),
-    );
+    const second = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({
+          ...execution,
+          laneStates: {},
+        }),
+      )
+      .then((mutation) => mutation.execution);
     expect(second.executionStateRevision).toBe(6);
     expect(second.liveRevision).toBe(seeded.liveRevision);
     expect(
@@ -2646,11 +2682,11 @@ describe("createGraphWorkflowExecutionRepository executionStateRevision fence", 
     const harness = createInMemoryRepo();
     seedActiveExecution(harness, { executionStateRevision: 9 });
 
-    const next = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({ ...execution, executionStateRevision: 2 }),
-    );
+    const next = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({ ...execution, executionStateRevision: 2 }),
+      )
+      .then((mutation) => mutation.execution);
 
     expect(next.executionStateRevision).toBe(10);
   });
@@ -2668,10 +2704,14 @@ describe("createGraphWorkflowExecutionRepository executionStateRevision fence", 
           loopEpoch: 0,
         },
         () =>
-          harness.repo.mutateActive("/repo", "session-1", (execution) => ({
-            ...execution,
-            activeContextIds: ["context-stale-write"],
-          })),
+          harness.repo
+            .mutateActive("/repo", "session-1", (execution) =>
+              changed({
+                ...execution,
+                activeContextIds: ["context-stale-write"],
+              }),
+            )
+            .then((mutation) => mutation.execution),
       ),
     ).rejects.toThrow(StaleLoopFenceError);
 
@@ -2706,10 +2746,8 @@ describe("createGraphWorkflowExecutionRepository structuralRevision fence", () =
     const harness = createInMemoryRepo();
     const seeded = seedActiveExecution(harness, { structuralRevision: 5 });
 
-    const next = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => {
+    const next = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) => {
         execution.workingDefinition.tasks.push({
           id: "task-remediation-1",
           contextId: "context-implement",
@@ -2718,9 +2756,9 @@ describe("createGraphWorkflowExecutionRepository structuralRevision fence", () =
           instructions: "Re-run the pre-merge script and fix what it reports.",
           source: "user",
         });
-        return execution;
-      },
-    );
+        return changed(execution);
+      })
+      .then((mutation) => mutation.execution);
 
     expect(next.structuralRevision).toBe(6);
     expect(next.liveRevision).toBe(seeded.liveRevision);
@@ -2732,21 +2770,21 @@ describe("createGraphWorkflowExecutionRepository structuralRevision fence", () =
     const harness = createInMemoryRepo();
     seedActiveExecution(harness, { structuralRevision: 5 });
 
-    const next = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({
-        ...execution,
-        activeContextIds: ["context-plan"],
-        contextStates: {
-          ...execution.contextStates,
-          "context-plan": {
-            ...execution.contextStates["context-plan"]!,
-            status: "running",
+    const next = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({
+          ...execution,
+          activeContextIds: ["context-plan"],
+          contextStates: {
+            ...execution.contextStates,
+            "context-plan": {
+              ...execution.contextStates["context-plan"]!,
+              status: "running",
+            },
           },
-        },
-      }),
-    );
+        }),
+      )
+      .then((mutation) => mutation.execution);
 
     expect(next.structuralRevision).toBe(5);
     expect(next.executionStateRevision).toBe(1);
@@ -2757,32 +2795,32 @@ describe("createGraphWorkflowExecutionRepository structuralRevision fence", () =
     seedActiveExecution(harness, { structuralRevision: 9 });
 
     // Claims a bump it did not earn...
-    const unearned = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({ ...execution, structuralRevision: 42 }),
-    );
+    const unearned = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({ ...execution, structuralRevision: 42 }),
+      )
+      .then((mutation) => mutation.execution);
     expect(unearned.structuralRevision).toBe(9);
 
     // ...and hides one it did.
-    const hidden = await harness.repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => ({
-        ...execution,
-        structuralRevision: 9,
-        charterAmendments: [
-          {
-            seq: 1,
-            amendedAt: "2026-08-04T00:00:00.000Z",
-            source: "cli",
-            rationale: "Scope moved after the API review",
-            fieldsChanged: ["mission"],
-            charterHash: "hash-1",
-          },
-        ],
-      }),
-    );
+    const hidden = await harness.repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed({
+          ...execution,
+          structuralRevision: 9,
+          charterAmendments: [
+            {
+              seq: 1,
+              amendedAt: "2026-08-04T00:00:00.000Z",
+              source: "cli",
+              rationale: "Scope moved after the API review",
+              fieldsChanged: ["mission"],
+              charterHash: "hash-1",
+            },
+          ],
+        }),
+      )
+      .then((mutation) => mutation.execution);
     expect(hidden.structuralRevision).toBe(10);
   });
 });

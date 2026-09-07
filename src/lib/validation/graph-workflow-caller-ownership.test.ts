@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -193,6 +194,9 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       now: () => T,
     });
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -214,6 +218,13 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       }),
     });
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       getSession: fixture.store.getSession,
       // The dirty-worktree guard probes a real git worktree; these fixture
@@ -227,6 +238,8 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       createExecutionId: () => "execution-started",
     });
     const handlers = createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
@@ -403,12 +416,16 @@ describe("createProductionValidationCallerResolver ownership of a slot-holding e
       SESSION_NAME,
       "test.seedLegacy",
       () => ({
-        execution: {
-          ...createWorkflowExecution({ status: "running" }),
-          ownerConversationId: null,
-          laneStates: {},
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: {
+            ...createWorkflowExecution({ status: "running" }),
+            ownerConversationId: null,
+            laneStates: {},
+          },
+          events: [],
         },
-        events: [],
       }),
     );
 

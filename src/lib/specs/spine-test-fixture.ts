@@ -1,3 +1,12 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createLifecycleRouteFixture } from "@/lib/workflow-graph/testing/lifecycle-route-fixture";
+import type { GraphWorkflowLifecycleDeps } from "@/lib/workflow-graph/lifecycle-service";
 import { createGraphPlanReviewsRepo } from "@/lib/state-store/graph-plan-reviews-repo";
 import { createPlanReviewService } from "@/lib/workflows/plan-review/service";
 import { holdsExecutionLease } from "@/lib/workflow-graph/lifecycle-classifier";
@@ -29,12 +38,9 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
 } from "@/lib/workflow-graph/definition-schemas";
-import {
-  graphWorkflowExecutionEventSchema,
-  type GraphWorkflowExecutionEvent,
-} from "@/lib/workflow-graph/event-schemas";
+import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
 import { createRegisteredGraphExecutionLifecycleCallbacks } from "@/lib/workflow-graph/execution-lifecycle-port";
-import { createGraphWorkflowExecutionRouteHandlers } from "@/lib/workflow-graph/execution-route-handlers";
+import { createGraphWorkflowLifecycleService } from "@/lib/workflow-graph/lifecycle-service";
 import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
 import { admitAuthoredWorkflowLaunch } from "@/lib/workflow-graph/authored-launch-admission";
@@ -99,7 +105,10 @@ import {
   specExecutionBindingSchema,
   type SpecExecutionBinding,
 } from "./execution-binding";
-import { createSpecExecutionBindingPorts } from "./execution-binding-service";
+import {
+  createSpecExecutionBindingGraphContract,
+  createSpecExecutionBindingPorts,
+} from "./execution-binding-service";
 import {
   createEvidenceMutationRecorder,
   createEvidenceService,
@@ -1068,6 +1077,10 @@ export function createSpecSpineWorld(
       },
     });
     registerSpecWorkflowComposition({
+      executionContract: createSpecExecutionBindingGraphContract(
+        createSpecExecutionBindingPorts(bindingRepo),
+        { loadRevisionSnapshot: (id) => specs.getRevisionSnapshot(id) },
+      ),
       deliveryGate,
       lifecycleCallbacks,
       mergeAssociation: createMergeAssociationResolver({
@@ -1205,47 +1218,38 @@ export function createSpecSpineWorld(
       ? { kind: "missing" }
       : { kind: "archived", status: archivedStatus };
   }
-  // Read-modify-write backing the sync `mutateActive`; awaits `fn` so a
-  // synchronous reducer is applied exactly as the production seam does.
-  const mutateActiveImpl = async (
+  // Apply the synchronous reducer and preserve write-free decisions.
+  const mutateActiveImpl = async <Value, Refusal>(
     _projectPath: string,
     _sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) =>
-      | GraphWorkflowExecution
-      | { execution: GraphWorkflowExecution; events: unknown[] }
-      | Promise<
-          | GraphWorkflowExecution
-          | { execution: GraphWorkflowExecution; events: unknown[] }
-        >,
-  ): Promise<GraphWorkflowExecution> => {
+    fn: (execution: GraphWorkflowExecution) => FixtureDecision<Value, Refusal>,
+  ): Promise<FixtureOutcome<Value, Refusal>> => {
     if (activeWorkflowExecution === null) {
       throw new Error(
         "Session does not have an active graph workflow execution",
       );
     }
-    const result = await fn(structuredClone(activeWorkflowExecution));
-    const carriesEvents =
-      typeof result === "object" && "execution" in result && "events" in result;
-    activeWorkflowExecution = carriesEvents
-      ? result.execution
-      : (result as GraphWorkflowExecution);
-    // The production seam persists a reducer's extra events in the same write
-    // that commits the execution. Dropping them here would let a durable-audit
-    // assertion pass or fail on the fixture rather than on the code under test.
-    if (carriesEvents && result.events.length > 0) {
-      workflowEvents.appendMany(
-        SPINE_PROJECT_PATH,
-        SPINE_SESSION_NAME,
-        activeWorkflowExecution.id,
-        now(),
-        result.events as GraphWorkflowExecutionEvent[],
-      );
-    }
-    return activeWorkflowExecution;
+    return applyFixtureMutation(
+      activeWorkflowExecution,
+      fn,
+      (execution, delivery) => {
+        activeWorkflowExecution = execution;
+        // Persist extra events with the execution so durable-audit assertions
+        // exercise the code under test rather than a fixture dropping events.
+        if (delivery.events.length > 0)
+          workflowEvents.appendMany(
+            SPINE_PROJECT_PATH,
+            SPINE_SESSION_NAME,
+            execution.id,
+            now(),
+            delivery.events,
+          );
+      },
+    );
   };
   const workflowExecutionRepository = {
+    ensureArtifactsMaterialized: async () => null,
+
     async getActive(): Promise<GraphWorkflowExecution | null> {
       return activeWorkflowExecution;
     },
@@ -1327,6 +1331,14 @@ export function createSpecSpineWorld(
     },
   };
   const workflowManager = createGraphWorkflowManager({
+    abortConversation: () => {},
+    abortExecutionLoop: () => {},
+    retireLaneConversation: () => {},
+    getSession: async () => null,
+    stopExecutionLaneDevServers: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: workflowExecutionRepository,
     loadDefinition: async (_projectPath, definitionId) =>
       definitions.findById(definitionId),
@@ -1395,17 +1407,13 @@ export function createSpecSpineWorld(
         SPINE_CAPABILITY_SECRET,
       ),
   };
-  const workflowHandlers = createGraphWorkflowExecutionRouteHandlers({
+  const workflowLifecycleDeps: GraphWorkflowLifecycleDeps = {
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     // Same clock the manager stamps reservations with, so "has this decision's
     // holder gone away" is asked against the fixture's timeline rather than the
     // wall clock — which would call every reservation here stranded.
     now,
-    resolveProjectPath: async (name) =>
-      name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
-    getSession: async (projectPath, sessionName) =>
-      projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
-        ? spineSession
-        : null,
     normalizeExecutionAfterRestart: async () => activeWorkflowExecution,
     startExecution: (input) => workflowManager.start(input),
     runExecution: (input) => workflowManager.run(input),
@@ -1465,13 +1473,13 @@ export function createSpecSpineWorld(
     recordPendingHaltReason: (input) =>
       workflowManager.recordPendingHaltReason(input),
     drainAndHalt: (input) => workflowManager.drainAndHalt(input),
-    recordApprovalDecision: unsupported("recordApprovalDecision"),
-    auth: spineAuth,
-    ...spineCapabilityVerifiers,
-  });
+  };
+  const workflowHandlers = createGraphWorkflowLifecycleService(
+    workflowLifecycleDeps,
+  );
   // The production start+kickoff seam, exactly as
-  // `launchSpecDeliveryGraphWorkflowExecution` wires it live: the same route
-  // handlers, the same manager, and the owner conversation the spec-launch
+  // `launchSpecDeliveryGraphWorkflowExecution` wires it live: the same lifecycle
+  // service, the same manager, and the owner conversation the spec-launch
   // seam resolved server-side.
   workflowDefinitionGateRef.launchApproved = async (input) => {
     try {
@@ -1577,7 +1585,7 @@ export function createSpecSpineWorld(
             `Unknown workflow context/task ${contextId}/${taskId}`,
           );
         }
-        return {
+        return changed({
           ...current,
           activeContextIds: [contextId],
           contextStates: {
@@ -1604,7 +1612,7 @@ export function createSpecSpineWorld(
             recoveryMode: "none",
             hasLiveIteration: true,
           },
-        };
+        });
       },
     );
   }
@@ -1612,56 +1620,29 @@ export function createSpecSpineWorld(
   async function setWorkflowExecutionStatus(
     status: GraphWorkflowExecution["status"],
   ): Promise<void> {
-    await mutateActiveImpl(
-      SPINE_PROJECT_PATH,
-      SPINE_SESSION_NAME,
-      (current) => ({
+    await mutateActiveImpl(SPINE_PROJECT_PATH, SPINE_SESSION_NAME, (current) =>
+      changed({
         ...current,
         status,
       }),
     );
   }
-
-  async function postWorkflowRoute(
-    handler:
-      | "START"
-      | "APPROVE_DEFINITION"
-      | "STATUS"
-      | "EXECUTION"
-      | "PAUSE"
-      | "ABORT",
-    body?: unknown,
-    headers: Record<string, string> = {},
-  ): Promise<Response> {
-    const suffix =
-      handler === "APPROVE_DEFINITION"
-        ? "/approve-definition"
-        : handler === "EXECUTION"
-          ? "/execution"
-          : handler === "PAUSE"
-            ? "/pause"
-            : handler === "ABORT"
-              ? "/abort"
-              : "";
-    const isGet = handler === "STATUS" || handler === "EXECUTION";
-    const request = new Request(
-      `http://cc.test/api/projects/${SPINE_PROJECT_NAME}/sessions/${SPINE_SESSION_NAME}/graph-workflow${suffix}`,
-      isGet
-        ? { method: "GET", headers }
-        : {
-            method: "POST",
-            headers: { "content-type": "application/json", ...headers },
-            body: JSON.stringify(body ?? {}),
-          },
-    );
-    const context = {
-      params: Promise.resolve({
-        name: SPINE_PROJECT_NAME,
-        session: SPINE_SESSION_NAME,
-      }),
-    };
-    return workflowHandlers[handler](request, context);
-  }
+  const postWorkflowRoute = createLifecycleRouteFixture({
+    projectName: SPINE_PROJECT_NAME,
+    sessionName: SPINE_SESSION_NAME,
+    deps: {
+      ...workflowLifecycleDeps,
+      resolveProjectPath: async (name) =>
+        name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
+      getSession: async (projectPath, sessionName) =>
+        projectPath === SPINE_PROJECT_PATH && sessionName === SPINE_SESSION_NAME
+          ? spineSession
+          : null,
+      recordApprovalDecision: unsupported("recordApprovalDecision"),
+      auth: spineAuth,
+      ...spineCapabilityVerifiers,
+    },
+  });
 
   const liveEditEventPublisher = createGraphWorkflowExecutionEventPublisher({
     broadcast(event) {
@@ -1669,6 +1650,7 @@ export function createSpecSpineWorld(
     },
   });
   const runtimeEditHandlers = createGraphWorkflowRuntimeEditRouteHandlers({
+    executionContract: createNonParticipatingGraphExecutionContract(),
     resolveProjectPath: async (name) =>
       name === SPINE_PROJECT_NAME ? SPINE_PROJECT_PATH : null,
     getSession: async (projectPath, sessionName) =>

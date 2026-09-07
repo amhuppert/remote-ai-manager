@@ -1,3 +1,4 @@
+import { createRegisteredGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextResponse } from "next/server";
 import { notFound } from "@/lib/shared/route-resolution";
 import { z } from "zod";
@@ -117,7 +118,11 @@ export async function runDefinitionEditRequest(
     );
   }
 
-  const applied = applyDefinitionEdits(record, parsed.data.operations);
+  const applied = applyDefinitionEdits(
+    record,
+    parsed.data.operations,
+    createRegisteredGraphExecutionContract(),
+  );
   if (!applied.ok) {
     const regionLocked = applied.issues.find(
       (issue) => issue.code === "region_locked",

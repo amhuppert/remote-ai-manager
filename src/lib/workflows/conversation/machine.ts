@@ -600,6 +600,30 @@ export const conversationMachine = setup({
       // Parent-level events apply across both branches so the existing
       // streaming control flow is byte-for-byte unchanged.
       on: {
+        // Internal transition: the execution invoke stays alive. The ASK
+        // side effects (persist, SSE, push) all fire here; the turn keeps
+        // running until the agent ends it.
+        ASK_QUESTION: {
+          guard: ({ context }) =>
+            context.activeTurn?.kind === "conversation_turn" ||
+            (!context.transient &&
+              context.target.scope === "session" &&
+              context.role === "validator"),
+          actions: [
+            assign({
+              status: "waiting_for_input" as const,
+              pendingQuestion: ({ event }) => ({
+                questionId: event.questionId,
+                questions: event.questions,
+              }),
+            }),
+            "syncDerivedFields",
+            "broadcastConversationStatus",
+            "broadcastAskQuestion",
+            "dispatchPushNotification",
+            "persistSnapshot",
+          ],
+        },
         // Persist immediately: the SDK announces its session id seconds into
         // the turn, but the turn may run for minutes. If the server dies
         // mid-turn before the ref is durable, the next turn cannot `resume:`
@@ -687,28 +711,6 @@ export const conversationMachine = setup({
         },
 
         conversationTurn: {
-          on: {
-            // Internal transition: the stream invoke stays alive. The ASK
-            // side effects (persist, SSE, push) all fire here; the turn keeps
-            // running until the agent ends it.
-            ASK_QUESTION: {
-              actions: [
-                assign({
-                  status: "waiting_for_input" as const,
-                  pendingQuestion: ({ event }) => ({
-                    questionId: event.questionId,
-                    questions: event.questions,
-                  }),
-                }),
-                "syncDerivedFields",
-                "broadcastConversationStatus",
-                "broadcastAskQuestion",
-                "dispatchPushNotification",
-                "persistSnapshot",
-              ],
-            },
-          },
-
           invoke: {
             src: "executePrompt",
             input: ({ context, self }): ExecutePromptInput => {
@@ -793,6 +795,7 @@ export const conversationMachine = setup({
                 persistence: context.transient ? "ephemeral" : "durable",
                 projectPath: context.projectPath,
                 target: context.target,
+                role: context.role,
 
                 worktreePath: context.worktreePath,
 

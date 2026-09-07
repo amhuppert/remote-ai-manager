@@ -726,16 +726,17 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
   const ALLOWED_STATUS_WRITES: Record<string, RegExp[]> = {
     "workflow-manager.ts": [
       // Execution-level lifecycle (D4: stays hand-rolled).
-      /nextExecution\.status = status/,
       /execution\.status = "(running|completed)"/,
       /current\.status = "paused"/,
-      // Task-level status.
+    ],
+    "execution-transitions.ts": [
+      /nextExecution\.status = status/,
       /taskState\.status = "interrupted"/,
     ],
     "execution-repository.ts": [/execution\.status = "running"/],
-    "iteration-orchestrator.ts": [
+    "context-validation-coordinator.ts": [
       // Task-level status.
-      /taskState\.status = "(completed|pending)"/,
+      /taskState\.status = "pending"/,
     ],
     "execution-tool-context.ts": [
       // Task-level status.

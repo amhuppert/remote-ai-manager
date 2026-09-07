@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * R15.1 — the whole scoped-validation path over ONE real shared worktree.
  *
@@ -5,7 +6,7 @@
  * The units are covered elsewhere; what this file proves is that the three places
  * that must agree actually do, on the same bytes, through the production wiring:
  *
- *  - the FREEZE (`createGraphWorkflowRouteValidationRoundService` over real git),
+ *  - the FREEZE (`createGraphWorkflowValidationRoundService` over real git),
  *  - the RE-READ that decides whether the round still owns its candidate
  *    (`candidateIdentityMatches`),
  *  - the RENDERING a validator turn is handed (`renderRoundCommonSections`).
@@ -23,7 +24,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _resetDiffCacheForTesting } from "@/lib/git/diff";
 import { buildChildEnv } from "@/lib/shared/child-env";
-import { createGraphWorkflowRouteValidationRoundService } from "./execution-route-handlers";
+import { createGraphWorkflowValidationRoundService } from "./validation-services";
 import { createValidatorRunner } from "./validator-runner";
 import {
   candidateIdentityMatches,
@@ -71,7 +72,7 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
   }
 
   /** The production freeze path, reading real git in the lane worktree. */
-  const roundService = createGraphWorkflowRouteValidationRoundService({
+  const roundService = createGraphWorkflowValidationRoundService({
     getSession: async () => null,
     readHeadSha: (path) =>
       defaultGitClient
@@ -133,6 +134,7 @@ describe("scoped candidate identity and rendering over a shared lane worktree", 
     contextId: string,
   ): Promise<{ diffScopeSection: string; candidateTreeHash: string | null }> {
     const runner = createValidatorRunner({
+      executionContract: createNonParticipatingGraphExecutionContract(),
       resolveWorktreePath: async () => worktreePath,
       resolveTimeoutMs: async () => 30_000,
       getProjectDisplayName: () => "repo",

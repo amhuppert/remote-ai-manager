@@ -1,3 +1,6 @@
+import { refused, type ExecutionMutationOutcome } from "./execution-mutation";
+import type { ExecutionMutationDecision } from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { createLogger } from "@/lib/logging";
 import { transitionContextStatus } from "@/lib/workflow-graph/context-transitions";
 import type {
@@ -15,11 +18,13 @@ const NO_ACTIVE_EXECUTION_MESSAGE =
   "Session does not have an active graph workflow execution";
 
 export interface ApprovalGateServiceDeps {
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
-    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   now(): string;
 }
 
@@ -230,11 +235,13 @@ export function createApprovalGateService(
   async function recordDecision(
     input: RecordDecisionInput,
   ): Promise<RecordDecisionResult> {
-    let guardFailure: RecordDecisionGuardFailureReason | null = null;
-    let execution: GraphWorkflowExecution;
+    let mutation: ExecutionMutationOutcome<
+      void,
+      RecordDecisionGuardFailureReason
+    >;
 
     try {
-      execution = await deps.mutateActive(
+      mutation = await deps.mutateActive(
         input.projectPath,
         input.sessionName,
         (draft) => {
@@ -251,8 +258,7 @@ export function createApprovalGateService(
               draft.abandonment,
             )
           ) {
-            guardFailure = "execution_not_running";
-            return draft;
+            return refused("execution_not_running");
           }
 
           const contextState = draft.contextStates[input.contextId];
@@ -261,13 +267,11 @@ export function createApprovalGateService(
             contextState.status !== "awaiting_approval" ||
             contextState.pendingApproval === null
           ) {
-            guardFailure = "not_awaiting_approval";
-            return draft;
+            return refused("not_awaiting_approval");
           }
 
           if (contextState.pendingApproval.decision !== null) {
-            guardFailure = "already_decided";
-            return draft;
+            return refused("already_decided");
           }
 
           const decidedAt = deps.now();
@@ -279,7 +283,7 @@ export function createApprovalGateService(
                   message: input.decision.message,
                   decidedAt,
                 };
-          return draft;
+          return changed(draft);
         },
       );
     } catch (error) {
@@ -295,7 +299,9 @@ export function createApprovalGateService(
       throw error;
     }
 
-    if (guardFailure !== null) {
+    const execution = mutation.execution;
+    if (mutation.kind === "refused") {
+      const guardFailure = mutation.refusal;
       logger.warn("gate.decision_guard_failed", {
         executionId: execution.id,
         executionStatus: execution.status,

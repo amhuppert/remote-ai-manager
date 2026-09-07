@@ -64,7 +64,7 @@ describe("loop exit routing before downstream dispatch", () => {
           capture: ({ contextId }) =>
             contextId === judgeId ? { verdict: "pass", optional } : null,
         },
-        async ({ settled, events, manager, projectPath, sessionName }) => {
+        async ({ settled, events, repository, projectPath, sessionName }) => {
           expect(settled.status).toBe("completed");
           const decision = events.findIndex(
             (event) => event.kind === "graph-workflow-loop-decision",
@@ -105,7 +105,7 @@ describe("loop exit routing before downstream dispatch", () => {
               { edgeId: "judge-publish", verdict: "active" },
             ],
           });
-          const reloaded = await manager.getActive(projectPath, sessionName);
+          const reloaded = await repository.getActive(projectPath, sessionName);
           expect(reloaded?.routeSettlements.judge).toEqual(
             settled.routeSettlements.judge,
           );

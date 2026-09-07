@@ -1,3 +1,10 @@
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * R8.1: two assignments of the SAME profile reviewing one context are two
  * lanes.
@@ -41,7 +48,7 @@ import { createGraphLaneContinuity } from "./lane-continuity";
 import { createGraphLaneStore } from "./graph-lane-store";
 import { assignmentFingerprint, laneStateKey } from "./lane-identity";
 import { createValidatorRunner } from "./validator-runner";
-import { createGraphWorkflowValidationService } from "./execution-validation";
+import { createValidatorCohortRunner } from "./validator-cohort-runner";
 import {
   createWorkflowExecution,
   makeSeededValidatorAssignment,
@@ -107,13 +114,11 @@ function readExecution(): GraphWorkflowExecution {
 let mutationQueue: Promise<void> = Promise.resolve();
 
 const executionRepository = {
-  async mutateActive(
+  async mutateActive<Value, Refusal>(
     projectPath: string,
     sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
-  ): Promise<GraphWorkflowExecution> {
+    fn: (execution: GraphWorkflowExecution) => FixtureDecision<Value, Refusal>,
+  ): Promise<FixtureOutcome<Value, Refusal>> {
     const previous = mutationQueue;
     let release!: () => void;
     mutationQueue = new Promise<void>((resolve) => {
@@ -123,9 +128,9 @@ const executionRepository = {
       await previous;
       const current = repo.getActive(projectPath, sessionName);
       if (!current) throw new Error("no active execution");
-      const next = await fn(current);
-      repo.setActive(projectPath, sessionName, next, NOW);
-      return next;
+      return applyFixtureMutation(current, fn, (next) => {
+        repo.setActive(projectPath, sessionName, next, NOW);
+      });
     } finally {
       release();
     }
@@ -184,6 +189,7 @@ function buildHarness(): Harness {
   });
 
   const runner = createValidatorRunner({
+    executionContract: createNonParticipatingGraphExecutionContract(),
     async resolveWorktreePath() {
       return worktreeDir;
     },
@@ -221,7 +227,7 @@ function buildHarness(): Harness {
     },
   });
 
-  const validation = createGraphWorkflowValidationService({
+  const validation = createValidatorCohortRunner({
     runContextValidator: runner.runContextValidator,
   });
 
@@ -384,18 +390,16 @@ describe("two assignments of one profile in one context (R8.1)", () => {
     expect(survivingLane).toBeDefined();
 
     // Retire exactly one assignment's lane, as a per-assignment cancel does.
-    await executionRepository.mutateActive(
-      PROJECT_PATH,
-      SESSION_NAME,
-      (execution) => {
+    await executionRepository
+      .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => {
         const contextLanes = { ...execution.laneStates[CONTEXT_ID] };
         delete contextLanes[LANE_A];
-        return {
+        return changed({
           ...execution,
           laneStates: { ...execution.laneStates, [CONTEXT_ID]: contextLanes },
-        };
-      },
-    );
+        });
+      })
+      .then((mutation) => mutation.execution);
 
     const after = readExecution().laneStates[CONTEXT_ID] ?? {};
     expect(after[LANE_A]).toBeUndefined();

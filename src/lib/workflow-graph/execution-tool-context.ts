@@ -1,3 +1,8 @@
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
+import { unchanged } from "@/lib/workflow-graph/execution-mutation";
+import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
+
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
 import {
@@ -13,7 +18,7 @@ import type {
   GraphWorkflowEventDelivery,
   PublishLiveEditAppliedInput,
 } from "./execution-events";
-import type { MutateActiveResult } from "./execution-repository";
+
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { AgentAddedTask, AgentTaskAddResult } from "./runtime-edits";
 import type {
@@ -23,7 +28,6 @@ import type {
 import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 import {
   assertGraphExecutionContractAccepted,
-  createRegisteredGraphExecutionContract,
   type GraphExecutionContract,
   type LoadedGraphExecutionLiveEditContract,
 } from "./execution-contract-port";
@@ -71,25 +75,15 @@ interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
   logUpsert(executionId: string, outcome: SharedDocumentMergeOutcome): void;
 }
 
-interface GraphWorkflowExecutionToolContextWorkflowManager {
-  mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
-}
-
 export interface GraphWorkflowExecutionToolContextDeps {
-  workflowManager: GraphWorkflowExecutionToolContextWorkflowManager;
+  executionRepository: Pick<GraphWorkflowExecutionRepository, "mutateActive">;
   runtimeEditService: GraphWorkflowExecutionToolContextRuntimeEditService;
   sharedDocumentRegistry: GraphWorkflowExecutionToolContextSharedDocumentRegistry;
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
   ): GraphWorkflowEventDelivery;
   readLiveOccupancy(conversationId: string): LiveOccupancySnapshot | null;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
   now?(): string;
 }
 
@@ -161,8 +155,7 @@ export function createGraphWorkflowExecutionToolContext(
   deps: GraphWorkflowExecutionToolContextDeps,
 ): GraphWorkflowExecutionToolContextFactory {
   const now = deps.now ?? (() => new Date().toISOString());
-  const executionContract =
-    deps.executionContract ?? createRegisteredGraphExecutionContract();
+  const executionContract = deps.executionContract;
 
   function create(
     input: CreateGraphWorkflowExecutionToolContextInput,
@@ -309,17 +302,21 @@ export function createGraphWorkflowExecutionToolContext(
       taskId: string,
       summary: string,
     ): Promise<CompleteTaskResult> {
-      let contextLimitStop: CompleteTaskContextLimitStop | null = null;
       // Diagnostics captured (pure) inside the reducer and emitted AFTER the
       // mutation commits, so the write-queue critical section performs no
       // logging I/O (`no-slow-work-in-critical-section`).
-      let resolvedConversationId = input.conversationId;
-      let idempotentFirstCompletedAt: string | null = null;
 
-      const execution = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (draft) => {
+      const {
+        execution: execution,
+        resolvedConversationId,
+        idempotentFirstCompletedAt,
+        contextLimitStop,
+      } = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (draft) => {
+          let contextLimitStop: CompleteTaskContextLimitStop | null = null;
+          let resolvedConversationId = input.conversationId;
+          let idempotentFirstCompletedAt: string | null = null;
+
           ensureBoundContextActive(draft);
 
           const taskState = draft.taskStates[taskId];
@@ -341,7 +338,17 @@ export function createGraphWorkflowExecutionToolContext(
               draft,
               conversationId,
             );
-            return draft;
+            if (contextLimitStop === null || contextLimitStop.alreadyScheduled)
+              return unchanged({
+                resolvedConversationId,
+                idempotentFirstCompletedAt,
+                contextLimitStop,
+              });
+            return changed(draft, {
+              resolvedConversationId,
+              idempotentFirstCompletedAt,
+              contextLimitStop,
+            });
           }
 
           assertGraphExecutionContractAccepted(
@@ -367,9 +374,16 @@ export function createGraphWorkflowExecutionToolContext(
             hasLiveIteration: true,
           });
           contextLimitStop = evaluateMidTurnContextLimit(draft, conversationId);
-          return draft;
-        },
-      );
+          return changed(draft, {
+            resolvedConversationId,
+            idempotentFirstCompletedAt,
+            contextLimitStop,
+          });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
 
       // Post-commit diagnostics (file writes) — outside the critical section.
       if (idempotentFirstCompletedAt !== null) {
@@ -408,15 +422,15 @@ export function createGraphWorkflowExecutionToolContext(
     ): Promise<GraphWorkflowExecution> {
       // Observability captured (pure) inside the reducer and emitted AFTER the
       // mutation commits, so the write-queue critical section performs no
-      // logging I/O (`no-slow-work-in-critical-section`). Boxed so the reducer's
-      // assignment survives control-flow narrowing after the call.
-      const addedBox: { value: AgentTaskAddResult["added"] | null } = {
-        value: null,
-      };
-      const execution = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
+      // logging I/O (`no-slow-work-in-critical-section`). The mutation returns
+      // the task details needed by post-commit observability.
+
+      const { execution: execution, addedBox } = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (current) => {
+          const addedBox: { value: AgentTaskAddResult["added"] | null } = {
+            value: null,
+          };
+
           const liveEditContract = executionContract.loadLiveEdit(current);
           ensureBoundContextActive(current);
           const applied = deps.runtimeEditService.applyAgentTaskAdd(
@@ -441,9 +455,12 @@ export function createGraphWorkflowExecutionToolContext(
             affectedContextIds: [input.contextId],
             source: "lane-agent",
           });
-          return { execution: applied.execution, ...delivery };
-        },
-      );
+          return changed(applied.execution, { addedBox }, { ...delivery });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
 
       // Post-commit observability (file I/O) — outside the critical section.
       const added = addedBox.value;
@@ -486,37 +503,38 @@ export function createGraphWorkflowExecutionToolContext(
       //     the only durable side effect after the commit means a refused
       //     finalize (superseded fence / deactivated context) captures nothing —
       //     there is no orphaned central-store write to restore or remove.
-      await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (execution) => {
+      await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (execution) => {
           ensureBoundContextActive(execution);
-          return execution;
-        },
-      );
+          return unchanged();
+        })
+        .then((mutation) => mutation.execution);
 
       const { relativePath } = await deps.sharedDocumentRegistry.prepareUpsert(
         input.executionTarget.worktreePath,
         { ...document },
       );
 
-      let mergeOutcome: SharedDocumentMergeOutcome | null = null;
-      const execution = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
-          ensureBoundContextActive(current);
-          const { nextExecution, outcome } =
-            deps.sharedDocumentRegistry.applyUpsert(current, {
-              relativePath,
-              description: document.description,
-              readWhen: document.readWhen,
-              conversationId: resolveConversationId(current),
-            });
-          mergeOutcome = outcome;
-          return nextExecution;
-        },
-      );
+      const { execution: execution, mergeOutcome } =
+        await deps.executionRepository
+          .mutateActive(input.projectPath, input.sessionName, (current) => {
+            let mergeOutcome: SharedDocumentMergeOutcome | null = null;
+
+            ensureBoundContextActive(current);
+            const { nextExecution, outcome } =
+              deps.sharedDocumentRegistry.applyUpsert(current, {
+                relativePath,
+                description: document.description,
+                readWhen: document.readWhen,
+                conversationId: resolveConversationId(current),
+              });
+            mergeOutcome = outcome;
+            return changed(nextExecution, { mergeOutcome });
+          })
+          .then((mutation) => ({
+            execution: mutation.execution,
+            ...mutationValue(mutation),
+          }));
 
       // Post-commit: capture content and emit the registration log — both file
       // I/O, kept out of the write-queue critical section.

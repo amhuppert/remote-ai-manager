@@ -9,7 +9,7 @@ import {
   settleRoutes,
 } from "@/lib/workflow-graph/route-runtime";
 import { isRouteSourceLanded } from "@/lib/workflow-graph/lane-readiness";
-import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { getEligibleContextIds } from "@/lib/workflow-graph/lane-readiness";
 import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 import {
   applyLiveExecutionEdits,

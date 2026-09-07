@@ -1,3 +1,7 @@
+import {
+  liveOutlineSchema,
+  liveOutputsSchema,
+} from "@/lib/workflow-graph/live-outline-schemas";
 import { planReviewAdvisoryLine } from "./plan-review-advisory";
 import { seededWorkflowDocumentsSchema } from "@/lib/workflow-graph/seeded-documents";
 import { z } from "zod";
@@ -81,12 +85,7 @@ import {
   type OutlineRecord,
   type SliceResult,
 } from "./workflow-outline";
-import {
-  liveOutlineSchema,
-  liveOutputsSchema,
-  renderLiveOutline,
-  renderLiveOutputs,
-} from "./workflow-live-outline";
+import { renderLiveOutline, renderLiveOutputs } from "./workflow-live-outline";
 import {
   buildLedger,
   ledgerEventPageSchema,

@@ -35,7 +35,7 @@ import {
   admitAuthoredWorkflowModelSelections,
 } from "@/lib/workflow-graph/authored-launch-admission";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
-import { launchSpecDeliveryGraphWorkflowExecution } from "@/lib/workflow-graph/execution-route-handlers";
+import { launchSpecDeliveryGraphWorkflowExecution } from "@/lib/workflow-graph/production";
 import { workingDefinitionHash } from "@/lib/workflow-graph/working-definition-hash";
 import { WorkflowStartInputError } from "@/lib/workflow-graph/spec-bridge";
 import { createProductionManagedWorkflowDefinitionService } from "@/lib/workflows/managed-workflow-definition-composition";

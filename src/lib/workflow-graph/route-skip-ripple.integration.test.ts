@@ -135,7 +135,14 @@ describe("skip ripple, end to end (D4 R4.1)", () => {
         capture: ({ contextId }) =>
           contextId === "ctx-classify" ? { verdict: "fix" } : null,
       },
-      async ({ settled, events, manager, projectPath, sessionName }) => {
+      async ({
+        settled,
+        events,
+        manager,
+        repository,
+        projectPath,
+        sessionName,
+      }) => {
         expect(settled.status).toBe("completed");
         expect(settled.haltReason).toBeNull();
 
@@ -190,7 +197,7 @@ describe("skip ripple, end to end (D4 R4.1)", () => {
         // Restart: the skip is durable, not an in-memory verdict recomputed on
         // every boot. Reloading through the repository — real SQLite, same
         // database — must return the same terminal state.
-        const reloaded = await manager.getActive(projectPath, sessionName);
+        const reloaded = await repository.getActive(projectPath, sessionName);
         expect(reloaded?.contextStates["ctx-ship"]?.status).toBe("skipped");
         expect(
           reloaded?.contextStates["ctx-ship"]?.skipReason?.edgeEvaluations,

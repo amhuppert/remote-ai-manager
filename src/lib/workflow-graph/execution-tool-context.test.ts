@@ -1,3 +1,5 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
@@ -33,7 +35,7 @@ interface FakeStore {
   current: GraphWorkflowExecution;
   serializedQueue: Promise<unknown>;
   mutateCount: number;
-  /** Extra events threaded through a `MutateActiveResult` (persisted in prod). */
+  /** Extra events carried by committed mutations (persisted in prod). */
   appliedEvents: GraphWorkflowExecutionEvent[];
 }
 
@@ -46,48 +48,19 @@ function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
   };
 }
 
-function isMutateActiveResult(value: unknown): value is {
-  execution: GraphWorkflowExecution;
-  events: GraphWorkflowExecutionEvent[];
-  pushes?: GraphWorkflowEventDelivery["pushes"];
-} {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "execution" in value &&
-    "events" in value &&
-    Array.isArray((value as { events: unknown }).events)
-  );
-}
-
-// Serializing fake of the sync `mutateActive` seam. It awaits `fn(draft)` so a
-// synchronous reducer (the only shape the interface now allows) is applied and
-// its result handled identically to the production seam.
+// Serializing fake of the synchronous mutation seam, with post-commit delivery.
 function createFakeMutateActive(
   store: FakeStore,
   deliver: (delivery: GraphWorkflowEventDelivery) => void = () => {},
-): GraphWorkflowExecutionToolContextDeps["workflowManager"]["mutateActive"] {
-  return async function mutateActive(
-    _projectPath,
-    _sessionName,
-    fn,
-  ): Promise<GraphWorkflowExecution> {
+): GraphWorkflowExecutionToolContextDeps["executionRepository"]["mutateActive"] {
+  return async function mutateActive(_projectPath, _sessionName, fn) {
     const next = store.serializedQueue.then(async () => {
-      store.mutateCount += 1;
-      const draft = structuredClone(store.current);
-      const result = await fn(draft);
-      const execution = isMutateActiveResult(result)
-        ? result.execution
-        : result;
-      store.current = structuredClone(execution);
-      if (isMutateActiveResult(result)) {
-        const events = result.events as GraphWorkflowExecutionEvent[];
-        store.appliedEvents.push(...events);
-        // Mirror the production seam: the reducer returns inert delivery DATA;
-        // the seam performs delivery post-commit through the event publisher.
-        deliver({ events, pushes: result.pushes ?? [] });
-      }
-      return store.current;
+      return applyFixtureMutation(store.current, fn, (next, delivery) => {
+        store.mutateCount += 1;
+        store.current = structuredClone(next);
+        store.appliedEvents.push(...delivery.events);
+        deliver(delivery);
+      });
     });
     store.serializedQueue = next.catch(() => undefined);
     return next;
@@ -194,14 +167,16 @@ function buildToolContext(
   const { broadcast, publishLiveEditApplied, deliver } =
     createTestLiveEditPublisher();
   const deps: GraphWorkflowExecutionToolContextDeps = {
-    workflowManager: {
+    executionRepository: {
       mutateActive: createFakeMutateActive(store, deliver),
     },
     runtimeEditService,
     sharedDocumentRegistry,
     publishLiveEditApplied,
     readLiveOccupancy: factoryOptions.readLiveOccupancy ?? (() => null),
-    executionContract: factoryOptions.executionContract,
+    executionContract:
+      factoryOptions.executionContract ??
+      createNonParticipatingGraphExecutionContract(),
     now: () => "2026-03-27T12:00:00.000Z",
   };
   const factory = createGraphWorkflowExecutionToolContext(deps);
@@ -243,6 +218,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const { store, toolContext } = buildToolContext({
       initialExecution: execution,
       executionContract: {
+        loadPromptProjection: async () => null,
+
         validateDefinition: () => ({ ok: true }),
         loadLiveEdit: () => ({
           validateOperation: () => ({ ok: true }),
@@ -651,7 +628,10 @@ describe("GraphWorkflowExecutionToolContext", () => {
       });
     const { publishLiveEditApplied, deliver } = createTestLiveEditPublisher();
     const factory = createGraphWorkflowExecutionToolContext({
-      workflowManager: { mutateActive: createFakeMutateActive(store, deliver) },
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionRepository: {
+        mutateActive: createFakeMutateActive(store, deliver),
+      },
       runtimeEditService: createGraphWorkflowRuntimeEditService(),
       sharedDocumentRegistry,
       publishLiveEditApplied,
@@ -712,12 +692,12 @@ describe("GraphWorkflowExecutionToolContext", () => {
       },
     };
     const factory = createGraphWorkflowExecutionToolContext({
-      workflowManager: {
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionRepository: {
         mutateActive: async (_projectPath, _sessionName, fn) => {
-          const result = fn(structuredClone(store.current));
-          const execution = "execution" in result ? result.execution : result;
-          store.current = structuredClone(execution);
-          return store.current;
+          return applyFixtureMutation(store.current, fn, (next) => {
+            store.current = structuredClone(next);
+          });
         },
       },
       runtimeEditService: createGraphWorkflowRuntimeEditService(),
@@ -792,16 +772,16 @@ describe("GraphWorkflowExecutionToolContext", () => {
       },
     };
     const factory = createGraphWorkflowExecutionToolContext({
+      executionContract: createNonParticipatingGraphExecutionContract(),
       // A fence-honoring seam: it enforces the ambient loop fence with the real
       // `assertLoopFence` exactly as the production repository's `mutateActive`
       // does, so a superseded generation's write is rejected before it applies.
-      workflowManager: {
+      executionRepository: {
         mutateActive: async (projectPath, sessionName, fn) => {
           assertLoopFence(projectPath, sessionName, store.current);
-          const result = fn(structuredClone(store.current));
-          const execution = "execution" in result ? result.execution : result;
-          store.current = structuredClone(execution);
-          return store.current;
+          return applyFixtureMutation(store.current, fn, (next) => {
+            store.current = structuredClone(next);
+          });
         },
       },
       runtimeEditService: createGraphWorkflowRuntimeEditService(),
@@ -857,7 +837,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const sharedDocumentRegistry =
       createGraphWorkflowSharedDocumentRegistryService();
     const deps: GraphWorkflowExecutionToolContextDeps = {
-      workflowManager: {
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionRepository: {
         mutateActive: createFakeMutateActive(store),
       },
       runtimeEditService,
@@ -934,7 +915,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
     };
     const { toolContext } = buildToolContext({});
     const factory = createGraphWorkflowExecutionToolContext({
-      workflowManager: {
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionRepository: {
         mutateActive: async (_p, _s, fn) =>
           fn(structuredClone(createWorkflowExecution())) as never,
       },
@@ -986,7 +968,8 @@ describe("GraphWorkflowExecutionToolContext", () => {
     const sharedDocumentRegistry =
       createGraphWorkflowSharedDocumentRegistryService();
     const deps: GraphWorkflowExecutionToolContextDeps = {
-      workflowManager: {
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      executionRepository: {
         mutateActive: createFakeMutateActive(store),
       },
       runtimeEditService,

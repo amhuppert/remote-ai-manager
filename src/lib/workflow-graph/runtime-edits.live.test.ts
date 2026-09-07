@@ -4255,7 +4255,6 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
           modelId: "opus",
           parameters: { effort: "medium" },
         },
-        toolServer: { servers: [] },
         placement,
       });
 
@@ -4354,7 +4353,6 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
           modelId: "opus",
           parameters: { effort: "medium" },
         },
-        toolServer: { servers: [] },
         placement,
       });
 

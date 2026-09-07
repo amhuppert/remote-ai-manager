@@ -6,7 +6,10 @@ import type {
   TurnExecutionOutcome,
   TaskRunResult,
 } from "@/lib/workflows/conversation/turn-result";
-import { AgentTurnFailedError } from "./errors";
+import {
+  AgentTurnFailedError,
+  ConversationTurnSettlementError,
+} from "./errors";
 
 type TaskError = Extract<TaskRunResult, { kind: "error" }>;
 export type GraphTurnFailureEvidence = Pick<
@@ -88,7 +91,16 @@ export function adaptGraphConversationTurn(
       originalMessage: outcome.message,
     });
   }
-  if (outcome.kind === "settlement_failed") throw new Error(outcome.message);
+  // A retained completed result does not make the turn a graph success: the
+  // lifecycle still owns unfinished settlement work, so the failure surfaces
+  // whole (code, result, interruption, attempt) rather than as prose.
+  if (outcome.kind === "settlement_failed")
+    throw new ConversationTurnSettlementError({
+      outcome,
+      attemptId: execution.turn.attemptId,
+      contextId: scope.contextId,
+      engine: scope.backend,
+    });
   const result = outcome.result;
   const call = result?.outcome;
   if (call?.kind === "paused")

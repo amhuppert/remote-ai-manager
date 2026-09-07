@@ -330,7 +330,7 @@ export type GraphWorkflowContextValidationOutcome =
       observedTreeHash?: string | null;
     };
 
-export interface GraphWorkflowValidationServiceDeps {
+export interface ValidatorCohortRunnerDeps {
   runContextValidator(
     input: GraphWorkflowContextValidatorInput,
   ): Promise<ValidatorRunResult>;
@@ -560,7 +560,7 @@ function attributeSummary(
   return cohortSize <= 1 ? summary : `${assignmentId}: ${summary}`;
 }
 
-const defaultDeps: GraphWorkflowValidationServiceDeps = {
+const defaultDeps: ValidatorCohortRunnerDeps = {
   async runContextValidator(): Promise<ValidatorRunResult> {
     throw new Error("Context validator runner is not configured");
   },
@@ -568,8 +568,8 @@ const defaultDeps: GraphWorkflowValidationServiceDeps = {
 
 const validationLogger = createLogger("graph-workflow-validation");
 
-export function createGraphWorkflowValidationService(
-  deps: Partial<GraphWorkflowValidationServiceDeps> = {},
+export function createValidatorCohortRunner(
+  deps: Partial<ValidatorCohortRunnerDeps> = {},
 ) {
   const resolvedDeps = { ...defaultDeps, ...deps };
 
@@ -940,6 +940,6 @@ export function createGraphWorkflowValidationService(
   };
 }
 
-export type GraphWorkflowValidationService = ReturnType<
-  typeof createGraphWorkflowValidationService
+export type ValidatorCohortRunner = ReturnType<
+  typeof createValidatorCohortRunner
 >;

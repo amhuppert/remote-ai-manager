@@ -20,7 +20,7 @@ import {
 } from "@/lib/workflow-graph/builder-draft";
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
 import { collectNodeDimensions } from "@/components/workflow-graph/AutoLayout";
-import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
+import { validateAuthoredDefinition } from "@/lib/workflow-graph/definition-validation";
 import {
   railOverlayPanelClass,
   RailOverlaySpacer,

@@ -1,3 +1,7 @@
+import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { type ExecutionLoopFixtureDeps } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
@@ -14,12 +18,10 @@ import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { _resetRegistryForTesting } from "./execution-logger";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import {
-  createGraphWorkflowExecutionLoop,
   _resetActiveLoopsForTesting,
-  type GraphWorkflowExecutionLoopDeps,
   type GraphWorkflowExecutionLoopWorkflowManager,
 } from "./execution-loop";
-import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import type { GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
 import { laneStateKey } from "./lane-identity";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
@@ -31,7 +33,7 @@ import { createGraphWorkflowManager } from "./workflow-manager";
 /**
  * Task 6.2 — Prove the awaiting-user-input lifecycle and its edge flows against
  * REAL persistence. Every scenario drives the genuine execution loop
- * (`createGraphWorkflowExecutionLoop`) and the genuine user-input gate
+ * (`createExecutionLoopFixture`) and the genuine user-input gate
  * (`createUserInputGateService`) over a `createPersistenceFixture` SQLite store,
  * with the loop's workflow manager reading and writing through a real
  * `createGraphWorkflowExecutionRepository`. Assertions are made on state
@@ -219,6 +221,9 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     >,
   ) {
     return createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -262,7 +267,11 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -286,39 +295,41 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       typeof createGraphWorkflowExecutionEventPublisher
     >;
     gate: UserInputGateService;
-    iterationOrchestrator: GraphWorkflowExecutionLoopDeps["iterationOrchestrator"];
-    waitForUserInputProgress: GraphWorkflowExecutionLoopDeps["waitForUserInputProgress"];
-  }): GraphWorkflowExecutionLoopDeps {
+    iterationOrchestrator: ExecutionLoopFixtureDeps["iterationOrchestrator"];
+    waitForUserInputProgress: ExecutionLoopFixtureDeps["waitForUserInputProgress"];
+  }): ExecutionLoopFixtureDeps {
     const { repository } = input;
     const workflowManager: GraphWorkflowExecutionLoopWorkflowManager = {
-      scheduleEligibleContexts: async () => ({
-        execution: (await repository.getActive(PROJECT_PATH, SESSION_NAME))!,
-        scheduled: { kind: "none" },
-      }),
       send: async (projectPath, sessionName) =>
-        repository.mutateActive(projectPath, sessionName, (execution) => ({
-          ...execution,
-          status: "completed",
-          completedAt: NOW,
-        })),
+        repository
+          .mutateActive(projectPath, sessionName, (execution) =>
+            changed({
+              ...execution,
+              status: "completed",
+              completedAt: NOW,
+            }),
+          )
+          .then((mutation) => mutation.execution),
       recordPendingHaltReason: async ({ projectPath, sessionName, reason }) => {
-        const execution = await repository.mutateActive(
-          projectPath,
-          sessionName,
-          (current) => ({ ...current, pendingHaltReason: reason }),
-        );
+        const execution = await repository
+          .mutateActive(projectPath, sessionName, (current) =>
+            changed({ ...current, pendingHaltReason: reason }),
+          )
+          .then((mutation) => mutation.execution);
         return { execution, accepted: true };
       },
       drainAndHalt: async ({ projectPath, sessionName }) =>
-        repository.mutateActive(projectPath, sessionName, (execution) => ({
-          ...execution,
-          status: "halted",
-          haltReason: execution.pendingHaltReason,
-          pendingHaltReason: null,
-          completedAt: NOW,
-        })),
-      mutateActive: repository.mutateActive,
-      getActive: repository.getActive,
+        repository
+          .mutateActive(projectPath, sessionName, (execution) =>
+            changed({
+              ...execution,
+              status: "halted",
+              haltReason: execution.pendingHaltReason,
+              pendingHaltReason: null,
+              completedAt: NOW,
+            }),
+          )
+          .then((mutation) => mutation.execution),
     };
 
     const sessionTarget: ExecutionTarget = {
@@ -329,6 +340,18 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     };
 
     return {
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+      contextScheduler: {
+        scheduleEligibleContexts: async () => ({
+          execution: (await repository.getActive(PROJECT_PATH, SESSION_NAME))!,
+          scheduled: { kind: "none" },
+        }),
+      },
+      executionRepository: {
+        mutateActive: repository.mutateActive,
+        getActive: repository.getActive,
+      },
       workflowManager,
       iterationOrchestrator: input.iterationOrchestrator,
       parallelWorktrees: {
@@ -380,14 +403,14 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
   }
 
   /** Iteration orchestrator stub that completes the resumed context. */
-  function completingOrchestrator(): GraphWorkflowExecutionLoopDeps["iterationOrchestrator"] {
+  function completingOrchestrator(): ExecutionLoopFixtureDeps["iterationOrchestrator"] {
     return {
       async runIteration(runInput): Promise<GraphWorkflowIterationResult> {
         const execution = await fixtureRepoMutateComplete(runInput.contextId);
         return {
           conversationId: `conv-${runInput.contextId}`,
           execution,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -411,9 +434,14 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
           next.activeContextIds = next.activeContextIds.filter(
             (id) => id !== contextId,
           );
-          return { execution: next, events: [] };
+          return {
+            kind: "commit",
+            value: undefined,
+            ...{ execution: next, events: [] },
+          };
         },
       );
+    if (!execution) throw new Error("Expected context completion write");
     return execution;
   }
 
@@ -453,7 +481,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       waitForUserInputProgress,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createExecutionLoopFixture(deps);
     const result = await loop.run({
       projectPath: PROJECT_PATH,
       projectName: "repo",
@@ -493,7 +521,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       waitForUserInputProgress,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createExecutionLoopFixture(deps);
     const result = await loop.run({
       projectPath: PROJECT_PATH,
       projectName: "repo",
@@ -547,7 +575,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       waitForUserInputProgress,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createExecutionLoopFixture(deps);
     const runPromise = loop.run({
       projectPath: PROJECT_PATH,
       projectName: "repo",
@@ -567,10 +595,14 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     expect((await reload()).status).toBe("running");
 
     // Unwind: abort in the store, release the poll, let the runner observe it.
-    await repository.mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => ({
-      ...execution,
-      status: "aborted",
-    }));
+    await repository
+      .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) =>
+        changed({
+          ...execution,
+          status: "aborted",
+        }),
+      )
+      .then((mutation) => mutation.execution);
     releasePoll();
     const result = await runPromise;
     expect(result.status).toBe("aborted");
@@ -620,14 +652,14 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
           return {
             conversationId: `conv-${runInput.contextId}`,
             execution,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
       waitForUserInputProgress,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createExecutionLoopFixture(deps);
     const runPromise = loop.run({
       projectPath: PROJECT_PATH,
       projectName: "repo",
@@ -656,10 +688,14 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     ).not.toBeNull();
 
     // Unwind.
-    await repository.mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => ({
-      ...execution,
-      status: "aborted",
-    }));
+    await repository
+      .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) =>
+        changed({
+          ...execution,
+          status: "aborted",
+        }),
+      )
+      .then((mutation) => mutation.execution);
     releaseSecondPoll();
     const result = await runPromise;
     expect(result.status).toBe("aborted");
@@ -701,7 +737,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       waitForUserInputProgress,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createExecutionLoopFixture(deps);
     const runPromise = loop.run({
       projectPath: PROJECT_PATH,
       projectName: "repo",
@@ -715,6 +751,14 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     // running loop's generation. Hand-stamping the status would skip both and
     // leave the scenario unable to fail the way production can.
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      getSession: async () => null,
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
@@ -790,20 +834,20 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
             return {
               conversationId: SECURITY_CONVERSATION,
               execution: atEntry,
-              shouldContinueInContext: false,
+              decision: { kind: "await_user_input" },
             };
           }
           return {
             conversationId: PERF_CONVERSATION,
             execution: await fixtureRepoMutateComplete(runInput.contextId),
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         },
       },
       waitForUserInputProgress,
     });
 
-    const loop = createGraphWorkflowExecutionLoop(deps);
+    const loop = createExecutionLoopFixture(deps);
     const result = await loop.run({
       projectPath: PROJECT_PATH,
       projectName: "repo",

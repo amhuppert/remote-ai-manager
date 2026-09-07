@@ -1,3 +1,5 @@
+import { applyFixtureMutation } from "./testing/execution-mutation-fixture";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
@@ -151,6 +153,9 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     broadcast = vi.fn<(_event: GraphWorkflowSSEEvent) => void>();
     const publisher = createGraphWorkflowExecutionEventPublisher({ broadcast });
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -171,6 +176,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     writeCharterDocument = vi.fn(async () => {});
 
     routeDeps = {
+      executionContract: createNonParticipatingGraphExecutionContract(),
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
@@ -196,7 +202,11 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "seed-execution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -579,6 +589,8 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     handlers = createGraphWorkflowRuntimeEditRouteHandlers({
       ...routeDeps,
       executionContract: {
+        loadPromptProjection: async () => null,
+
         validateDefinition: () => ({ ok: true }),
         loadLiveEdit: () => ({
           validateOperation: () => ({
@@ -1109,22 +1121,28 @@ describe("graph workflow runtime edit route principals", () => {
     const { activeAtWriteTime } = options;
     const readExecution = options.execution ?? ownedExecution();
     const applyMutation = vi.fn();
-    const mutateActive = vi.fn<
-      GraphWorkflowRuntimeEditRouteDeps["mutateActive"]
-    >(async () => {
-      if (activeAtWriteTime !== undefined) {
-        assertExecutionPrincipalFence(
-          PROJECT_PATH,
-          SESSION_NAME,
-          activeAtWriteTime,
+    const mutationAttempt = vi.fn();
+    const mutateActive: GraphWorkflowRuntimeEditRouteDeps["mutateActive"] =
+      async (_p, _s, reduce) => {
+        mutationAttempt();
+        if (activeAtWriteTime !== undefined) {
+          assertExecutionPrincipalFence(
+            PROJECT_PATH,
+            SESSION_NAME,
+            activeAtWriteTime,
+          );
+        }
+        applyMutation();
+        return applyFixtureMutation(
+          activeAtWriteTime ?? readExecution,
+          reduce,
+          () => {},
         );
-      }
-      applyMutation();
-      return activeAtWriteTime ?? readExecution;
-    });
+      };
     const buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
 
     const handlers = createGraphWorkflowRuntimeEditRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () => principalSession(conversationIds),
@@ -1148,7 +1166,12 @@ describe("graph workflow runtime edit route principals", () => {
         ),
     } satisfies GraphWorkflowRuntimeEditRouteDeps);
 
-    return { handlers, mutateActive, buildLiveEditDeps, applyMutation };
+    return {
+      handlers,
+      mutateActive: mutationAttempt,
+      buildLiveEditDeps,
+      applyMutation,
+    };
   }
 
   function editRequest(headers: Record<string, string> = {}): NextRequest {

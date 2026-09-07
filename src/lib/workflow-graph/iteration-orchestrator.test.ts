@@ -1,3 +1,12 @@
+import { transitionToNonRunningState } from "./execution-transitions";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assignmentFingerprint } from "./lane-identity";
 import type {
@@ -14,7 +23,6 @@ import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
-  type GraphWorkflowPushInfo,
 } from "@/lib/workflow-graph/execution-events";
 import {
   _resetRegistryForTesting,
@@ -29,12 +37,10 @@ import {
   stubValidationRoundService,
 } from "@/lib/workflow-graph/test-fixtures";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
-import {
-  appendFailureHistory,
-  createGraphWorkflowIterationOrchestrator,
-  IterationHaltedError,
-  type GraphWorkflowRunAgentIterationInput,
-} from "./iteration-orchestrator";
+import { appendFailureHistory } from "@/lib/workflow-graph/context-accounting";
+import { createContextIterationFixture } from "./testing/iteration-fixture";
+import { type GraphWorkflowRunAgentIterationInput } from "./iteration-orchestrator";
+
 import {
   applyLiveExecutionEdits,
   type LiveEditDeps,
@@ -42,7 +48,7 @@ import {
 } from "./runtime-edits";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
-import type { GraphWorkflowContextValidationInput } from "./execution-validation";
+import type { GraphWorkflowContextValidationInput } from "./validator-cohort-runner";
 import type { CohortParkedLane } from "./validation-cohort";
 import type { ResumeUserInputContext } from "./user-input-gate";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
@@ -68,26 +74,18 @@ import type {
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
 
-type MutateActiveReturn =
-  | GraphWorkflowExecution
-  | {
-      execution: GraphWorkflowExecution;
-      events: GraphWorkflowExecutionEvent[];
-      pushes?: GraphWorkflowPushInfo[];
-    };
-
 interface InMemoryExecutionRepository {
   getActive(
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveReturn | Promise<MutateActiveReturn>,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   findLatestContextValidationEvent(
     projectPath: string,
     sessionName: string,
@@ -164,18 +162,6 @@ function makeLiveEditDeps(): LiveEditDeps {
   };
 }
 
-function isResultWithEvents(value: MutateActiveReturn): value is {
-  execution: GraphWorkflowExecution;
-  events: GraphWorkflowExecutionEvent[];
-  pushes?: GraphWorkflowPushInfo[];
-} {
-  return (
-    "events" in value &&
-    "execution" in value &&
-    Array.isArray((value as { events: unknown }).events)
-  );
-}
-
 function createRepository(
   initialExecution: GraphWorkflowExecution,
 ): InMemoryExecutionRepository & {
@@ -221,29 +207,16 @@ function createRepository(
       });
       try {
         await previous;
-        const result = await fn(structuredClone(activeExecution));
-        if (isResultWithEvents(result)) {
-          activeExecution = result.execution;
-          appendedEvents.push(...result.events);
+        return applyFixtureMutation(activeExecution, fn, (next, delivery) => {
+          activeExecution = next;
+          appendedEvents.push(...delivery.events);
           commits.push({
-            execution: structuredClone(result.execution),
-            events: structuredClone(result.events),
+            execution: structuredClone(next),
+            events: structuredClone(delivery.events),
           });
-          // Mirror the production seam: commit the rows, then perform delivery
-          // post-commit through the injected publisher so a sibling publisher's
-          // broadcast/push fires here (the reducer returned inert data).
-          repository.deliver({
-            events: result.events,
-            pushes: result.pushes ?? [],
-          });
-        } else {
-          activeExecution = result;
-          commits.push({
-            execution: structuredClone(result),
-            events: [],
-          });
-        }
-        return activeExecution;
+          // Commit the rows before delivering a sibling publisher's descriptors.
+          repository.deliver(delivery);
+        });
       } finally {
         release();
       }
@@ -540,15 +513,20 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn();
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -584,7 +562,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       // Agent completes task-plan-1 via complete_task callback
       const current = structuredClone(repository.read());
@@ -599,7 +577,9 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 1,
       };
 
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -608,12 +588,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -635,7 +620,7 @@ describe("graph workflow iteration orchestrator", () => {
         repository.read().workingDefinition.executionContexts[0]!.implementer
           .profileSnapshot,
     });
-    expect(createToolServer).toHaveBeenCalledWith(
+    expect(bindTaskCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: "conversation-1",
         contextId: "context-plan",
@@ -654,7 +639,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     expect(result.conversationId).toBe("conversation-1");
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(result.execution.contextStates["context-plan"]).toMatchObject({
       status: "running",
       completedTaskCount: 1,
@@ -705,7 +690,9 @@ describe("graph workflow iteration orchestrator", () => {
           ...next.contextStates["context-plan"]!,
           completedTaskCount: 2,
         };
-        await repository.mutateActive("/repo", "session-1", () => next);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(next))
+          .then((mutation) => mutation.execution);
         return {
           conversationId: "conversation-1",
           contextTokens: null,
@@ -714,12 +701,17 @@ describe("graph workflow iteration orchestrator", () => {
         };
       },
     );
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: () => ({ server: { id: "tool-server" } }),
+      bindTaskCompletion: () => undefined,
       runAgentIteration,
       now: () => "2026-03-27T16:00:00.000Z",
     });
@@ -744,7 +736,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const materializeCalls: Array<{
       executionId: string;
       worktreePath: string;
@@ -763,7 +755,9 @@ describe("graph workflow iteration orchestrator", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 1,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -772,12 +766,16 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       materializeWorkflowDocuments: async ({ execution, worktreePath }) => {
         materializeCalls.push({ executionId: execution.id, worktreePath });
@@ -816,7 +814,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const materializeWorkflowDocuments = vi.fn(async () => {});
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
@@ -830,7 +828,9 @@ describe("graph workflow iteration orchestrator", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 1,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -839,12 +839,16 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       materializeWorkflowDocuments,
       now() {
@@ -876,7 +880,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-2" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
       current.taskStates["task-plan-1"] = {
@@ -890,7 +894,9 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 1,
       };
 
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -899,12 +905,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:10:00.000Z";
@@ -924,7 +935,7 @@ describe("graph workflow iteration orchestrator", () => {
         prompt: expect.stringContaining("task-plan-1"),
       }),
     );
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
   });
 
   it("marks context as completed once all tasks are completed in an iteration", async () => {
@@ -935,7 +946,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-3" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
       current.taskStates["task-plan-2"] = {
@@ -949,7 +960,9 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 2,
       };
 
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -958,12 +971,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:20:00.000Z";
@@ -980,7 +998,7 @@ describe("graph workflow iteration orchestrator", () => {
     expect(runAgentIteration).toHaveBeenCalledWith(
       expect.objectContaining({ askUserQuestionsEnabled: false }),
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
@@ -1012,7 +1030,9 @@ describe("graph workflow iteration orchestrator", () => {
         status: "ready",
       };
 
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -1021,12 +1041,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-3" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now() {
         return "2026-03-27T16:20:00.000Z";
@@ -1043,7 +1068,9 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "ready",
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result).toMatchObject({
+      decision: { kind: "yield", reason: "superseded" },
+    });
     expect(repository.read().status).toBe("running");
   });
 
@@ -1060,7 +1087,7 @@ describe("graph workflow iteration orchestrator", () => {
       );
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conversation-aq" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
       current.taskStates["task-plan-2"] = {
@@ -1073,7 +1100,9 @@ describe("graph workflow iteration orchestrator", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -1082,12 +1111,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:20:00.000Z";
@@ -1128,7 +1162,7 @@ describe("graph workflow iteration orchestrator", () => {
     const createConversation = vi.fn(async () => ({
       id: "conversation-placement",
     }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
 
     // The first iteration leaves the task open, so the context legitimately
     // takes a SECOND iteration — the turn the accepted edit has to reach.
@@ -1186,7 +1220,9 @@ describe("graph workflow iteration orchestrator", () => {
             ...contextState,
             completedTaskCount: 2,
           };
-          await repository.mutateActive("/repo", "session-1", () => current);
+          await repository
+            .mutateActive("/repo", "session-1", () => changed(current))
+            .then((mutation) => mutation.execution);
         }
         return {
           conversationId: "conv-mock",
@@ -1197,12 +1233,17 @@ describe("graph workflow iteration orchestrator", () => {
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:20:00.000Z";
@@ -1243,10 +1284,14 @@ describe("graph workflow iteration orchestrator", () => {
     );
     expect(edited.ok).toBe(true);
     if (!edited.ok) return;
-    await repository.mutateActive("/repo", "session-1", () => ({
-      ...edited.execution,
-      status: "running",
-    }));
+    await repository
+      .mutateActive("/repo", "session-1", () =>
+        changed({
+          ...edited.execution,
+          status: "running",
+        }),
+      )
+      .then((mutation) => mutation.execution);
 
     completeTheTask = true;
     await orchestrator.runIteration({
@@ -1330,15 +1375,13 @@ describe("graph workflow iteration orchestrator", () => {
       );
       editOutcome = edited.ok ? "accepted" : "rejected";
       if (edited.ok) {
-        await repository.mutateActive(
-          "/repo",
-          "session-1",
-          () => edited.execution,
-        );
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(edited.execution))
+          .then((mutation) => mutation.execution);
       }
       return { id: "conversation-race" };
     });
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
 
     const dispatchedPlacements: unknown[] = [];
     const runAgentIteration = vi.fn(
@@ -1360,7 +1403,9 @@ describe("graph workflow iteration orchestrator", () => {
           ...contextState,
           completedTaskCount: 1,
         };
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return {
           conversationId: "conv-mock",
           contextTokens: null,
@@ -1370,12 +1415,17 @@ describe("graph workflow iteration orchestrator", () => {
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:20:00.000Z";
@@ -1426,7 +1476,7 @@ describe("graph workflow iteration orchestrator", () => {
     };
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conversation-3" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       expect(repository.read().activeContextIds).toEqual([
         "context-plan",
@@ -1445,7 +1495,9 @@ describe("graph workflow iteration orchestrator", () => {
         completedTaskCount: 2,
       };
 
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -1454,12 +1506,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:20:00.000Z";
@@ -1473,7 +1530,7 @@ describe("graph workflow iteration orchestrator", () => {
       contextId: "context-plan",
     });
 
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
@@ -1488,7 +1545,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-5" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const ownershipPrefix = [
       "# Spec ownership (authoritative)",
       "",
@@ -1511,7 +1568,9 @@ describe("graph workflow iteration orchestrator", () => {
           ...current.contextStates["context-plan"]!,
           completedTaskCount: 1,
         };
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
       }
       // First two calls: agent returns without completing any task
       return {
@@ -1522,12 +1581,15 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       executionContract: {
         validateDefinition: () => ({ ok: true }),
@@ -1581,7 +1643,7 @@ describe("graph workflow iteration orchestrator", () => {
     expect(result.execution.taskStates["task-plan-1"]).toMatchObject({
       status: "completed",
     });
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
   });
 
   it("continues follow-ups even when context is full (no automatic 85% stopping)", async () => {
@@ -1592,7 +1654,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-6" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       // Agent returns without completing, and context is nearly full
       return {
@@ -1603,12 +1665,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:50:00.000Z";
@@ -1634,7 +1701,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conv-rotate" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: 180_000,
@@ -1655,36 +1722,48 @@ describe("graph workflow iteration orchestrator", () => {
     // persists the rotation flag itself, so the fake writes through the
     // repository the orchestrator re-reads between turns.
     const recordLaneTurnOutcome = vi.fn(async () =>
-      repository.mutateActive("/repo", "session-1", (latest) => ({
-        ...latest,
-        laneStates: {
-          "context-plan": {
-            implementer: {
-              backend: "claude" as const,
-              refKind: "conversation" as const,
-              lane: "implementer" as const,
-              contextId: "context-plan",
-              workflowConversationId: "conv-rotate",
-              sessionRef: { backend: "claude" as const, ref: "conv-rotate" },
-              metrics: {
-                contextTokens: 180_000,
-                contextWindowMax: 200_000,
-                rotateBeforeNextTurn: true,
+      repository
+        .mutateActive("/repo", "session-1", (latest) =>
+          changed({
+            ...latest,
+            laneStates: {
+              "context-plan": {
+                implementer: {
+                  backend: "claude" as const,
+                  refKind: "conversation" as const,
+                  lane: "implementer" as const,
+                  contextId: "context-plan",
+                  workflowConversationId: "conv-rotate",
+                  sessionRef: {
+                    backend: "claude" as const,
+                    ref: "conv-rotate",
+                  },
+                  metrics: {
+                    contextTokens: 180_000,
+                    contextWindowMax: 200_000,
+                    rotateBeforeNextTurn: true,
+                  },
+                  limitEvaluation: "supported" as const,
+                  lastUsedAt: "2026-03-27T16:00:00.000Z",
+                },
               },
-              limitEvaluation: "supported" as const,
-              lastUsedAt: "2026-03-27T16:00:00.000Z",
             },
-          },
-        },
-      })),
+          }),
+        )
+        .then((mutation) => mutation.execution),
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -1720,12 +1799,17 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conv-unused" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async () => ({
         conversationId: "conv-1",
         contextTokens: 50_000,
@@ -1770,7 +1854,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: 50_000,
@@ -1791,12 +1875,17 @@ describe("graph workflow iteration orchestrator", () => {
       async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -1863,7 +1952,7 @@ describe("graph workflow iteration orchestrator", () => {
 
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: 50_000,
@@ -1884,12 +1973,17 @@ describe("graph workflow iteration orchestrator", () => {
       async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -1930,7 +2024,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "conversation-7" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       // Agent never completes any task
       return {
@@ -1941,12 +2035,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:55:00.000Z";
@@ -1972,7 +2071,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "fallback-conv" }));
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
       current.taskStates["task-plan-1"] = {
@@ -1991,7 +2090,9 @@ describe("graph workflow iteration orchestrator", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: 50000,
@@ -2012,12 +2113,17 @@ describe("graph workflow iteration orchestrator", () => {
       async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -2061,7 +2167,7 @@ describe("graph workflow iteration orchestrator", () => {
       }),
     );
     const createConversation = vi.fn(async () => ({ id: "fallback-conv" }));
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const capturedPrompts: string[] = [];
     const runAgentIteration = vi.fn(async (input: { prompt: string }) => {
       capturedPrompts.push(input.prompt);
@@ -2082,7 +2188,9 @@ describe("graph workflow iteration orchestrator", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-ask",
         contextTokens: null,
@@ -2105,12 +2213,17 @@ describe("graph workflow iteration orchestrator", () => {
       async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -2174,7 +2287,7 @@ describe("graph workflow iteration orchestrator", () => {
       lastConversationId: "conversation-old",
     };
     const createConversation = vi.fn(async () => ({ id: "conversation-8" }));
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       const current = repository.read();
       expect(current.taskStates["task-plan-1"]).toMatchObject({
@@ -2199,7 +2312,9 @@ describe("graph workflow iteration orchestrator", () => {
         ...next.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => next);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(next))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: 25_000,
@@ -2208,12 +2323,17 @@ describe("graph workflow iteration orchestrator", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -2245,7 +2365,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -2253,7 +2373,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return { server: {} };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-1" }));
@@ -2283,7 +2403,9 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
           context_validator: validatorLaneState,
         },
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         kind: "pass" as const,
         summary: "Context passed",
@@ -2314,12 +2436,17 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: {
         validateContextCompletion,
@@ -2386,7 +2513,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const createConversation = vi.fn();
     const getConversation = vi.fn(async () => ({ id: "conv-existing" }));
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
 
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
@@ -2396,7 +2523,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         summary: "Done",
         completedAt: NOW,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: 60_000,
@@ -2411,12 +2540,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -2456,7 +2590,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     const getConversation = vi.fn(
       async (_p: string, _s: string, id: string) => ({ id }),
     );
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
 
     const runAgentIteration = vi.fn(async (input: { contextId: string }) => {
       const current = structuredClone(repository.read());
@@ -2484,7 +2618,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
           completedTaskCount: 1,
         };
       }
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: 50_000,
@@ -2499,12 +2635,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -2566,7 +2707,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const createConversation = vi.fn(async () => ({ id: "conv-new" }));
     const getConversation = vi.fn();
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
 
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
@@ -2576,7 +2717,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         summary: "Done",
         completedAt: NOW,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: 50_000,
@@ -2591,12 +2734,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -2648,7 +2796,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     const getConversation = vi.fn(
       async (_p: string, _s: string, id: string) => ({ id }),
     );
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
 
     // Call 1 exceeds the configured limit; call 2 stays within it
     let callCount = 0;
@@ -2675,12 +2823,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -2763,12 +2916,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -2808,7 +2966,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     const getConversation = vi.fn(
       async (_p: string, _s: string, id: string) => ({ id }),
     );
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: 50_000,
@@ -2822,12 +2980,17 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -2848,7 +3011,9 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
     const deserialized = graphWorkflowExecutionSchema.parse(
       JSON.parse(JSON.stringify(repository.read())),
     );
-    await repository.mutateActive("/repo", "session-1", () => deserialized);
+    await repository
+      .mutateActive("/repo", "session-1", () => changed(deserialized))
+      .then((mutation) => mutation.execution);
 
     // Second call after restart: should find and reuse conv-1 from the deserialized lane state
     const result2 = await orchestrator.runIteration(input);
@@ -2872,7 +3037,7 @@ describe("task validation event publishing (fix-30388517)", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -2880,7 +3045,7 @@ describe("task validation event publishing (fix-30388517)", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return { server: {} };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-1" }));
@@ -2921,12 +3086,17 @@ describe("task validation event publishing (fix-30388517)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: {
         validateContextCompletion,
@@ -2967,7 +3137,7 @@ describe("task validation event publishing (fix-30388517)", () => {
 // -- Circuit breaker: validation failure handling -----------------------------
 
 describe("task validation failure handling (circuit breaker)", () => {
-  it("catches validation failure, increments consecutiveFailureCount, and returns shouldContinueInContext", async () => {
+  it("catches validation failure, increments consecutiveFailureCount, and returns a continuation decision", async () => {
     const execution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",
       "task-plan-2": "pending",
@@ -2978,7 +3148,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -2986,7 +3156,7 @@ describe("task validation failure handling (circuit breaker)", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return { server: {} };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-fail" }));
@@ -3020,12 +3190,17 @@ describe("task validation failure handling (circuit breaker)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       now() {
@@ -3041,7 +3216,7 @@ describe("task validation failure handling (circuit breaker)", () => {
     });
 
     // Iteration should NOT throw — the error is caught internally
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
 
     // consecutiveFailureCount should be incremented
     expect(
@@ -3068,12 +3243,17 @@ describe("task validation failure handling (circuit breaker)", () => {
     seedFailedContextValidationEvent(repository, repository.read().id);
     const prompts: string[] = [];
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-retry" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async (agentInput) => {
         prompts.push(agentInput.prompt);
         return {
@@ -3093,7 +3273,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       contextId: "context-plan",
     });
 
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(prompts[0]).toContain("Latest Context Validation Failure");
     expect(prompts[0]).toContain(
       "Validation failed because rollback notes are missing.",
@@ -3139,12 +3319,17 @@ describe("task validation failure handling (circuit breaker)", () => {
     });
     const prompts: string[] = [];
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-retry" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async (agentInput) => {
         prompts.push(agentInput.prompt);
         return {
@@ -3185,7 +3370,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -3193,7 +3378,7 @@ describe("task validation failure handling (circuit breaker)", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return { server: {} };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-pass" }));
@@ -3221,12 +3406,17 @@ describe("task validation failure handling (circuit breaker)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       now() {
@@ -3255,12 +3445,17 @@ describe("task validation failure handling (circuit breaker)", () => {
     const repository = createRepository(execution);
     const prompts: string[] = [];
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-no-collab" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async (agentInput) => {
         prompts.push(agentInput.prompt);
         return {
@@ -3318,12 +3513,17 @@ describe("task validation failure handling (circuit breaker)", () => {
     const repository = createRepository(execution);
     const prompts: string[] = [];
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-disabled" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async (agentInput) => {
         prompts.push(agentInput.prompt);
         return {
@@ -3382,12 +3582,17 @@ describe("task validation failure handling (circuit breaker)", () => {
     const repository = createRepository(execution);
     const prompts: string[] = [];
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-enabled" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async (agentInput) => {
         prompts.push(agentInput.prompt);
         return {
@@ -3531,7 +3736,7 @@ describe("codex implementer continuity", () => {
     const execution = createCodexExecutionWithPlanTasks();
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => {
       const current = structuredClone(repository.read());
       current.taskStates["task-plan-1"] = {
@@ -3550,7 +3755,9 @@ describe("codex implementer continuity", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -3572,12 +3779,17 @@ describe("codex implementer continuity", () => {
       async (input: RecordLaneTurnOutcomeInput) => input.execution,
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -3616,7 +3828,7 @@ describe("codex implementer continuity", () => {
     const execution = createCodexExecutionWithPlanTasks();
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conv-unused" }));
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: null,
@@ -3635,36 +3847,45 @@ describe("codex implementer continuity", () => {
 
     // Codex normally keeps rotateBeforeNextTurn false, but if somehow set, the guard should trigger
     const recordLaneTurnOutcome = vi.fn(async () =>
-      repository.mutateActive("/repo", "session-1", (latest) => ({
-        ...latest,
-        laneStates: {
-          "context-plan": {
-            implementer: {
-              backend: "codex" as const,
-              refKind: "backend" as const,
-              lane: "implementer" as const,
-              contextId: "context-plan",
-              sessionRef: { backend: "codex" as const, ref: "thread-1" },
-              // Defense-in-depth: Codex schema defines this as literal false, but
-              // the rotation guard should still stop follow-ups if the value is true
-              metrics: {
-                lastTurnUsage: null,
-                rotateBeforeNextTurn: true,
+      repository
+        .mutateActive("/repo", "session-1", (latest) =>
+          changed({
+            ...latest,
+            laneStates: {
+              "context-plan": {
+                implementer: {
+                  backend: "codex" as const,
+                  refKind: "backend" as const,
+                  lane: "implementer" as const,
+                  contextId: "context-plan",
+                  sessionRef: { backend: "codex" as const, ref: "thread-1" },
+                  // Defense-in-depth: Codex schema defines this as literal false, but
+                  // the rotation guard should still stop follow-ups if the value is true
+                  metrics: {
+                    lastTurnUsage: null,
+                    rotateBeforeNextTurn: true,
+                  },
+                  limitEvaluation: "disabled" as const,
+                  lastUsedAt: "2026-03-27T16:00:00.000Z",
+                },
               },
-              limitEvaluation: "disabled" as const,
-              lastUsedAt: "2026-03-27T16:00:00.000Z",
             },
-          },
-        },
-      })),
+          }),
+        )
+        .then((mutation) => mutation.execution),
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService: {
         resolveImplementerCall,
@@ -3709,7 +3930,7 @@ describe("codex implementer continuity", () => {
         recovered: false,
       }),
     );
-    const createToolServer = vi.fn(() => ({ server: {} }));
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn(async () => ({
       conversationId: "conv-mock",
       contextTokens: null,
@@ -3731,12 +3952,17 @@ describe("codex implementer continuity", () => {
       now: () => NOW,
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       continuityService,
       now: () => NOW,
@@ -3756,7 +3982,9 @@ describe("codex implementer continuity", () => {
     const deserialized = graphWorkflowExecutionSchema.parse(
       JSON.parse(JSON.stringify(repository.read())),
     );
-    await repository.mutateActive("/repo", "session-1", () => deserialized);
+    await repository
+      .mutateActive("/repo", "session-1", () => changed(deserialized))
+      .then((mutation) => mutation.execution);
 
     // Second iteration after restart: should reuse
     const result2 = await orchestrator.runIteration(input);
@@ -3792,7 +4020,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -3800,10 +4028,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-infra" }));
@@ -3827,7 +4052,9 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
@@ -3843,12 +4070,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -3887,16 +4119,13 @@ describe("mid-iteration halt via signalHalt", () => {
     // Execution ends halted
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("validator_infra_error");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
   });
 
   it("increments consecutiveFailureCount when an iteration is terminated by a pending-halt terminal error while still running", async () => {
     const repository = seedRepoWithConsecutiveFailures(0);
 
-    const createToolServer = vi.fn(() => ({
-      server: {},
-      close: vi.fn(async () => undefined),
-    }));
+    const bindTaskCompletion = vi.fn();
     const createConversation = vi.fn(async () => ({ id: "conv-drain" }));
 
     // Faithful drain-window halt: a sibling already recorded the halt, so
@@ -3907,17 +4136,19 @@ describe("mid-iteration halt via signalHalt", () => {
     const runAgentIteration = vi.fn(async () => {
       // Simulate a sibling recording a halt during this context's turn: set
       // pendingHaltReason without flipping status or completing any task.
-      await repository.mutateActive("/repo", "session-1", (current) => {
-        current.pendingHaltReason = {
-          type: "collaboration_failure",
-          status: "objective_disagreement",
-          brief: "sibling blocked",
-          executionContextId: "ctx-other",
-          conversationId: "conv-other",
-          summary: "sibling blocked",
-        };
-        return current;
-      });
+      await repository
+        .mutateActive("/repo", "session-1", (current) => {
+          current.pendingHaltReason = {
+            type: "collaboration_failure",
+            status: "objective_disagreement",
+            brief: "sibling blocked",
+            executionContextId: "ctx-other",
+            conversationId: "conv-other",
+            summary: "sibling blocked",
+          };
+          return changed(current);
+        })
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -3926,12 +4157,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       now: () => NOW,
@@ -3952,7 +4188,7 @@ describe("mid-iteration halt via signalHalt", () => {
     ).toBe(1);
     // Tasks remain and the execution is still running, so the iteration would
     // otherwise loop — the breaker is the backstop.
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
   });
 
   it("triggers mid-iteration circuit_breaker halt when failure count crosses threshold inside a single iteration", async () => {
@@ -3962,7 +4198,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -3970,10 +4206,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-breaker" }));
@@ -4006,7 +4239,9 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
@@ -4022,12 +4257,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4063,7 +4303,7 @@ describe("mid-iteration halt via signalHalt", () => {
     // Execution ends halted
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("circuit_breaker");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
   });
 
   it("routes circuit-breaker decisions through the runCircuitBreakerGate primitive (Task 6.2 — primitive layer integration)", async () => {
@@ -4076,7 +4316,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -4084,10 +4324,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-gate" }));
@@ -4120,7 +4357,9 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
@@ -4138,12 +4377,17 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const runCircuitBreakerGate = vi.fn(defaultGate);
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4189,7 +4433,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -4197,10 +4441,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({
@@ -4231,12 +4472,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4259,17 +4505,17 @@ describe("mid-iteration halt via signalHalt", () => {
 
     // Execution remains running
     expect(result.execution.status).toBe("running");
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
   });
 
-  it("short-circuits completeTask with IterationHaltedError when execution is halted mid-flight", async () => {
+  it("refuses task completion after a persisted mid-flight halt", async () => {
     const repository = seedRepoWithConsecutiveFailures(0);
 
     let capturedCompleteTask:
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -4277,10 +4523,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-halt" }));
@@ -4289,16 +4532,27 @@ describe("mid-iteration halt via signalHalt", () => {
     const signalHalt = vi.fn();
 
     let capturedError: unknown;
+    let haltedTaskState:
+      | GraphWorkflowExecution["taskStates"][string]
+      | undefined;
     const runAgentIteration = vi.fn(async () => {
       // Simulate a prior halt persisted between the orchestrator's seed and
       // the agent's first completeTask call (e.g., by another concurrent path).
-      const current = structuredClone(repository.read());
-      current.status = "halted";
-      current.haltReason = {
-        type: "recovery_error",
-        message: "Pre-existing halt",
-      };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      const current = transitionToNonRunningState(
+        repository.read(),
+        "halted",
+        null,
+        {
+          type: "recovery_error",
+          message: "Pre-existing halt",
+        },
+      );
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
+      haltedTaskState = structuredClone(
+        repository.read().taskStates["task-plan-1"],
+      );
       try {
         await capturedCompleteTask!("task-plan-1", "Done");
       } catch (error) {
@@ -4313,27 +4567,39 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
       now: () => NOW,
     });
 
-    await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
+    await expect(
+      orchestrator.runIteration({
+        projectPath: "/repo",
+        projectName: "repo",
+        sessionName: "session-1",
+        contextId: "context-plan",
+      }),
+    ).rejects.toThrow('Execution context "context-plan" is not running');
 
-    // completeTask threw IterationHaltedError; validator and signalHalt never invoked
-    expect(capturedError).toBeInstanceOf(IterationHaltedError);
+    expect(capturedError).toEqual(
+      new Error('Execution context "context-plan" is not running'),
+    );
+    expect(repository.read().taskStates["task-plan-1"]).toEqual(
+      haltedTaskState,
+    );
+    expect(repository.read().taskStates["task-plan-1"]?.completedAt).toBeNull();
     expect(validateContextCompletion).not.toHaveBeenCalled();
     expect(signalHalt).not.toHaveBeenCalled();
   });
@@ -4344,10 +4610,7 @@ describe("mid-iteration halt via signalHalt", () => {
     // handler. The orchestrator's follow-up loop must read the field before
     // sending the next agent turn and halt instead of dispatching.
     const repository = seedRepoWithConsecutiveFailures(0);
-    const createToolServer = vi.fn(() => ({
-      server: {},
-      close: vi.fn(async () => undefined),
-    }));
+    const bindTaskCompletion = vi.fn();
     const createConversation = vi.fn(async () => ({ id: "conv-pending-halt" }));
 
     const signalHalt = vi.fn(
@@ -4360,7 +4623,9 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
@@ -4368,17 +4633,19 @@ describe("mid-iteration halt via signalHalt", () => {
     const runAgentIteration = vi.fn(async () => {
       // Simulate the `request_collaboration` handler writing pendingHaltReason
       // before returning its tool_result on this turn.
-      await repository.mutateActive("/repo", "session-1", (current) => {
-        current.pendingHaltReason = {
-          type: "collaboration_failure",
-          status: "rounds_exhausted",
-          brief: "Should we use approach A or B?",
-          executionContextId: "context-plan",
-          conversationId: "conv-pending-halt",
-          summary: "Negotiation rounds exhausted without convergence",
-        };
-        return current;
-      });
+      await repository
+        .mutateActive("/repo", "session-1", (current) => {
+          current.pendingHaltReason = {
+            type: "collaboration_failure",
+            status: "rounds_exhausted",
+            brief: "Should we use approach A or B?",
+            executionContextId: "context-plan",
+            conversationId: "conv-pending-halt",
+            summary: "Negotiation rounds exhausted without convergence",
+          };
+          return changed(current);
+        })
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conv-mock",
         contextTokens: null,
@@ -4387,12 +4654,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       now: () => NOW,
@@ -4416,7 +4688,7 @@ describe("mid-iteration halt via signalHalt", () => {
     );
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("collaboration_failure");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
   });
 
   it("short-circuits completeTask as idempotent no-op when task is already completed (no validator re-run)", async () => {
@@ -4437,7 +4709,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -4445,10 +4717,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-redo" }));
@@ -4475,12 +4744,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4534,7 +4808,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -4542,10 +4816,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-thresh" }));
@@ -4574,12 +4845,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4607,7 +4883,7 @@ describe("mid-iteration halt via signalHalt", () => {
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
 
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -4615,10 +4891,7 @@ describe("mid-iteration halt via signalHalt", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         capturedCompleteTask = input.completeTask;
-        return {
-          server: {},
-          close: vi.fn(async () => undefined),
-        };
+        return;
       },
     );
     const createConversation = vi.fn(async () => ({ id: "conv-final-halt" }));
@@ -4644,7 +4917,9 @@ describe("mid-iteration halt via signalHalt", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
@@ -4660,12 +4935,17 @@ describe("mid-iteration halt via signalHalt", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4679,9 +4959,9 @@ describe("mid-iteration halt via signalHalt", () => {
       contextId: "context-plan",
     });
 
-    // Finalization short-circuits: shouldContinueInContext is false and status halted
+    // Finalization short-circuits: the decision stops execution and status halted
     expect(result.execution.status).toBe("halted");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
     // The active context should still be "context-plan" since no finalize happened
     expect(result.execution.activeContextIds).toEqual(["context-plan"]);
   });
@@ -4718,7 +4998,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
     const repository = seedRepoWithAllTasksCompleted();
 
     const createConversation = vi.fn();
-    const createToolServer = vi.fn();
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn();
 
     const validateContextCompletion = vi.fn(async () => ({
@@ -4731,12 +5011,17 @@ describe("runIteration when all tasks are already completed on entry", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       now: () => NOW,
@@ -4751,10 +5036,10 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
     expect(createConversation).not.toHaveBeenCalled();
-    expect(createToolServer).not.toHaveBeenCalled();
+    expect(bindTaskCompletion).not.toHaveBeenCalled();
     expect(runAgentIteration).not.toHaveBeenCalled();
 
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
     expect(result.execution.status).toBe("running");
     expect(result.execution.activeContextIds).toEqual([]);
     expect(result.execution.contextStates["context-plan"]).toMatchObject({
@@ -4797,12 +5082,17 @@ describe("runIteration when all tasks are already completed on entry", () => {
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer: vi.fn(),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(),
       validationService: { validateContextCompletion },
       now: () => NOW,
@@ -4865,12 +5155,17 @@ describe("runIteration when all tasks are already completed on entry", () => {
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
-      createToolServer: vi.fn(),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(),
       validationService: { validateContextCompletion },
       now: () => NOW,
@@ -4903,7 +5198,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
     const repository = seedRepoWithAllTasksCompleted();
 
     const createConversation = vi.fn();
-    const createToolServer = vi.fn();
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn();
 
     const validateContextCompletion = vi.fn(async () => ({
@@ -4925,17 +5220,24 @@ describe("runIteration when all tasks are already completed on entry", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -4951,7 +5253,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     expect(runAgentIteration).not.toHaveBeenCalled();
     expect(createConversation).not.toHaveBeenCalled();
-    expect(createToolServer).not.toHaveBeenCalled();
+    expect(bindTaskCompletion).not.toHaveBeenCalled();
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
 
     expect(signalHalt).toHaveBeenCalledWith(
@@ -4967,14 +5269,14 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("validator_infra_error");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
   });
 
-  it("reopens tasks and returns shouldContinueInContext=true when validator fails on re-validation", async () => {
+  it("reopens tasks and returns a continue decision when validator fails on re-validation", async () => {
     const repository = seedRepoWithAllTasksCompleted();
 
     const createConversation = vi.fn();
-    const createToolServer = vi.fn();
+    const bindTaskCompletion = vi.fn();
     const runAgentIteration = vi.fn();
 
     const validateContextCompletion = vi.fn(async () => ({
@@ -4995,12 +5297,17 @@ describe("runIteration when all tasks are already completed on entry", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       now: () => NOW,
@@ -5021,7 +5328,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
     expect(result.execution.taskStates["task-plan-1"]?.status).toBe(
       "completed",
     );
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(1);
@@ -5066,8 +5373,8 @@ describe("script validator integration", () => {
     return createRepository(exec);
   }
 
-  function createCapturingToolServer(): {
-    createToolServer: ReturnType<typeof vi.fn>;
+  function createCompletionCapture(): {
+    bindTaskCompletion: ReturnType<typeof vi.fn>;
     capturedCompleteTask():
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
@@ -5075,7 +5382,7 @@ describe("script validator integration", () => {
     let captured:
       | ((taskId: string, summary: string) => Promise<GraphWorkflowExecution>)
       | undefined;
-    const createToolServer = vi.fn(
+    const bindTaskCompletion = vi.fn(
       (input: {
         completeTask: (
           taskId: string,
@@ -5083,19 +5390,19 @@ describe("script validator integration", () => {
         ) => Promise<GraphWorkflowExecution>;
       }) => {
         captured = input.completeTask;
-        return { server: {}, close: vi.fn(async () => undefined) };
+        return;
       },
     );
     return {
-      createToolServer,
+      bindTaskCompletion,
       capturedCompleteTask: () => captured,
     };
   }
 
   it("runs the script validator before the agent validator when enabled", async () => {
     const repository = seedRepoWithScriptValidator();
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const createConversation = vi.fn(async () => ({ id: "conv-s1" }));
 
     const callOrder: string[] = [];
@@ -5127,13 +5434,18 @@ describe("script validator integration", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       scriptValidatorService: { runScriptValidator },
@@ -5159,8 +5471,8 @@ describe("script validator integration", () => {
       "task-plan-2": "pending",
     });
     const repository = createRepository(execution);
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const createConversation = vi.fn(async () => ({ id: "conv-s2" }));
 
     const runScriptValidator = vi.fn();
@@ -5185,13 +5497,18 @@ describe("script validator integration", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       scriptValidatorService: { runScriptValidator },
@@ -5225,8 +5542,8 @@ describe("script validator integration", () => {
     };
     context.scriptValidator = { commands: ["typecheck"] };
     const repository = createRepository(execution);
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
     const validateContextCompletion = vi.fn(async () => ({
       kind: "pass" as const,
@@ -5247,13 +5564,18 @@ describe("script validator integration", () => {
         compacted: false,
       };
     });
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conv-enveloped" })),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       scriptValidatorService: { runScriptValidator },
@@ -5282,8 +5604,8 @@ describe("script validator integration", () => {
     if (!context) throw new Error('context "context-plan" not in fixture');
     context.scriptValidator = { commands: ["typecheck"] };
     const repository = createRepository(execution);
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
     const validateContextCompletion = vi.fn(async () => ({
       kind: "pass" as const,
@@ -5304,7 +5626,12 @@ describe("script validator integration", () => {
         compacted: false,
       };
     });
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       // A selected script gate opens a validation round, so the candidate tree
       // has to be resolvable for the gate to be reached at all.
       validationRoundService: stubValidationRoundService(),
@@ -5312,7 +5639,7 @@ describe("script validator integration", () => {
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conv-commands" })),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       scriptValidatorService: { runScriptValidator },
@@ -5332,8 +5659,8 @@ describe("script validator integration", () => {
 
   it("skips the agent validator when the script validator fails, adds a remediation task, and increments failure count", async () => {
     const repository = seedRepoWithScriptValidator();
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const createConversation = vi.fn(async () => ({ id: "conv-s3" }));
 
     const runScriptValidator = vi.fn(async () => ({
@@ -5364,13 +5691,18 @@ describe("script validator integration", () => {
       return `task-remediation-${remediationTaskId}`;
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       validationService: { validateContextCompletion },
       scriptValidatorService: { runScriptValidator },
@@ -5413,13 +5745,13 @@ describe("script validator integration", () => {
 
     // Execution remains running, iteration should continue in context
     expect(result.execution.status).toBe("running");
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
   });
 
   it("halts with script_validator_unknown_command for an unregistered configured command", async () => {
     const repository = seedRepoWithScriptValidator();
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const runScriptValidator = vi.fn(async () => ({
       kind: "infra_error" as const,
       reason: "unknown_command" as const,
@@ -5447,17 +5779,24 @@ describe("script validator integration", () => {
         const current = structuredClone(repository.read());
         current.status = "halted";
         current.haltReason = input.reason;
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conv-unknown-command" })),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -5487,15 +5826,15 @@ describe("script validator integration", () => {
     expect(result.execution.haltReason?.type).toBe(
       "script_validator_unknown_command",
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
   });
 
   it("treats a script-gate capacity wait as orchestration state", async () => {
     const repository = seedRepoWithScriptValidator({
       consecutiveFailureCount: 2,
     });
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     let releaseCapacity: (() => void) | undefined;
     const runScriptValidator = vi.fn(
       () =>
@@ -5523,7 +5862,12 @@ describe("script validator integration", () => {
       };
     });
     const signalHalt = vi.fn();
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       // A selected script gate opens a validation round, so the candidate tree
       // has to be resolvable for the gate to be reached at all.
       validationRoundService: stubValidationRoundService(),
@@ -5531,7 +5875,7 @@ describe("script validator integration", () => {
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conv-capacity-wait" })),
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -5579,8 +5923,8 @@ describe("script validator integration", () => {
 
   it("halts with recovery_error when the script validator throws an unexpected exception", async () => {
     const repository = seedRepoWithScriptValidator();
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const createConversation = vi.fn(async () => ({ id: "conv-s5" }));
 
     const runScriptValidator = vi.fn(async () => ({
@@ -5602,7 +5946,16 @@ describe("script validator integration", () => {
     });
 
     const workflowManager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      getSession: async () => null,
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: {
+        ensureArtifactsMaterialized: async () => null,
         ...repository,
         async create() {
           throw new Error("not used by this test");
@@ -5622,13 +5975,18 @@ describe("script validator integration", () => {
       createGraphWorkflowSignalHaltHandler(workflowManager),
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -5656,7 +6014,7 @@ describe("script validator integration", () => {
     expect(
       result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
     ).toBe(0);
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("halted");
   });
 
   it("trips the circuit breaker when script validator fails repeatedly beyond the threshold", async () => {
@@ -5664,8 +6022,8 @@ describe("script validator integration", () => {
     const repository = seedRepoWithScriptValidator({
       consecutiveFailureCount: 2,
     });
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const createConversation = vi.fn(async () => ({ id: "conv-s6" }));
 
     const runScriptValidator = vi.fn(async () => ({
@@ -5700,18 +6058,25 @@ describe("script validator integration", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -5747,8 +6112,8 @@ describe("script validator integration", () => {
     const repository = seedRepoWithScriptValidator({
       consecutiveFailureCount: 2,
     });
-    const { createToolServer, capturedCompleteTask } =
-      createCapturingToolServer();
+    const { bindTaskCompletion, capturedCompleteTask } =
+      createCompletionCapture();
     const createConversation = vi.fn(async () => ({ id: "conv-script-gate" }));
 
     const runScriptValidator = vi.fn(async () => ({
@@ -5783,20 +6148,27 @@ describe("script validator integration", () => {
         current.status = "halted";
         current.haltReason =
           input.reason as GraphWorkflowExecution["haltReason"];
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
 
     const runCircuitBreakerGate = vi.fn(defaultGate);
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer,
+      bindTaskCompletion,
       runAgentIteration,
       signalHalt,
       validationService: { validateContextCompletion },
@@ -5858,12 +6230,17 @@ describe("iteration failure with partial turn progress", () => {
       throw new Error("SDK error: QuerySession is dead");
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-progress" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now: () => "2026-03-27T16:00:00.000Z",
     });
@@ -5900,12 +6277,17 @@ describe("iteration failure with partial turn progress", () => {
       throw new Error("SDK error: QuerySession is dead");
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-fail" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now: () => "2026-03-27T16:00:00.000Z",
     });
@@ -6000,7 +6382,9 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 1,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -6015,12 +6399,17 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -6090,7 +6479,9 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 1,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -6105,12 +6496,17 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -6174,7 +6570,9 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 1,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -6183,12 +6581,17 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -6238,7 +6641,9 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -6248,12 +6653,17 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -6301,7 +6711,9 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -6311,12 +6723,17 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now() {
         return "2026-03-27T16:00:00.000Z";
@@ -6354,13 +6771,13 @@ describe("human approval gate at finalization", () => {
 
   function completeAllPlanTasks(repository: {
     read(): GraphWorkflowExecution;
-    mutateActive(
+    mutateActive<Value = void, Refusal = never>(
       projectPath: string,
       sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
-    ): Promise<GraphWorkflowExecution>;
+      ) => ExecutionMutationDecision<Value, Refusal>,
+    ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   }) {
     return vi.fn(async () => {
       const current = structuredClone(repository.read());
@@ -6380,7 +6797,9 @@ describe("human approval gate at finalization", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-gate",
         contextTokens: null,
@@ -6439,12 +6858,17 @@ describe("human approval gate at finalization", () => {
     });
     repository.deliver = eventPublisher.deliver;
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: passingValidationService(),
       eventPublisher,
@@ -6458,7 +6882,7 @@ describe("human approval gate at finalization", () => {
       contextId: "context-plan",
     });
 
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("await_approval");
 
     const persisted = repository.read();
     const contextState = persisted.contextStates["context-plan"];
@@ -6567,12 +6991,17 @@ describe("human approval gate at finalization", () => {
       ),
     };
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: passingValidationService(),
       validationRoundService,
@@ -6617,12 +7046,17 @@ describe("human approval gate at finalization", () => {
     };
     const repository = createRepository(execution);
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: passingValidationService(),
       validationRoundService: {
@@ -6671,12 +7105,17 @@ describe("human approval gate at finalization", () => {
     });
     repository.deliver = eventPublisher.deliver;
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: passingValidationService(),
       eventPublisher,
@@ -6690,7 +7129,7 @@ describe("human approval gate at finalization", () => {
       contextId: "context-plan",
     });
 
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
 
     const persisted = repository.read();
     const contextState = persisted.contextStates["context-plan"];
@@ -6742,12 +7181,17 @@ describe("human approval gate at finalization", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: { validateContextCompletion },
       eventPublisher,
@@ -6761,7 +7205,7 @@ describe("human approval gate at finalization", () => {
       contextId: "context-plan",
     });
 
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
 
     const persisted = repository.read();
     const contextState = persisted.contextStates["context-plan"];
@@ -6838,7 +7282,9 @@ describe("awaiting-user-input park after an implementer turn", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-ask",
         contextTokens: null,
@@ -6883,12 +7329,17 @@ describe("awaiting-user-input park after an implementer turn", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -6905,7 +7356,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     });
 
     // Parked outcome: the context does not continue and validation never ran.
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("await_user_input");
     expect(result.conversationId).toBe("conversation-ask");
     expect(validateContextCompletion).not.toHaveBeenCalled();
 
@@ -7006,12 +7457,17 @@ describe("awaiting-user-input park after an implementer turn", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -7033,7 +7489,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     expect(runAgentIteration).toHaveBeenCalledTimes(1);
     expect(enterSpy).toHaveBeenCalledTimes(1);
 
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("await_user_input");
     expect(validateContextCompletion).not.toHaveBeenCalled();
 
     const persisted = repository.read();
@@ -7084,10 +7540,12 @@ describe("awaiting-user-input park after an implementer turn", () => {
       pendingQuestions: questions,
     }));
     const runAgentIteration = vi.fn(async () => {
-      await repository.mutateActive("/repo", "session-1", (current) => {
-        current.pendingHaltReason = pendingHaltReason;
-        return current;
-      });
+      await repository
+        .mutateActive("/repo", "session-1", (current) => {
+          current.pendingHaltReason = pendingHaltReason;
+          return changed(current);
+        })
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-ask",
         contextTokens: null,
@@ -7105,17 +7563,24 @@ describe("awaiting-user-input park after an implementer turn", () => {
         current.status = "halted";
         current.haltReason = input.reason;
         current.pendingHaltReason = null;
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return current;
       },
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       signalHalt,
       userInputGateService: gate,
@@ -7205,12 +7670,17 @@ describe("awaiting-user-input park after an implementer turn", () => {
       );
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -7227,7 +7697,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     });
 
     // Parked outcome: no continue, validation never ran, status is awaiting.
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("await_user_input");
     expect(validateContextCompletion).not.toHaveBeenCalled();
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "awaiting_user_input",
@@ -7282,12 +7752,17 @@ describe("awaiting-user-input park after an implementer turn", () => {
       });
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       validationService: { validateContextCompletion: vi.fn() },
       userInputGateService: gate,
@@ -7356,12 +7831,17 @@ describe("awaiting-user-input park after an implementer turn", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -7389,7 +7869,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
   });
 
   it("behaves identically to today when the lane has no pending question", async () => {
@@ -7421,12 +7901,17 @@ describe("awaiting-user-input park after an implementer turn", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-ask" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -7448,7 +7933,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
     expect(
       repository.read().contextStates["context-plan"]?.pendingUserInputs,
     ).toEqual({});
@@ -7513,7 +7998,9 @@ describe("awaiting-user-input park after a context-validator turn", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-impl",
         contextTokens: null,
@@ -7559,12 +8046,17 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       ] as [CohortParkedLane, ...CohortParkedLane[]],
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeAllPlanTasks(repository),
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -7582,7 +8074,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
 
     // Validation ran (the validator asked), but the outcome parks — no continue.
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("await_user_input");
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "awaiting_user_input",
     );
@@ -7671,12 +8163,17 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       throw new Error("validation-only path must not run the implementer");
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -7697,7 +8194,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     expect(enterSpy).toHaveBeenCalledWith(
       expect.objectContaining({ laneKey: "context_validator:general" }),
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("await_user_input");
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "awaiting_user_input",
     );
@@ -7800,7 +8297,9 @@ describe("conversation telemetry emission", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: 123_456,
@@ -7825,12 +8324,17 @@ describe("conversation telemetry emission", () => {
       topReReads: [{ path: "/repo/a.ts", count: 3 }],
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       readConversationTelemetry,
       now() {
@@ -7866,12 +8370,17 @@ describe("conversation telemetry emission", () => {
       createCapturingExecutionLogger("execution-1");
     registerExecutionLogger(logger);
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       readConversationTelemetry: vi
         .fn()
@@ -7981,7 +8490,9 @@ describe("per-turn billing on agent_turn_completed", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: call >= 2 ? 2 : 1,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -7990,12 +8501,17 @@ describe("per-turn billing on agent_turn_completed", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       readConversationTelemetry,
       now: () => "2026-03-27T16:00:00.000Z",
@@ -8051,7 +8567,9 @@ describe("per-turn billing on agent_turn_completed", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-1",
         contextTokens: null,
@@ -8060,12 +8578,17 @@ describe("per-turn billing on agent_turn_completed", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       now: () => "2026-03-27T16:00:00.000Z",
     });
@@ -8099,12 +8622,14 @@ describe("per-turn billing on agent_turn_completed", () => {
           "task-plan-2": "pending",
         }),
       );
-      await repository.mutateActive("/repo", "session-1", (execution) => {
-        execution.workingDefinition.executionContexts.find(
-          (entry) => entry.id === "context-plan",
-        )!.implementer.agent.backend = backend;
-        return execution;
-      });
+      await repository
+        .mutateActive("/repo", "session-1", (execution) => {
+          execution.workingDefinition.executionContexts.find(
+            (entry) => entry.id === "context-plan",
+          )!.implementer.agent.backend = backend;
+          return changed(execution);
+        })
+        .then((mutation) => mutation.execution);
       const { logger, iterationCalls } =
         createCapturingExecutionLogger("execution-1");
       registerExecutionLogger(logger);
@@ -8123,7 +8648,9 @@ describe("per-turn billing on agent_turn_completed", () => {
           ...current.contextStates["context-plan"]!,
           completedTaskCount: 2,
         };
-        await repository.mutateActive("/repo", "session-1", () => current);
+        await repository
+          .mutateActive("/repo", "session-1", () => changed(current))
+          .then((mutation) => mutation.execution);
         return {
           conversationId: "conversation-1",
           contextTokens: 120000,
@@ -8132,12 +8659,17 @@ describe("per-turn billing on agent_turn_completed", () => {
         };
       });
 
-      const orchestrator = createGraphWorkflowIterationOrchestrator({
+      const orchestrator = createContextIterationFixture({
+        ...createContextTestCapabilities(),
+        materializeWorkflowDocuments: async () => {},
+
+        executionContract: createNonParticipatingGraphExecutionContract(),
+
         executionRepository: repository,
         findLatestContextValidationEvent:
           repository.findLatestContextValidationEvent,
         createConversation: vi.fn(async () => ({ id: "conversation-1" })),
-        createToolServer: vi.fn(() => ({ server: {} })),
+        bindTaskCompletion: vi.fn(),
         runAgentIteration,
         now: () => "2026-03-27T16:00:00.000Z",
       });
@@ -8189,13 +8721,13 @@ describe("context output capture (D2)", () => {
 
   function completeBothPlanTasks(repository: {
     read(): GraphWorkflowExecution;
-    mutateActive(
+    mutateActive<Value = void, Refusal = never>(
       projectPath: string,
       sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
-    ): Promise<GraphWorkflowExecution>;
+      ) => ExecutionMutationDecision<Value, Refusal>,
+    ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   }) {
     return vi.fn(async () => {
       const current = structuredClone(repository.read());
@@ -8211,7 +8743,9 @@ describe("context output capture (D2)", () => {
         ...current.contextStates["context-plan"]!,
         completedTaskCount: 2,
       };
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return {
         conversationId: "conversation-capture",
         contextTokens: null,
@@ -8249,12 +8783,17 @@ describe("context output capture (D2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8275,7 +8814,7 @@ describe("context output capture (D2)", () => {
 
     const persisted = repository.read();
     expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("ready_to_land");
 
     const captured = persisted.contextOutputs["context-plan"];
     expect(captured).toBeDefined();
@@ -8300,12 +8839,17 @@ describe("context output capture (D2)", () => {
     );
     const captureContextOutput = vi.fn();
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8355,13 +8899,13 @@ describe("context output capture (D2)", () => {
    */
   function haltRecordingSignalHalt(repository: {
     read(): GraphWorkflowExecution;
-    mutateActive(
+    mutateActive<Value = void, Refusal = never>(
       projectPath: string,
       sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
-    ): Promise<GraphWorkflowExecution>;
+      ) => ExecutionMutationDecision<Value, Refusal>,
+    ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   }) {
     return vi.fn(
       async (input: {
@@ -8376,20 +8920,22 @@ describe("context output capture (D2)", () => {
         const contextId =
           input.contextId ??
           ("contextId" in reason ? (reason.contextId ?? undefined) : undefined);
-        return repository.mutateActive("/repo", "session-1", (latest) => {
-          const next = structuredClone(latest);
-          next.pendingHaltReason = reason;
-          if (contextId) {
-            const contextState = next.contextStates[contextId];
-            if (contextState && contextState.status !== "completed") {
-              contextState.status = "halted";
+        return repository
+          .mutateActive("/repo", "session-1", (latest) => {
+            const next = structuredClone(latest);
+            next.pendingHaltReason = reason;
+            if (contextId) {
+              const contextState = next.contextStates[contextId];
+              if (contextState && contextState.status !== "completed") {
+                contextState.status = "halted";
+              }
+              next.activeContextIds = next.activeContextIds.filter(
+                (activeContextId) => activeContextId !== contextId,
+              );
             }
-            next.activeContextIds = next.activeContextIds.filter(
-              (activeContextId) => activeContextId !== contextId,
-            );
-          }
-          return next;
-        });
+            return changed(next);
+          })
+          .then((mutation) => mutation.execution);
       },
     );
   }
@@ -8398,12 +8944,17 @@ describe("context output capture (D2)", () => {
     const repository = createRepository(createExecutionWithOutputSchema());
     const captureContextOutput = vi.fn(async () => rejectedCapture());
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8425,7 +8976,7 @@ describe("context output capture (D2)", () => {
       "completed",
     );
     expect(persisted.contextOutputs).toEqual({});
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(persisted.status).toBe("running");
 
     const failure = repository.appendedEvents
@@ -8483,12 +9034,17 @@ describe("context output capture (D2)", () => {
     const captureContextOutput = vi.fn(async () => rejectedCapture());
     const signalHalt = haltRecordingSignalHalt(repository);
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8527,7 +9083,7 @@ describe("context output capture (D2)", () => {
     expect(persisted.contextStates["context-plan"]?.status).toBe("halted");
     expect(persisted.contextOutputs).toEqual({});
     expect(persisted.activeContextIds).not.toContain("context-plan");
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("halted");
   });
 
   it("accumulates capture failures to the DEFAULT breaker threshold before spending semantic reviews (R3.1)", async () => {
@@ -8539,12 +9095,17 @@ describe("context output capture (D2)", () => {
     const signalHalt = haltRecordingSignalHalt(repository);
     const validationService = passingValidation();
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService,
       outputCaptureService: { captureContextOutput },
@@ -8603,12 +9164,17 @@ describe("context output capture (D2)", () => {
     };
 
     const repository = createRepository(execution);
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: {
@@ -8654,12 +9220,17 @@ describe("context output capture (D2)", () => {
         parse: { source: "raw_json" as const },
       }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8691,7 +9262,7 @@ describe("context output capture (D2)", () => {
       summary: "Plan is ready",
       risks: ["schema drift"],
     });
-    expect(second.shouldContinueInContext).toBe(false);
+    expect(second.decision.kind).toBe("ready_to_land");
   });
 
   /** Every plan task already finished in a previous iteration, so `runIteration`
@@ -8744,12 +9315,17 @@ describe("context output capture (D2)", () => {
       parse: { source: "raw_json" as const },
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conv-should-not-create" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8797,12 +9373,17 @@ describe("context output capture (D2)", () => {
     }));
     const createConversation = vi.fn(async () => ({ id: "conv-created" }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -8859,12 +9440,17 @@ describe("context output capture (D2)", () => {
     const repository = createRepository(execution);
     const createConversation = vi.fn(async () => ({ id: "conv-created" }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation,
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(),
       validationService: passingValidation(),
       outputCaptureService: {
@@ -8899,12 +9485,17 @@ describe("context output capture (D2)", () => {
     const repository = createRepository(createExecutionWithOutputSchema());
     const signalHalt = haltRecordingSignalHalt(repository);
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: {
@@ -8948,12 +9539,17 @@ describe("context output capture (D2)", () => {
         parse: { source: "raw_json" as const },
       }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: completeBothPlanTasks(repository),
       validationService: passingValidation(),
       outputCaptureService: { captureContextOutput },
@@ -9010,12 +9606,17 @@ describe("context output capture (D2)", () => {
       };
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-implement" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration,
       validationService: passingValidation(),
       now: () => NOW,
@@ -9045,12 +9646,17 @@ describe("context output capture (D2)", () => {
     const repository = createRepository(execution);
     let seedPrompt: string | null = null;
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-implement" })),
-      createToolServer: vi.fn(() => ({ server: {} })),
+      bindTaskCompletion: vi.fn(),
       runAgentIteration: vi.fn(async (agentInput: { prompt: string }) => {
         seedPrompt ??= agentInput.prompt;
         return {

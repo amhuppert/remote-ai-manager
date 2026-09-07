@@ -1164,6 +1164,22 @@ export function createConversationManager(
     await deps.getRuntime(key)?.managed.close();
   }
 
+  async function flushRuntimeDurability(
+    actor: ConversationActorRef,
+    runtime: ConversationRuntimeState,
+  ): Promise<void> {
+    const context = actor.getSnapshot().context;
+    try {
+      await deps
+        .persistence(context.transient ? "ephemeral" : "durable")
+        .whenDurable(context);
+    } catch (error) {
+      runtime.durabilityFailure = { context, error };
+      throw error;
+    }
+    if (runtime.durabilityFailure) throw runtime.durabilityFailure.error;
+  }
+
   /** Request cancellation synchronously; settlement proves that owned work has unwound. */
   function requestConversationStop(
     address: ConversationAddress,
@@ -1214,16 +1230,7 @@ export function createConversationManager(
       await runtime.command;
       await closeHostedRuntime(key);
       await Promise.allSettled(runtime.debugVerificationWork ?? []);
-      const context = actor.getSnapshot().context;
-      try {
-        await deps
-          .persistence(context.transient ? "ephemeral" : "durable")
-          .whenDurable(context);
-      } catch (error) {
-        runtime.durabilityFailure = { context, error };
-        throw error;
-      }
-      if (runtime.durabilityFailure) throw runtime.durabilityFailure.error;
+      await flushRuntimeDurability(actor, runtime);
       logger.info("conversation.stop_settled", {
         ...conversationTargetLogFields(address.target),
         reason,
@@ -1263,7 +1270,27 @@ export function createConversationManager(
       reason,
     });
     const snapshot = readUsableSnapshot(actor);
-    if (snapshot) {
+    if (
+      reason === "server_shutdown" &&
+      snapshot &&
+      isActorSettled(actor) &&
+      ownedRuntime &&
+      !ownedRuntime.admission &&
+      !ownedRuntime.attempt &&
+      !ownedRuntime.stopping
+    ) {
+      ownedRuntime.debugCleanupVerification?.controller.abort();
+      await ownedRuntime.command;
+      await closeHostedRuntime(key);
+      await Promise.allSettled(ownedRuntime.debugVerificationWork ?? []);
+      await flushRuntimeDurability(actor, ownedRuntime);
+      logger.info("conversation-manager.settled_actor_drained", {
+        conversationId,
+        reason,
+        pendingQuestionId:
+          actor.getSnapshot().context.pendingQuestion?.questionId ?? null,
+      });
+    } else if (snapshot) {
       await requestConversationStop(
         {
           projectPath,

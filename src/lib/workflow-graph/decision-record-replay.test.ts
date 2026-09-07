@@ -1,3 +1,5 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * The closeout replay proof for D4 R13.3.
  *
@@ -364,6 +366,9 @@ describe("R13.3 — expansion decisions replay from durable records", () => {
         now: () => NOW,
       });
       const repository = createGraphWorkflowExecutionRepository({
+        getGraphWorkflowPendingArtifacts: async () => null,
+        clearGraphWorkflowPendingArtifacts: async () => false,
+
         // No git worktree in this harness; the real exclusion would shell out.
         ensureCcArtifactsExcluded: async () => {},
         getSession: (projectPath, sessionName) =>
@@ -386,10 +391,15 @@ describe("R13.3 — expansion decisions replay from durable records", () => {
         PROJECT_PATH,
         SESSION_NAME,
         "replay-seed",
-        () => ({ execution: expandingExecution(), events: [] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: expandingExecution(), events: [] },
+        }),
       );
 
       const service = createGraphWorkflowExpansionService({
+        executionContract: createNonParticipatingGraphExecutionContract(),
         getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
         mutateActive: repository.mutateActive,
         buildLiveEditDeps: () => Promise.resolve(makeLiveEditDeps()),
@@ -502,6 +512,9 @@ describe("R13.3 — loop decisions replay from durable records", () => {
         now: () => NOW,
       });
       const repository = createGraphWorkflowExecutionRepository({
+        getGraphWorkflowPendingArtifacts: async () => null,
+        clearGraphWorkflowPendingArtifacts: async () => false,
+
         // No git worktree in this harness; the real exclusion would shell out.
         ensureCcArtifactsExcluded: async () => {},
         getSession: () =>
@@ -525,7 +538,11 @@ describe("R13.3 — loop decisions replay from durable records", () => {
         PROJECT_PATH,
         SESSION_NAME,
         "replay-seed",
-        () => ({ execution: seeded, events: [] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: seeded, events: [] },
+        }),
       );
 
       // The seed activates the loop and materializes pass 1; pass 1's judge then
@@ -533,14 +550,16 @@ describe("R13.3 — loop decisions replay from durable records", () => {
       // and unrolls pass 2 — the decision record the ledger is built from. The
       // commit goes through the production repository, so its loop-decision
       // event is derived from the marker diff and appended in the same write.
-      await repository.mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => {
-        let working = structuredClone(execution);
-        completeContext(working, "seed");
-        working = runPass(working).execution;
-        completeContext(working, P1_WORKER);
-        completeContext(working, P1_JUDGE, { verdict: "fail" });
-        return runPass(working).execution;
-      });
+      await repository
+        .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => {
+          let working = structuredClone(execution);
+          completeContext(working, "seed");
+          working = runPass(working).execution;
+          completeContext(working, P1_WORKER);
+          completeContext(working, P1_JUDGE, { verdict: "fail" });
+          return changed(runPass(working).execution);
+        })
+        .then((mutation) => mutation.execution);
 
       const restarted = fixture.recreateStore();
       const reloaded = await restarted.getActiveGraphWorkflowExecution(

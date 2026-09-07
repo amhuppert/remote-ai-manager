@@ -1,3 +1,15 @@
+import { createGraphWorkflowGates } from "../engine-composition";
+import { readRepoConfig } from "@/lib/projects/repo-config";
+import { randomUUID } from "node:crypto";
+import { scheduleNextContext } from "../context-scheduler";
+import { applyFixtureMutation } from "./execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "../execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { createGraphWorkflowContextServices } from "../engine-composition";
 /**
  * The engine driving the REAL cohort machinery: the orchestrator's round, the
  * production validation service, and a fake at the one true boundary — the
@@ -29,30 +41,26 @@ import type {
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
-  type GraphWorkflowPushInfo,
 } from "@/lib/workflow-graph/execution-events";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
-import {
-  createGraphWorkflowIterationOrchestrator,
-  type GraphWorkflowIterationResult,
-  type GraphWorkflowIterationOrchestratorDeps,
-  type IterationOrchestratorValidationRoundService,
-} from "@/lib/workflow-graph/iteration-orchestrator";
+import { type GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
+import type { ContextIterationPorts } from "../engine-composition";
+import { type IterationOrchestratorValidationRoundService } from "@/lib/workflow-graph/context-validation-coordinator";
 
 /** What the engine asks a candidate-tree probe, exactly as the port declares it. */
 export type ResolveCandidateTreeInput = Parameters<
   IterationOrchestratorValidationRoundService["resolveCandidateTree"]
 >[0];
-import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
+
 import type {
   GraphWorkflowContextValidatorInput,
   RenderRoundCommonSectionsInput,
   ValidationRoundCommonSections,
-} from "@/lib/workflow-graph/execution-validation";
+} from "@/lib/workflow-graph/validator-cohort-runner";
 import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
 import {
   buildValidationRoundRoster,
@@ -75,38 +83,24 @@ export const COHORT = [
   "perf-reviewer",
 ] as const;
 
-type MutateActiveReturn =
-  | GraphWorkflowExecution
-  | {
-      execution: GraphWorkflowExecution;
-      events: GraphWorkflowExecutionEvent[];
-      pushes?: GraphWorkflowPushInfo[];
-    };
-
-function isResultWithEvents(value: MutateActiveReturn): value is {
-  execution: GraphWorkflowExecution;
-  events: GraphWorkflowExecutionEvent[];
-  pushes?: GraphWorkflowPushInfo[];
-} {
-  return "events" in value && "execution" in value;
-}
-
 export function createRepository(initial: GraphWorkflowExecution) {
   let active = initial;
   let lock: Promise<void> = Promise.resolve();
   const appendedEvents: GraphWorkflowExecutionEvent[] = [];
 
   const repository = {
+    ensureArtifactsMaterialized: async () => null,
+
     async getActive() {
       return active;
     },
-    async mutateActive(
+    async mutateActive<Value, Refusal>(
       _projectPath: string,
       _sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) => MutateActiveReturn | Promise<MutateActiveReturn>,
-    ) {
+      ) => ExecutionMutationDecision<Value, Refusal>,
+    ): Promise<ExecutionMutationOutcome<Value, Refusal>> {
       const previous = lock;
       let release!: () => void;
       lock = new Promise<void>((resolve) => {
@@ -114,18 +108,11 @@ export function createRepository(initial: GraphWorkflowExecution) {
       });
       try {
         await previous;
-        const result = await fn(structuredClone(active));
-        if (isResultWithEvents(result)) {
-          active = result.execution;
-          appendedEvents.push(...result.events);
-          repository.deliver({
-            events: result.events,
-            pushes: result.pushes ?? [],
-          });
-        } else {
-          active = result;
-        }
-        return active;
+        return applyFixtureMutation(active, fn, (next, delivery) => {
+          active = next;
+          appendedEvents.push(...delivery.events);
+          repository.deliver(delivery);
+        });
       } finally {
         release();
       }
@@ -425,7 +412,7 @@ export interface Harness {
 }
 
 export function createHarness(params: {
-  outputCaptureService?: GraphWorkflowIterationOrchestratorDeps["outputCaptureService"];
+  outputCaptureService?: ContextIterationPorts["outputCaptureService"];
   execution: GraphWorkflowExecution;
   runContextValidator: (
     input: GraphWorkflowContextValidatorInput,
@@ -483,18 +470,26 @@ export function createHarness(params: {
   repository.deliver = eventPublisher.deliver;
 
   const runContextValidator = vi.fn(params.runContextValidator);
-  const validationService = createGraphWorkflowValidationService({
+  const validationService = {
     runContextValidator,
     ...(params.renderRoundCommonSections
       ? { renderRoundCommonSections: params.renderRoundCommonSections }
       : {}),
-  });
+  };
 
   // The real recovery paths, over the same repository the orchestrator writes
   // through: resume and restart-normalization are production decisions about a
   // round's attempt budget, so the harness drives them rather than imitating
   // them.
   const manager = createGraphWorkflowManager({
+    abortConversation: () => {},
+    abortExecutionLoop: () => {},
+    retireLaneConversation: () => {},
+    getSession: async () => null,
+    stopExecutionLaneDevServers: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: repository,
     async loadDefinition() {
       return null;
@@ -521,15 +516,15 @@ export function createHarness(params: {
       const current = structuredClone(repository.read());
       current.status = "halted";
       current.haltReason = halt.reason;
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return current;
     },
   );
 
-  // Unwired means the service is never passed to the orchestrator at all, so
-  // this default exists only to keep the spy's type honest. It throws rather
-  // than inventing an empty batch: a test that reaches it has wired nothing and
-  // is about to assert on dispositions no turn produced.
+  // A scenario that reaches advisory delivery must supply a turn; otherwise
+  // there are no dispositions for the engine to persist.
   const runAdvisoryResponse = vi.fn(
     params.advisoryResponse ??
       (async (): Promise<GraphWorkflowAdvisoryResponseOutcome> => {
@@ -537,43 +532,67 @@ export function createHarness(params: {
       }),
   );
 
-  const orchestrator = createGraphWorkflowIterationOrchestrator({
-    outputCaptureService: params.outputCaptureService,
-    executionRepository: repository,
-    ...(params.advisoryResponse
-      ? { advisoryResponseService: { runAdvisoryResponse } }
-      : {}),
-    signalHalt,
-    findLatestContextValidationEvent:
-      repository.findLatestContextValidationEvent,
-    createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
-    createToolServer: vi.fn(() => ({ server: {} })),
-    runAgentIteration: vi.fn(async () => {
-      throw new Error("the validation-only path must not run the implementer");
-    }),
-    validationService,
-    scriptValidatorService: {
-      runScriptValidator: vi.fn(
-        params.scriptValidatorOutcome ??
-          (async (): Promise<ScriptValidatorOutcome> => ({
-            kind: "pass",
-            treeState: { headSha: "head-1", dirty: true },
-            command: "bun run pre-merge",
-          })),
-      ),
+  const orchestrator = createGraphWorkflowContextServices({
+    storage: {
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      eventPublisher,
     },
-    validationRoundService: {
-      resolveCandidateTree: vi.fn(
-        async (input: ResolveCandidateTreeInput) =>
-          params.resolveCandidateTree?.(input) ?? TREE_A,
-      ),
+    conversation: {
+      continuityService: null,
+      outputCaptureService: params.outputCaptureService ?? {
+        captureContextOutput: async () => {
+          throw new Error("Output capture is outside this fixture");
+        },
+      },
+      advisoryResponseService: { runAdvisoryResponse },
+      createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
+      runAgentIteration: vi.fn(async () => {
+        throw new Error(
+          "the validation-only path must not run the implementer",
+        );
+      }),
     },
-    ...(params.userInputGateService
-      ? { userInputGateService: params.userInputGateService }
-      : {}),
-    eventPublisher,
-    now: () => NOW,
-  });
+    validation: {
+      scriptValidatorService: {
+        runScriptValidator: vi.fn(
+          params.scriptValidatorOutcome ??
+            (async (): Promise<ScriptValidatorOutcome> => ({
+              kind: "pass",
+              treeState: { headSha: "head-1", dirty: true },
+              command: "bun run pre-merge",
+            })),
+        ),
+      },
+      validationRoundService: {
+        resolveCandidateTree: vi.fn(
+          async (input: ResolveCandidateTreeInput) =>
+            params.resolveCandidateTree?.(input) ?? TREE_A,
+        ),
+      },
+      cohort: validationService,
+    },
+    policy: {
+      ...createGraphWorkflowGates({
+        getActive: repository.getActive,
+        mutateActive: repository.mutateActive,
+        eventPublisher,
+        clearConversationQuestion: async () => false,
+        now: () => NOW,
+      }),
+      readRepoConfig,
+      readLaneConversation: async () => null,
+      createTaskId: () => `task-${randomUUID()}`,
+      materializeWorkflowDocuments: async () => {},
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      signalHalt,
+      ...(params.userInputGateService
+        ? { userInputGateService: params.userInputGateService }
+        : {}),
+      now: () => NOW,
+    },
+  }).iterationOrchestrator;
 
   return {
     repository,
@@ -604,17 +623,23 @@ export function createHarness(params: {
       await manager.resume("/repo", "session-1");
     },
     async scheduleNextContext() {
-      await manager.scheduleNextContext("/repo", "session-1");
+      await scheduleNextContext(
+        { executionRepository: repository, now: () => NOW },
+        "/repo",
+        "session-1",
+      );
     },
     async restartAndResume() {
       // A restart only normalizes an execution the persisted record still calls
       // running — which is exactly what a crash leaves behind.
-      await repository.mutateActive("/repo", "session-1", (latest) => {
-        const next = structuredClone(latest);
-        next.status = "running";
-        next.haltReason = null;
-        return next;
-      });
+      await repository
+        .mutateActive("/repo", "session-1", (latest) => {
+          const next = structuredClone(latest);
+          next.status = "running";
+          next.haltReason = null;
+          return changed(next);
+        })
+        .then((mutation) => mutation.execution);
       await manager.normalizeAfterRestart("/repo", "session-1");
       await manager.resume("/repo", "session-1");
     },

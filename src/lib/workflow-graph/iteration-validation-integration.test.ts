@@ -1,3 +1,10 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
@@ -11,29 +18,22 @@ import {
   stubValidationRoundService,
 } from "./test-fixtures";
 import {
-  createGraphWorkflowIterationOrchestrator,
-  type GraphWorkflowIterationToolServerInput,
-} from "@/lib/workflow-graph/iteration-orchestrator";
-
-type MutateActiveReturn =
-  | GraphWorkflowExecution
-  | {
-      execution: GraphWorkflowExecution;
-      events: GraphWorkflowExecutionEvent[];
-    };
+  createContextIterationFixture,
+  type BoundIterationCompletion,
+} from "./testing/iteration-fixture";
 
 interface InMemoryExecutionRepository {
   getActive(
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveReturn | Promise<MutateActiveReturn>,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   findLatestContextValidationEvent(
     projectPath: string,
     sessionName: string,
@@ -65,14 +65,10 @@ function createRepository(
       });
       try {
         await previous;
-        const result = await fn(structuredClone(activeExecution));
-        if ("execution" in result && "events" in result) {
-          activeExecution = result.execution;
-          appendedEvents.push(...result.events);
-        } else {
-          activeExecution = result;
-        }
-        return activeExecution;
+        return applyFixtureMutation(activeExecution, fn, (next, delivery) => {
+          activeExecution = next;
+          appendedEvents.push(...delivery.events);
+        });
       } finally {
         release();
       }
@@ -229,7 +225,7 @@ describe("graph workflow iteration context validation integration", () => {
   it("reopens named tasks after end-of-context validation fails and preserves failure history", async () => {
     const repository = createRepository(createContextValidatorExecution());
 
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    let toolInput: BoundIterationCompletion | null = null;
     const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "The plan document is missing rollback notes.",
@@ -248,15 +244,20 @@ describe("graph workflow iteration context validation integration", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
+      bindTaskCompletion: (input) => {
         toolInput = input;
-        return { server: { id: "tool-server" } };
+        return;
       },
       runAgentIteration: async () => {
         if (!toolInput) {
@@ -290,7 +291,7 @@ describe("graph workflow iteration context validation integration", () => {
     });
 
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
       "running",
     );
@@ -324,18 +325,23 @@ describe("graph workflow iteration context validation integration", () => {
   it("does not run context validation until every task in the context is completed", async () => {
     const repository = createRepository(createContextValidatorExecution());
 
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    let toolInput: BoundIterationCompletion | null = null;
     const validateContextCompletion = vi.fn();
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
+      bindTaskCompletion: (input) => {
         toolInput = input;
-        return { server: { id: "tool-server" } };
+        return;
       },
       runAgentIteration: async () => {
         if (!toolInput) {
@@ -365,7 +371,7 @@ describe("graph workflow iteration context validation integration", () => {
     });
 
     expect(validateContextCompletion).not.toHaveBeenCalled();
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
     expect(result.execution.taskStates["task-plan-1"]?.status).toBe(
       "completed",
     );
@@ -376,7 +382,7 @@ describe("graph workflow iteration context validation integration", () => {
     const repository = createRepository(createContextValidatorExecution());
     const signalHalt = createSignalHalt(repository);
 
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    let toolInput: BoundIterationCompletion | null = null;
     const validateContextCompletion = vi.fn(async () => ({
       kind: "infra_exhausted" as const,
       assignmentId: "general",
@@ -386,15 +392,20 @@ describe("graph workflow iteration context validation integration", () => {
       engine: "codex" as const,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
+      bindTaskCompletion: (input) => {
         toolInput = input;
-        return { server: { id: "tool-server" } };
+        return;
       },
       runAgentIteration: async () => {
         if (!toolInput) {
@@ -434,7 +445,7 @@ describe("graph workflow iteration context validation integration", () => {
         }),
       }),
     );
-    expect(result.shouldContinueInContext).toBe(false);
+    expect(result.decision.kind).toBe("execution_stopped");
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("validator_infra_error");
     expect(
@@ -448,7 +459,7 @@ describe("graph workflow iteration context validation integration", () => {
     );
     const signalHalt = createSignalHalt(repository);
 
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    let toolInput: BoundIterationCompletion | null = null;
     const validateContextCompletion = vi.fn(async () => ({
       kind: "fail" as const,
       summary: "Rollback notes are still missing.",
@@ -467,15 +478,20 @@ describe("graph workflow iteration context validation integration", () => {
       reviewArtifact: null,
     }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
+      bindTaskCompletion: (input) => {
         toolInput = input;
-        return { server: { id: "tool-server" } };
+        return;
       },
       runAgentIteration: async () => {
         if (!toolInput) {
@@ -515,10 +531,10 @@ describe("graph workflow iteration context validation integration", () => {
       contextId: "context-plan",
     });
 
-    expect(firstResult.shouldContinueInContext).toBe(true);
+    expect(firstResult.decision.kind).toBe("continue");
     expect(validateContextCompletion).toHaveBeenCalledTimes(2);
     expect(signalHalt).toHaveBeenCalledTimes(1);
-    expect(secondResult.shouldContinueInContext).toBe(false);
+    expect(secondResult.decision.kind).toBe("execution_stopped");
     expect(secondResult.execution.status).toBe("halted");
     expect(secondResult.execution.haltReason).toMatchObject({
       type: "circuit_breaker",
@@ -534,7 +550,7 @@ describe("graph workflow iteration context validation integration", () => {
   it("resets consecutiveFailureCount on a later passing context validation while preserving failure history", async () => {
     const repository = createRepository(createContextValidatorExecution());
 
-    let toolInput: GraphWorkflowIterationToolServerInput | null = null;
+    let toolInput: BoundIterationCompletion | null = null;
     const validateContextCompletion = vi
       .fn()
       .mockImplementationOnce(async () => ({
@@ -564,15 +580,20 @@ describe("graph workflow iteration context validation integration", () => {
         reviewArtifact: null,
       }));
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
-      createToolServer: (input) => {
+      bindTaskCompletion: (input) => {
         toolInput = input;
-        return { server: { id: "tool-server" } };
+        return;
       },
       runAgentIteration: async () => {
         if (!toolInput) {
@@ -611,8 +632,8 @@ describe("graph workflow iteration context validation integration", () => {
       contextId: "context-plan",
     });
 
-    expect(firstResult.shouldContinueInContext).toBe(true);
-    expect(secondResult.shouldContinueInContext).toBe(false);
+    expect(firstResult.decision.kind).toBe("continue");
+    expect(secondResult.decision.kind).toBe("ready_to_land");
     expect(secondResult.execution.contextStates["context-plan"]?.status).toBe(
       "completed",
     );

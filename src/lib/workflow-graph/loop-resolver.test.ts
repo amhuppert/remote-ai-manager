@@ -33,7 +33,7 @@ import {
 import {
   validateAuthoredDefinition,
   validateWorkflowDefinition,
-} from "./validation";
+} from "./definition-validation";
 
 // The judge (exit) verdict the `until` predicate is written against.
 const JUDGE_OUTPUT_SCHEMA: Record<string, unknown> = {

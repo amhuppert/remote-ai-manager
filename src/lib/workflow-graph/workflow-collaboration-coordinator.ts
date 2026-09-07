@@ -1,3 +1,10 @@
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
+import {
+  unchanged,
+  mutationValue,
+} from "@/lib/workflow-graph/execution-mutation";
+
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -41,11 +48,6 @@ export interface TriggeredWorkflowCollaborationRun {
 }
 
 interface WorkflowCollaborationCoordinatorWorkflowManager {
-  mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
   recordPendingHaltReason(input: {
     projectPath: string;
     sessionName: string;
@@ -55,6 +57,7 @@ interface WorkflowCollaborationCoordinatorWorkflowManager {
 }
 
 export interface WorkflowCollaborationCoordinatorDeps {
+  executionRepository: Pick<GraphWorkflowExecutionRepository, "mutateActive">;
   workflowManager: WorkflowCollaborationCoordinatorWorkflowManager;
   now?(): string;
   createWorkflowId?(): string;
@@ -105,13 +108,11 @@ export function createGraphWorkflowCollaborationCoordinator(
     output: { result: WorkflowCollaborationResult; roundsConsumed: number },
   ): Promise<void> {
     const completedAt = getNow(deps);
-    const nextExecution = await deps.workflowManager.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (execution) => {
+    const nextExecution = await deps.executionRepository
+      .mutateActive(input.projectPath, input.sessionName, (execution) => {
         const next = structuredClone(execution);
         if (!removePendingCollaboration(next, input.contextId, workflowId)) {
-          return next;
+          return changed(next);
         }
 
         next.collaborationContinuations ??= {};
@@ -139,9 +140,9 @@ export function createGraphWorkflowCollaborationCoordinator(
           next.activeContextIds = [...next.activeContextIds, input.contextId];
         }
 
-        return next;
-      },
-    );
+        return changed(next);
+      })
+      .then((mutation) => mutation.execution);
 
     logger.info("graph-workflow.collaboration.completed", {
       executionId: nextExecution.id,
@@ -242,13 +243,14 @@ export function createGraphWorkflowCollaborationCoordinator(
     workflowId: string;
   }> {
     const requestedWorkflowId = createWorkflowId(deps);
-    let workflowId = requestedWorkflowId;
-    let shouldStart = false;
-
-    const nextExecution = await deps.workflowManager.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (execution) => {
+    const {
+      execution: nextExecution,
+      workflowId,
+      shouldStart,
+    } = await deps.executionRepository
+      .mutateActive(input.projectPath, input.sessionName, (execution) => {
+        let workflowId = requestedWorkflowId;
+        let shouldStart = false;
         if (execution.id !== input.executionId) {
           throw new Error(
             "Session does not have the requested graph workflow execution",
@@ -260,7 +262,7 @@ export function createGraphWorkflowCollaborationCoordinator(
         const existing = next.pendingCollaborations[input.contextId];
         if (existing) {
           workflowId = existing.workflowId;
-          return next;
+          return unchanged({ workflowId, shouldStart });
         }
 
         if (!next.contextStates[input.contextId]) {
@@ -278,9 +280,12 @@ export function createGraphWorkflowCollaborationCoordinator(
           startedAt: getNow(deps),
         };
         shouldStart = true;
-        return next;
-      },
-    );
+        return changed(next, { workflowId, shouldStart });
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     if (!shouldStart) {
       logger.info("graph-workflow.collaboration.trigger_duplicate", {

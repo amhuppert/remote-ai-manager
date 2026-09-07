@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +103,7 @@ interface LoopPatternRun {
   /** The last prompt each context's implementer was handed. */
   prompts: Map<string, string>;
   manager: EngineScenarioRun["manager"];
+  repository: EngineScenarioRun["repository"];
   eventPublisher: EngineScenarioRun["eventPublisher"];
   projectPath: string;
   sessionName: string;
@@ -186,6 +188,7 @@ async function runLoopPattern<T>(
         events: run.events,
         prompts,
         manager: run.manager,
+        repository: run.repository,
         eventPublisher: run.eventPublisher,
         projectPath: run.projectPath,
         sessionName: run.sessionName,
@@ -426,7 +429,7 @@ describe("Loop-Until-Done — exhaustion halt and cap-raise resume (R15.3)", () 
       // releases the loop, and an exhausted budget is re-derived from durable
       // state rather than consumed by the halt that reported it.
       await expect(run.resume()).rejects.toThrow("resume would halt again");
-      const unrepaired = await run.manager.getActive(
+      const unrepaired = await run.repository.getActive(
         run.projectPath,
         run.sessionName,
       );
@@ -475,8 +478,9 @@ describe("Loop-Until-Done — exhaustion halt and cap-raise resume (R15.3)", () 
           },
         },
         {
-          getActiveExecution: run.manager.getActive,
-          mutateActive: run.manager.mutateActive,
+          executionContract: createNonParticipatingGraphExecutionContract(),
+          getActiveExecution: run.repository.getActive,
+          mutateActive: run.repository.mutateActive,
           buildLiveEditDeps: async () => harnessLiveEditDeps(),
           prepareAssignmentSnapshots: stubAssignmentSnapshotPreparation(),
           // The run's own publisher, so the repair's event lands in the same

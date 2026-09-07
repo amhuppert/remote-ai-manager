@@ -1,9 +1,6 @@
 import type { GraphWorkflowExecution } from "./schemas";
 import { acceptanceCriteriaRecordListText } from "./criteria/criterion-records";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "./execution-contract-port";
+import { type GraphExecutionContract } from "./execution-contract-port";
 
 /**
  * A launching tier's bounded, immutable prompt projection. The graph composer
@@ -23,7 +20,7 @@ export function renderGraphRolePromptProjection(
 export interface ComposeGraphRolePromptInput {
   execution: GraphWorkflowExecution;
   prompt: string;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
   role?: "implementer" | "context-validator";
   contextId?: string;
 }
@@ -98,11 +95,11 @@ function renderValidatorDeferralCohort(
 export async function composeGraphRolePrompt(
   input: ComposeGraphRolePromptInput,
 ): Promise<string> {
-  const contract =
-    input.executionContract ?? createRegisteredGraphExecutionContract();
-  const projection =
-    (await contract.loadPromptProjection?.(input.execution, input.contextId)) ??
-    null;
+  const contract = input.executionContract;
+  const projection = await contract.loadPromptProjection(
+    input.execution,
+    input.contextId,
+  );
   const projected =
     projection === null ? null : renderGraphRolePromptProjection(projection);
 

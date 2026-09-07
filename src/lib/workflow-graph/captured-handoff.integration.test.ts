@@ -68,13 +68,13 @@ describe("semantic validation of the downstream handoff", () => {
         },
         onAgentTurn: async ({
           contextId,
-          manager,
+          repository,
           projectPath,
           sessionName,
         }) => {
           if (contextId === "consume")
             consumed.push(
-              (await manager.getActive(projectPath, sessionName))
+              (await repository.getActive(projectPath, sessionName))
                 ?.contextOutputs.review?.value,
             );
         },

@@ -385,6 +385,9 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       now: () => NOW,
     });
     const repo = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -423,7 +426,11 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -931,7 +938,11 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
         const contextState = execution.contextStates[IMPL_CONTEXT_ID];
         if (!contextState?.validationRound) throw new Error("no round");
         contextState.validationRound.seq = ROUND_SEQ + 1;
-        return { execution, events: [] };
+        return {
+          kind: "commit",
+          value: undefined,
+          ...{ execution, events: [] },
+        };
       },
     );
 

@@ -13,7 +13,7 @@ import type {
 import { getConfigDirPath } from "../config/loader";
 import { createLogger } from "../logging";
 import { timed } from "../logging/timed";
-import { validateAuthoredDefinition } from "./validation";
+import { validateAuthoredDefinition } from "./definition-validation";
 import {
   assertDefinitionRecordSupported,
   assertNoLegacyWorkflowFields,

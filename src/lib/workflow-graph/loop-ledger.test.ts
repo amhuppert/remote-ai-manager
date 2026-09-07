@@ -66,15 +66,20 @@ describe("loop ledger over the paginated reader (R16.2)", () => {
       SESSION_NAME,
       "loop-ledger-test",
       (current) => ({
-        execution: next,
-        events: publisher.publishExecutionUpdate({
-          projectPath: PROJECT_PATH,
-          sessionName: SESSION_NAME,
-          previousExecution: current,
-          nextExecution: next,
-        }).events,
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: next,
+          events: publisher.publishExecutionUpdate({
+            projectPath: PROJECT_PATH,
+            sessionName: SESSION_NAME,
+            previousExecution: current,
+            nextExecution: next,
+          }).events,
+        },
       }),
     );
+    if (result.kind !== "committed") throw new Error("Expected ledger write");
     return result.execution;
   }
 

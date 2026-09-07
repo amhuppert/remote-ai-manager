@@ -1,3 +1,4 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 /**
  * Durability contract for the graph-workflow lane store (plan §3.2.3, red
  * test for bug §1.9.4): lane continuity state written during a run must
@@ -99,15 +100,16 @@ function buildStore(database: Db): LaneStore {
           `no active execution for ${projectPath}/${sessionName}`,
         );
       }
-      const next = await fn(current);
-      writeCounter += 1;
-      repo.setActive(
-        projectPath,
-        sessionName,
-        next,
-        `2026-07-12T10:00:${String(writeCounter).padStart(2, "0")}.000Z`,
-      );
-      return next;
+      const outcome = applyFixtureMutation(current, fn, (next) => {
+        writeCounter += 1;
+        repo.setActive(
+          projectPath,
+          sessionName,
+          next,
+          `2026-07-12T10:00:${String(writeCounter).padStart(2, "0")}.000Z`,
+        );
+      });
+      return outcome;
     },
   };
   return createGraphLaneStore(deps);

@@ -28,7 +28,7 @@ import { defaultGitClient } from "@/lib/git/client";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { resolveApprovalSnapshot } from "./approval-snapshot";
 import { candidateScopeForPlacement } from "./validation-diff-scope";
-import { createGraphWorkflowRouteValidationRoundService } from "./execution-route-handlers";
+import { createGraphWorkflowValidationRoundService } from "./validation-services";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { ContextPlacement } from "./definition-schemas";
 import type { GraphWorkflowExecution } from "./schemas";
@@ -55,7 +55,7 @@ describe("scoped approval snapshot over a shared lane worktree", () => {
   }
 
   /** The production freeze path, reading real git in the lane worktree. */
-  const roundService = createGraphWorkflowRouteValidationRoundService({
+  const roundService = createGraphWorkflowValidationRoundService({
     getSession: async () => null,
     readHeadSha: (path) =>
       defaultGitClient

@@ -1,3 +1,4 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 /**
  * Full-composition durability contract for graph lane outcome recording
  * (Phase 3 finding 2). Wires the REAL production stack over a fresh SQLite
@@ -5,7 +6,7 @@
  *  - the real graph-workflow-executions repository over `createPersistenceFixture`;
  *  - the real `GraphLaneStore` and the real `LaneService` layered on it, both
  *    routed through ONE `mutateActiveExecution` (as production wires them to
- *    `workflowManager.mutateActive`);
+ *    `executionRepository.mutateActive`);
  *  - the real `createGraphLaneContinuity` whose `executionRepository` is that
  *    same single critical section.
  *
@@ -120,20 +121,21 @@ function buildComposition(database: Db): Composition {
           `no active execution for ${projectPath}/${sessionName}`,
         );
       }
-      const next = await fn(current);
-      writes += 1;
-      repo.setActive(
-        projectPath,
-        sessionName,
-        next,
-        `2026-07-12T10:00:${String(writes).padStart(2, "0")}.000Z`,
-      );
+      const outcome = applyFixtureMutation(current, fn, (next) => {
+        writes += 1;
+        repo.setActive(
+          projectPath,
+          sessionName,
+          next,
+          `2026-07-12T10:00:${String(writes).padStart(2, "0")}.000Z`,
+        );
+      });
       if (afterNextWrite) {
         const hook = afterNextWrite;
         afterNextWrite = null;
         await hook();
       }
-      return next;
+      return outcome;
     };
 
   const laneService = createLaneService({

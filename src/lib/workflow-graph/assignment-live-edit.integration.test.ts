@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * The R11 lifecycle for an assignment edit, end to end over production parts:
  * the real live-edit pipeline mutating the execution the real cohort engine
@@ -130,6 +131,7 @@ function composedHash(assignment: {
 /** The live-edit service over the harness repository, so both share state. */
 function editDeps(harness: Harness): LiveEditApplyServiceDeps {
   return {
+    executionContract: createNonParticipatingGraphExecutionContract(),
     getActiveExecution: () => harness.repository.getActive(),
     mutateActive: (projectPath, sessionName, fn) =>
       harness.repository.mutateActive(projectPath, sessionName, fn),

@@ -228,11 +228,27 @@ export function mergeCollaborationOverWithDefaults(
   };
 }
 
-export function resolveContext(
+export type ContextConfigOverrides = Pick<
+  GraphWorkflowExecutionContextDefinition,
+  | "implementer"
+  | "contextValidator"
+  | "scriptValidator"
+  | "humanApprovalGate"
+  | "askUserQuestions"
+  | "mutability"
+  | "circuitBreaker"
+  | "iterationPolicy"
+  | "planRepair"
+  | "collaboration"
+  | "agentValidation"
+  | "memory"
+>;
+
+export function resolveContextDefaults(
   globalDefaults: WorkflowDefaults,
-  workflowConfig: WorkflowConfigOverride,
-  context: GraphWorkflowExecutionContextDefinition,
-): GraphWorkflowCascadeContext {
+  workflowConfig: WorkflowConfigOverride = {},
+  context: ContextConfigOverrides = {},
+) {
   const defaults = coerceGlobalDefaults(globalDefaults);
   const workflow: WorkflowConfigOverride = workflowConfig ?? {};
 
@@ -297,6 +313,28 @@ export function resolveContext(
   const memory = resolveMemoryPolicyWithProvenance(defaults, workflow, context);
 
   return {
+    implementer,
+    contextValidator,
+    scriptValidator,
+    scriptValidatorSource,
+    humanApprovalGate,
+    askUserQuestions,
+    mutability,
+    circuitBreaker,
+    iterationPolicy,
+    planRepair,
+    collaboration,
+    agentValidation,
+    memory,
+  };
+}
+
+export function resolveContext(
+  globalDefaults: WorkflowDefaults,
+  workflowConfig: WorkflowConfigOverride,
+  context: GraphWorkflowExecutionContextDefinition,
+): GraphWorkflowCascadeContext {
+  return {
     id: context.id,
     title: context.title,
     ...(context.description !== undefined
@@ -318,19 +356,7 @@ export function resolveContext(
     // Same identity passthrough: the routing policy describes this context's own
     // outgoing edge set, so no cascade tier can meaningfully supply one.
     ...(context.routing !== undefined ? { routing: context.routing } : {}),
-    implementer,
-    contextValidator,
-    scriptValidator,
-    scriptValidatorSource,
-    humanApprovalGate,
-    askUserQuestions,
-    mutability,
-    circuitBreaker,
-    iterationPolicy,
-    planRepair,
-    collaboration,
-    agentValidation,
-    memory,
+    ...resolveContextDefaults(globalDefaults, workflowConfig, context),
   };
 }
 
@@ -438,7 +464,7 @@ export function computeUsedBackends(
 export function resolveCollaborationConfigWithProvenance(
   globalDefaults: WorkflowDefaults,
   workflowConfig: WorkflowConfigOverride,
-  contextConfig: GraphWorkflowExecutionContextDefinition,
+  contextConfig: Pick<ContextConfigOverrides, "collaboration">,
 ): ResolvedCollaborationConfig {
   const perNode: WorkflowCollaborationConfigOverride =
     contextConfig.collaboration ?? {};
@@ -490,7 +516,7 @@ function pickProvenancedField<T>(
 export function resolveAgentValidationWithProvenance(
   globalDefaults: WorkflowDefaults,
   workflowConfig: WorkflowConfigOverride,
-  contextConfig: GraphWorkflowExecutionContextDefinition,
+  contextConfig: Pick<ContextConfigOverrides, "agentValidation">,
 ): ResolvedAgentValidationConfig {
   const perNode = contextConfig.agentValidation ?? {};
   const workflow = workflowConfig.agentValidation ?? {};
@@ -523,7 +549,7 @@ export function resolveAgentValidationWithProvenance(
 export function resolveMemoryPolicyWithProvenance(
   globalDefaults: WorkflowDefaults,
   workflowConfig: WorkflowConfigOverride,
-  contextConfig: GraphWorkflowExecutionContextDefinition,
+  contextConfig: Pick<ContextConfigOverrides, "memory">,
 ): ResolvedMemoryPolicyConfig {
   const perNode = contextConfig.memory ?? {};
   const workflow = workflowConfig.memory ?? {};

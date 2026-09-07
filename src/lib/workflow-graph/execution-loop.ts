@@ -1,7 +1,15 @@
+import type { ContextLanding } from "./context-landing";
+import { type ContextLandingInput } from "./context-landing";
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
+import type { ContextScheduler } from "./context-scheduler";
+import { unchanged, eventsOnly } from "@/lib/workflow-graph/execution-mutation";
+import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
+
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { getConfiguredQueryConcurrency as defaultGetMaxConcurrentQueries } from "@/lib/shared/query-semaphore";
+
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { AgentTurnFailedError, toHaltReason, type DirtyPath } from "./errors";
@@ -11,17 +19,12 @@ import {
   type CircuitBreakerGateResult,
   type RunCircuitBreakerGateInput,
 } from "@/lib/workflows/primitives/circuit-breaker-gate";
+
 import {
-  acquireConversationLock as defaultAcquireConversationLock,
-  isConversationBusy as defaultIsConversationBusy,
-} from "@/lib/prompt/single-flight";
-import {
-  createApprovalGateService,
   type ApprovalGateService,
   type AppliedApprovalDecision,
 } from "@/lib/workflow-graph/approval-gate";
 import {
-  createUserInputGateService,
   type ConsumeAnswersResult,
   type ResumeUserInputContext,
   type UserInputGateService,
@@ -31,25 +34,20 @@ import {
   pendingUserInputEntries,
   unansweredPendingUserInputs,
 } from "@/lib/workflow-graph/pending-user-input";
-import { clearConversationQuestion } from "@/lib/workflows/conversation/manager";
+
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import type {
   ExecutionTargetResolver,
   ExecutionTarget,
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
-import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
+
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { type SessionGitLock } from "@/lib/shared/lock-retry";
 import { sleep } from "@/lib/shared/sleep";
-import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
-import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
-import type { SoloContextCommitter } from "@/lib/workflow-graph/solo-context-committer";
-import {
-  applyLaneCommitSnapshot,
-  type LaneCommitter,
-} from "@/lib/workflow-graph/lane-committer";
-import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
+
+import { type LaneCommitter } from "@/lib/workflow-graph/lane-committer";
+
 import {
   classifyContextSchedulability,
   landGatedPublishSettlement,
@@ -57,21 +55,12 @@ import {
 import {
   collectLandingCommitRepairs,
   collectLandingProbeTargets,
-  settleLandingIntent,
   settleRoutes,
   type LandingBranchEvidence,
   type RouteSettlementOutcome,
 } from "@/lib/workflow-graph/route-runtime";
-import {
-  createLaneDriftAuditor,
-  type LaneDriftAuditor,
-  type LaneDriftVerdict,
-} from "./lane-drift";
-import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
-import {
-  createLandingEvidenceProber,
-  type LandingEvidenceProber,
-} from "@/lib/workflow-graph/landing-evidence";
+
+import { type LandingEvidenceProber } from "@/lib/workflow-graph/landing-evidence";
 import {
   finalizeLoopPassMaterialization,
   prepareLoopPassMaterialization,
@@ -79,13 +68,10 @@ import {
   type LoopMaterializationRequest,
   type LoopSettlementOutcome,
 } from "@/lib/workflow-graph/loop-settlement";
-import { buildDefaultLiveEditDeps } from "@/lib/workflow-graph/live-edit-apply";
+
 import type { LiveEditDeps } from "@/lib/workflow-graph/runtime-edits";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "@/lib/workflow-graph/execution-contract-port";
-import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { type GraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { getEligibleContextIds } from "@/lib/workflow-graph/lane-readiness";
 import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
 import {
   appendPendingJoin,
@@ -95,7 +81,6 @@ import {
   materializeSessionLane,
   planContextJoin,
   planFinalPublishJoin,
-  resolveContextConversationId,
 } from "@/lib/workflow-graph/lane-join";
 import {
   describeValidationCertificationDebt,
@@ -104,13 +89,11 @@ import {
 import {
   applyJoinProgress,
   buildLifecycleSnapshot,
-  transitionContextMergeStatus,
   transitionContextStatus,
 } from "@/lib/workflow-graph/context-transitions";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalDecision,
-  GraphWorkflowCanonicalOwnership,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
@@ -119,8 +102,6 @@ import type {
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 
-/** Matches the halt schema's cap on `unattributedPaths`. */
-const MAX_REPORTED_UNATTRIBUTED_PATHS = 50;
 import {
   StaleLoopFenceError,
   isOwnRetiredGeneration,
@@ -132,16 +113,10 @@ import {
   hasPartialIterationProgress,
   IterationFailureWithProgressError,
 } from "./iteration-failure-with-progress";
-import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
-import type { MutateActiveResult } from "./execution-repository";
-import type {
-  RecordPendingHaltReasonResult,
-  ScheduleEligibleContextsResult,
-} from "./workflow-manager";
-import {
-  resolveLaneMergeRunValidationMode,
-  type ReadLaneMergeRepoConfig,
-} from "./lane-merge-validation";
+import type { GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
+
+import type { RecordPendingHaltReasonResult } from "./workflow-manager";
+import type { ScheduleEligibleContextsResult } from "@/lib/workflow-graph/context-scheduler";
 
 export interface GraphWorkflowExecutionLoopInput {
   projectPath: string;
@@ -159,13 +134,6 @@ export interface GraphWorkflowExecutionLoopInput {
 }
 
 export interface GraphWorkflowExecutionLoopWorkflowManager {
-  scheduleEligibleContexts(input: {
-    projectPath: string;
-    sessionName: string;
-    sessionLaneEnabled?: boolean;
-    capacityRemaining?: number;
-    excludedContextIds: readonly string[];
-  }): Promise<ScheduleEligibleContextsResult>;
   send(
     projectPath: string,
     sessionName: string,
@@ -181,17 +149,6 @@ export interface GraphWorkflowExecutionLoopWorkflowManager {
     projectPath: string;
     sessionName: string;
   }): Promise<GraphWorkflowExecution>;
-  mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
-  getActive(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution | null>;
   recoverRetryableIterationError?(
     projectPath: string,
     sessionName: string,
@@ -212,44 +169,39 @@ interface GraphWorkflowExecutionLoopIterationOrchestrator {
 }
 
 export interface GraphWorkflowExecutionLoopDeps {
+  executionRepository: Pick<
+    GraphWorkflowExecutionRepository,
+    "getActive" | "mutateActive"
+  >;
+  contextScheduler: ContextScheduler;
   workflowManager: GraphWorkflowExecutionLoopWorkflowManager;
   iterationOrchestrator: GraphWorkflowExecutionLoopIterationOrchestrator;
   parallelWorktrees: ParallelWorktrees;
-  mergeMutex: PerSessionMergeMutex;
   sessionGitLock: SessionGitLock;
-  mergeRunner: GraphMergeRunner;
-  soloContextCommitter: SoloContextCommitter;
   laneCommitter: LaneCommitter;
-  joinRunner: JoinRunner;
   executionTargetResolver: ExecutionTargetResolver;
   /**
    * Reads landing evidence back off the branch for the commit modes (decision
    * D8). The scheduler probes before each settlement pass so a commit-mode
    * intent whose settlement did not survive a crash is repaired from replayable
-   * facts rather than from lifecycle bookkeeping. Defaults to the git-backed
-   * prober.
+   * facts rather than from lifecycle bookkeeping.
    */
-  landingEvidenceProber?: LandingEvidenceProber;
-  /**
-   * Judges the lane worktree against its members' collective ownership after an
-   * enveloped landing (R8). Defaults to the git-backed auditor.
-   */
-  laneDriftAuditor?: LaneDriftAuditor;
+  landingEvidenceProber: LandingEvidenceProber;
   /**
    * Repairs a lane worktree's shared index before a full-access member's first
    * turn, so an agent's own `git commit -a` cannot publish the deletion of a
-   * path an enveloped sibling landed (R7.2). Defaults to the git-backed resync.
+   * path an enveloped sibling landed (R7.2).
    */
-  resyncSharedIndex?(worktreePath: string): Promise<void>;
+  resyncSharedIndex(worktreePath: string): Promise<void>;
   /**
    * Builds the live-edit core's deps for loop unrolling (D4 R9). Unrolling
    * rides `applyLiveExecutionEdits` through the staging seam, and that core is
    * sync, so its config-derived deps are resolved once per materialization
-   * outside the write queue. Defaults to the same builder the HTTP live-edit
-   * route uses, so an unrolled pass is seeded exactly as a live-added one.
+   * outside the write queue. Production supplies the live-edit builder so an
+   * unrolled pass is seeded exactly as a live-added one.
    */
-  buildLiveEditDeps?(projectPath: string): Promise<LiveEditDeps>;
-  executionContract?: GraphExecutionContract;
+  buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  executionContract: GraphExecutionContract;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -270,18 +222,16 @@ export interface GraphWorkflowExecutionLoopDeps {
    * set but release their query permit until they can resume. Defaults to the
    * semaphore's configured limit.
    */
-  getMaxConcurrentQueries?: () => Promise<number>;
+  getMaxConcurrentQueries: () => Promise<number>;
   createJobId?: () => string;
-  readRepoConfig?: ReadLaneMergeRepoConfig;
   /**
    * Read tracked dirty paths from the session worktree. Used by the pre-batch
    * preflight to halt before scheduling worktree-isolation contexts whose
-   * fan-in merge would inevitably fail. Default returns [] (clean), keeping
-   * existing tests unchanged.
+   * fan-in merge would inevitably fail. Inspection errors halt before admission.
    */
-  getSessionWorktreeDirtyPaths?: (input: {
+  getSessionWorktreeDirtyPaths(input: {
     sessionWorktreePath: string;
-  }) => Promise<DirtyPath[]>;
+  }): Promise<DirtyPath[]>;
   waitForCollaborationProgress?: (input: {
     projectPath: string;
     sessionName: string;
@@ -302,10 +252,9 @@ export interface GraphWorkflowExecutionLoopDeps {
   }): Promise<void>;
   /**
    * Approval-gate service whose draft-level apply methods run inside the
-   * loop's decision-application mutation. Defaults to a service backed by
-   * the workflow manager's mutateActive.
+   * loop's decision-application mutation.
    */
-  approvalGateService?: ApprovalGateService;
+  approvalGateService: ApprovalGateService;
   /**
    * Poll interval for the user-input-gate wait, mirroring the approval gate's
    * cadence. The loop refreshes execution state after each call until answers
@@ -321,35 +270,31 @@ export interface GraphWorkflowExecutionLoopDeps {
   }): Promise<void>;
   /**
    * User-input-gate service. The loop consumes recorded answers on resume and
-   * withdraws all parked questions on abort through it. Defaults to a service
-   * backed by the workflow manager's mutateActive/getActive, the event
-   * publisher, and the conversation-machine dispatch.
+   * withdraws all parked questions on abort through it.
    */
-  userInputGateService?: UserInputGateService;
+  userInputGateService: UserInputGateService;
   /**
    * Publisher for the approval-resolved history/SSE event emitted after a
    * decision is applied.
    */
-  eventPublisher?: ReturnType<
-    typeof createGraphWorkflowExecutionEventPublisher
-  >;
+  eventPublisher: ReturnType<typeof createGraphWorkflowExecutionEventPublisher>;
   /**
    * Conversation single-flight lock probes for the decision-application
    * quiescence rule: the loop probes `isConversationBusy` on the wait
    * interval and acquires once free, holding the lock across the approved
-   * merge or rejected remediation seeding. Default to the shared
-   * single-flight lock manager.
+   * merge or rejected remediation seeding.
    */
-  isConversationBusy?(
+  isConversationBusy(
     projectPath: string,
     sessionName: string,
     conversationId: string,
   ): boolean;
-  acquireConversationLock?(
+  acquireConversationLock(
     projectPath: string,
     sessionName: string,
     conversationId: string,
   ): () => void;
+  contextLanding: ContextLanding;
 }
 
 type QueryCapacityLeaseState = "held" | "released" | "waiting";
@@ -862,47 +807,29 @@ const logger = createLogger("graph-workflow-execution-loop");
 export function createGraphWorkflowExecutionLoop(
   deps: GraphWorkflowExecutionLoopDeps,
 ) {
+  if (typeof deps.getSessionWorktreeDirtyPaths !== "function") {
+    logger.error(
+      "graph-workflow.configuration.missing_worktree_inspection",
+      {},
+    );
+    throw new Error("Worktree inspection is required");
+  }
   const runCircuitBreakerGate =
     deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
-  const getMaxConcurrentQueries =
-    deps.getMaxConcurrentQueries ?? defaultGetMaxConcurrentQueries;
+  const getMaxConcurrentQueries = deps.getMaxConcurrentQueries;
   const createJobId = deps.createJobId ?? (() => randomUUID());
-  const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
-  const landingEvidenceProber =
-    deps.landingEvidenceProber ?? createLandingEvidenceProber();
-  const laneDriftAuditor = deps.laneDriftAuditor ?? createLaneDriftAuditor();
-  const resyncSharedIndex =
-    deps.resyncSharedIndex ??
-    ((worktreePath: string) => resyncSharedIndexToHead(worktreePath));
-  const buildLiveEditDeps = deps.buildLiveEditDeps ?? buildDefaultLiveEditDeps;
-  const executionContract =
-    deps.executionContract ?? createRegisteredGraphExecutionContract();
-  const approvalGateService =
-    deps.approvalGateService ??
-    createApprovalGateService({
-      mutateActive: (projectPath, sessionName, fn) =>
-        deps.workflowManager.mutateActive(projectPath, sessionName, fn),
-      now: () => new Date().toISOString(),
-    });
-  const eventPublisher =
-    deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
-  const userInputGateService =
-    deps.userInputGateService ??
-    createUserInputGateService({
-      getActive: (projectPath, sessionName) =>
-        deps.workflowManager.getActive(projectPath, sessionName),
-      mutateActive: (projectPath, sessionName, fn) =>
-        deps.workflowManager.mutateActive(projectPath, sessionName, fn),
-      publishUserInputPending: eventPublisher.publishUserInputPending,
-      publishUserInputResolved: eventPublisher.publishUserInputResolved,
-      deliver: eventPublisher.deliver,
-      clearConversationQuestion,
-      now: () => new Date().toISOString(),
-    });
-  const isConversationBusy =
-    deps.isConversationBusy ?? defaultIsConversationBusy;
-  const acquireConversationLock =
-    deps.acquireConversationLock ?? defaultAcquireConversationLock;
+  const {
+    landingEvidenceProber,
+    contextLanding,
+    resyncSharedIndex,
+    buildLiveEditDeps,
+    approvalGateService,
+    eventPublisher,
+    userInputGateService,
+    isConversationBusy,
+    acquireConversationLock,
+  } = deps;
+  const executionContract = deps.executionContract;
 
   function run(
     input: GraphWorkflowExecutionLoopInput,
@@ -990,24 +917,35 @@ export function createGraphWorkflowExecutionLoop(
      */
     async function settleRoutesForPass(): Promise<"settled" | "halted"> {
       const branchEvidence = await probeLandingEvidence();
-      const settlement: { value: RouteSettlementOutcome | null } = {
-        value: null,
-      };
-      const next = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
-          if (current.status !== "running") return current;
-          if (current.pendingHaltReason !== null) return current;
+
+      const { execution: next, settlement } = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (current) => {
+          const settlement: { value: RouteSettlementOutcome | null } = {
+            value: null,
+          };
+
+          if (current.status !== "running") return unchanged({ settlement });
+          if (current.pendingHaltReason !== null)
+            return unchanged({ settlement });
           // `mutateActive` hands the reducer its own clone, so settling in
           // place here cannot reach the caller's snapshot.
           settlement.value = settleRoutes(current, {
             now: new Date().toISOString(),
             branchEvidence,
           });
-          return current;
-        },
-      );
+          const outcome = settlement.value;
+          if (
+            outcome.skippedContextIds.length === 0 &&
+            outcome.settledSourceContextIds.length === 0 &&
+            outcome.reconciledContextIds.length === 0
+          )
+            return unchanged({ settlement });
+          return changed(current, { settlement });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
       adoptExecution(next);
 
       const outcome = settlement.value;
@@ -1108,19 +1046,36 @@ export function createGraphWorkflowExecutionLoop(
         });
 
         if (repair.mode === "lane_commit") {
-          await runLaneCommit(
-            repair.contextId,
-            repair.laneId,
-            repair.worktreePath,
-            repair.branchName,
-            repair.baselineSha,
+          adoptExecution(
+            (
+              await contextLanding.land({
+                ...input,
+                executionId: execution.id,
+                contextId: repair.contextId,
+                preTurnHeadSha: repair.baselineSha,
+                target: {
+                  isolation: "worktree",
+                  laneId: repair.laneId,
+                  worktreePath: repair.worktreePath,
+                  branchName: repair.branchName,
+                },
+              })
+            ).execution,
           );
         } else {
-          await runSoloCommit(repair.contextId, repair.baselineSha);
+          adoptExecution(
+            (
+              await contextLanding.land({
+                ...input,
+                executionId: execution.id,
+                contextId: repair.contextId,
+                preTurnHeadSha: repair.baselineSha,
+                target: { isolation: "session" },
+              })
+            ).execution,
+          );
         }
-        // The committers settle their own intent on every terminal path, so the
-        // repair cannot repeat; refresh because they mutate through the manager
-        // without handing the snapshot back.
+        // Re-read sibling progress before deciding whether the repair pass can continue.
         await refreshExecution();
         if (execution.pendingHaltReason !== null) return "halted";
         repaired = true;
@@ -1145,21 +1100,32 @@ export function createGraphWorkflowExecutionLoop(
     async function settleLoopsForPass(): Promise<
       "settled" | "changed" | "halted"
     > {
-      const settlement: { value: LoopSettlementOutcome | null } = {
-        value: null,
-      };
-      const next = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
-          if (current.status !== "running") return current;
-          if (current.pendingHaltReason !== null) return current;
+      const { execution: next, settlement } = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (current) => {
+          const settlement: { value: LoopSettlementOutcome | null } = {
+            value: null,
+          };
+
+          if (current.status !== "running") return unchanged({ settlement });
+          if (current.pendingHaltReason !== null)
+            return unchanged({ settlement });
           settlement.value = settleLoops(current, {
             now: new Date().toISOString(),
           });
-          return current;
-        },
-      );
+          const outcome = settlement.value;
+          if (
+            !outcome.ledgerChanged &&
+            outcome.activatedLoopGroupIds.length === 0 &&
+            outcome.skippedLoopGroupIds.length === 0 &&
+            outcome.concludedLoopGroupIds.length === 0
+          )
+            return unchanged({ settlement });
+          return changed(current, { settlement });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
       adoptExecution(next);
 
       const outcome = settlement.value;
@@ -1271,11 +1237,10 @@ export function createGraphWorkflowExecutionLoop(
           return;
         }
 
-        const install: { value: string | null } = { value: null };
-        const next = await deps.workflowManager.mutateActive(
-          input.projectPath,
-          input.sessionName,
-          (current) => {
+        const { execution: next, install } = await deps.executionRepository
+          .mutateActive(input.projectPath, input.sessionName, (current) => {
+            const install: { value: string | null } = { value: null };
+
             const installed = finalizeLoopPassMaterialization(
               current,
               prepared.prepared,
@@ -1284,15 +1249,21 @@ export function createGraphWorkflowExecutionLoop(
             );
             if (!installed.ok) {
               install.value = installed.outcome;
-              return current;
+              return unchanged({ install });
             }
             install.value = installed.install;
-            return {
-              ...installed.execution,
-              liveRevision: installed.execution.liveRevision + 1,
-            };
-          },
-        );
+            return changed(
+              {
+                ...installed.execution,
+                liveRevision: installed.execution.liveRevision + 1,
+              },
+              { install },
+            );
+          })
+          .then((mutation) => ({
+            execution: mutation.execution,
+            ...mutationValue(mutation),
+          }));
         adoptExecution(next);
 
         if (install.value !== "reprepare") {
@@ -1373,7 +1344,7 @@ export function createGraphWorkflowExecutionLoop(
     /** Refresh from the session's active execution, fence-checked. */
     async function refreshExecution(): Promise<void> {
       adoptExecution(
-        await deps.workflowManager.getActive(
+        await deps.executionRepository.getActive(
           input.projectPath,
           input.sessionName,
         ),
@@ -1714,24 +1685,35 @@ export function createGraphWorkflowExecutionLoop(
       contextId: string,
       decision: GraphWorkflowApprovalDecision,
     ): Promise<ApprovalApplicationOutcome> {
-      let exitedStatus: Exclude<GraphWorkflowStatus, "running"> | null = null;
       // Applied-decision observability captured (pure) inside the reducer and
       // emitted AFTER the mutation commits, so the write-queue critical section
-      // performs no logging I/O (`no-slow-work-in-critical-section`). Boxed so
-      // the reducer's assignment survives control-flow narrowing after the call.
-      const appliedBox: { value: AppliedApprovalDecision | null } = {
-        value: null,
-      };
-      // Boxed for the same reason as `appliedBox`: assigned inside the reducer
-      // callback, read after the mutation resolves.
-      const withheldBox = { value: false };
-      execution = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (e) => {
+      // performs no logging I/O (`no-slow-work-in-critical-section`). The result
+      // carries the applied decision and whether output requirements withheld it.
+
+      const {
+        execution: mutationExecution,
+        exitedStatus,
+        appliedBox,
+        withheldBox,
+      } = await deps.executionRepository
+        .mutateActive<{
+          exitedStatus: Exclude<
+            GraphWorkflowExecution["status"],
+            "running"
+          > | null;
+          appliedBox: { value: AppliedApprovalDecision | null };
+          withheldBox: { value: boolean };
+        }>(input.projectPath, input.sessionName, (e) => {
+          let exitedStatus: Exclude<GraphWorkflowStatus, "running"> | null =
+            null;
+          const appliedBox: { value: AppliedApprovalDecision | null } = {
+            value: null,
+          };
+          const withheldBox = { value: false };
+
           if (e.status !== "running") {
             exitedStatus = e.status;
-            return e;
+            return unchanged({ exitedStatus, appliedBox, withheldBox });
           }
           const next = structuredClone(e);
           if (decision.type === "approved") {
@@ -1781,9 +1763,13 @@ export function createGraphWorkflowExecutionLoop(
           next.machineSnapshot = buildLifecycleSnapshot(next, {
             hasLiveIteration: false,
           });
-          return next;
-        },
-      );
+          return changed(next, { exitedStatus, appliedBox, withheldBox });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
+      execution = mutationExecution;
       if (exitedStatus !== null) {
         execLogger?.iteration(contextId, "gate.application_exit", {
           cause: exitedStatus,
@@ -1834,10 +1820,8 @@ export function createGraphWorkflowExecutionLoop(
       conversationId: string,
       decision: GraphWorkflowApprovalDecision,
     ): Promise<void> {
-      execution = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (latest) => {
+      execution = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (latest) => {
           const delivery = eventPublisher.publishApprovalResolved({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
@@ -1848,25 +1832,9 @@ export function createGraphWorkflowExecutionLoop(
             message: decision.type === "rejected" ? decision.message : null,
             decidedAt: decision.decidedAt,
           });
-          return { execution: latest, ...delivery };
-        },
-      );
-    }
-
-    async function readSessionWorktreeDirtyPaths(
-      sessionWorktreePath: string,
-    ): Promise<DirtyPath[]> {
-      if (!deps.getSessionWorktreeDirtyPaths) return [];
-      try {
-        return await deps.getSessionWorktreeDirtyPaths({ sessionWorktreePath });
-      } catch (err) {
-        logger.warn("graph-workflow.preflight.dirty_read_failed", {
-          executionId: execution.id,
-          sessionWorktreePath,
-          error: getErrorMessage(err),
-        });
-        return [];
-      }
+          return eventsOnly(undefined, delivery);
+        })
+        .then((mutation) => mutation.execution);
     }
 
     async function preflightSessionWorktreeForNextBatch(): Promise<boolean> {
@@ -1882,11 +1850,33 @@ export function createGraphWorkflowExecutionLoop(
           if (!state) return false;
           if (state.status !== "pending" && state.status !== "ready")
             return false;
-          return state.isolation === "worktree";
+          return (
+            state.isolation === "worktree" ||
+            ctx.placement.lane !== SESSION_LANE_ID
+          );
         });
       if (!needsWorktreeBatch) return false;
 
-      const dirty = await readSessionWorktreeDirtyPaths(session.worktreePath);
+      let dirty: DirtyPath[];
+      try {
+        dirty = await deps.getSessionWorktreeDirtyPaths({
+          sessionWorktreePath: session.worktreePath,
+        });
+      } catch (error) {
+        const message = getErrorMessage(error);
+        logger.error("graph-workflow.preflight.dirty_read_failed", {
+          executionId: execution.id,
+          sessionWorktreePath: session.worktreePath,
+          error: message,
+        });
+        await recordHalt({
+          type: "execution_loop_failed",
+          contextId: null,
+          cause: "io",
+          message,
+        });
+        return true;
+      }
       const trackedDirty = dirty.filter((p) => p.tracked);
       if (trackedDirty.length === 0) return false;
 
@@ -1896,7 +1886,10 @@ export function createGraphWorkflowExecutionLoop(
           if (!state) return false;
           if (state.status !== "pending" && state.status !== "ready")
             return false;
-          return state.isolation === "worktree";
+          return (
+            state.isolation === "worktree" ||
+            ctx.placement.lane !== SESSION_LANE_ID
+          );
         })?.id ?? "";
 
       const haltReason: GraphWorkflowHaltReason = {
@@ -1932,17 +1925,15 @@ export function createGraphWorkflowExecutionLoop(
           state.worktreePath === null ||
           state.branchName === null
         ) {
-          await deps.workflowManager.mutateActive(
-            input.projectPath,
-            input.sessionName,
-            (e) => {
+          await deps.executionRepository
+            .mutateActive(input.projectPath, input.sessionName, (e) => {
               const next = structuredClone(e);
               next.pendingMergeRetry = next.pendingMergeRetry.filter(
                 (id) => id !== contextId,
               );
-              return next;
-            },
-          );
+              return changed(next);
+            })
+            .then((mutation) => mutation.execution);
           await refreshExecution();
           continue;
         }
@@ -1951,262 +1942,42 @@ export function createGraphWorkflowExecutionLoop(
           executionId: execution.id,
           contextId,
         });
-        await runFanInMerge(contextId, state.worktreePath, state.branchName);
+        adoptExecution(
+          (
+            await contextLanding.land({
+              ...input,
+              executionId: execution.id,
+              contextId: contextId,
+              preTurnHeadSha: null,
+              target: {
+                isolation: "worktree",
+                laneId: null,
+                worktreePath: state.worktreePath,
+                branchName: state.branchName,
+              },
+            })
+          ).execution,
+        );
 
         await refreshExecution();
 
         const refreshedState = execution.contextStates[contextId];
         if (refreshedState?.mergeStatus === "merged-success") {
-          await deps.workflowManager.mutateActive(
-            input.projectPath,
-            input.sessionName,
-            (e) => {
+          await deps.executionRepository
+            .mutateActive(input.projectPath, input.sessionName, (e) => {
               const next = structuredClone(e);
               next.pendingMergeRetry = next.pendingMergeRetry.filter(
                 (id) => id !== contextId,
               );
-              return next;
-            },
-          );
+              return changed(next);
+            })
+            .then((mutation) => mutation.execution);
           await refreshExecution();
           continue;
         }
-        // Merge failed again — halt path is already recorded by runFanInMerge.
+        // The landing service has recorded the failed merge and its halt reason.
         return;
       }
-    }
-
-    async function runFanInMerge(
-      contextId: string,
-      featureWorktreePath: string,
-      featureBranchName: string,
-    ): Promise<void> {
-      execLogger?.iteration(contextId, "merge.queued", {
-        branchName: featureBranchName,
-        worktreePath: featureWorktreePath,
-      });
-      logger.info("graph-workflow.merge.queued", {
-        executionId: execution.id,
-        contextId,
-        branchName: featureBranchName,
-      });
-
-      await deps.mergeMutex.withMergeMutex(
-        {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-        },
-        async () => {
-          await deps.workflowManager.mutateActive(
-            input.projectPath,
-            input.sessionName,
-            (e) => {
-              const next = structuredClone(e);
-              if (next.contextStates[contextId]) {
-                transitionContextMergeStatus(next, contextId, "in-progress", {
-                  reason: "merge.started",
-                });
-              }
-              return next;
-            },
-          );
-
-          execLogger?.iteration(contextId, "merge.started", {
-            branchName: featureBranchName,
-          });
-          logger.info("graph-workflow.merge.started", {
-            executionId: execution.id,
-            contextId,
-            branchName: featureBranchName,
-          });
-
-          const session = await deps.getSession(
-            input.projectPath,
-            input.sessionName,
-          );
-          if (!session) {
-            const reason: GraphWorkflowHaltReason = {
-              type: "merge_failure",
-              contextId,
-              message: `Session "${input.sessionName}" not found during fan-in merge`,
-              conflictFiles: [],
-            };
-            const haltResult =
-              await deps.workflowManager.recordPendingHaltReason({
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-                reason,
-                applyAdditionalMutation: (next) => {
-                  const cs = next.contextStates[contextId];
-                  if (cs) {
-                    transitionContextMergeStatus(
-                      next,
-                      contextId,
-                      "merged-failed",
-                      { reason: "merge.session_not_found" },
-                    );
-                    cs.lastMergeError = reason.message;
-                  }
-                },
-              });
-            execution = haltResult.execution;
-            logger.error("graph-workflow.merge.failed", {
-              executionId: execution.id,
-              contextId,
-              reason: reason.message,
-            });
-            return;
-          }
-
-          let mergeStatus:
-            | "completed"
-            | "failed"
-            | "conflicts"
-            | "ready-to-land"
-            | "discarded";
-          let mergeError: string | null = null;
-          let mergeConflictFiles: string[] = [];
-          try {
-            const output = await deps.sessionGitLock.withSessionGitLock(
-              {
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-              },
-              async () => {
-                const validationMode = await resolveLaneMergeRunValidationMode({
-                  projectPath: input.projectPath,
-                  config: execution.workingDefinition.laneMergeValidation,
-                  readRepoConfig,
-                });
-                // The context's own implementer conversation: without it the
-                // merge's agent sub-turns fall back to the session's
-                // most-recently-active conversation, which in a parallel
-                // workflow can belong to a context still running in a
-                // different worktree.
-                const conversationId = resolveContextConversationId(
-                  execution,
-                  contextId,
-                );
-                return deps.mergeRunner.run({
-                  jobId: createJobId(),
-                  projectPath: input.projectPath,
-                  projectName: input.projectName,
-                  sessionName: input.sessionName,
-                  contextId,
-                  branchName: featureBranchName,
-                  featureWorktreePath,
-                  targetBranch: session.branchName,
-                  targetWorktreePath: session.worktreePath,
-                  message: `Graph workflow context ${contextId}`,
-                  workflowExecutionId: execution.id,
-                  ...(conversationId !== null ? { conversationId } : {}),
-                  validationMode,
-                });
-              },
-            );
-            mergeStatus = output.status;
-            mergeError = output.error;
-            mergeConflictFiles = output.conflictFiles;
-          } catch (error) {
-            mergeStatus = "failed";
-            mergeError = getErrorMessage(error);
-            mergeConflictFiles = [];
-          }
-
-          if (mergeStatus === "completed") {
-            await deps.workflowManager.mutateActive(
-              input.projectPath,
-              input.sessionName,
-              (e) => {
-                const next = structuredClone(e);
-                const cs = next.contextStates[contextId];
-                if (cs) {
-                  transitionContextMergeStatus(
-                    next,
-                    contextId,
-                    "merged-success",
-                    { reason: "merge.completed" },
-                  );
-                  cs.lastMergeError = null;
-                }
-                return next;
-              },
-            );
-
-            execLogger?.iteration(contextId, "merge.completed", {
-              branchName: featureBranchName,
-            });
-            logger.info("graph-workflow.merge.completed", {
-              executionId: execution.id,
-              contextId,
-              branchName: featureBranchName,
-            });
-
-            const dispose = await deps.parallelWorktrees.dispose({
-              projectPath: input.projectPath,
-              worktreePath: featureWorktreePath,
-              branchName: featureBranchName,
-            });
-            await deps.workflowManager.mutateActive(
-              input.projectPath,
-              input.sessionName,
-              (e) => {
-                const next = structuredClone(e);
-                const cs = next.contextStates[contextId];
-                if (cs) {
-                  cs.cleanupStatus =
-                    dispose.status === "removed" ? "removed" : "failed";
-                }
-                return next;
-              },
-            );
-            execLogger?.lifecycle("parallel.cleanup_attempted", {
-              contextId,
-              status: dispose.status,
-              reason: dispose.status === "failed" ? dispose.reason : undefined,
-            });
-            return;
-          }
-
-          const finalMergeStatus =
-            mergeStatus === "conflicts" ? "conflicts" : "merged-failed";
-          const haltReason: GraphWorkflowHaltReason = {
-            type: "merge_failure",
-            contextId,
-            message: mergeError ?? "Fan-in merge failed",
-            conflictFiles: mergeConflictFiles,
-          };
-          const haltResult = await deps.workflowManager.recordPendingHaltReason(
-            {
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-              reason: haltReason,
-              applyAdditionalMutation: (next) => {
-                const cs = next.contextStates[contextId];
-                if (cs) {
-                  transitionContextMergeStatus(
-                    next,
-                    contextId,
-                    finalMergeStatus,
-                    {
-                      reason: "merge.failed",
-                    },
-                  );
-                  cs.lastMergeError = mergeError;
-                }
-              },
-            },
-          );
-          execution = haltResult.execution;
-          logger.error("graph-workflow.merge.failed", {
-            executionId: execution.id,
-            contextId,
-            mergeStatus: finalMergeStatus,
-            error: mergeError,
-            conflictFiles: mergeConflictFiles.length,
-          });
-        },
-      );
     }
 
     /**
@@ -2223,21 +1994,19 @@ export function createGraphWorkflowExecutionLoop(
       baselineSha: string | null,
     ): Promise<void> {
       if (baselineSha === null) return;
-      const next = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (current) => {
+      const next = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (current) => {
           const intent = current.contextStates[contextId]?.landingIntent;
-          if (!intent || intent.state !== "pending") return current;
-          if (intent.baselineSha === baselineSha) return current;
+          if (!intent || intent.state !== "pending") return unchanged();
+          if (intent.baselineSha === baselineSha) return unchanged();
           const draft = structuredClone(current);
           draft.contextStates[contextId]!.landingIntent = {
             ...intent,
             baselineSha,
           };
-          return draft;
-        },
-      );
+          return changed(draft);
+        })
+        .then((mutation) => mutation.execution);
       adoptExecution(next);
     }
 
@@ -2309,49 +2078,36 @@ export function createGraphWorkflowExecutionLoop(
         )?.placement.mode === "readOnly";
 
       async function runCommitPhase(): Promise<void> {
-        if (contextIsReadOnly()) {
-          execLogger?.iteration(
-            contextId,
-            "read_only.completed_without_commit",
-            { laneId: featureLaneId, isolation },
-          );
-          logger.info("graph-workflow.read_only.completed_without_commit", {
-            executionId: execution.id,
-            contextId,
-            laneId: featureLaneId,
-            isolation,
-          });
-          return;
-        }
         if (
+          isolation === "worktree" &&
+          (featureWorktreePath === null || featureBranchName === null)
+        )
+          return;
+        const target: ContextLandingInput["target"] =
           isolation === "worktree" &&
           featureWorktreePath !== null &&
           featureBranchName !== null
-        ) {
-          if (featureLaneId !== null) {
-            await runLaneCommit(
-              contextId,
-              featureLaneId,
-              featureWorktreePath,
-              featureBranchName,
-              preTurnLaneHeadSha,
-            );
-          } else {
-            await runFanInMerge(
-              contextId,
-              featureWorktreePath,
-              featureBranchName,
-            );
-          }
-        } else if (isolation === "session") {
-          await runSoloCommit(contextId, preTurnLaneHeadSha);
-        }
+            ? {
+                isolation,
+                worktreePath: featureWorktreePath,
+                branchName: featureBranchName,
+                laneId: featureLaneId,
+              }
+            : { isolation: "session" };
+        const landed = await contextLanding.land({
+          ...input,
+          executionId: execution.id,
+          contextId,
+          preTurnHeadSha: preTurnLaneHeadSha,
+          target,
+        });
+        adoptExecution(landed.execution);
       }
 
       try {
         // Inner per-context iteration loop
         // eslint-disable-next-line no-constant-condition
-        while (true) {
+        contextIterations: while (true) {
           const session = await deps.getSession(
             input.projectPath,
             input.sessionName,
@@ -2664,40 +2420,32 @@ export function createGraphWorkflowExecutionLoop(
 
           adoptExecution(iterationResult.execution);
 
-          const pendingCollaboration =
-            execution.pendingCollaborations?.[contextId];
-          if (pendingCollaboration) {
+          const decision = iterationResult.decision;
+          if (decision.kind === "await_collaboration") {
             execLogger?.iteration(contextId, "loop.collaboration_pending", {
-              workflowId: pendingCollaboration.workflowId,
+              workflowId: decision.workflowId,
             });
             logger.info("graph-workflow.parallel.collaboration_pending", {
               executionId: execution.id,
               contextId,
-              workflowId: pendingCollaboration.workflowId,
+              workflowId: decision.workflowId,
             });
             return;
           }
 
-          if (execution.status !== "running") {
-            // Orchestrator-driven halt (e.g., signalHalt). Stop iterating;
-            // the outer loop's drain-then-halt path takes over.
+          if (
+            execution.status !== "running" ||
+            decision.kind === "execution_stopped"
+          ) {
             return;
           }
 
+          // During drain, a successful sibling may land; another turn must wait
+          // for the execution-wide halt to settle.
           if (
             execution.pendingHaltReason !== null &&
-            iterationResult.shouldContinueInContext
+            decision.kind === "continue"
           ) {
-            // A halt was recorded (by this or a sibling context) but the
-            // execution is still in the drain-then-halt window: pendingHaltReason
-            // is set while status stays "running" and this context's status is
-            // not yet "halted". Stop seeding another iteration so the in-flight
-            // task settles and the outer loop applies the halt. Without this, a
-            // context with remaining tasks spins a full agent turn per iteration
-            // until maxIterations. A context that just COMPLETED its tasks
-            // (shouldContinueInContext === false) is not stopped here — it falls
-            // through to commit/merge so the drain still lands successful
-            // siblings before halting.
             execLogger?.iteration(contextId, "loop.pending_halt_detected", {
               haltReasonType: execution.pendingHaltReason.type,
             });
@@ -2709,22 +2457,22 @@ export function createGraphWorkflowExecutionLoop(
             return;
           }
 
-          const contextState = execution.contextStates[contextId];
-          const contextDef = execution.workingDefinition.executionContexts.find(
-            (c) => c.id === contextId,
-          );
-
-          if (contextState?.status === "halted") {
+          if (decision.kind === "halted") {
             execLogger?.iteration(contextId, "loop.context_halted", {
-              pendingHaltReason: execution.pendingHaltReason,
+              haltReason: decision.haltReason,
             });
             logger.info("graph-workflow.parallel.context_halted", {
               executionId: execution.id,
               contextId,
-              haltReasonType: execution.pendingHaltReason?.type ?? null,
+              haltReasonType: decision.haltReason.type,
             });
             return;
           }
+
+          const contextState = execution.contextStates[contextId];
+          const contextDef = execution.workingDefinition.executionContexts.find(
+            (c) => c.id === contextId,
+          );
 
           if (contextState && contextDef) {
             const threshold =
@@ -2771,43 +2519,33 @@ export function createGraphWorkflowExecutionLoop(
             return;
           }
 
-          if (iterationResult.shouldContinueInContext) {
-            execLogger?.iteration(contextId, "loop.continue_in_context", {
-              conversationId: iterationResult.conversationId,
-            });
-            continue;
+          switch (decision.kind) {
+            case "continue":
+              execLogger?.iteration(contextId, "loop.continue_in_context", {
+                conversationId: iterationResult.conversationId,
+                reason: decision.reason,
+              });
+              continue;
+            case "await_approval":
+            case "await_user_input":
+            case "deliver_validator_answers":
+              continue;
+            case "yield":
+              logger.info("graph-workflow.parallel.context_yielded", {
+                executionId: execution.id,
+                contextId,
+                reason: decision.reason,
+              });
+              return;
+            case "ready_to_land":
+              break contextIterations;
+            default: {
+              const unreachable: never = decision;
+              throw new Error(
+                `Unhandled context decision: ${JSON.stringify(unreachable)}`,
+              );
+            }
           }
-
-          // An awaiting-approval context exits the iteration exactly like a
-          // completed one (no extra iteration is seeded), but loops back to
-          // park in the gate wait at the top of the loop instead of
-          // proceeding to the commit/merge phase.
-          if (contextState?.status === "awaiting_approval") {
-            continue;
-          }
-
-          // A context that parked awaiting user input during this iteration
-          // (the orchestrator's post-turn park check) loops back to the top so
-          // the user-input wait engages, mirroring the approval gate. No
-          // iteration is consumed and no commit/merge runs while parked.
-          if (contextState?.status === "awaiting_user_input") {
-            continue;
-          }
-
-          // Still running, and holding a validator answer nobody has delivered:
-          // the lane that asked owes its open round a verdict, so the context is
-          // not finished and must not break to commit/merge. Loops back so the
-          // wait above consumes the answer and the next turn re-dispatches that
-          // lane (R9: the round concludes only once every lane settles).
-          if (
-            contextState?.status === "running" &&
-            hasUndeliveredValidatorAnswer(contextState)
-          ) {
-            continue;
-          }
-
-          // Context completed all of its tasks — break out for fan-in merge.
-          break;
         }
       } finally {
         execLogger?.lifecycle("parallel.context_finished", {
@@ -2822,540 +2560,6 @@ export function createGraphWorkflowExecutionLoop(
       }
 
       await runCommitPhase();
-    }
-
-    /**
-     * Judge the lane worktree against every current member's declared surface
-     * after an enveloped landing (R8, decision D8).
-     *
-     * Only enveloped landings audit: a full-access member owns the whole tree,
-     * so there is nothing it could have failed to declare. Runs inside the
-     * merge mutex the landing held, so no sibling landing can move the worktree
-     * between the commit and the reading of it.
-     *
-     * Read failures do not halt. The audit is a backstop for writes the sandbox
-     * could not stop, and turning a status read that failed into a halt would
-     * make it a new way for correct runs to stop.
-     */
-    async function auditLaneDrift(
-      contextId: string,
-      laneId: string,
-      laneWorktreePath: string,
-    ): Promise<void> {
-      // A lane the execution no longer tracks has no member set to judge
-      // against, and the halt this can raise names it.
-      if (!execution.executionLanes[laneId]) return;
-
-      const memberOwnerships: GraphWorkflowCanonicalOwnership[] = [];
-      for (const state of Object.values(execution.contextStates)) {
-        if (state.laneId !== laneId) continue;
-        // A member that never reached admission wrote nothing, and its
-        // authored placement is not the frozen surface anyone was scoped
-        // against — including it would widen the union on a guess.
-        if (!state.reservedOwnership) continue;
-        memberOwnerships.push(state.reservedOwnership);
-      }
-
-      let verdict: LaneDriftVerdict;
-      try {
-        verdict = await laneDriftAuditor.audit({
-          laneWorktreePath,
-          memberOwnerships,
-        });
-      } catch (error) {
-        logger.warn("graph-workflow.lane_drift.audit_failed", {
-          executionId: execution.id,
-          contextId,
-          laneId,
-          laneWorktreePath,
-          error: getErrorMessage(error),
-        });
-        return;
-      }
-
-      if (verdict.unattributedPaths.length === 0) return;
-
-      // Capped to what the halt schema persists; the count in the message keeps
-      // the total honest when the list is truncated.
-      const unattributedPaths = verdict.unattributedPaths.slice(
-        0,
-        MAX_REPORTED_UNATTRIBUTED_PATHS,
-      );
-      const reason: GraphWorkflowHaltReason = {
-        type: "ownership_violation",
-        laneId,
-        contextId,
-        unattributedPaths: [...unattributedPaths],
-        message: `Lane "${laneId}" has ${verdict.unattributedPaths.length} change(s) that no current member's ownership, scratch, or payload directory accounts for, found while "${contextId}" landed`,
-        // Plan repair fills this in if it speaks; the raise never claims a
-        // verdict it has not heard.
-        summary: null,
-      };
-      const haltResult = await deps.workflowManager.recordPendingHaltReason({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        reason,
-      });
-      execution = haltResult.execution;
-      execLogger?.iteration(contextId, "lane_drift.unattributed", {
-        laneId,
-        unattributedCount: verdict.unattributedPaths.length,
-      });
-      logger.error("graph-workflow.lane_drift.unattributed", {
-        executionId: execution.id,
-        contextId,
-        laneId,
-        laneWorktreePath,
-        unattributedCount: verdict.unattributedPaths.length,
-        unattributedPaths,
-      });
-    }
-
-    async function runLaneCommit(
-      contextId: string,
-      laneId: string,
-      laneWorktreePath: string,
-      laneBranchName: string,
-      preTurnHeadSha: string | null,
-    ): Promise<void> {
-      await deps.mergeMutex.withMergeMutex(
-        {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-        },
-        async () => {
-          execLogger?.iteration(contextId, "lane_commit.started", {
-            laneId,
-            laneWorktreePath,
-            laneBranchName,
-          });
-          logger.info("graph-workflow.lane_commit.started", {
-            executionId: execution.id,
-            contextId,
-            laneId,
-            laneBranchName,
-          });
-
-          // An enveloped landing is the only one that audits: a full-access
-          // member owns the whole tree, so no path in the worktree is one it
-          // could have failed to declare (R8).
-          const auditsDrift =
-            execution.contextStates[contextId]?.reservedOwnership?.mode ===
-            "owned";
-          const result = await deps.sessionGitLock.withSessionGitLock(
-            {
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-            },
-            async () =>
-              deps.laneCommitter.commit({
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-                contextId,
-                laneId,
-                laneWorktreePath,
-                preTurnHeadSha,
-                landingToken:
-                  execution.contextStates[contextId]?.landingIntent?.token ??
-                  null,
-                // The envelope this context was ADMITTED under, not a fresh read
-                // of the definition: what the landing may commit has to be the
-                // same set the turn was allowed to write, or a live edit between
-                // dispatch and landing would widen the commit past the surface
-                // the sibling members were scoped against.
-                ownership:
-                  execution.contextStates[contextId]?.reservedOwnership ?? null,
-              }),
-          );
-
-          if (result.status === "failed") {
-            const reason: GraphWorkflowHaltReason = {
-              type: "merge_failure",
-              contextId,
-              message: result.errorMessage,
-              conflictFiles: [],
-            };
-            const haltResult =
-              await deps.workflowManager.recordPendingHaltReason({
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-                reason,
-                applyAdditionalMutation: (next) => {
-                  const cs = next.contextStates[contextId];
-                  if (cs) {
-                    transitionContextMergeStatus(
-                      next,
-                      contextId,
-                      "merged-failed",
-                      { reason: "lane_commit.failed" },
-                    );
-                    cs.lastMergeError = result.errorMessage;
-                    // The intent records the refusal so a resume classifies
-                    // this context as blocked from durable state rather than
-                    // re-deriving it (D4 decision D8); a failed landing blocks
-                    // the dependents, it never skips them (R2.5).
-                    settleLandingIntent(next, contextId, {
-                      state: "failed",
-                      evidence: "commit",
-                      now: new Date().toISOString(),
-                    });
-                  }
-                },
-              });
-            execution = haltResult.execution;
-            logger.error("graph-workflow.lane_commit.failed", {
-              executionId: execution.id,
-              contextId,
-              laneId,
-              error: result.errorMessage,
-            });
-            return;
-          }
-
-          // An adopted result (implementer self-committed; the committer
-          // adopted the moved lane HEAD) records a snapshot exactly like a
-          // committed one — the snapshot diff is what derives the
-          // graph-workflow-lane-commit event feeding commit evidence.
-          if (result.status === "committed" || result.status === "adopted") {
-            const adopted = result.status === "adopted";
-            const snapshot = result.snapshot;
-            await deps.workflowManager.mutateActive(
-              input.projectPath,
-              input.sessionName,
-              (e) => {
-                const next = structuredClone(e);
-                const cs = next.contextStates[contextId];
-                if (cs) {
-                  transitionContextMergeStatus(
-                    next,
-                    contextId,
-                    "merged-success",
-                    {
-                      reason: adopted
-                        ? "lane_commit.adopted"
-                        : "lane_commit.completed",
-                    },
-                  );
-                  cs.lastMergeError = null;
-                }
-                // Same mutation as the merge-status move, so the durable
-                // landing record can never lag the evidence it describes. An
-                // adopted result is evidenced by the recorded baseline → head
-                // SHA range rather than by the token, because the implementer
-                // authored that commit itself.
-                settleLandingIntent(next, contextId, {
-                  state: "landed",
-                  evidence: adopted ? "adopted-head" : "commit",
-                  headSha: snapshot.sha,
-                  now: snapshot.committedAt,
-                });
-                return applyLaneCommitSnapshot(next, laneId, snapshot);
-              },
-            );
-            execLogger?.iteration(
-              contextId,
-              adopted ? "lane_commit.adopted" : "lane_commit.completed",
-              {
-                laneId,
-                sha: snapshot.sha,
-                committedAt: snapshot.committedAt,
-              },
-            );
-            logger.info(
-              adopted
-                ? "graph-workflow.lane_commit.adopted"
-                : "graph-workflow.lane_commit.completed",
-              {
-                executionId: execution.id,
-                contextId,
-                laneId,
-                sha: snapshot.sha,
-              },
-            );
-            if (auditsDrift) {
-              await auditLaneDrift(contextId, laneId, laneWorktreePath);
-            }
-            return;
-          }
-
-          // status === "skipped" — no uncommitted changes on the lane. Still
-          // mark the context as available in the lane so downstream contexts
-          // (and any future join) see the work as ready, but do not append a
-          // snapshot since no commit was made.
-          await deps.workflowManager.mutateActive(
-            input.projectPath,
-            input.sessionName,
-            (e) => {
-              const next = structuredClone(e);
-              const lane = next.executionLanes[laneId];
-              if (lane && !lane.includedContextIds.includes(contextId)) {
-                lane.includedContextIds = [
-                  ...lane.includedContextIds,
-                  contextId,
-                ];
-              }
-              if (next.contextStates[contextId]) {
-                transitionContextMergeStatus(
-                  next,
-                  contextId,
-                  "merged-success",
-                  {
-                    reason: "lane_commit.skipped",
-                  },
-                );
-              }
-              // A context that produced nothing still LANDED: its dependents
-              // have everything it was ever going to give them, so leaving the
-              // intent pending would block them on a commit that will not come.
-              settleLandingIntent(next, contextId, {
-                state: "landed",
-                evidence: "no-changes",
-                now: new Date().toISOString(),
-              });
-              return next;
-            },
-          );
-          execLogger?.iteration(contextId, "lane_commit.skipped", {
-            laneId,
-            laneWorktreePath,
-          });
-          logger.info("graph-workflow.lane_commit.skipped", {
-            executionId: execution.id,
-            contextId,
-            laneId,
-          });
-          if (auditsDrift) {
-            await auditLaneDrift(contextId, laneId, laneWorktreePath);
-          }
-        },
-      );
-    }
-
-    async function runSoloCommit(
-      contextId: string,
-      preTurnHeadSha: string | null,
-    ): Promise<void> {
-      await deps.mergeMutex.withMergeMutex(
-        {
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-        },
-        async () => {
-          const session = await deps.getSession(
-            input.projectPath,
-            input.sessionName,
-          );
-          if (!session) {
-            const reason: GraphWorkflowHaltReason = {
-              type: "merge_failure",
-              contextId,
-              message: `Session "${input.sessionName}" not found during solo-context commit`,
-              conflictFiles: [],
-            };
-            const haltResult =
-              await deps.workflowManager.recordPendingHaltReason({
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-                reason,
-              });
-            execution = haltResult.execution;
-            logger.error("graph-workflow.solo_commit.session_missing", {
-              executionId: execution.id,
-              contextId,
-            });
-            return;
-          }
-
-          const result = await deps.sessionGitLock.withSessionGitLock(
-            {
-              projectPath: input.projectPath,
-              sessionName: input.sessionName,
-            },
-            async () =>
-              deps.soloContextCommitter.commit({
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-                contextId,
-                sessionWorktreePath: session.worktreePath,
-                landingToken:
-                  execution.contextStates[contextId]?.landingIntent?.token ??
-                  null,
-                ownership:
-                  execution.contextStates[contextId]?.reservedOwnership ?? null,
-              }),
-          );
-
-          if (result.status === "failed") {
-            const reason: GraphWorkflowHaltReason = {
-              type: "merge_failure",
-              contextId,
-              message: result.errorMessage,
-              conflictFiles: [],
-            };
-            const haltResult =
-              await deps.workflowManager.recordPendingHaltReason({
-                projectPath: input.projectPath,
-                sessionName: input.sessionName,
-                reason,
-                applyAdditionalMutation: (next) => {
-                  // A failed landing is recorded durably so a resume classifies
-                  // this context as blocked rather than re-deriving it; it
-                  // blocks the dependents, never skips them (R2.5).
-                  settleLandingIntent(next, contextId, {
-                    state: "failed",
-                    evidence: "commit",
-                    now: new Date().toISOString(),
-                  });
-                },
-              });
-            execution = haltResult.execution;
-            logger.error("graph-workflow.solo_commit.failed", {
-              executionId: execution.id,
-              contextId,
-              error: result.errorMessage,
-            });
-            return;
-          }
-
-          execLogger?.iteration(contextId, "solo_commit.completed", {
-            status: result.status,
-          });
-          logger.info("graph-workflow.solo_commit.recorded", {
-            executionId: execution.id,
-            contextId,
-            status: result.status,
-          });
-
-          // Record the context's commit on the session lane so the snapshot →
-          // lane-commit event → evidence-ingest chain carries changedCode for
-          // solo runs too. A skipped commit with a moved HEAD means the
-          // implementer committed its own work — adopt that HEAD, mirroring
-          // the lane-worktree adoption path.
-          let snapshotSha: string | null = null;
-          let adopted = false;
-          if (result.status === "committed") {
-            snapshotSha = result.hash;
-          } else {
-            let currentHead: string | null = null;
-            try {
-              currentHead = await deps.laneCommitter.resolveHead(
-                session.worktreePath,
-              );
-            } catch {
-              currentHead = null;
-            }
-            if (
-              currentHead !== null &&
-              preTurnHeadSha !== null &&
-              currentHead !== preTurnHeadSha
-            ) {
-              snapshotSha = currentHead;
-              adopted = true;
-            }
-          }
-          if (snapshotSha !== null) {
-            const snapshot = {
-              contextId,
-              sha: snapshotSha,
-              committedAt: new Date().toISOString(),
-            };
-            await deps.workflowManager.mutateActive(
-              input.projectPath,
-              input.sessionName,
-              (e) => {
-                const assignedLaneId =
-                  e.contextStates[contextId]?.laneId ?? null;
-                const assigned =
-                  assignedLaneId === null
-                    ? undefined
-                    : e.executionLanes[assignedLaneId];
-                const laneIdForSnapshot =
-                  assigned?.kind === "session"
-                    ? assigned.laneId
-                    : SESSION_LANE_ID;
-                const withLane =
-                  laneIdForSnapshot === SESSION_LANE_ID
-                    ? materializeSessionLane(e, {
-                        sessionLaneId: SESSION_LANE_ID,
-                        branchName: session.branchName,
-                        worktreePath: session.worktreePath,
-                        now: () => new Date().toISOString(),
-                      })
-                    : e;
-                // Cloned before the in-place settle: applyLaneCommitSnapshot
-                // shares `contextStates` with its input, so writing the intent
-                // straight onto its result would reach back into the caller's
-                // snapshot.
-                const next = structuredClone(
-                  applyLaneCommitSnapshot(
-                    withLane,
-                    laneIdForSnapshot,
-                    snapshot,
-                  ),
-                );
-                // Same mutation as the snapshot, so the durable landing record
-                // can never lag the evidence it describes (decision D8).
-                settleLandingIntent(next, contextId, {
-                  state: "landed",
-                  evidence: adopted ? "adopted-head" : "commit",
-                  headSha: snapshot.sha,
-                  now: snapshot.committedAt,
-                });
-                return next;
-              },
-            );
-            if (adopted) {
-              execLogger?.iteration(contextId, "solo_commit.adopted_head", {
-                sha: snapshotSha,
-              });
-              logger.info("graph-workflow.solo_commit.adopted_head", {
-                executionId: execution.id,
-                contextId,
-                sha: snapshotSha,
-              });
-            }
-          } else {
-            // Nothing to commit and an unmoved HEAD: the context produced no
-            // changes, which is still a LANDING — its dependents have
-            // everything it was ever going to give them, and leaving the intent
-            // unsettled would block them on a commit that will not come.
-            await deps.workflowManager.mutateActive(
-              input.projectPath,
-              input.sessionName,
-              (e) => {
-                const next = structuredClone(e);
-                settleLandingIntent(next, contextId, {
-                  state: "landed",
-                  evidence: "no-changes",
-                  now: new Date().toISOString(),
-                });
-                return next;
-              },
-            );
-          }
-
-          await deps.workflowManager.mutateActive(
-            input.projectPath,
-            input.sessionName,
-            (e) => {
-              const cs = e.contextStates[contextId];
-              if (!cs || cs.laneId === null) return e;
-              const lane = e.executionLanes[cs.laneId];
-              if (!lane || lane.kind !== "session") return e;
-              if (lane.includedContextIds.includes(contextId)) return e;
-              const next = structuredClone(e);
-              const nextLane = next.executionLanes[cs.laneId];
-              if (nextLane) {
-                nextLane.includedContextIds = [
-                  ...nextLane.includedContextIds,
-                  contextId,
-                ];
-              }
-              return next;
-            },
-          );
-        },
-      );
     }
 
     type ContextJoinCandidate = {
@@ -3486,146 +2690,163 @@ export function createGraphWorkflowExecutionLoop(
           | "candidate_changed"
           | "busy_source_lanes"
           | "stale_final_publish_superseded";
-        const claim: {
-          join: GraphWorkflowExecutionJoinState | null;
-          deferredJoin: GraphWorkflowExecutionJoinState | null;
-          busyLaneIds: string[];
-          reason: ClaimDeferralReason | null;
-        } = {
-          join: null,
-          deferredJoin: null,
-          busyLaneIds: [],
-          reason: null,
-        };
-        const claimedExecution = await deps.workflowManager.mutateActive(
-          input.projectPath,
-          input.sessionName,
-          (current) => {
-            if (current.status !== "running") {
-              claim.reason = "execution_not_running";
-              return current;
-            }
-            if (current.pendingHaltReason !== null) {
-              claim.reason = "pending_halt";
-              return current;
-            }
 
-            const active = findActiveJoin(current);
-            let currentJoin: GraphWorkflowExecutionJoinState | null = null;
-            if (alreadyPersisted) {
-              if (!active || active.joinId !== join.joinId) {
-                claim.reason = "active_join_changed";
-                return current;
+        const { execution: claimedExecution, claim } =
+          await deps.executionRepository
+            .mutateActive(input.projectPath, input.sessionName, (current) => {
+              const claim: {
+                join: GraphWorkflowExecutionJoinState | null;
+                deferredJoin: GraphWorkflowExecutionJoinState | null;
+                busyLaneIds: string[];
+                reason: ClaimDeferralReason | null;
+              } = {
+                join: null,
+                deferredJoin: null,
+                busyLaneIds: [],
+                reason: null,
+              };
+
+              if (current.status !== "running") {
+                claim.reason = "execution_not_running";
+                return unchanged({ claim });
               }
-              // A final_publish persisted before a halt window may be restored
-              // while a source-eligible context still has unstarted tasks (a
-              // never-started downstream, or a context reset during the halt).
-              // Running it would deliver a candidate that structurally excludes
-              // that work, so supersede it: mark it failed and let the next pass
-              // re-plan from current state (ticket #28 / F25).
-              if (active.kind === "final_publish") {
-                const unfinished = findContextsWithUnfinishedTasks(current);
-                if (unfinished.length > 0) {
-                  claim.reason = "stale_final_publish_superseded";
-                  return applyJoinProgress(
-                    current,
-                    active.joinId,
-                    new Date().toISOString(),
-                    {
-                      status: "failed",
-                      errorMessage: `Superseded: ${unfinished.length} context(s) still have unfinished tasks (${unfinished
-                        .map((state) => state.contextId)
-                        .join(
-                          ", ",
-                        )}). The final publish is re-planned after that work completes.`,
-                    },
-                  );
-                }
-                const validationDebt = findValidationCertificationDebt(current);
-                if (validationDebt.length > 0) {
-                  claim.reason = "stale_final_publish_superseded";
-                  return applyJoinProgress(
-                    current,
-                    active.joinId,
-                    new Date().toISOString(),
-                    {
-                      status: "failed",
-                      errorMessage: `Superseded: required validation certification is owed by ${validationDebt
-                        .map(describeValidationCertificationDebt)
-                        .join(
-                          ", ",
-                        )}. The final publish is re-planned after that debt is resolved.`,
-                    },
-                  );
-                }
-              }
-              currentJoin = active;
-            } else {
-              if (active !== null) {
-                claim.reason = "active_join_changed";
-                return current;
+              if (current.pendingHaltReason !== null) {
+                claim.reason = "pending_halt";
+                return unchanged({ claim });
               }
 
-              if (plannedFor === "context") {
-                const contextId = join.contextId;
-                const eligibleIds = getEligibleContextIds(
-                  current.workingDefinition,
-                  current,
-                );
-                if (contextId === null || !eligibleIds.includes(contextId)) {
-                  claim.reason = "candidate_changed";
-                  return current;
+              const active = findActiveJoin(current);
+              let currentJoin: GraphWorkflowExecutionJoinState | null = null;
+              if (alreadyPersisted) {
+                if (!active || active.joinId !== join.joinId) {
+                  claim.reason = "active_join_changed";
+                  return unchanged({ claim });
                 }
-                const classification = classifyContextSchedulability({
-                  contextId,
-                  definition: current.workingDefinition,
-                  execution: current,
-                });
-                if (classification.kind !== "wait-for-join") {
-                  claim.reason = "candidate_changed";
-                  return current;
+                // A final_publish persisted before a halt window may be restored
+                // while a source-eligible context still has unstarted tasks (a
+                // never-started downstream, or a context reset during the halt).
+                // Running it would deliver a candidate that structurally excludes
+                // that work, so supersede it: mark it failed and let the next pass
+                // re-plan from current state (ticket #28 / F25).
+                if (active.kind === "final_publish") {
+                  const unfinished = findContextsWithUnfinishedTasks(current);
+                  if (unfinished.length > 0) {
+                    claim.reason = "stale_final_publish_superseded";
+                    return changed(
+                      applyJoinProgress(
+                        current,
+                        active.joinId,
+                        new Date().toISOString(),
+                        {
+                          status: "failed",
+                          errorMessage: `Superseded: ${unfinished.length} context(s) still have unfinished tasks (${unfinished
+                            .map((state) => state.contextId)
+                            .join(
+                              ", ",
+                            )}). The final publish is re-planned after that work completes.`,
+                        },
+                      ),
+                      { claim },
+                    );
+                  }
+                  const validationDebt =
+                    findValidationCertificationDebt(current);
+                  if (validationDebt.length > 0) {
+                    claim.reason = "stale_final_publish_superseded";
+                    return changed(
+                      applyJoinProgress(
+                        current,
+                        active.joinId,
+                        new Date().toISOString(),
+                        {
+                          status: "failed",
+                          errorMessage: `Superseded: required validation certification is owed by ${validationDebt
+                            .map(describeValidationCertificationDebt)
+                            .join(
+                              ", ",
+                            )}. The final publish is re-planned after that debt is resolved.`,
+                        },
+                      ),
+                      { claim },
+                    );
+                  }
                 }
-                currentJoin = planContextJoin({
-                  contextId,
-                  execution: current,
-                  now: () => new Date().toISOString(),
-                  generateJoinId: () => join.joinId,
-                });
+                currentJoin = active;
               } else {
-                currentJoin = planFinalPublishJoin({
-                  execution: current,
-                  sessionLaneId: SESSION_LANE_ID,
-                  now: () => new Date().toISOString(),
-                  generateJoinId: () => join.joinId,
-                });
+                if (active !== null) {
+                  claim.reason = "active_join_changed";
+                  return unchanged({ claim });
+                }
+
+                if (plannedFor === "context") {
+                  const contextId = join.contextId;
+                  const eligibleIds = getEligibleContextIds(
+                    current.workingDefinition,
+                    current,
+                  );
+                  if (contextId === null || !eligibleIds.includes(contextId)) {
+                    claim.reason = "candidate_changed";
+                    return unchanged({ claim });
+                  }
+                  const classification = classifyContextSchedulability({
+                    contextId,
+                    definition: current.workingDefinition,
+                    execution: current,
+                  });
+                  if (classification.kind !== "wait-for-join") {
+                    claim.reason = "candidate_changed";
+                    return unchanged({ claim });
+                  }
+                  currentJoin = planContextJoin({
+                    contextId,
+                    execution: current,
+                    now: () => new Date().toISOString(),
+                    generateJoinId: () => join.joinId,
+                  });
+                } else {
+                  currentJoin = planFinalPublishJoin({
+                    execution: current,
+                    sessionLaneId: SESSION_LANE_ID,
+                    now: () => new Date().toISOString(),
+                    generateJoinId: () => join.joinId,
+                  });
+                }
+
+                if (!currentJoin) {
+                  claim.reason = "candidate_changed";
+                  return unchanged({ claim });
+                }
               }
 
-              if (!currentJoin) {
-                claim.reason = "candidate_changed";
-                return current;
+              const busyLaneIds = findBusyJoinSourceLaneIds(
+                currentJoin,
+                current,
+              );
+              if (busyLaneIds.length > 0) {
+                claim.deferredJoin = currentJoin;
+                claim.busyLaneIds = busyLaneIds;
+                claim.reason = "busy_source_lanes";
+                return unchanged({ claim });
               }
-            }
 
-            const busyLaneIds = findBusyJoinSourceLaneIds(currentJoin, current);
-            if (busyLaneIds.length > 0) {
-              claim.deferredJoin = currentJoin;
-              claim.busyLaneIds = busyLaneIds;
-              claim.reason = "busy_source_lanes";
-              return current;
-            }
-
-            const withJoin = alreadyPersisted
-              ? current
-              : appendPendingJoin(current, currentJoin);
-            claim.join = currentJoin;
-            return applyJoinProgress(
-              withJoin,
-              currentJoin.joinId,
-              new Date().toISOString(),
-              { status: "running" },
-            );
-          },
-        );
+              const withJoin = alreadyPersisted
+                ? current
+                : appendPendingJoin(current, currentJoin);
+              claim.join = currentJoin;
+              return changed(
+                applyJoinProgress(
+                  withJoin,
+                  currentJoin.joinId,
+                  new Date().toISOString(),
+                  { status: "running" },
+                ),
+                { claim },
+              );
+            })
+            .then((mutation) => ({
+              execution: mutation.execution,
+              ...mutationValue(mutation),
+            }));
         adoptExecution(claimedExecution);
 
         const claimedJoin = claim.join;
@@ -3683,62 +2904,13 @@ export function createGraphWorkflowExecutionLoop(
           kind: claimedJoin.kind,
         });
 
-        const result = await deps.joinRunner.run({
-          projectPath: input.projectPath,
-          projectName: input.projectName,
-          sessionName: input.sessionName,
-          joinId: claimedJoin.joinId,
-          mutateActive: (mutator) =>
-            deps.workflowManager.mutateActive(
-              input.projectPath,
-              input.sessionName,
-              mutator,
-            ),
-          lifecycle: (event, fields) => execLogger?.lifecycle(event, fields),
-        });
-
-        await refreshExecution();
-
-        if (result.status === "succeeded") {
-          execLogger?.lifecycle("join.completed", {
-            joinId: claimedJoin.joinId,
-            kind: claimedJoin.kind,
-          });
-          return "ran";
-        }
-
-        const haltResult = await deps.workflowManager.recordPendingHaltReason({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
-          reason: result.haltReason ?? {
-            type: "join_failure",
-            joinId: claimedJoin.joinId,
-            joinKind: claimedJoin.kind,
-            contextId: claimedJoin.contextId,
-            sourceLaneIds: claimedJoin.sourceLaneIds,
-            targetLaneId: claimedJoin.targetLaneId,
-            message: result.message,
-            conflictFiles: result.conflictFiles,
-            resolutionFailure: result.resolutionFailure ?? undefined,
-          },
-        });
-        adoptExecution(haltResult.execution);
-        execLogger?.lifecycle("join.failed", {
-          joinId: claimedJoin.joinId,
-          kind: claimedJoin.kind,
-          failedSourceLaneId: result.failedSourceLaneId,
-          conflictFiles: result.conflictFiles,
-          haltReasonType: result.haltReason?.type ?? null,
-        });
-        logger.error("graph-workflow.join.failed", {
+        const landed = await contextLanding.runJoin({
+          ...input,
           executionId: execution.id,
           joinId: claimedJoin.joinId,
-          kind: claimedJoin.kind,
-          message: result.message,
-          conflictFiles: result.conflictFiles.length,
-          haltReasonType: result.haltReason?.type ?? null,
         });
-        return "halted";
+        adoptExecution(landed.execution);
+        return landed.outcome.kind === "failed" ? "halted" : "ran";
       } finally {
         capacityLease.release();
       }
@@ -3786,17 +2958,18 @@ export function createGraphWorkflowExecutionLoop(
         return "halted";
       }
 
-      const materialized = await deps.workflowManager.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (e) =>
-          materializeSessionLane(e, {
-            sessionLaneId: SESSION_LANE_ID,
-            branchName: session.branchName,
-            worktreePath: session.worktreePath,
-            now: () => new Date().toISOString(),
-          }),
-      );
+      const materialized = await deps.executionRepository
+        .mutateActive(input.projectPath, input.sessionName, (e) =>
+          changed(
+            materializeSessionLane(e, {
+              sessionLaneId: SESSION_LANE_ID,
+              branchName: session.branchName,
+              worktreePath: session.worktreePath,
+              now: () => new Date().toISOString(),
+            }),
+          ),
+        )
+        .then((mutation) => mutation.execution);
       adoptExecution(materialized);
 
       return executeJoin(finalPublish, "final_publish", false);
@@ -3997,13 +3170,15 @@ export function createGraphWorkflowExecutionLoop(
         let scheduleResult: ScheduleEligibleContextsResult;
         let scheduledContextIds: string[] = [];
         try {
-          scheduleResult = await deps.workflowManager.scheduleEligibleContexts({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            sessionLaneEnabled: input.sessionLaneEnabled,
-            capacityRemaining,
-            excludedContextIds: [...inFlight.keys()],
-          });
+          scheduleResult = await deps.contextScheduler.scheduleEligibleContexts(
+            {
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              sessionLaneEnabled: input.sessionLaneEnabled,
+              capacityRemaining,
+              excludedContextIds: [...inFlight.keys()],
+            },
+          );
           adoptExecution(scheduleResult.execution);
           scheduledContextIds =
             scheduleResult.scheduled.kind === "none"

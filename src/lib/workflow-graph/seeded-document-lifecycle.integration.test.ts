@@ -86,6 +86,9 @@ function setup(
   });
 
   const repo = createGraphWorkflowExecutionRepository({
+    getGraphWorkflowPendingArtifacts: async () => null,
+    clearGraphWorkflowPendingArtifacts: async () => false,
+
     // No git worktree in this harness; the real exclusion would shell out.
     ensureCcArtifactsExcluded: async () => {},
     async getSession(projectPath, sessionName) {
@@ -106,11 +109,21 @@ function setup(
       const key = `${projectPath}:${sessionName}`;
       const current = sessions.get(key);
       if (current === undefined) throw new Error(`No session ${key}`);
-      const { execution, events, pushes } = await mutate(
-        current.graphWorkflowExecution,
-      );
+      const decision = mutate(current.graphWorkflowExecution);
+      if (decision.kind === "no_commit")
+        return {
+          kind: "not_committed" as const,
+          execution: current.graphWorkflowExecution,
+          value: decision.value,
+        };
+      const { execution, events, pushes } = decision;
       current.graphWorkflowExecution = execution;
-      return { execution, delivery: { events, pushes: pushes ?? [] } };
+      return {
+        kind: "committed" as const,
+        value: decision.value,
+        execution,
+        delivery: { events, pushes: pushes ?? [] },
+      };
     },
     reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
       readActive: (projectPath, sessionName) =>

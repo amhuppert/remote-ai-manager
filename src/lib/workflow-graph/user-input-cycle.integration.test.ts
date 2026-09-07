@@ -1,3 +1,7 @@
+import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AskQuestionAnswer,
@@ -16,14 +20,14 @@ import type {
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { _resetRegistryForTesting } from "./execution-logger";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+
 import { laneStateKey } from "./lane-identity";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   createUserInputGateService,
   type ResumeUserInputContext,
 } from "./user-input-gate";
-import type { GraphWorkflowContextValidationInput } from "./execution-validation";
+import type { GraphWorkflowContextValidationInput } from "./validator-cohort-runner";
 import type { CohortParkedLane } from "./validation-cohort";
 import type {
   RecordLaneTurnOutcomeInput,
@@ -179,6 +183,9 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
     >,
   ) {
     return createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -218,7 +225,11 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -282,7 +293,9 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
             ...next.contextStates[CONTEXT_ID]!,
             completedTaskCount: 1,
           };
-          await repository.mutateActive(PROJECT_PATH, SESSION_NAME, () => next);
+          await repository
+            .mutateActive(PROJECT_PATH, SESSION_NAME, () => changed(next))
+            .then((mutation) => mutation.execution);
         }
         return {
           conversationId: agentInput.conversationId,
@@ -312,11 +325,15 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       }),
     );
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent: async () => null,
       createConversation: vi.fn(async () => ({ id: CONV_ASK })),
-      createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration,
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -339,7 +356,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       contextId: CONTEXT_ID,
     });
 
-    expect(askResult.shouldContinueInContext).toBe(false);
+    expect(askResult.decision.kind).toBe("await_user_input");
     // No validation ran on the asking turn — the park short-circuits it.
     expect(validateContextCompletion).not.toHaveBeenCalled();
 
@@ -491,11 +508,15 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       throw new Error("validation-only path must not run the implementer");
     });
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       findLatestContextValidationEvent: async () => null,
       createConversation: vi.fn(),
-      createToolServer: vi.fn(),
       runAgentIteration,
       validationService: { validateContextCompletion },
       userInputGateService: gate,
@@ -517,7 +538,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     expect(runAgentIteration).not.toHaveBeenCalled();
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
-    expect(askResult.shouldContinueInContext).toBe(false);
+    expect(askResult.decision.kind).toBe("await_user_input");
 
     const parked = await reloadContext();
     expect(parked.contextState.status).toBe("awaiting_user_input");
@@ -588,7 +609,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
     // Req 5.1/5.5: the validator resume forwards the answers into re-validation.
     expect(receivedResume).toEqual(consumed);
     expect(validateContextCompletion).toHaveBeenCalledTimes(2);
-    expect(resumeResult.shouldContinueInContext).toBe(false);
+    expect(resumeResult.decision.kind).toBe("ready_to_land");
 
     const resumed = await reloadContext();
     expect(resumed.contextState.pendingUserInputs).toEqual({});

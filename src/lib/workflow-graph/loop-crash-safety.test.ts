@@ -1,3 +1,4 @@
+import { createPersistenceGraphRepository } from "./testing/persistence-repository-fixture";
 /**
  * Loop crash and restart safety (D4 R9.4, decisions D7 and D8).
  *
@@ -105,7 +106,11 @@ describe("loop crash and restart safety (R9.4)", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "loop-crash-safety",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
     const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
       PROJECT_PATH,
@@ -746,19 +751,7 @@ describe("loop crash and restart safety (R9.4)", () => {
   describe("an approval-gated exit", () => {
     it("settles only after approval, completion and landing — in that order", async () => {
       const approvals = createApprovalGateService({
-        mutateActive: async (projectPath, sessionName, mutate) => {
-          const { execution } =
-            await fixture.store.mutateActiveGraphWorkflowExecution(
-              projectPath,
-              sessionName,
-              "approval",
-              (current) => {
-                if (!current) throw new Error("no active execution");
-                return { execution: mutate(current), events: [] };
-              },
-            );
-          return execution;
-        },
+        mutateActive: createPersistenceGraphRepository(fixture).mutateActive,
         now: () => RESUMED,
       });
 

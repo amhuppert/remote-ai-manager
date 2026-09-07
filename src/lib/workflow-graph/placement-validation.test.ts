@@ -10,7 +10,7 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   WorkflowSemanticDefinition,
 } from "./definition-schemas";
-import { validateAuthoredDefinition } from "./validation";
+import { validateAuthoredDefinition } from "./definition-validation";
 
 function makeContext(
   id: string,

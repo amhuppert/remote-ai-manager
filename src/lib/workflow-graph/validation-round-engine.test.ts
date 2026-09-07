@@ -1,42 +1,34 @@
+import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
-  type GraphWorkflowPushInfo,
 } from "@/lib/workflow-graph/execution-events";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
-import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+
 import type { CandidateScope } from "@/lib/git/diff";
 import {
   computeTaskStateHash,
   type ValidationCandidateTreeResolution,
 } from "./validation-round";
-import type { GraphWorkflowContextValidationOutcome } from "./execution-validation";
+import type { GraphWorkflowContextValidationOutcome } from "./validator-cohort-runner";
 import type { ScriptValidatorOutcome } from "./script-validator-runner";
 
 const NOW = "2026-08-04T12:00:00.000Z";
-
-type MutateActiveReturn =
-  | GraphWorkflowExecution
-  | {
-      execution: GraphWorkflowExecution;
-      events: GraphWorkflowExecutionEvent[];
-      pushes?: GraphWorkflowPushInfo[];
-    };
-
-function isResultWithEvents(value: MutateActiveReturn): value is {
-  execution: GraphWorkflowExecution;
-  events: GraphWorkflowExecutionEvent[];
-  pushes?: GraphWorkflowPushInfo[];
-} {
-  return "events" in value && "execution" in value;
-}
 
 function createRepository(initial: GraphWorkflowExecution) {
   let active = initial;
@@ -47,13 +39,13 @@ function createRepository(initial: GraphWorkflowExecution) {
     async getActive() {
       return active;
     },
-    async mutateActive(
+    async mutateActive<Value, Refusal>(
       _projectPath: string,
       _sessionName: string,
       fn: (
         execution: GraphWorkflowExecution,
-      ) => MutateActiveReturn | Promise<MutateActiveReturn>,
-    ) {
+      ) => FixtureDecision<Value, Refusal>,
+    ): Promise<FixtureOutcome<Value, Refusal>> {
       const previous = lock;
       let release!: () => void;
       lock = new Promise<void>((resolve) => {
@@ -61,18 +53,11 @@ function createRepository(initial: GraphWorkflowExecution) {
       });
       try {
         await previous;
-        const result = await fn(structuredClone(active));
-        if (isResultWithEvents(result)) {
-          active = result.execution;
-          appendedEvents.push(...result.events);
-          repository.deliver({
-            events: result.events,
-            pushes: result.pushes ?? [],
-          });
-        } else {
-          active = result;
-        }
-        return active;
+        return applyFixtureMutation(active, fn, (next, delivery) => {
+          active = next;
+          appendedEvents.push(...delivery.events);
+          repository.deliver(delivery);
+        });
       } finally {
         release();
       }
@@ -165,7 +150,7 @@ function passingValidation(): GraphWorkflowContextValidationOutcome {
 
 interface Harness {
   repository: ReturnType<typeof createRepository>;
-  orchestrator: ReturnType<typeof createGraphWorkflowIterationOrchestrator>;
+  orchestrator: ReturnType<typeof createContextIterationFixture>;
   run(): Promise<void>;
   probeCount(): number;
   /** Every candidate scope the engine asked a probe for, in probe order. */
@@ -211,18 +196,24 @@ function createHarness(params: {
       const current = structuredClone(repository.read());
       current.status = "halted";
       current.haltReason = halt.reason;
-      await repository.mutateActive("/repo", "session-1", () => current);
+      await repository
+        .mutateActive("/repo", "session-1", () => changed(current))
+        .then((mutation) => mutation.execution);
       return current;
     },
   );
 
-  const orchestrator = createGraphWorkflowIterationOrchestrator({
+  const orchestrator = createContextIterationFixture({
+    ...createContextTestCapabilities(),
+    materializeWorkflowDocuments: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: repository,
     signalHalt,
     findLatestContextValidationEvent:
       repository.findLatestContextValidationEvent,
     createConversation: vi.fn(async () => ({ id: "conversation-impl" })),
-    createToolServer: vi.fn(() => ({ server: {} })),
     runAgentIteration: vi.fn(async () => {
       throw new Error("the validation-only path must not run the implementer");
     }),
@@ -607,10 +598,8 @@ describe("validation round: the frozen roster governs dispatch", () => {
         // A live config edit lands while the script validator is running: the
         // round froze a two-seat roster, the definition now declares one.
         runScriptValidator: vi.fn(async () => {
-          await harness.repository.mutateActive(
-            "/repo",
-            "session-1",
-            (latest) => {
+          await harness.repository
+            .mutateActive("/repo", "session-1", (latest) => {
               const next = structuredClone(latest);
               next.workingDefinition.executionContexts =
                 next.workingDefinition.executionContexts.map((context) =>
@@ -626,9 +615,9 @@ describe("validation round: the frozen roster governs dispatch", () => {
                       }
                     : context,
                 );
-              return next;
-            },
-          );
+              return changed(next);
+            })
+            .then((mutation) => mutation.execution);
           return {
             kind: "pass" as const,
             treeState: { headSha: "head-1", dirty: true },
@@ -672,10 +661,8 @@ describe("validation round: the frozen roster governs dispatch", () => {
         // profile. Running it would leave the persisted roster naming a
         // reviewer that never reviewed this candidate.
         runScriptValidator: vi.fn(async () => {
-          await harness.repository.mutateActive(
-            "/repo",
-            "session-1",
-            (latest) => {
+          await harness.repository
+            .mutateActive("/repo", "session-1", (latest) => {
               const next = structuredClone(latest);
               next.workingDefinition.executionContexts =
                 next.workingDefinition.executionContexts.map((context) => {
@@ -699,9 +686,9 @@ describe("validation round: the frozen roster governs dispatch", () => {
                     },
                   };
                 });
-              return next;
-            },
-          );
+              return changed(next);
+            })
+            .then((mutation) => mutation.execution);
           return {
             kind: "pass" as const,
             treeState: { headSha: "head-1", dirty: true },

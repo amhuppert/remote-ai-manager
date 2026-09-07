@@ -9,6 +9,7 @@ import { queueMessage } from "@/lib/prompt/queue";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import { vi } from "vitest";
+import type { AgentTaskRequest } from "@/lib/agent-backends/task";
 
 const result: ConversationBackendTurnResult = {
   backendRef: null,
@@ -32,6 +33,111 @@ afterEach(async () => {
   await fixture?.close();
   fixture = undefined;
 });
+
+it.each([
+  { persistence: "durable", role: "validator", canAsk: true },
+  { persistence: "durable", role: null, canAsk: false },
+  { persistence: "ephemeral", role: "validator", canAsk: false },
+] as const)(
+  "grants task questioning only to a durable validator: %j",
+  async ({ persistence, role, canAsk }) => {
+    const started = Promise.withResolvers<AgentTaskRequest>();
+    const release = Promise.withResolvers<void>();
+    fixture = await createLifecycleFixture({
+      conversation: { role },
+      ...(persistence === "ephemeral"
+        ? {
+            binding: {
+              kind: "ephemeral",
+              address: {
+                projectPath: "/lifecycle-fixture",
+                target: {
+                  scope: "session",
+                  projectName: "lifecycle-fixture",
+                  sessionName: "s",
+                  conversationId: "c",
+                },
+              },
+              backend: "claude",
+              role,
+              worktreePath: "/lifecycle-fixture/.worktrees/s",
+            },
+          }
+        : {}),
+      actorDeps: {
+        getTaskRunner: () => ({
+          backend: "claude",
+          async run(request) {
+            started.resolve(request);
+            await release.promise;
+            return {
+              text: "Waiting for the answer",
+              usage: null,
+              error: null,
+              timedOut: false,
+              failure: null,
+              continuationDisposition: "retain",
+            };
+          },
+        }),
+      },
+    });
+    const hosted = fixture;
+    const admission = await hosted.manager.submitConversationTurn({
+      binding: hosted.binding,
+      turn: {
+        kind: "task_run",
+        executionClass: "governed-execution",
+        promptText: "Review after asking",
+      },
+    });
+    if (admission.kind !== "accepted") throw new Error(admission.message);
+    try {
+      expect((await started.promise).ccSessionScope).toEqual(
+        canAsk
+          ? {
+              project: "lifecycle-fixture",
+              session: "s",
+              conversationId: "c",
+            }
+          : undefined,
+      );
+      expect(
+        await hosted.manager.registerConversationQuestion(
+          "/lifecycle-fixture",
+          "s",
+          "c",
+          {
+            questionId: "validator-batch",
+            questions: [
+              askQuestionItemSchema.parse({
+                id: "choice",
+                question: "Which path?",
+                options: [{ label: "A" }],
+              }),
+            ],
+          },
+        ),
+      ).toBe(canAsk);
+    } finally {
+      release.resolve();
+      await admission.turn.completed;
+    }
+    const stored = await hosted.persistence
+      .recreateStore()
+      .getConversation("/lifecycle-fixture", "s", "c");
+    if (persistence === "ephemeral") {
+      expect(stored).toBeNull();
+      return;
+    }
+    expect(stored).toMatchObject({
+      role,
+      status: canAsk ? "waiting_for_input" : "awaiting",
+      pendingQuestionId: canAsk ? "validator-batch" : null,
+      promptCount: 1,
+    });
+  },
+);
 
 it("does not let an old answer withdraw a later question batch", async () => {
   finish = Promise.withResolvers<ConversationBackendTurnResult>();
@@ -116,12 +222,13 @@ it("does not let an old answer withdraw a later question batch", async () => {
   ).toBe("batch-b");
 });
 
-it.each(["running", "parked"] as const)(
+it.each(["running", "parked", "restarted"] as const)(
   "delivers a %s ordinary question answer once on its own queued turn",
   async (state) => {
     finish = Promise.withResolvers<ConversationBackendTurnResult>();
     const started = Promise.withResolvers<void>();
     const prompts: string[] = [];
+    let backendCloses = 0;
     const transcript: TranscriptEntry[] = [];
     const liveInput = vi.fn(async () => {});
     const backend = createMockBackendRuntime({
@@ -135,6 +242,7 @@ it.each(["running", "parked"] as const)(
         return result;
       },
       close: async () => {
+        backendCloses++;
         finish.resolve(result);
       },
       queueUserInput: liveInput,
@@ -174,9 +282,27 @@ it.each(["running", "parked"] as const)(
         ],
       },
     );
-    if (state === "parked") {
+    if (state !== "running") {
       finish.resolve(result);
       await admission.turn.completed;
+    }
+    if (state === "restarted") {
+      await hosted.manager.stopAllConversationActors();
+      expect(backendCloses).toBe(1);
+      expect(hosted.actor("/lifecycle-fixture", "s", "c")).toBeUndefined();
+      const restoredStore = hosted.persistence.recreateStore();
+      expect(
+        await restoredStore.getConversation("/lifecycle-fixture", "s", "c"),
+      ).toMatchObject({
+        status: "waiting_for_input",
+        pendingQuestionId: "ordinary-batch",
+      });
+      expect(
+        restoredStore.getConversationMachineSnapshot("session", "c"),
+      ).toMatchObject({
+        value: "waitingForInput",
+        context: { pendingQuestion: { questionId: "ordinary-batch" } },
+      });
     }
     const queuedIds: string[] = [];
     const handlers = createAnswerHandlers({

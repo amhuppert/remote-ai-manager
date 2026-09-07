@@ -26,7 +26,7 @@ import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/e
 import type { TaskRunResult } from "@/lib/workflows/conversation/turn-result";
 import { generateWorkflowLayout } from "./layout";
 import { createWorkflowStorageService } from "./storage";
-import { validateWorkflowDefinition } from "./validation";
+import { validateWorkflowDefinition } from "./definition-validation";
 
 const logger = createLogger("graph-workflow-planner");
 

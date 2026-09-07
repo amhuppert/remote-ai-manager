@@ -1,3 +1,9 @@
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
@@ -9,7 +15,7 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
-import type { MutateActiveResult } from "./execution-repository";
+
 import { createGraphWorkflowExecutionToolContext } from "./execution-tool-context";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
@@ -59,16 +65,6 @@ function createFakeStore(initial: GraphWorkflowExecution): FakeStore {
   };
 }
 
-function isMutateActiveResult(
-  value: MutateActiveResult | GraphWorkflowExecution,
-): value is MutateActiveResult {
-  return (
-    "execution" in value &&
-    "events" in value &&
-    Array.isArray((value as MutateActiveResult).events)
-  );
-}
-
 function createFakeMutateActive(
   store: FakeStore,
   // The publisher the fake seam delivers through post-commit, mirroring the real
@@ -77,30 +73,18 @@ function createFakeMutateActive(
   // commit — never from a callable the reducer returned (`post-commit-delivery`).
   eventPublisher: ReturnType<typeof createGraphWorkflowExecutionEventPublisher>,
 ) {
-  return async function mutateActive(
+  return async function mutateActive<Value, Refusal>(
     _projectPath: string,
     _sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution> {
+    fn: (execution: GraphWorkflowExecution) => FixtureDecision<Value, Refusal>,
+  ): Promise<FixtureOutcome<Value, Refusal>> {
     const next = store.serializedQueue.then(() => {
-      store.mutateCount += 1;
-      const draft = structuredClone(store.current);
-      const result = fn(draft);
-      const execution = isMutateActiveResult(result)
-        ? result.execution
-        : result;
-      store.current = structuredClone(execution);
-      // Mirror the production seam: broadcast the derived events only after the
-      // (fake) commit.
-      if (isMutateActiveResult(result)) {
-        eventPublisher.deliver({
-          events: result.events,
-          pushes: result.pushes ?? [],
-        });
-      }
-      return store.current;
+      return applyFixtureMutation(store.current, fn, (next, delivery) => {
+        store.mutateCount += 1;
+        store.current = structuredClone(next);
+        // Delivery follows the fake commit.
+        eventPublisher.deliver(delivery);
+      });
     });
     store.serializedQueue = next.catch(() => undefined);
     return next;
@@ -247,7 +231,8 @@ function buildContext(options: BuildContextOptions = {}): {
     now: () => "2026-03-27T12:00:00.000Z",
   });
   const factory = createGraphWorkflowExecutionToolContext({
-    workflowManager: {
+    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionRepository: {
       mutateActive: createFakeMutateActive(store, eventPublisher),
     },
     runtimeEditService: createGraphWorkflowRuntimeEditService({

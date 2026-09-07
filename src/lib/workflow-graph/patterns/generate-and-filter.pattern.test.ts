@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -288,8 +289,9 @@ async function runPattern(options: {
           if (turn.contextId !== GENERATOR || turn.turn !== 1) return;
 
           const expansionService = createGraphWorkflowExpansionService({
-            getActiveExecution: turn.manager.getActive,
-            mutateActive: turn.manager.mutateActive,
+            executionContract: createNonParticipatingGraphExecutionContract(),
+            getActiveExecution: turn.repository.getActive,
+            mutateActive: turn.repository.mutateActive,
             buildLiveEditDeps: async () => harnessLiveEditDeps(),
             publishLiveEditApplied: turn.eventPublisher.publishLiveEditApplied,
             publishGraphExpansion: turn.eventPublisher.publishGraphExpansion,
@@ -314,7 +316,7 @@ async function runPattern(options: {
               executionId,
               contextId,
             ) => {
-              const execution = await turn.manager.getActive(
+              const execution = await turn.repository.getActive(
                 projectPath,
                 sessionName,
               );
@@ -367,7 +369,7 @@ async function runPattern(options: {
                     throw new Error("not reached by the expand verb");
                   },
                   getPendingHaltReason: async () => {
-                    const fresh = await turn.manager.getActive(
+                    const fresh = await turn.repository.getActive(
                       projectPath,
                       sessionName,
                     );
@@ -433,7 +435,10 @@ async function runPattern(options: {
         attempts,
         refusalCodes,
         prompts,
-        reloaded: await run.manager.getActive(run.projectPath, run.sessionName),
+        reloaded: await run.repository.getActive(
+          run.projectPath,
+          run.sessionName,
+        ),
       }),
     );
   } finally {

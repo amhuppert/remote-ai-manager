@@ -1,3 +1,5 @@
+import { getEntryContextIds, getTerminalContextIds } from "./execution-index";
+import { createWorkflowDefinition } from "./test-fixtures";
 import { describe, expect, it } from "vitest";
 import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
 import type {
@@ -152,4 +154,10 @@ describe("createExecutionIndex", () => {
       "task-b": taskStateB,
     });
   });
+});
+
+it("finds graph entry and terminal contexts", () => {
+  const definition = createWorkflowDefinition();
+  expect(getEntryContextIds(definition)).toEqual(["context-plan"]);
+  expect(getTerminalContextIds(definition)).toEqual(["context-verify"]);
 });

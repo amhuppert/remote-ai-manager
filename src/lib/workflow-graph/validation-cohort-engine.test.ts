@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { describe, expect, it } from "vitest";
 import {
   ADMISSION_TIMEOUT_RESULT,
@@ -882,13 +883,15 @@ describe("a parked specialist leaves the round unconcluded", () => {
   async function consumeAnswers(
     harness: Harness,
   ): Promise<ResumeUserInputContext[]> {
-    await harness.repository.mutateActive("/repo", "session-1", (latest) => {
-      const next = structuredClone(latest);
-      const contextState = next.contextStates["context-plan"]!;
-      contextState.pendingUserInputs = {};
-      contextState.status = "running";
-      return next;
-    });
+    await harness.repository
+      .mutateActive("/repo", "session-1", (latest) => {
+        const next = structuredClone(latest);
+        const contextState = next.contextStates["context-plan"]!;
+        contextState.pendingUserInputs = {};
+        contextState.status = "running";
+        return changed(next);
+      })
+      .then((mutation) => mutation.execution);
     return [
       {
         laneKey: "context_validator:security-reviewer",

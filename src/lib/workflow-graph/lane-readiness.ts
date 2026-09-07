@@ -8,6 +8,8 @@ import {
 } from "@/lib/workflow-graph/execution-routes";
 import {
   incomingRoutes,
+  activeDependencySourceIds,
+  routeVerdict,
   type RouteProjection,
   type RoutePublishSettlement,
 } from "@/lib/workflow-graph/route-projection";
@@ -722,4 +724,71 @@ function isPublishedToSessionLane(
     if (execution.executionLanes[reachedId]?.kind === "session") return true;
   }
   return false;
+}
+
+/**
+ * A context is "landed" — its work is visible to a session-bound downstream.
+ * Equivalent to "upstream output is visible to a downstream that has no lane
+ * assignment" under the lane-aware model: legacy session-isolation contexts
+ * publish straight to the session worktree, and legacy per-context worktree
+ * contexts publish via the fan-in squash merge (`mergeStatus === "merged-success"`).
+ * Prefer {@link isContextOutputCommittedToLane} or
+ * `isUpstreamVisibleToLane` for lane-aware callers.
+ */
+export function isContextLanded(
+  state: GraphWorkflowExecutionContextState,
+): boolean {
+  if (state.status !== "completed") return false;
+  if (state.laneId !== null) return false;
+  if (state.isolation === "session") return true;
+  return state.mergeStatus === "merged-success";
+}
+
+/**
+ * The contexts the scheduler may start right now.
+ *
+ * Two independent gates, composed (D4 R2.5). The ROUTE gate is the projection's
+ * verdict: every incoming edge satisfied, where a guard decides a conditional
+ * edge and a skipped source's unconditional edge drops out of the conjunction.
+ * The LAND gate is unchanged and still necessary — a satisfied route says the
+ * branch was taken, not that the source's work is committed and visible from
+ * the downstream's lane — so a source whose fan-in merge is pending or failed
+ * blocks its dependents here rather than releasing them.
+ *
+ * Prerequisites come from `activeDependencySourceIds`, i.e. the EFFECTIVE
+ * sources of the ACTIVE incoming edges (decision D1). Reading
+ * `edge.sourceContextId` directly would wait on branches the routing already
+ * declined and, once loops land, on a declared exit that never runs.
+ *
+ * The LAND gate stops at "has it landed". WHERE it landed relative to this
+ * context's lane is `classifyContextSchedulability`'s call, and deliberately
+ * not repeated here: an upstream on a lane the target has not merged yet is
+ * joinable, not blocked, and the classifier's `wait-for-join` verdict is what
+ * plans that merge. Filtering the context out of eligibility would leave nobody
+ * to plan it (R3.2).
+ */
+export function getEligibleContextIds(
+  definition: ReadinessDefinition,
+  execution: GraphWorkflowExecution,
+): string[] {
+  const projection = projectExecutionRoutes(execution, definition);
+
+  return definition.executionContexts
+    .map((context) => context.id)
+    .filter((contextId) => {
+      const state = execution.contextStates[contextId];
+      if (!state) return false;
+      if (state.status !== "pending" && state.status !== "ready") return false;
+      // Owner-discriminated reservation (Design 3.1): a context a scheduler has
+      // reserved (and is provisioning worktrees for out of the lock) is not
+      // eligible for a concurrent same-epoch scheduler to re-classify and
+      // double-provision. The owning pass clears the stamp at finalize.
+      if (state.reservedByBatchId != null) return false;
+
+      if (routeVerdict(projection, contextId).kind !== "eligible") return false;
+
+      return activeDependencySourceIds(projection, contextId).every(
+        (upstreamId) => isRouteSourceLanded(execution, upstreamId),
+      );
+    });
 }

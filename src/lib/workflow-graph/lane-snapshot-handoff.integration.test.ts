@@ -1,3 +1,4 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { createTestActorImplementations } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 let conversationActors: ReturnType<typeof createTestActorImplementations>;
@@ -238,8 +239,9 @@ function laneContinuity(
     laneService: createLaneService({ store: createInMemoryLaneStore() }),
     executionRepository: {
       async mutateActive(_projectPath, _sessionName, fn) {
-        current = await fn(current);
-        return current;
+        return applyFixtureMutation(current, fn, (next) => {
+          current = next;
+        });
       },
     },
     createConversation: (projectPath, sessionName, opts) =>

@@ -1,3 +1,4 @@
+import { classifyContextActivity } from "@/lib/workflow-graph/context-activity";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
@@ -84,7 +85,8 @@ export function deriveContextWaitState(input: {
     };
   }
 
-  if (ctxState.mergeStatus === "in-progress") {
+  const activity = classifyContextActivity(ctxState);
+  if (activity === "merging") {
     return { kind: "merging", targetBranch: ctxState.branchName };
   }
 
@@ -93,19 +95,8 @@ export function deriveContextWaitState(input: {
   }
 
   if (ctxState.status === "running") {
-    // Ahead of the task-count check, which would otherwise read a certified
-    // context as still under review. `recertifying` deliberately falls through:
-    // the response turn moved the candidate, so a blocking round IS what runs
-    // next.
-    if (ctxState.advisoryResponse?.phase === "awaiting_response") {
-      return { kind: "advisory-response" };
-    }
-    if (
-      ctxState.totalTaskCount > 0 &&
-      ctxState.completedTaskCount >= ctxState.totalTaskCount
-    ) {
-      return { kind: "validating" };
-    }
+    if (activity === "advisory_response") return { kind: "advisory-response" };
+    if (activity === "validation") return { kind: "validating" };
     return { kind: "running" };
   }
 

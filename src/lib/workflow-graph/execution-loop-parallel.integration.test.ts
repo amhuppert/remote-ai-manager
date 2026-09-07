@@ -1,3 +1,17 @@
+import { createExecutionLoopFixture as createConfiguredExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { type ExecutionLoopFixtureDeps } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { createContextScheduler } from "./context-scheduler";
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -39,19 +53,12 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
-import type {
-  GraphWorkflowExecutionSeed,
-  MutateActiveResult,
-} from "./execution-repository";
-import {
-  createGraphWorkflowExecutionLoop as createProductionGraphWorkflowExecutionLoop,
-  _resetActiveLoopsForTesting,
-  type GraphWorkflowExecutionLoopDeps,
-} from "./execution-loop";
+import type { GraphWorkflowExecutionSeed } from "./execution-repository";
+import { _resetActiveLoopsForTesting } from "./execution-loop";
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { createGraphWorkflowManager } from "./workflow-manager";
-import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import type { GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
@@ -61,16 +68,15 @@ import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-en
 import { resolveUpstreamInputs } from "./context-outputs";
 
 /** Synthetic worktrees in this suite have no Git index to prepare. */
-function createGraphWorkflowExecutionLoop(
-  deps: GraphWorkflowExecutionLoopDeps,
-) {
-  return createProductionGraphWorkflowExecutionLoop({
+function createExecutionLoopFixture(deps: ExecutionLoopFixtureDeps) {
+  return createConfiguredExecutionLoopFixture({
     ...deps,
     resyncSharedIndex: deps.resyncSharedIndex ?? (async () => {}),
   });
 }
 
 interface InMemoryExecutionRepository {
+  ensureArtifactsMaterialized(): Promise<GraphWorkflowExecution | null>;
   getActive(
     projectPath: string,
     sessionName: string,
@@ -84,13 +90,13 @@ interface InMemoryExecutionRepository {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowArchiveOutcome>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   markContextEventsPreReset(
     projectPath: string,
     sessionName: string,
@@ -116,13 +122,11 @@ function createRepository(
   // Serialized read-modify-write backing the sync `mutateActive` — the reducer
   // is synchronous and returns inert delivery data, applied exactly as the
   // production seam does.
-  const mutateActiveImpl = async (
-    _p: string,
-    _s: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution> => {
+  const mutateActiveImpl = async <Value, Refusal>(
+    _projectPath: string,
+    _sessionName: string,
+    fn: (execution: GraphWorkflowExecution) => FixtureDecision<Value, Refusal>,
+  ): Promise<FixtureOutcome<Value, Refusal>> => {
     const previous = chain;
     let release!: () => void;
     const next = new Promise<void>((resolve) => {
@@ -134,26 +138,18 @@ function createRepository(
       if (!active) {
         throw new Error("No active execution");
       }
-      const result = fn(structuredClone(active));
-      if ("execution" in result && "events" in result) {
-        active = result.execution;
-        // Mirror the production repository: broadcast the derived events only
-        // AFTER the (fake) commit, through the injected publisher — never from a
-        // callable the reducer returned (`post-commit-delivery`).
-        eventPublisher?.deliver({
-          events: result.events,
-          pushes: result.pushes ?? [],
-        });
-      } else {
-        active = result;
-      }
-      return active;
+      return applyFixtureMutation(active, fn, (next, delivery) => {
+        active = next;
+        eventPublisher?.deliver(delivery);
+      });
     } finally {
       release();
     }
   };
 
   return {
+    ensureArtifactsMaterialized: async () => null,
+
     async getActive() {
       return active;
     },
@@ -472,10 +468,12 @@ function createNoopJoinRunner(): JoinRunner {
   return {
     async run({ joinId, mutateActive }) {
       await mutateActive((e) =>
-        applyJoinProgress(e, joinId, new Date().toISOString(), {
-          status: "succeeded",
-        }),
-      );
+        changed(
+          applyJoinProgress(e, joinId, new Date().toISOString(), {
+            status: "succeeded",
+          }),
+        ),
+      ).then((mutation) => mutation.execution);
       return { status: "succeeded" };
     },
   };
@@ -491,11 +489,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -511,25 +515,27 @@ describe("execution loop — parallel integration", () => {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
         await completionGates.get(input.contextId)!.promise;
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) {
-            ts.status = "completed";
-            ts.completedAt = "2026-03-27T12:01:00.000Z";
-          }
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) {
+              ts.status = "completed";
+              ts.completedAt = "2026-03-27T12:01:00.000Z";
+            }
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -550,8 +556,17 @@ describe("execution loop — parallel integration", () => {
     });
 
     const soloCommitCalls: string[] = [];
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex,
@@ -624,11 +639,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -655,25 +676,27 @@ describe("execution loop — parallel integration", () => {
         ranContexts.add(input.contextId);
         try {
           await completionGates.get(input.contextId)!.promise;
-          const next = await manager.mutateActive("/repo", "session-1", (e) => {
-            const updated = structuredClone(e);
-            const cs = updated.contextStates[input.contextId];
-            if (cs) {
-              cs.iterationCount = 1;
-              cs.status = "completed";
-              cs.completedTaskCount = 1;
-            }
-            const ts = updated.taskStates[`task-${input.contextId}`];
-            if (ts) {
-              ts.status = "completed";
-              ts.completedAt = "2026-03-27T12:01:00.000Z";
-            }
-            return updated;
-          });
+          const next = await repository
+            .mutateActive("/repo", "session-1", (e) => {
+              const updated = structuredClone(e);
+              const cs = updated.contextStates[input.contextId];
+              if (cs) {
+                cs.iterationCount = 1;
+                cs.status = "completed";
+                cs.completedTaskCount = 1;
+              }
+              const ts = updated.taskStates[`task-${input.contextId}`];
+              if (ts) {
+                ts.status = "completed";
+                ts.completedAt = "2026-03-27T12:01:00.000Z";
+              }
+              return changed(updated);
+            })
+            .then((mutation) => mutation.execution);
           return {
             conversationId: `conv-${input.contextId}`,
             execution: next,
-            shouldContinueInContext: false,
+            decision: { kind: "ready_to_land" },
           };
         } finally {
           current -= 1;
@@ -687,8 +710,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -739,11 +771,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -753,21 +791,23 @@ describe("execution loop — parallel integration", () => {
       async runIteration(input: {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -778,8 +818,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -823,11 +872,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -843,21 +898,23 @@ describe("execution loop — parallel integration", () => {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
         await completionGates.get(input.contextId)!.promise;
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -877,8 +934,17 @@ describe("execution loop — parallel integration", () => {
       acquireSessionLock: () => () => {},
     });
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex,
@@ -940,11 +1006,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -963,37 +1035,41 @@ describe("execution loop — parallel integration", () => {
         await completionGates.get(input.contextId)!.promise;
         if (input.contextId === "ctx-a") {
           // A's iteration trips the circuit breaker (consecutiveFailureCount >= threshold)
-          const next = await manager.mutateActive("/repo", "session-1", (e) => {
-            const updated = structuredClone(e);
-            const cs = updated.contextStates["ctx-a"];
-            if (cs) {
-              cs.iterationCount = 1;
-              cs.consecutiveFailureCount = 3;
-            }
-            return updated;
-          });
+          const next = await repository
+            .mutateActive("/repo", "session-1", (e) => {
+              const updated = structuredClone(e);
+              const cs = updated.contextStates["ctx-a"];
+              if (cs) {
+                cs.iterationCount = 1;
+                cs.consecutiveFailureCount = 3;
+              }
+              return changed(updated);
+            })
+            .then((mutation) => mutation.execution);
           return {
             conversationId: "conv-a",
             execution: next,
-            shouldContinueInContext: true,
+            decision: { kind: "continue", reason: "tasks_remaining" },
           };
         }
         // B and C complete normally
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -1004,8 +1080,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -1062,11 +1147,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -1099,23 +1190,35 @@ describe("execution loop — parallel integration", () => {
           return {
             conversationId: "conv-a",
             execution: result.execution,
-            shouldContinueInContext: false,
+            decision: {
+              kind: "halted",
+              haltReason: {
+                type: "collaboration_failure",
+                status: "objective_disagreement",
+                brief: "ctx-a is blocked",
+                executionContextId: "ctx-a",
+                conversationId: "conv-a",
+                summary: "ctx-a is blocked",
+              },
+            },
           };
         }
         // ctx-b always has remaining work and would loop forever without the
         // pending-halt guard. It clones the latest execution (now carrying
         // pendingHaltReason), so the loop must stop after a single iteration.
         await haltRecorded.promise;
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates["ctx-b"];
-          if (cs) cs.iterationCount += 1;
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates["ctx-b"];
+            if (cs) cs.iterationCount += 1;
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: "conv-b",
           execution: next,
-          shouldContinueInContext: true,
+          decision: { kind: "continue", reason: "tasks_remaining" },
         };
       },
     };
@@ -1126,8 +1229,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -1174,11 +1286,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -1210,30 +1328,41 @@ describe("execution loop — parallel integration", () => {
           return {
             conversationId: "conv-a",
             execution,
-            shouldContinueInContext: false,
+            decision: {
+              kind: "halted",
+              haltReason: {
+                type: "circuit_breaker",
+                contextId: "ctx-a",
+                condition: "retry_exhaustion",
+                failureCount: 3,
+                summary: null,
+              },
+            },
           };
         }
 
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) {
-            ts.status = "completed";
-          }
-          updated.activeContextIds = updated.activeContextIds.filter(
-            (id) => id !== input.contextId,
-          );
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) {
+              ts.status = "completed";
+            }
+            updated.activeContextIds = updated.activeContextIds.filter(
+              (id) => id !== input.contextId,
+            );
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -1246,8 +1375,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -1301,14 +1439,19 @@ describe("execution loop — parallel integration", () => {
     const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
     const initial = createInitialExecution(definition);
     const repository = createRepository(initial);
-    const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -1421,11 +1564,17 @@ describe("execution loop — parallel integration", () => {
     });
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return session;
       },
@@ -1459,34 +1608,35 @@ describe("execution loop — parallel integration", () => {
             modelId: "sonnet",
             parameters: { effort: "medium" },
           },
-          toolServer: { servers: [] },
           executionTarget: input.executionTarget,
           placement,
         });
 
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          // Structured output is a read-only context's ONLY delivery channel,
-          // so the run cannot finish until the declared contract is satisfied.
-          updated.contextOutputs[input.contextId] = {
-            value: { result: input.contextId },
-            capturedAt: "2026-03-27T12:05:00.000Z",
-            iteration: 1,
-            parse: { source: "native" },
-          };
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            // Structured output is a read-only context's ONLY delivery channel,
+            // so the run cannot finish until the declared contract is satisfied.
+            updated.contextOutputs[input.contextId] = {
+              value: { result: input.contextId },
+              capturedAt: "2026-03-27T12:05:00.000Z",
+              iteration: 1,
+              parse: { source: "native" },
+            };
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -1502,8 +1652,17 @@ describe("execution loop — parallel integration", () => {
     const laneCommit = vi.fn(async () => ({ status: "skipped" as const }));
     const resolveHead = vi.fn(async () => null);
     const joinRun = vi.fn();
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -1597,11 +1756,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -1611,21 +1776,23 @@ describe("execution loop — parallel integration", () => {
       async runIteration(input: {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -1657,8 +1824,17 @@ describe("execution loop — parallel integration", () => {
     });
     const mergeMutex = createPerSessionMergeMutex();
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex,
@@ -1706,11 +1882,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -1726,21 +1908,23 @@ describe("execution loop — parallel integration", () => {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
         await completionGates.get(input.contextId)!.promise;
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -1772,8 +1956,17 @@ describe("execution loop — parallel integration", () => {
       acquireSessionLock: () => () => {},
     });
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex,
@@ -1876,11 +2069,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -1904,22 +2103,24 @@ describe("execution loop — parallel integration", () => {
           completionGates.get("p3")!.resolve();
         }
         await completionGates.get(input.contextId)!.promise;
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -1930,8 +2131,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -2061,11 +2271,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2085,22 +2301,24 @@ describe("execution loop — parallel integration", () => {
       }): Promise<GraphWorkflowIterationResult> {
         runIterationCalls.push(input.contextId);
         await completionGates.get(input.contextId)!.promise;
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -2114,8 +2332,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -2209,11 +2436,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2232,30 +2465,35 @@ describe("execution loop — parallel integration", () => {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
         runIterationCalls.push(input.contextId);
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.completedTaskCount = 1;
-            if (input.contextId === "ctx-a") {
-              cs.status = "awaiting_approval";
-              cs.pendingApproval = structuredClone(pendingApprovalRecord);
-            } else {
-              cs.status = "completed";
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.completedTaskCount = 1;
+              if (input.contextId === "ctx-a") {
+                cs.status = "awaiting_approval";
+                cs.pendingApproval = structuredClone(pendingApprovalRecord);
+              } else {
+                cs.status = "completed";
+              }
             }
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          updated.activeContextIds = updated.activeContextIds.filter(
-            (id) => id !== input.contextId,
-          );
-          return updated;
-        });
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            updated.activeContextIds = updated.activeContextIds.filter(
+              (id) => id !== input.contextId,
+            );
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision:
+            input.contextId === "ctx-a"
+              ? { kind: "await_approval" }
+              : { kind: "ready_to_land" },
         };
       },
     };
@@ -2268,8 +2506,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -2376,11 +2623,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2392,35 +2645,40 @@ describe("execution loop — parallel integration", () => {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
         runIterationCalls.push(input.contextId);
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.completedTaskCount = 1;
-            if (input.contextId === "ctx-a" && cs.pendingApproval === null) {
-              cs.status = "awaiting_approval";
-              cs.pendingApproval = {
-                conversationId: "conv-ctx-a",
-                requestedAt: "2026-03-27T12:01:00.000Z",
-                approvalScope: { kind: "whole_tree" as const },
-                decision: null,
-              };
-            } else {
-              cs.status = "completed";
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.completedTaskCount = 1;
+              if (input.contextId === "ctx-a" && cs.pendingApproval === null) {
+                cs.status = "awaiting_approval";
+                cs.pendingApproval = {
+                  conversationId: "conv-ctx-a",
+                  requestedAt: "2026-03-27T12:01:00.000Z",
+                  approvalScope: { kind: "whole_tree" as const },
+                  decision: null,
+                };
+              } else {
+                cs.status = "completed";
+              }
             }
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          updated.activeContextIds = updated.activeContextIds.filter(
-            (id) => id !== input.contextId,
-          );
-          return updated;
-        });
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            updated.activeContextIds = updated.activeContextIds.filter(
+              (id) => id !== input.contextId,
+            );
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision:
+            next.contextStates[input.contextId]?.status === "awaiting_approval"
+              ? { kind: "await_approval" }
+              : { kind: "ready_to_land" },
         };
       },
     };
@@ -2441,21 +2699,32 @@ describe("execution loop — parallel integration", () => {
     };
 
     const waitForApprovalProgress = vi.fn(async () => {
-      await manager.mutateActive("/repo", "session-1", (e) => {
-        const next = structuredClone(e);
-        const record = next.contextStates["ctx-a"]?.pendingApproval;
-        if (record && record.decision === null) {
-          record.decision = {
-            type: "approved",
-            decidedAt: "2026-03-27T12:02:00.000Z",
-          };
-        }
-        return next;
-      });
+      await repository
+        .mutateActive("/repo", "session-1", (e) => {
+          const next = structuredClone(e);
+          const record = next.contextStates["ctx-a"]?.pendingApproval;
+          if (record && record.decision === null) {
+            record.decision = {
+              type: "approved",
+              decidedAt: "2026-03-27T12:02:00.000Z",
+            };
+          }
+          return changed(next);
+        })
+        .then((mutation) => mutation.execution);
     });
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -2548,11 +2817,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2562,25 +2837,27 @@ describe("execution loop — parallel integration", () => {
       async runIteration(input: {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) {
-            ts.status = "completed";
-            ts.completedAt = "2026-03-27T12:01:00.000Z";
-          }
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) {
+              ts.status = "completed";
+              ts.completedAt = "2026-03-27T12:01:00.000Z";
+            }
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -2591,8 +2868,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -2678,11 +2964,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2694,25 +2986,27 @@ describe("execution loop — parallel integration", () => {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
         iterationOrder.push(input.contextId);
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) {
-            ts.status = "completed";
-            ts.completedAt = "2026-03-27T12:01:00.000Z";
-          }
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) {
+              ts.status = "completed";
+              ts.completedAt = "2026-03-27T12:01:00.000Z";
+            }
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -2728,8 +3022,17 @@ describe("execution loop — parallel integration", () => {
     const sessionGitLock = createSessionGitLock({
       acquireSessionLock: () => () => {},
     });
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex,
@@ -2793,11 +3096,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2829,32 +3138,43 @@ describe("execution loop — parallel integration", () => {
             },
           );
         }
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.completedTaskCount = 1;
-            cs.status = "awaiting_approval";
-            cs.pendingApproval = structuredClone(pendingApprovalRecord);
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) ts.status = "completed";
-          updated.activeContextIds = updated.activeContextIds.filter(
-            (id) => id !== input.contextId,
-          );
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.completedTaskCount = 1;
+              cs.status = "awaiting_approval";
+              cs.pendingApproval = structuredClone(pendingApprovalRecord);
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) ts.status = "completed";
+            updated.activeContextIds = updated.activeContextIds.filter(
+              (id) => id !== input.contextId,
+            );
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "await_approval" },
         };
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -2920,11 +3240,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return createSession();
       },
@@ -2959,31 +3285,42 @@ describe("execution loop — parallel integration", () => {
             },
           );
         }
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "awaiting_user_input";
-            cs.pendingUserInputs = {
-              implementer: structuredClone(pendingUserInputRecord),
-            };
-          }
-          updated.activeContextIds = updated.activeContextIds.filter(
-            (id) => id !== input.contextId,
-          );
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "awaiting_user_input";
+              cs.pendingUserInputs = {
+                implementer: structuredClone(pendingUserInputRecord),
+              };
+            }
+            updated.activeContextIds = updated.activeContextIds.filter(
+              (id) => id !== input.contextId,
+            );
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "await_user_input" },
         };
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex: createPerSessionMergeMutex(),
@@ -3122,11 +3459,17 @@ describe("execution loop — parallel integration", () => {
     const parallelWorktrees = createParallelWorktreesStub();
 
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
       },
-      parallelWorktrees,
       async getSession() {
         return session;
       },
@@ -3136,25 +3479,27 @@ describe("execution loop — parallel integration", () => {
       async runIteration(input: {
         contextId: string;
       }): Promise<GraphWorkflowIterationResult> {
-        const next = await manager.mutateActive("/repo", "session-1", (e) => {
-          const updated = structuredClone(e);
-          const cs = updated.contextStates[input.contextId];
-          if (cs) {
-            cs.iterationCount = 1;
-            cs.status = "completed";
-            cs.completedTaskCount = 1;
-          }
-          const ts = updated.taskStates[`task-${input.contextId}`];
-          if (ts) {
-            ts.status = "completed";
-            ts.completedAt = "2026-03-27T12:02:00.000Z";
-          }
-          return updated;
-        });
+        const next = await repository
+          .mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) {
+              ts.status = "completed";
+              ts.completedAt = "2026-03-27T12:02:00.000Z";
+            }
+            return changed(updated);
+          })
+          .then((mutation) => mutation.execution);
         return {
           conversationId: `conv-${input.contextId}`,
           execution: next,
-          shouldContinueInContext: false,
+          decision: { kind: "ready_to_land" },
         };
       },
     };
@@ -3191,8 +3536,17 @@ describe("execution loop — parallel integration", () => {
       },
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
       workflowManager: manager,
+      executionRepository: repository,
+      contextScheduler: createContextScheduler({
+        executionRepository: repository,
+        parallelWorktrees,
+        getSession: async () => createSession(),
+      }),
       iterationOrchestrator,
       parallelWorktrees,
       mergeMutex,

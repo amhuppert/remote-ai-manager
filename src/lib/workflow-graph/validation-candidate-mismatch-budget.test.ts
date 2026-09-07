@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * The bound on validation rounds that conclude without a verdict, driven
  * through the production orchestrator.
@@ -86,10 +87,8 @@ function driftingSubject(): DriftSubject {
     scriptValidatorOutcome: async () => {
       if (dropSeat) {
         dropSeat = false;
-        await harness.repository.mutateActive(
-          PROJECT_PATH,
-          SESSION_NAME,
-          (latest) => {
+        await harness.repository
+          .mutateActive(PROJECT_PATH, SESSION_NAME, (latest) => {
             const next = structuredClone(latest);
             const context = next.workingDefinition.executionContexts.find(
               (entry) => entry.id === "context-plan",
@@ -101,9 +100,9 @@ function driftingSubject(): DriftSubject {
               ...context.contextValidator,
               assignments: context.contextValidator.assignments.slice(0, -1),
             };
-            return next;
-          },
-        );
+            return changed(next);
+          })
+          .then((mutation) => mutation.execution);
       }
       return {
         kind: "pass",

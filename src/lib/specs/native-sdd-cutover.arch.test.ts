@@ -625,22 +625,18 @@ describe("native SDD proposal shares the ordinary admission service", () => {
 
 describe("native SDD start shares the spec-delivery start core", () => {
   it("binds the spec entry point to the shared manager's spec-delivery launch", () => {
-    // The entry point is the route module's in-process seam, and its default
-    // deps ride workflowManager.launchSpecDelivery — the same gauntlet every
-    // other launch verb crosses. Spec code building its own start path would
-    // bypass exactly this binding.
-    const routeSource = read(
-      "src/lib/workflow-graph/execution-route-handlers.ts",
-    );
+    // Production binds the lifecycle service to the manager's shared launch
+    // gauntlet; native SDD supplies its atomic reservation attachment there.
+    const routeSource = read("src/lib/workflow-graph/production.ts");
     expect(routeSource).toContain(
       `export async function ${SPEC_START_ENTRY_POINT}(`,
     );
     expect(routeSource.replace(/\s+/g, " ")).toContain(
-      "launchSpecDeliveryExecution: (input) => workflowManager.launchSpecDelivery(input),",
+      "launchSpecDeliveryExecution: (input) => getGraphWorkflowRuntime().workflowManager.launchSpecDelivery(input),",
     );
     const factorySource = read("src/lib/specs/service-factory.ts");
     expect(factorySource).toContain(
-      `import { ${SPEC_START_ENTRY_POINT} } from "@/lib/workflow-graph/execution-route-handlers"`,
+      `import { ${SPEC_START_ENTRY_POINT} } from "@/lib/workflow-graph/production"`,
     );
   });
 

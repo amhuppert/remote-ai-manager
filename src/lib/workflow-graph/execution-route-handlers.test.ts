@@ -1,3 +1,10 @@
+import { createContextIterationFixture } from "@/lib/workflow-graph/testing/iteration-fixture";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { createContextTestCapabilities } from "@/lib/workflow-graph/testing/context-capabilities";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
+import { WorkflowDefinitionNotFoundError } from "./workflow-manager";
+import { ResetExecutionContextError } from "./reset-context";
+import { ResetAssignmentError } from "./reset-assignment";
 import { settledConversationTurn } from "@/lib/workflows/conversation/testing/turn-result-fixture";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,15 +29,16 @@ import {
   makeProfileSnapshot,
 } from "./test-fixtures";
 import {
-  buildLaneIterationToolServer,
   createGraphWorkflowExecutionRouteHandlers,
-  createGraphWorkflowRouteScriptValidatorService,
-  createGraphWorkflowRouteValidationRoundService,
-  launchGraphWorkflowExecution,
   OWNER_CONVERSATION_HEADER,
   type GraphWorkflowExecutionRouteDeps,
-  type GraphWorkflowRouteValidationRoundServiceDeps,
 } from "./execution-route-handlers";
+
+import {
+  createGraphWorkflowScriptValidatorService,
+  createGraphWorkflowValidationRoundService,
+  type GraphWorkflowValidationRoundServiceDeps,
+} from "./validation-services";
 import {
   CONVERSATION_CAPABILITY_HEADER,
   mintConversationCapability,
@@ -45,7 +53,7 @@ import {
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { CandidateScope } from "@/lib/git/diff";
-import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+
 import type {
   DefinitionApprovalGateDecision,
   GraphExecutionLifecycleContext,
@@ -54,11 +62,12 @@ import {
   createGraphWorkflowManager,
   GraphWorkflowTransitionConflictError,
   WorkflowPrerequisitesUnmetError,
-  WorkflowStartGuardError,
   WorkflowStartInputError,
 } from "./workflow-manager";
+import { WorkflowStartGuardError } from "./start-guards";
 import {
   GraphExecutionContractViolationError,
+  createRegisteredGraphExecutionContract,
   registerGraphExecutionContract,
   resetGraphExecutionContractForTesting,
 } from "./execution-contract-port";
@@ -208,6 +217,8 @@ describe("graph workflow execution route handlers", () => {
     >();
 
   const handlers = createGraphWorkflowExecutionRouteHandlers({
+    executionContract: createRegisteredGraphExecutionContract(),
+
     resolveProjectPath,
     getSession,
     startExecution,
@@ -276,6 +287,9 @@ describe("graph workflow execution route handlers", () => {
 
   afterEach(() => {
     resetGraphExecutionContractForTesting();
+    registerGraphExecutionContract(
+      createNonParticipatingGraphExecutionContract(),
+    );
   });
 
   it("delegates a zero-input start to the shared start path and returns 202", async () => {
@@ -915,6 +929,8 @@ describe("graph workflow execution route handlers", () => {
       makeSession({ graphWorkflowExecution: parkedExecution }),
     );
     registerGraphExecutionContract({
+      loadPromptProjection: async () => null,
+
       validateDefinition() {
         return {
           ok: false,
@@ -1718,7 +1734,7 @@ describe("graph workflow execution route handlers", () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
     startExecution.mockRejectedValue(
-      new Error('Workflow definition "workflow-1" was not found'),
+      new WorkflowDefinitionNotFoundError("workflow-1", "project"),
     );
 
     const response = await handlers.START(
@@ -3019,7 +3035,8 @@ describe("graph workflow execution route handlers", () => {
       }),
     );
     resetExecutionContext.mockRejectedValue(
-      new Error(
+      new ResetExecutionContextError(
+        "invalid_execution_status",
         "Reset only allowed when the workflow is paused or halted (current status: running).",
       ),
     );
@@ -3127,7 +3144,8 @@ describe("graph workflow execution route handlers", () => {
       }),
     );
     resetExecutionContextAssignment.mockRejectedValue(
-      new Error(
+      new ResetAssignmentError(
+        "invalid_execution_status",
         "Resetting a validator assignment is only allowed when the workflow is paused or halted (current status: running).",
       ),
     );
@@ -3223,6 +3241,9 @@ describe("graph workflow resolve-approval route handler", () => {
 
   function buildHandlers() {
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -3247,6 +3268,8 @@ describe("graph workflow resolve-approval route handler", () => {
       now: () => NOW,
     });
     return createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
@@ -3301,7 +3324,11 @@ describe("graph workflow resolve-approval route handler", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -3533,6 +3560,8 @@ describe("graph workflow approval-snapshot route handler", () => {
     resolveApprovalSnapshot?: GraphWorkflowExecutionRouteDeps["resolveApprovalSnapshot"];
   }) {
     return createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () =>
@@ -3678,9 +3707,9 @@ describe("graph workflow route validation round service", () => {
   const ownedByA: CandidateScope = { mode: "owned", ownedPaths: ["src/a"] };
 
   function makeService(
-    overrides: Partial<GraphWorkflowRouteValidationRoundServiceDeps> = {},
+    overrides: Partial<GraphWorkflowValidationRoundServiceDeps> = {},
   ) {
-    return createGraphWorkflowRouteValidationRoundService({
+    return createGraphWorkflowValidationRoundService({
       getSession: async () => makeSession(),
       readHeadSha: async () => "head-sha-1",
       computeCandidateIdentity: async () => "identity-1",
@@ -3781,7 +3810,7 @@ describe("graph workflow route script validator service", () => {
     }));
     const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
 
-    const service = createGraphWorkflowRouteScriptValidatorService({
+    const service = createGraphWorkflowScriptValidatorService({
       getSession,
       readConfig,
       runScriptValidator,
@@ -3838,7 +3867,7 @@ describe("graph workflow route script validator service", () => {
     const readConfig = vi.fn(async () => ({ preMergeTimeoutMs: 123_000 }));
     const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
 
-    const service = createGraphWorkflowRouteScriptValidatorService({
+    const service = createGraphWorkflowScriptValidatorService({
       getSession,
       readConfig,
       runScriptValidator,
@@ -3874,11 +3903,13 @@ describe("graph workflow route script validator service", () => {
 // that both Claude and Codex backends use executeConversationTurn and that no
 // implementer-only in-memory resume cache is needed.
 
+// -- Implementer runner wiring: unified executeConversationTurn path ---------------
+// These tests exercise the same wiring pattern used by execution-route-handlers.ts
+// to wire implementer turns through createGraphWorkflowImplementerRunner, verifying
+// that both Claude and Codex backends use executeConversationTurn and that no
+// implementer-only in-memory resume cache is needed.
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
-import {
-  createGraphWorkflowIterationOrchestrator,
-  type GraphWorkflowRunAgentIterationInput,
-} from "@/lib/workflow-graph/iteration-orchestrator";
+import { type GraphWorkflowRunAgentIterationInput } from "@/lib/workflow-graph/iteration-orchestrator";
 import { createResolvedWorkflowDefinition } from "./test-fixtures";
 function createCodexWorkflowExecution(): GraphWorkflowExecution {
   const definition = createResolvedWorkflowDefinition({
@@ -3986,24 +4017,25 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
     const execution = createCodexWorkflowExecution();
     let activeExecution = execution;
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: {
         async getActive() {
           return activeExecution;
         },
         async mutateActive(_p, _s, fn) {
-          const result = await fn(structuredClone(activeExecution));
-          activeExecution =
-            "execution" in result && "events" in result
-              ? result.execution
-              : result;
-          return activeExecution;
+          return applyFixtureMutation(activeExecution, fn, (next) => {
+            activeExecution = next;
+          });
         },
       },
       findLatestContextValidationEvent: async () => null,
       createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
-      createToolServer: vi.fn(() => ({ server: { servers: [] } })),
-      // Wire runAgentIteration the same way execution-route-handlers.ts does
+      // Wire runAgentIteration through the production implementer runner
       async runAgentIteration(input: GraphWorkflowRunAgentIterationInput) {
         return implementerRunner.runIteration({
           projectPath: input.projectPath,
@@ -4014,7 +4046,6 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
           contextId: input.contextId,
           backend: input.backend,
           modelSelection: input.modelSelection,
-          toolServer: input.toolServer,
           placement: { lane: "build", mode: "full" },
         });
       },
@@ -4074,23 +4105,24 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
     const execution = createCodexWorkflowExecution();
     let activeExecution = execution;
 
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
+    const orchestrator = createContextIterationFixture({
+      ...createContextTestCapabilities(),
+      materializeWorkflowDocuments: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: {
         async getActive() {
           return activeExecution;
         },
         async mutateActive(_p, _s, fn) {
-          const result = await fn(structuredClone(activeExecution));
-          activeExecution =
-            "execution" in result && "events" in result
-              ? result.execution
-              : result;
-          return activeExecution;
+          return applyFixtureMutation(activeExecution, fn, (next) => {
+            activeExecution = next;
+          });
         },
       },
       findLatestContextValidationEvent: async () => null,
       createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
-      createToolServer: vi.fn(() => ({ server: { servers: [] } })),
       async runAgentIteration(input: GraphWorkflowRunAgentIterationInput) {
         return implementerRunner.runIteration({
           projectPath: input.projectPath,
@@ -4101,7 +4133,6 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
           contextId: input.contextId,
           backend: input.backend,
           modelSelection: input.modelSelection,
-          toolServer: input.toolServer,
           placement: { lane: "build", mode: "full" },
         });
       },
@@ -4149,505 +4180,6 @@ describe("implementer runner wiring (unified executeConversationTurn path)", () 
   });
 });
 
-describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
-  const PROJECT_PATH = "/repo";
-  const PROJECT_NAME = "repo";
-  const SESSION_NAME = "session-1";
-
-  function makeSeamDeps(
-    overrides: Partial<GraphWorkflowExecutionRouteDeps> = {},
-  ): GraphWorkflowExecutionRouteDeps {
-    const unused = (name: string) => {
-      return async (): Promise<never> => {
-        throw new Error(
-          `${name} should not be called by the start+kickoff seam`,
-        );
-      };
-    };
-    return {
-      resolveProjectPath: unused("resolveProjectPath"),
-      getSession: unused("getSession"),
-      normalizeExecutionAfterRestart: unused("normalizeExecutionAfterRestart"),
-      startExecution: unused("startExecution"),
-      runExecution: unused("runExecution"),
-      launchSpecDeliveryExecution: unused("launchSpecDeliveryExecution"),
-      pauseExecution: unused("pauseExecution"),
-      resumeExecution: unused("resumeExecution"),
-      abortExecution: unused("abortExecution"),
-      resetExecutionContext: unused("resetExecutionContext"),
-      resetExecutionContextAssignment: unused(
-        "resetExecutionContextAssignment",
-      ),
-      archiveExecution: unused("archiveExecution"),
-      kickOffExecutionLoop: unused("kickOffExecutionLoop"),
-      getActiveExecution: unused("getActiveExecution"),
-      recordPendingHaltReason: unused("recordPendingHaltReason"),
-      drainAndHalt: unused("drainAndHalt"),
-      recordApprovalDecision: unused("recordApprovalDecision"),
-      ...overrides,
-    };
-  }
-
-  it("calls startExecution with the supplied parameters, kicks off the loop, and returns the started execution", async () => {
-    const started = createWorkflowExecution({
-      id: "execution-seam",
-      status: "running",
-    });
-    const startExecution = vi.fn(async () => acceptedLaunch(started));
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    const result = await launchGraphWorkflowExecution(
-      {
-        projectPath: PROJECT_PATH,
-        projectName: PROJECT_NAME,
-        sessionName: SESSION_NAME,
-        definitionId: "wf-1",
-        parameters: { ticket: "CC-42" },
-      },
-      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-    );
-
-    expect(result).toBe(started);
-    expect(startExecution).toHaveBeenCalledWith({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      definitionId: "wf-1",
-      parameters: { ticket: "CC-42" },
-    });
-    // Kickoff is fire-and-forget; flush microtasks so the queued call lands.
-    await Promise.resolve();
-    expect(kickOffExecutionLoop).toHaveBeenCalledWith({
-      projectPath: PROJECT_PATH,
-      projectName: PROJECT_NAME,
-      sessionName: SESSION_NAME,
-      execution: started,
-    });
-  });
-
-  it("threads the caller-supplied owner conversation into the shared start path", async () => {
-    const started = createWorkflowExecution({
-      id: "execution-owned-seam",
-      status: "running",
-    });
-    const startExecution = vi.fn(async () => acceptedLaunch(started));
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    await launchGraphWorkflowExecution(
-      {
-        projectPath: PROJECT_PATH,
-        projectName: PROJECT_NAME,
-        sessionName: SESSION_NAME,
-        definitionId: "wf-1",
-        ownerConversationId: "conv-planner",
-      },
-      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-    );
-
-    expect(startExecution).toHaveBeenCalledWith({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      definitionId: "wf-1",
-      ownerConversationId: "conv-planner",
-    });
-  });
-
-  it("omits the owner entirely when the calling seam has no conversation identity", async () => {
-    const started = createWorkflowExecution({
-      id: "execution-unowned-seam",
-      status: "running",
-    });
-    const startExecution = vi.fn(async () => acceptedLaunch(started));
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    await launchGraphWorkflowExecution(
-      {
-        projectPath: PROJECT_PATH,
-        projectName: PROJECT_NAME,
-        sessionName: SESSION_NAME,
-        definitionId: "wf-1",
-        ownerConversationId: null,
-      },
-      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-    );
-
-    expect(startExecution).toHaveBeenCalledWith({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      definitionId: "wf-1",
-    });
-  });
-
-  it("marks a linked spec execution running before kicking off the workflow loop", async () => {
-    const started = createWorkflowExecution({
-      id: "execution-lifecycle",
-      status: "running",
-    });
-    const calls: string[] = [];
-    const startExecution = vi.fn(async () => {
-      calls.push("start");
-      return acceptedLaunch(started);
-    });
-    const markRunning = vi.fn(async () => {
-      calls.push("mark-running");
-    });
-    const kickOffExecutionLoop = vi.fn(async () => {
-      calls.push("kickoff");
-    });
-
-    await launchGraphWorkflowExecution(
-      {
-        projectPath: PROJECT_PATH,
-        projectName: PROJECT_NAME,
-        sessionName: SESSION_NAME,
-        definitionId: "wf-1",
-      },
-      makeSeamDeps({ startExecution, markRunning, kickOffExecutionLoop }),
-    );
-
-    // The recorded origin rides along so the lifecycle consumer can correlate
-    // the run with work it prepared — by definition revision for a template
-    // launch, and by nothing it has to invent for a one-off.
-    expect(markRunning).toHaveBeenCalledWith(
-      { projectPath: "/repo", sessionName: "session-1" },
-      "execution-lifecycle",
-      started.origin,
-    );
-    expect(calls).toEqual(["start", "mark-running", "kickoff"]);
-  });
-
-  it("starts a zero-input launch without forwarding a parameters key", async () => {
-    const started = createWorkflowExecution({
-      id: "execution-zero",
-      status: "running",
-    });
-    const startExecution = vi.fn(async () => acceptedLaunch(started));
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    await launchGraphWorkflowExecution(
-      {
-        projectPath: PROJECT_PATH,
-        projectName: PROJECT_NAME,
-        sessionName: SESSION_NAME,
-        definitionId: "wf-static",
-      },
-      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-    );
-
-    expect(startExecution).toHaveBeenCalledWith({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      definitionId: "wf-static",
-    });
-  });
-
-  it("propagates a guard error without kicking off the loop", async () => {
-    const startExecution = vi.fn(async () => {
-      throw new WorkflowStartGuardError(
-        "active_execution",
-        'Session "session-1" already has an active graph workflow execution',
-      );
-    });
-    const kickOffExecutionLoop = vi.fn(async () => {});
-
-    await expect(
-      launchGraphWorkflowExecution(
-        {
-          projectPath: PROJECT_PATH,
-          projectName: PROJECT_NAME,
-          sessionName: SESSION_NAME,
-          definitionId: "wf-1",
-        },
-        makeSeamDeps({ startExecution, kickOffExecutionLoop }),
-      ),
-    ).rejects.toBeInstanceOf(WorkflowStartGuardError);
-
-    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
-  });
-});
-
-describe("lifecycle contract: production slot auto-release", () => {
-  const PROJECT_PATH = "/repo";
-  const PROJECT_NAME = "repo";
-  const SESSION_NAME = "session-1";
-  const NOW = "2026-06-10T10:00:00.000Z";
-  const ABORT_URL =
-    "/api/projects/repo/sessions/session-1/graph-workflow/abort";
-  const START_URL = "/api/projects/repo/sessions/session-1/graph-workflow";
-
-  let fixture: PersistenceFixture;
-
-  beforeEach(() => {
-    fixture = createPersistenceFixture();
-    fixture.seedProject(PROJECT_PATH);
-    fixture.seedSession(PROJECT_PATH, SESSION_NAME);
-  });
-
-  afterEach(() => {
-    fixture.close();
-  });
-
-  function unusedDep(name: string) {
-    return async (): Promise<never> => {
-      throw new Error(`${name} should not be called by this flow`);
-    };
-  }
-
-  /**
-   * Real repository + real manager over the real (in-memory SQLite) store, with
-   * the production route handlers on top. The slot is the persisted
-   * `graph_workflow_executions` active row, so "the slot is free" can only be
-   * proven by reading the store back — a JS fake would prove nothing about
-   * durability.
-   */
-  function buildStack(
-    overrides: Partial<GraphWorkflowExecutionRouteDeps> = {},
-  ) {
-    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
-      broadcast: () => {},
-      dispatchPush: () => {},
-      now: () => NOW,
-    });
-    const repository = createGraphWorkflowExecutionRepository({
-      // No git worktree in this harness; the real exclusion would shell out.
-      ensureCcArtifactsExcluded: async () => {},
-      getSession: fixture.store.getSession,
-      getActiveGraphWorkflowExecution:
-        fixture.store.getActiveGraphWorkflowExecution,
-      mutateActiveGraphWorkflowExecution:
-        fixture.store.mutateActiveGraphWorkflowExecution,
-      reserveActiveGraphWorkflowExecution:
-        fixture.store.reserveActiveGraphWorkflowExecution,
-      archiveActiveGraphWorkflowExecution:
-        fixture.store.archiveActiveGraphWorkflowExecution,
-      markGraphWorkflowContextEventsPreReset:
-        fixture.store.markGraphWorkflowContextEventsPreReset,
-      eventPublisher,
-    });
-    // Two distinct spies on purpose. The manager already stops lane dev servers
-    // inside its abort/halt transitions, so a shared spy could not tell the
-    // release's own cleanup apart from the manager's — and completion, the one
-    // transition with no manager-side cleanup, is exactly where the gap is.
-    const managerStopLaneDevServers = vi.fn(async () => {});
-    const releaseStopLaneDevServers = vi.fn(async () => {});
-    const manager = createGraphWorkflowManager({
-      executionRepository: repository,
-      async loadDefinition() {
-        return null;
-      },
-      now: () => NOW,
-      stopExecutionLaneDevServers: managerStopLaneDevServers,
-    });
-    const handlers = createGraphWorkflowExecutionRouteHandlers({
-      resolveProjectPath: async (name) =>
-        name === PROJECT_NAME ? PROJECT_PATH : null,
-      getSession: fixture.store.getSession,
-      normalizeExecutionAfterRestart: unusedDep(
-        "normalizeExecutionAfterRestart",
-      ),
-      startExecution: unusedDep("startExecution"),
-      runExecution: unusedDep("runExecution"),
-      launchSpecDeliveryExecution: unusedDep("launchSpecDeliveryExecution"),
-      pauseExecution: unusedDep("pauseExecution"),
-      resumeExecution: unusedDep("resumeExecution"),
-      abortExecution: (projectPath, sessionName) =>
-        manager.send(projectPath, sessionName, { type: "abort" }),
-      resetExecutionContext: unusedDep("resetExecutionContext"),
-      resetExecutionContextAssignment: unusedDep(
-        "resetExecutionContextAssignment",
-      ),
-      archiveExecution: repository.archiveActive,
-      kickOffExecutionLoop: unusedDep("kickOffExecutionLoop"),
-      getActiveExecution: repository.getActive,
-      recordPendingHaltReason: unusedDep("recordPendingHaltReason"),
-      drainAndHalt: unusedDep("drainAndHalt"),
-      recordApprovalDecision: unusedDep("recordApprovalDecision"),
-      executionAborted: async () => {},
-      stopExecutionLaneDevServers: releaseStopLaneDevServers,
-      ...overrides,
-    });
-    return {
-      handlers,
-      manager,
-      repository,
-      managerStopLaneDevServers,
-      releaseStopLaneDevServers,
-    };
-  }
-
-  async function seedActive(execution: GraphWorkflowExecution): Promise<void> {
-    await fixture.store.mutateActiveGraphWorkflowExecution(
-      PROJECT_PATH,
-      SESSION_NAME,
-      "test.seedActive",
-      () => ({ execution, events: [] }),
-    );
-  }
-
-  function readActive(): Promise<GraphWorkflowExecution | null> {
-    return fixture.store.getActiveGraphWorkflowExecution(
-      PROJECT_PATH,
-      SESSION_NAME,
-    );
-  }
-
-  /**
-   * The kickoff is fire-and-forget on every launch surface, so the completion
-   * auto-release lands after the route has already answered. Poll the store
-   * rather than the handler's response.
-   */
-  async function waitForFreeSlot(): Promise<void> {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if ((await readActive()) === null) return;
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    throw new Error("slot was still held after the execution settled");
-  }
-
-  function runningExecution(
-    overrides: Partial<GraphWorkflowExecution> = {},
-  ): GraphWorkflowExecution {
-    return createWorkflowExecution({
-      id: "execution-live",
-      status: "running",
-      activeContextIds: ["context-plan"],
-      ...overrides,
-    });
-  }
-
-  it("frees the slot after the production abort route, archiving the run", async () => {
-    const { handlers } = buildStack();
-    await seedActive(runningExecution());
-
-    const response = await handlers.ABORT(
-      makeRequest(ABORT_URL, "POST"),
-      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      execution: { executionId: "execution-live", status: "aborted" },
-    });
-    // The whole point of auto-release: no separate clear act is needed.
-    expect(await readActive()).toBeNull();
-    const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
-      PROJECT_PATH,
-      SESSION_NAME,
-    );
-    expect(archived.map((entry) => entry.id)).toEqual(["execution-live"]);
-  });
-
-  it("frees the slot identically when a run reaches completed", async () => {
-    const seeded = runningExecution({ id: "execution-finishing" });
-    const stack = buildStack({
-      startExecution: async () => acceptedLaunch(seeded),
-      // Stands in for the execution loop: the graph runs out of work and the
-      // manager records the terminal `completed` transition.
-      kickOffExecutionLoop: async () => {
-        await stack.manager.send(PROJECT_PATH, SESSION_NAME, {
-          type: "complete",
-        });
-      },
-    });
-    await seedActive(seeded);
-
-    const response = await stack.handlers.START(
-      makeRequest(START_URL, "POST", { definitionId: "workflow-1" }),
-      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
-    );
-
-    expect(response.status).toBe(202);
-    await waitForFreeSlot();
-    const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
-      PROJECT_PATH,
-      SESSION_NAME,
-    );
-    expect(archived.map((entry) => entry.status)).toEqual(["completed"]);
-  });
-
-  it("leaves a halted run holding the slot for resume", async () => {
-    const stack = buildStack({
-      startExecution: async () =>
-        acceptedLaunch(runningExecution({ id: "execution-halting" })),
-      kickOffExecutionLoop: async () => {
-        await stack.manager.send(PROJECT_PATH, SESSION_NAME, {
-          type: "halt",
-          reason: {
-            type: "max_iterations",
-            contextId: "context-plan",
-            iterationCount: 1,
-            summary: null,
-          },
-        });
-      },
-    });
-    await seedActive(runningExecution({ id: "execution-halting" }));
-
-    const response = await stack.handlers.START(
-      makeRequest(START_URL, "POST", { definitionId: "workflow-1" }),
-      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
-    );
-    expect(response.status).toBe(202);
-
-    // `halted` retains ownership: it is resumable, so releasing the slot would
-    // admit unrelated work and race the resume.
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      const active = await readActive();
-      if (active?.status === "halted") break;
-    }
-    const active = await readActive();
-    expect(active?.status).toBe("halted");
-    expect(active?.id).toBe("execution-halting");
-  });
-
-  it("stops lane dev servers when a completed run releases the slot", async () => {
-    const laneExecution = runningExecution({ id: "execution-laned" });
-    const planState = laneExecution.contextStates["context-plan"];
-    if (!planState) throw new Error("fixture missing context-plan");
-    planState.isolation = "worktree";
-    planState.worktreePath = "/repo/.worktrees/session-1--lane-plan";
-
-    const stack = buildStack({
-      startExecution: async () => acceptedLaunch(laneExecution),
-      kickOffExecutionLoop: async () => {
-        await stack.manager.send(PROJECT_PATH, SESSION_NAME, {
-          type: "complete",
-        });
-      },
-    });
-    await seedActive(laneExecution);
-
-    await stack.handlers.START(
-      makeRequest(START_URL, "POST", { definitionId: "workflow-1" }),
-      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
-    );
-    await waitForFreeSlot();
-
-    // Completion is the one terminal transition the manager runs no dev-server
-    // cleanup for — CLEAR was the backstop that caught it. Auto-release takes
-    // CLEAR out of the operator's hands, so the release has to carry the
-    // backstop or a finished run leaks its lane servers.
-    expect(stack.managerStopLaneDevServers).not.toHaveBeenCalled();
-    expect(stack.releaseStopLaneDevServers).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectPath: PROJECT_PATH,
-        execution: expect.objectContaining({ id: "execution-laned" }),
-      }),
-    );
-  });
-});
-
-describe("buildLaneIterationToolServer (Phase 3 lane MCP detachment)", () => {
-  it("attaches no in-process CC MCP server to new lane conversations", () => {
-    const toolServer = buildLaneIterationToolServer();
-    const config = toolServer.server as PortableMcpConfig;
-
-    // The lane tools are now the `cctl workflow …` verbs, so a freshly spawned
-    // lane conversation's transient tool server carries no server entries.
-    expect(config.servers).toEqual([]);
-  });
-});
-
 describe("graph workflow execution by-id and result routes", () => {
   const PROJECT_PATH = "/repo";
   const PROJECT_NAME = "repo";
@@ -4676,6 +4208,8 @@ describe("graph workflow execution by-id and result routes", () => {
 
   function buildHandlers(store = fixture.store) {
     return createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       getSession: store.getSession,
@@ -4717,7 +4251,11 @@ describe("graph workflow execution by-id and result routes", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.by-id",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -4739,6 +4277,7 @@ describe("graph workflow execution by-id and result routes", () => {
     const completed = createWorkflowExecution({
       ...running,
       status: "completed",
+      executionStateRevision: running.executionStateRevision + 1,
       completedAt: "2026-08-14T12:00:00.000Z",
     });
     await persistExecution(completed);
@@ -4786,13 +4325,17 @@ describe("graph workflow execution by-id and result routes", () => {
       SESSION_NAME,
       "test.pause-boundary",
       () => ({
-        execution: paused,
-        events: publisher.publishExecutionUpdate({
-          projectPath: PROJECT_PATH,
-          sessionName: SESSION_NAME,
-          previousExecution: running,
-          nextExecution: paused,
-        }).events,
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: paused,
+          events: publisher.publishExecutionUpdate({
+            projectPath: PROJECT_PATH,
+            sessionName: SESSION_NAME,
+            previousExecution: running,
+            nextExecution: paused,
+          }).events,
+        },
       }),
     );
     const halted = createWorkflowExecution({ ...running, status: "halted" });
@@ -4801,13 +4344,17 @@ describe("graph workflow execution by-id and result routes", () => {
       SESSION_NAME,
       "test.halt-boundary",
       () => ({
-        execution: halted,
-        events: publisher.publishExecutionUpdate({
-          projectPath: PROJECT_PATH,
-          sessionName: SESSION_NAME,
-          previousExecution: running,
-          nextExecution: halted,
-        }).events,
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: halted,
+          events: publisher.publishExecutionUpdate({
+            projectPath: PROJECT_PATH,
+            sessionName: SESSION_NAME,
+            previousExecution: running,
+            nextExecution: halted,
+          }).events,
+        },
       }),
     );
 
@@ -4873,6 +4420,8 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
    */
   function buildHandlers() {
     return createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
@@ -4913,21 +4462,25 @@ describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () 
       SESSION_NAME,
       "test.seedEvents",
       () => ({
-        execution: createWorkflowExecution({ status: "running" }),
-        events: Array.from({ length: count }, (_, index) => ({
-          occurredAt: `2026-08-04T00:00:0${index}.000Z`,
-          preReset: false,
-          event: {
-            type: "graph-workflow-context-status" as const,
-            projectName: "repo",
-            sessionName: SESSION_NAME,
-            executionId: EXECUTION_ID,
-            contextId: `ctx-${index}`,
-            status: "running" as const,
-            remainingTaskCount: 1,
-            iterationCount: 1,
-          },
-        })),
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: createWorkflowExecution({ status: "running" }),
+          events: Array.from({ length: count }, (_, index) => ({
+            occurredAt: `2026-08-04T00:00:0${index}.000Z`,
+            preReset: false,
+            event: {
+              type: "graph-workflow-context-status" as const,
+              projectName: "repo",
+              sessionName: SESSION_NAME,
+              executionId: EXECUTION_ID,
+              contextId: `ctx-${index}`,
+              status: "running" as const,
+              remainingTaskCount: 1,
+              iterationCount: 1,
+            },
+          })),
+        },
       }),
     );
   }
@@ -5053,6 +4606,8 @@ describe("graph workflow RUN route — inline one-off launch", () => {
     }),
   ) {
     return createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () => session,
@@ -5354,6 +4909,8 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       secret: string | null = CAPABILITY_SECRET,
     ) {
       return createGraphWorkflowExecutionRouteHandlers({
+        executionContract: createNonParticipatingGraphExecutionContract(),
+
         resolveProjectPath: async (name: string) =>
           name === "repo" ? PROJECT_PATH : null,
         getSession: async () => session,
@@ -5587,6 +5144,8 @@ describe("graph workflow RUN route — inline one-off launch", () => {
       }),
     ) {
       return createGraphWorkflowExecutionRouteHandlers({
+        executionContract: createNonParticipatingGraphExecutionContract(),
+
         resolveProjectPath: async (name: string) =>
           name === "repo" ? PROJECT_PATH : null,
         getSession: async () => session,
@@ -5937,6 +5496,9 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       now: () => NOW,
     });
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
@@ -5951,6 +5513,14 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       eventPublisher,
     });
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      getSession: async () => null,
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
@@ -5959,6 +5529,8 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
     });
     const stopExecutionLaneDevServers = vi.fn(async () => {});
     const handlers = createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
       getSession: fixture.store.getSession,
@@ -6006,7 +5578,11 @@ describe("graph workflow abandon route — the audited end of a resumable halt",
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedActive",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -6596,6 +6172,9 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       now: () => NOW,
     });
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
@@ -6611,6 +6190,14 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       eventPublisher,
     });
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      getSession: async () => null,
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
@@ -6627,6 +6214,8 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       ) => Promise<DefinitionApprovalGateDecision>
     >(async () => ({ ok: true }));
     const handlers = createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       now: () => NOW,
       resolveProjectPath: async (name) =>
         name === PROJECT_NAME ? PROJECT_PATH : null,
@@ -6682,7 +6271,11 @@ describe("graph workflow definition rejection — the reviewed end of a parked l
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedActive",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 
@@ -7411,6 +7004,8 @@ describe("graph workflow mutation principals", () => {
       });
 
     const handlers = createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () => session,
@@ -8397,6 +7992,9 @@ describe("graph workflow mutation turnover — end to end", () => {
 
   it("refuses the origin's pause against a successor and leaves the successor untouched", async () => {
     const repository = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
       getActiveGraphWorkflowExecution:
@@ -8415,6 +8013,14 @@ describe("graph workflow mutation turnover — end to end", () => {
       }),
     });
     const manager = createGraphWorkflowManager({
+      abortConversation: () => {},
+      abortExecutionLoop: () => {},
+      retireLaneConversation: () => {},
+      getSession: async () => null,
+      stopExecutionLaneDevServers: async () => {},
+
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       executionRepository: repository,
       async loadDefinition() {
         return null;
@@ -8433,7 +8039,11 @@ describe("graph workflow mutation turnover — end to end", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedSuccessor",
-      () => ({ execution: successor, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: successor, events: [] },
+      }),
     );
     const before = await fixture.store.getActiveGraphWorkflowExecution(
       PROJECT_PATH,
@@ -8444,6 +8054,8 @@ describe("graph workflow mutation turnover — end to end", () => {
     };
 
     const handlers = createGraphWorkflowExecutionRouteHandlers({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+
       resolveProjectPath: async (name: string) =>
         name === "repo" ? PROJECT_PATH : null,
       getSession: async () =>

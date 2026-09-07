@@ -1,3 +1,6 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type { GraphWorkflowExecutionToolContextDeps } from "@/lib/workflow-graph/execution-tool-context";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -136,32 +139,19 @@ function buildRealContext(
   });
   // Serialized read-modify-write backing the sync `mutateActive`; awaits `fn`
   // so a synchronous reducer is applied and its result handled like production.
-  const mutateActiveImpl = async (
-    _projectPath: string,
-    _sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) =>
-      | GraphWorkflowExecution
-      | { execution: GraphWorkflowExecution; events: unknown[] }
-      | Promise<
-          | GraphWorkflowExecution
-          | { execution: GraphWorkflowExecution; events: unknown[] }
-        >,
-  ): Promise<GraphWorkflowExecution> => {
-    const next = queue.then(async () => {
-      const draft = structuredClone(current);
-      const result = await fn(draft);
-      current = structuredClone(
-        "execution" in result && "events" in result ? result.execution : result,
-      );
-      return current;
-    });
-    queue = next.catch(() => undefined);
-    return next;
-  };
+  const mutateActiveImpl: GraphWorkflowExecutionToolContextDeps["executionRepository"]["mutateActive"] =
+    async (_projectPath, _sessionName, fn) => {
+      const next = queue.then(async () => {
+        return applyFixtureMutation(current, fn, (next) => {
+          current = structuredClone(next);
+        });
+      });
+      queue = next.catch(() => undefined);
+      return next;
+    };
   const factory = createGraphWorkflowExecutionToolContext({
-    workflowManager: {
+    executionContract: createNonParticipatingGraphExecutionContract(),
+    executionRepository: {
       mutateActive: mutateActiveImpl,
     },
     runtimeEditService: createGraphWorkflowRuntimeEditService({

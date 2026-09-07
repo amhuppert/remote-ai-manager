@@ -1,3 +1,5 @@
+import type { GraphWorkflowExecution } from "./schemas";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * Compile-time contract for `mutateActive`'s reducer (Design 3.1,
  * `no-slow-work-in-critical-section`). The reducer runs inside the global write
@@ -25,19 +27,34 @@ type ExecutionRepository = ReturnType<
 // fixture assert on the signature without executing anything.
 function __mutateActiveReducerTypeFixture__(repo: ExecutionRepository): void {
   // A synchronous reducer that returns the next execution compiles.
-  void repo.mutateActive("/project", "session", (execution) => execution);
+  void repo
+    .mutateActive("/project", "session", (execution) => changed(execution))
+    .then((mutation) => mutation.execution);
 
-  // A synchronous reducer that returns the richer `{ execution, events,
-  // pushes }` result also compiles.
-  void repo.mutateActive("/project", "session", (execution) => ({
-    execution,
-    events: [],
-    pushes: [],
-  }));
+  // A synchronous reducer may pair changed state with inert delivery data.
+  void repo
+    .mutateActive("/project", "session", (execution) =>
+      changed(execution, undefined, { events: [], pushes: [] }),
+    )
+    .then((mutation) => mutation.execution);
 
-  // @ts-expect-error — a Promise-returning (async) reducer is rejected: the
-  // reducer must be synchronous so it cannot await external work under the lock.
-  void repo.mutateActive("/project", "session", async (execution) => execution);
+  const asyncReducer = async (execution: GraphWorkflowExecution) =>
+    changed(execution);
+  // The reducer cannot await external work under the lock.
+  // @ts-expect-error — Promise-returning reducers are rejected.
+  void repo.mutateActive("p", "s", asyncReducer);
+
+  const deliveryOnNoop = () => ({
+    kind: "unchanged" as const,
+    value: undefined,
+    delivery: { events: [], pushes: [] },
+  });
+  // @ts-expect-error — no-commit decisions cannot carry delivery.
+  void repo.mutateActive("p", "s", deliveryOnNoop);
+
+  const bareExecution = (execution: GraphWorkflowExecution) => execution;
+  // @ts-expect-error — every reducer must decide whether to commit.
+  void repo.mutateActive("p", "s", bareExecution);
 }
 
 it("mutateActive's reducer is typed synchronous (compile-time fixture)", () => {

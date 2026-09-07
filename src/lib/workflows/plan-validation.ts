@@ -4,7 +4,7 @@ import {
   type ValidationCommandPreflight,
 } from "@/lib/validation/preflight";
 import { lintGuardEnumCoverage } from "@/lib/workflow-graph/edge-guard-validation";
-import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
+import { validateAuthoredDefinition } from "@/lib/workflow-graph/definition-validation";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type {
   WorkflowGraphValidationError,

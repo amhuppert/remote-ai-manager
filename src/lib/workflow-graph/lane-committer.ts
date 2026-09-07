@@ -32,7 +32,7 @@ function withLandingTrailer(
   return token ? `${message}\n\n${landingIntentTrailer(token)}` : message;
 }
 
-interface LaneCommitterInput {
+export interface LaneCommitterInput {
   projectPath: string;
   sessionName: string;
   contextId: string;
@@ -57,7 +57,7 @@ interface LaneCommitterInput {
   ownership: GraphWorkflowCanonicalOwnership | null;
 }
 
-type LaneCommitterResult =
+export type LaneCommitterResult =
   | { status: "committed"; snapshot: GraphWorkflowExecutionLaneCommitSnapshot }
   | { status: "adopted"; snapshot: GraphWorkflowExecutionLaneCommitSnapshot }
   | { status: "skipped" }

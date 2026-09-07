@@ -30,6 +30,8 @@
  * as the owning phases migrate each offender, never added to admit new code.
  */
 
+import path from "node:path";
+
 /** Normalize a filename to forward slashes with a leading "/" so path-segment
  *  matching behaves the same for absolute paths and RuleTester-style relative
  *  filenames. */
@@ -626,6 +628,154 @@ const noServerLoggingInClient = {
   },
 };
 
+const noGraphOwnershipViolation = {
+  meta: {
+    type: "problem",
+    schema: [
+      {
+        type: "object",
+        properties: {
+          allowlist: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                file: { type: "string" },
+                target: { type: "string" },
+              },
+              required: ["file", "target"],
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      graphLiveEditOwnership:
+        "Graph command adapters must delegate structural edits to the runtime-edit service. Definition mutation belongs to the live-edit core.",
+      graphOwnership:
+        "'{{spec}}' crosses a graph workflow ownership boundary. Use the domain operation or repository contract; shipping code cannot depend on HTTP adapters or engine test harnesses.",
+    },
+  },
+  create(context) {
+    const file = normalizeFile(context.filename);
+    if (isTestFile(file)) return {};
+    const fixture = /\/(testing|compat)\/|\/[^/]*test-fixture\./.test(file);
+    const adapter =
+      /\/(?:[^/]*route-handlers|[^/]*route-composition|route)\.[cm]?[jt]sx?$/.test(
+        file,
+      );
+    const commandAdapter =
+      adapter ||
+      /\/src\/cli\/commands\/workflow[^/]*\.[cm]?[jt]sx?$/.test(file);
+    const allowlist = context.options[0]?.allowlist ?? [];
+    const imports = importSourceVisitors((spec, reportNode, node) => {
+      if (bindsOnlyTypes(node) || node.exportKind === "type") return;
+      const target = (
+        spec.startsWith("@/")
+          ? `/src/${spec.slice(2)}`
+          : path.posix.resolve(path.posix.dirname(file), spec)
+      ).replace(/\.[cm]?[jt]sx?$/, "");
+      if (
+        commandAdapter &&
+        /\/src\/lib\/workflow-graph\/(?:document-edit-mechanics|live-edit-apply)$/.test(
+          target,
+        )
+      ) {
+        context.report({
+          node: reportNode,
+          messageId: "graphLiveEditOwnership",
+        });
+        return;
+      }
+      const repositoryToManager =
+        file.endsWith("/src/lib/workflow-graph/execution-repository.ts") &&
+        target.endsWith("/src/lib/workflow-graph/workflow-manager");
+      const domainToRoute =
+        !adapter &&
+        !fixture &&
+        file.includes("/src/lib/") &&
+        /\/src\/lib\/workflow-graph\/[^/]*route-handlers$/.test(target);
+      const shippingToHarness =
+        !fixture &&
+        /\/src\/lib\/workflow-graph\/(?:compat|testing)\/[^/]*engine-harness$/.test(
+          target,
+        );
+      if (!repositoryToManager && !domainToRoute && !shippingToHarness) return;
+      if (
+        allowlist.some(
+          (edge) =>
+            file.endsWith(`/${edge.file}`) &&
+            target.endsWith(`/${edge.target}`),
+        )
+      )
+        return;
+      context.report({
+        node: reportNode,
+        messageId: "graphOwnership",
+        data: { spec },
+      });
+    });
+    if (!commandAdapter) return imports;
+    function propertyName(node) {
+      if (node.type !== "MemberExpression") return null;
+      if (!node.computed && node.property.type === "Identifier")
+        return node.property.name;
+      if (node.computed && node.property.type === "Literal")
+        return node.property.value;
+      return null;
+    }
+    function touchesDefinition(node) {
+      if (node.type !== "MemberExpression") return false;
+      return (
+        propertyName(node) === "workingDefinition" ||
+        touchesDefinition(node.object)
+      );
+    }
+    function reportWrite(node, target) {
+      if (touchesDefinition(target))
+        context.report({ node, messageId: "graphLiveEditOwnership" });
+    }
+    const mutators = new Set([
+      "push",
+      "pop",
+      "shift",
+      "unshift",
+      "splice",
+      "sort",
+      "reverse",
+      "fill",
+      "copyWithin",
+    ]);
+    return {
+      ...imports,
+      AssignmentExpression(node) {
+        reportWrite(node, node.left);
+      },
+      UpdateExpression(node) {
+        reportWrite(node, node.argument);
+      },
+      UnaryExpression(node) {
+        if (node.operator === "delete") reportWrite(node, node.argument);
+      },
+      CallExpression(node) {
+        imports.CallExpression?.(node);
+        const name = propertyName(node.callee);
+        if (mutators.has(name)) reportWrite(node, node.callee.object);
+        if (
+          name === "assign" &&
+          node.callee.object.type === "Identifier" &&
+          node.callee.object.name === "Object" &&
+          node.arguments[0]
+        ) {
+          reportWrite(node, node.arguments[0]);
+        }
+      },
+    };
+  },
+};
+
 const plugin = {
   meta: { name: "architecture-seams", version: "1.0.0" },
   rules: {
@@ -635,6 +785,7 @@ const plugin = {
     "no-external-state-store-construction": noExternalStateStoreConstruction,
     "no-data-tooltip-attribute": noDataTooltipAttribute,
     "no-server-logging-in-client": noServerLoggingInClient,
+    "no-graph-ownership-violation": noGraphOwnershipViolation,
   },
 };
 

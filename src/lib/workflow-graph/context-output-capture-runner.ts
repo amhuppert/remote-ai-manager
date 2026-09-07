@@ -15,7 +15,7 @@ import { getProjectDisplayName as getConversationProjectName } from "@/lib/proje
 
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { GraphWorkflowContextOutputCaptureInput } from "@/lib/workflow-graph/iteration-orchestrator";
+import type { GraphWorkflowContextOutputCaptureInput } from "@/lib/workflow-graph/context-validation-coordinator";
 import {
   buildOutputCapturePrompt,
   toOutputSchemaIssues,

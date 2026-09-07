@@ -1,3 +1,12 @@
+import { createExecutionLoopFixture } from "@/lib/workflow-graph/testing/execution-loop-fixture";
+import { createContextScheduler } from "./context-scheduler";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import type {
+  ExecutionMutationDecision,
+  ExecutionMutationOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -27,17 +36,13 @@ import type { MergeOutput } from "@/lib/workflows/merge/types";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { parseJsonl } from "@/lib/shared/read-jsonl";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
-import type {
-  GraphWorkflowExecutionSeed,
-  MutateActiveResult,
-} from "./execution-repository";
+import type { GraphWorkflowExecutionSeed } from "./execution-repository";
 import {
   abortExecutionLoop,
-  createGraphWorkflowExecutionLoop,
   _resetActiveLoopsForTesting,
 } from "./execution-loop";
 import { createGraphWorkflowManager } from "./workflow-manager";
-import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import type { GraphWorkflowIterationResult } from "@/lib/workflow-graph/context-outcome";
 import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
 import { assertLoopFence } from "./loop-fence";
 import {
@@ -52,7 +57,7 @@ import {
  * into the completion-invariant guard and halted with `recovery_error`
  * ("Refusing to complete …"), a halt no plan repair can fix.
  *
- * The scenario drives the REAL manager (pause, resume, scheduler) and the REAL
+ * The scenario drives the REAL manager (pause, resume), scheduler and the REAL
  * loop over a fenced in-memory repository. The defect lives in what a
  * superseded loop generation leaves behind when the pause lands while the
  * scheduler is provisioning out of the lock, so a harness scheduler would hide
@@ -72,6 +77,7 @@ const SESSION_NAME = "session-1";
 const LANE_WORKTREE_PATH = `${PROJECT_PATH}/.worktrees/${SESSION_NAME}.ctx-1`;
 
 interface InMemoryExecutionRepository {
+  ensureArtifactsMaterialized(): Promise<GraphWorkflowExecution | null>;
   getActive(
     projectPath: string,
     sessionName: string,
@@ -85,13 +91,13 @@ interface InMemoryExecutionRepository {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowArchiveOutcome>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   markContextEventsPreReset(
     projectPath: string,
     sessionName: string,
@@ -112,6 +118,8 @@ function createFencedRepository(
   let chain: Promise<unknown> = Promise.resolve();
 
   return {
+    ensureArtifactsMaterialized: async () => null,
+
     async getActive() {
       return active;
     },
@@ -131,12 +139,9 @@ function createFencedRepository(
       try {
         await previous;
         assertLoopFence(projectPath, sessionName, active);
-        const result = fn(structuredClone(active));
-        active =
-          "execution" in result && "events" in result
-            ? result.execution
-            : result;
-        return active;
+        return applyFixtureMutation(active, fn, (next) => {
+          active = next;
+        });
       } finally {
         release();
       }
@@ -453,10 +458,12 @@ function createNoopJoinRunner(): JoinRunner {
   return {
     async run({ joinId, mutateActive }) {
       await mutateActive((e) =>
-        applyJoinProgress(e, joinId, new Date().toISOString(), {
-          status: "succeeded",
-        }),
-      );
+        changed(
+          applyJoinProgress(e, joinId, new Date().toISOString(), {
+            status: "succeeded",
+          }),
+        ),
+      ).then((mutation) => mutation.execution);
       return { status: "succeeded" };
     },
   };
@@ -504,27 +511,32 @@ async function waitFor(
  * globalThis-hosted state is shared between them.
  */
 interface RouteModules {
+  createContextScheduler: typeof createContextScheduler;
   createGraphWorkflowManager: typeof createGraphWorkflowManager;
-  createGraphWorkflowExecutionLoop: typeof createGraphWorkflowExecutionLoop;
+  createExecutionLoopFixture: typeof createExecutionLoopFixture;
   abortExecutionLoop: typeof abortExecutionLoop;
 }
 
 const startRouteModules: RouteModules = {
+  createContextScheduler,
   createGraphWorkflowManager,
-  createGraphWorkflowExecutionLoop,
+  createExecutionLoopFixture,
   abortExecutionLoop,
 };
 
 /** Evaluate the workflow modules again, as a second route module graph does. */
 async function loadSeparateRouteModules(): Promise<RouteModules> {
   vi.resetModules();
-  const [manager, loop] = await Promise.all([
+  const [manager, loop, scheduler, fixture] = await Promise.all([
     import("./workflow-manager"),
     import("./execution-loop"),
+    import("./context-scheduler"),
+    import("./testing/execution-loop-fixture"),
   ]);
   return {
     createGraphWorkflowManager: manager.createGraphWorkflowManager,
-    createGraphWorkflowExecutionLoop: loop.createGraphWorkflowExecutionLoop,
+    createContextScheduler: scheduler.createContextScheduler,
+    createExecutionLoopFixture: fixture.createExecutionLoopFixture,
     abortExecutionLoop: loop.abortExecutionLoop,
   };
 }
@@ -580,11 +592,17 @@ function createRouteManager(
   modules: RouteModules,
 ): Generation["manager"] {
   return modules.createGraphWorkflowManager({
+    abortConversation: () => {},
+    retireLaneConversation: () => {},
+    stopExecutionLaneDevServers: async () => {},
+
+    executionContract: createNonParticipatingGraphExecutionContract(),
+
     executionRepository: fixture.repository,
     async loadDefinition() {
       return null;
     },
-    parallelWorktrees: fixture.parallelWorktrees,
+
     async getSession() {
       return fixture.session;
     },
@@ -600,25 +618,27 @@ function createGeneration(fixture: Fixture, modules: RouteModules): Generation {
     contextId: string;
   }): Promise<GraphWorkflowIterationResult> => {
     fixture.dispatchedContextIds.push(input.contextId);
-    const next = await manager.mutateActive(PROJECT_PATH, SESSION_NAME, (e) => {
-      const updated = structuredClone(e);
-      const cs = updated.contextStates[input.contextId];
-      if (cs) {
-        cs.iterationCount = 1;
-        cs.status = "completed";
-        cs.completedTaskCount = 1;
-      }
-      const ts = updated.taskStates[`task-${input.contextId}`];
-      if (ts) {
-        ts.status = "completed";
-        ts.completedAt = "2026-03-27T12:01:00.000Z";
-      }
-      return updated;
-    });
+    const next = await fixture.repository
+      .mutateActive(PROJECT_PATH, SESSION_NAME, (e) => {
+        const updated = structuredClone(e);
+        const cs = updated.contextStates[input.contextId];
+        if (cs) {
+          cs.iterationCount = 1;
+          cs.status = "completed";
+          cs.completedTaskCount = 1;
+        }
+        const ts = updated.taskStates[`task-${input.contextId}`];
+        if (ts) {
+          ts.status = "completed";
+          ts.completedAt = "2026-03-27T12:01:00.000Z";
+        }
+        return changed(updated);
+      })
+      .then((mutation) => mutation.execution);
     return {
       conversationId: `conv-${input.contextId}`,
       execution: next,
-      shouldContinueInContext: false,
+      decision: { kind: "ready_to_land" },
     };
   };
 
@@ -631,8 +651,16 @@ function createGeneration(fixture: Fixture, modules: RouteModules): Generation {
       return buildSuccessMergeOutput();
     },
   };
-  const loop = modules.createGraphWorkflowExecutionLoop({
+  const loop = modules.createExecutionLoopFixture({
+    executionContract: createNonParticipatingGraphExecutionContract(),
+    getSessionWorktreeDirtyPaths: async () => [],
     workflowManager: manager,
+    executionRepository: fixture.repository,
+    contextScheduler: modules.createContextScheduler({
+      executionRepository: fixture.repository,
+      parallelWorktrees,
+      getSession: async () => session,
+    }),
     iterationOrchestrator: { runIteration },
     parallelWorktrees,
     mergeMutex,

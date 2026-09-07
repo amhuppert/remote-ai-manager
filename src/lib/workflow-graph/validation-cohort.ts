@@ -40,7 +40,7 @@ import type {
   GraphWorkflowValidationSessionRef,
   GraphWorkflowValidationSpecialistState,
 } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowContextValidationOutcome } from "./execution-validation";
+import type { GraphWorkflowContextValidationOutcome } from "./validator-cohort-runner";
 
 /**
  * A validator's finding, carrying WHO raised it.

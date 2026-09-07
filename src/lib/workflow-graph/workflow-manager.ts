@@ -1,38 +1,35 @@
+import { requireRunningExecution } from "./execution-transitions";
+import { accountContextAction } from "./context-accounting";
+import { unchanged } from "@/lib/workflow-graph/execution-mutation";
+import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
+import { changed, refused } from "@/lib/workflow-graph/execution-mutation";
+import { transitionToNonRunningState } from "./execution-transitions";
+import {
+  WorkflowStartGuardError,
+  leaseHeldStartGuardError,
+  sessionFinalizingStartGuardError,
+  type SessionFinalizingMerge,
+} from "./start-guards";
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
 import { seededWorkflowDocumentsSchema } from "./seeded-documents";
 import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
-import path from "node:path";
-import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
-import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
+
 import {
   collectLandingProbeTargets,
   reconcileLandingIntents,
-  recordLandingIntent,
 } from "@/lib/workflow-graph/route-runtime";
 import {
   createLandingEvidenceProber,
   type LandingEvidenceProber,
 } from "@/lib/workflow-graph/landing-evidence";
-import {
-  assertLoopFence,
-  StaleLoopFenceError,
-} from "@/lib/workflow-graph/loop-fence";
-import { createKeyedMutex, type KeyedMutex } from "@/lib/shared/keyed-mutex";
-import { getGlobalSingleton } from "@/lib/shared/global-singleton";
+
 import {
   awaitsDefinitionApproval,
   evaluateLeaseAdmission,
   holdsExecutionLease,
-  type LeaseAdmissionDecision,
 } from "@/lib/workflow-graph/lifecycle-classifier";
-import { buildGraphWorkflowExecutionDeepLink } from "@/lib/workflow-graph/execution-deep-link";
-import { releaseLoopPassSlotsForContexts } from "@/lib/workflow-graph/loop-budgets";
-import {
-  classifyContextSchedulability,
-  isRouteSourceLanded,
-  contextsPresentInLane,
-  type ContextSchedulability,
-} from "@/lib/workflow-graph/lane-readiness";
+
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createLogger } from "@/lib/logging";
 import {
@@ -49,26 +46,11 @@ import {
   ResetAssignmentError,
   resetExecutionContextAssignment,
 } from "@/lib/workflow-graph/reset-assignment";
-import {
-  deriveLaneWorktreePath,
-  type ParallelWorktrees,
-  type ProvisionResult,
-} from "@/lib/workflow-graph/parallel-worktrees";
+
 import type { SeededWorkflowDocument } from "@/lib/workflow-graph/shared-documents";
 import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { settleLoops } from "./loop-settlement";
-import {
-  SESSION_LANE_ID,
-  SESSION_LANE_NAME,
-  validateLaneId,
-} from "@/lib/workflow-graph/lane-identity";
-import {
-  canonicalizeOwnership,
-  classifyLaneAdmission,
-  laneWorktreeExists,
-  type CanonicalOwnership,
-  type LaneOccupant,
-} from "@/lib/workflow-graph/lane-admission";
+
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
@@ -87,14 +69,14 @@ import {
   WorkflowStartInputError,
   type LaunchInputError,
 } from "@/lib/workflow-graph/start-input-service";
-import type { MutateActiveResult } from "@/lib/workflow-graph/execution-repository";
+
 import type { TemplateTier } from "@/lib/workflow-graph/template-library-service";
 import {
   computeUsedBackends,
   resolveWorkflowDefinition,
 } from "@/lib/workflow-graph/resolve-config";
 import { isWholeRunLiveSessionReadOnly } from "@/lib/workflow-graph/live-session-read-only";
-import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
+
 import {
   createPreflightPrerequisiteService,
   type MissingPrerequisite,
@@ -117,18 +99,15 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   GraphWorkflowLaunchDocument,
-  GraphWorkflowLeaseBlocker,
 } from "@/lib/workflow-graph/schemas";
 import type { AgentFailureClassification } from "@/lib/agent-backends/errors";
 import type {
-  ContextPlacement,
   GraphWorkflowStatus,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
   assertGraphExecutionContractAccepted,
-  createRegisteredGraphExecutionContract,
   type GraphExecutionContract,
 } from "@/lib/workflow-graph/execution-contract-port";
 import {
@@ -139,67 +118,13 @@ import type { WorkflowDefinitionDraft } from "./storage";
 // The seed is a DATA contract, imported rather than restated: a local copy of
 // its shape is how a launch field (an origin, a bound input) ends up recorded on
 // one path and silently dropped on another.
-import {
-  MutationRefusedError,
-  mutateActiveOrRefuse,
-  type GraphWorkflowExecutionSeed,
-} from "./execution-repository";
+import { type GraphWorkflowExecutionSeed } from "./execution-repository";
 import {
   concludeValidationRound,
   isValidationRoundOpen,
   resetValidationRoundAttempts,
   validationRoundResumeDispositions,
 } from "@/lib/workflow-graph/validation-round";
-interface GraphWorkflowExecutionRepository {
-  getActive(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution | null>;
-  /**
-   * `fence` is evaluated inside the reserving transaction and declines by
-   * throwing: it is how a launch checks an admission fact that lives outside
-   * the row (the session-finalizing merge) without the check going stale in the
-   * asynchronous distance between reading it and taking the lease.
-   */
-  create(
-    projectPath: string,
-    sessionName: string,
-    seed: GraphWorkflowExecutionSeed,
-    fence?: () => void,
-  ): Promise<GraphWorkflowExecution>;
-  archiveActive(
-    projectPath: string,
-    sessionName: string,
-    audit?: { reason: string; actor: string | null },
-    guard?: (execution: GraphWorkflowExecution) => boolean,
-    stamp?: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-  ): Promise<GraphWorkflowArchiveOutcome>;
-  mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
-  markContextEventsPreReset(
-    projectPath: string,
-    sessionName: string,
-    executionId: string,
-    contextId: string,
-  ): Promise<number>;
-  /**
-   * Settle any artifact debt the launch's reserving transaction recorded,
-   * rewriting the charter and seeded documents from durable state. Null when
-   * the run owes nothing, which is every run whose launch completed normally.
-   * Optional so a fixture that never seeds artifacts can omit it.
-   */
-  ensureArtifactsMaterialized?(input: {
-    projectPath: string;
-    sessionName: string;
-    executionId: string;
-  }): Promise<GraphWorkflowExecution | null>;
-}
-
 export interface GraphWorkflowStartInput {
   projectPath: string;
   sessionName: string;
@@ -338,99 +263,6 @@ export interface GraphWorkflowLaunchOutcome {
 }
 
 /**
- * Raised by the shared start path when a pre-seed guard rejects the launch. The
- * `guard` discriminator lets the thin HTTP/MCP surface reconstruct the exact
- * 409 response (the lease-held payload built from `blocker`, or the structured
- * `uncommitted_changes` payload built from `dirtyPaths`) without re-deriving it
- * from a message string.
- *
- * `blocker` is the one structured launch-refusal payload (D7 decision D6). It
- * is present on every `active_execution` refusal — one-off and template alike,
- * advisory pre-check and authoritative reservation alike — because the surface
- * that renders the refusal must never have to re-read the incumbent to say
- * which run is holding the session.
- */
-export type WorkflowStartGuard =
-  | "active_execution"
-  | "uncommitted_changes"
-  | "session_branch_unavailable"
-  // The symmetric half of the session delivery gate (R13): the session is
-  // already being finalized by a merge, so seeding a run into it would install
-  // live work in a session that is about to be marked finished.
-  | "session_finalizing";
-
-export class WorkflowStartGuardError extends Error {
-  readonly guard: WorkflowStartGuard;
-  readonly dirtyPaths?: DirtyPath[];
-  readonly blocker?: GraphWorkflowLeaseBlocker;
-  /**
-   * The blocking merge on a `session_finalizing` refusal. Carried on the error
-   * because the reservation fence raises it from inside the write queue, where
-   * nothing may log: the launch logs the refusal from these facts once the
-   * critical section is behind it.
-   */
-  readonly finalizingMerge?: SessionFinalizingMerge;
-
-  constructor(
-    guard: WorkflowStartGuard,
-    message: string,
-    details?: {
-      dirtyPaths?: DirtyPath[];
-      blocker?: GraphWorkflowLeaseBlocker;
-      finalizingMerge?: SessionFinalizingMerge;
-    },
-  ) {
-    super(message);
-    this.name = "WorkflowStartGuardError";
-    this.guard = guard;
-    if (details?.dirtyPaths !== undefined) {
-      this.dirtyPaths = details.dirtyPaths;
-    }
-    if (details?.blocker !== undefined) {
-      this.blocker = details.blocker;
-    }
-    if (details?.finalizingMerge !== undefined) {
-      this.finalizingMerge = details.finalizingMerge;
-    }
-  }
-}
-
-/**
- * Turn a lease refusal into the raised guard error. Both start-guard call sites
- * — the manager's advisory pre-check and the repository's reservation — build
- * the refusal HERE, so the message, the code, and the blocker facts cannot
- * drift between the two paths that can refuse the same launch.
- */
-export function leaseHeldStartGuardError(input: {
-  projectPath: string;
-  sessionName: string;
-  refusal: Extract<LeaseAdmissionDecision, { kind: "refuse" }>;
-}): WorkflowStartGuardError {
-  const { incumbent, remedy } = input.refusal;
-  return new WorkflowStartGuardError(
-    "active_execution",
-    `Session "${input.sessionName}" already has an active graph workflow execution`,
-    {
-      blocker: {
-        ...incumbent,
-        remedy,
-        deepLink: buildGraphWorkflowExecutionDeepLink({
-          projectName: path.basename(input.projectPath),
-          sessionName: input.sessionName,
-          executionId: incumbent.executionId,
-        }),
-      },
-    },
-  );
-}
-
-/** The merge a `session_finalizing` refusal names. */
-export interface SessionFinalizingMerge {
-  jobId: string;
-  branchName: string;
-}
-
-/**
  * The production reader behind the session-finalizing launch guard. Narrowed to
  * the two facts the refusal names, so the manager never holds a whole job.
  */
@@ -440,22 +272,6 @@ function defaultReadSessionFinalizingMerge(
 ): SessionFinalizingMerge | null {
   const job = getFinalizingSessionMergeJob(projectPath, sessionName);
   return job === null ? null : { jobId: job.jobId, branchName: job.branchName };
-}
-
-/**
- * Turn a session-finalizing merge into the raised guard error. Like the lease
- * refusal above, both call sites — the advisory pre-check and the reservation
- * fence — build it HERE, so the two refusals for one race cannot word
- * themselves differently.
- */
-function sessionFinalizingStartGuardError(
-  merge: SessionFinalizingMerge,
-): WorkflowStartGuardError {
-  return new WorkflowStartGuardError(
-    "session_finalizing",
-    `Cannot start the workflow while ${merge.branchName} is being merged and this session finished. Wait for the merge to finish, or discard it, and try again.`,
-    { finalizingMerge: merge },
-  );
 }
 
 // The ONE start-input refusal class, owned by the pure start-input-service
@@ -669,9 +485,8 @@ export interface RecordDefinitionApprovalInput {
  * Raised by the shared start path when the requested template does not exist in
  * the indicated tier (R3.4). Carries the `definitionId` + `tier` so a surface
  * can identify the missing template distinctly from every other rejection class.
- * The `message` keeps the established `'Workflow definition "<id>" was not
- * found'` shape so the HTTP handler's string-based 404 mapping and the MCP
- * tool's `not_found` detection continue to fire unchanged.
+ * The definition identity and tier distinguish a missing source independently
+ * of the display message.
  */
 export class WorkflowDefinitionNotFoundError extends Error {
   readonly definitionId: string;
@@ -817,7 +632,7 @@ export interface GraphWorkflowManagerDeps {
     definitionId: string,
     tier: TemplateTier,
   ): Promise<WorkflowDefinitionRecord | null>;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
   now?(): string;
   createExecutionId?(): string;
   eventPublisher?: ReturnType<
@@ -825,8 +640,7 @@ export interface GraphWorkflowManagerDeps {
   >;
   /** Check if an execution loop is currently running for this session. When true, normalizeAfterRestart skips normalization. */
   isExecutionLoopActive?(projectPath: string, sessionName: string): boolean;
-  parallelWorktrees?: ParallelWorktrees;
-  getSession?(
+  getSession(
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
@@ -871,7 +685,6 @@ export interface GraphWorkflowManagerDeps {
     definition: Pick<WorkflowSemanticDefinition, "charter">,
     session: Pick<SessionState, "sessionName" | "branchName" | "worktreePath">,
   ): Promise<WorkflowPlanIssue[]>;
-  createBatchId?(): string;
   /**
    * Signal the in-flight Claude Code SDK query for a running task's
    * conversation to abort. Invoked once per unique conversationId across
@@ -879,19 +692,18 @@ export interface GraphWorkflowManagerDeps {
    * an orphan query running concurrently with the next iteration after
    * resume.
    */
-  abortConversation?(input: {
+  abortConversation(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
   }): void;
-  abortExecutionLoop?(projectPath: string, sessionName: string): void;
+  abortExecutionLoop(projectPath: string, sessionName: string): void;
   /**
    * Stop dev servers running in an execution's lane worktrees. Invoked on
    * abort/halt/drain/reset so a workflow that ends (or has a context reset)
-   * never leaves orphaned lane dev servers. Defaults to the real worktree-
-   * scoped registry stop; injected in tests to assert invocation.
+   * never leaves orphaned lane dev servers.
    */
-  stopExecutionLaneDevServers?(input: {
+  stopExecutionLaneDevServers(input: {
     execution: GraphWorkflowExecution;
     projectPath: string;
     contextIds?: string[];
@@ -907,7 +719,7 @@ export interface GraphWorkflowManagerDeps {
    * a per-assignment reset retires it. Best-effort: a throw is logged, never a
    * reset failure — the durable state is already committed.
    */
-  retireLaneConversation?(input: {
+  retireLaneConversation(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
@@ -918,39 +730,6 @@ export interface GraphWorkflowManagerDeps {
    * committer actually left behind. Defaults to the real git-backed prober.
    */
   landingEvidenceProber?: LandingEvidenceProber;
-}
-
-export interface ScheduleEligibleContextsInput {
-  projectPath: string;
-  sessionName: string;
-  /**
-   * Upper bound on the number of contexts this pass may schedule. Omit for
-   * unbounded. The scheduler also forwards the running budget to the
-   * classifier so each eligible context sees its own remaining capacity.
-   */
-  capacityRemaining?: number;
-  /**
-   * Contexts whose runners already hold an execution-loop lease. They may
-   * still look dependency-eligible in the persisted snapshot while a parked
-   * gate is resolving, but this scheduling pass must not reserve them again.
-   */
-  excludedContextIds?: readonly string[];
-  /**
-   * Whether the scheduler may place a context on the session worktree.
-   * Defaults to `true`. When `false`, classifier results that would otherwise
-   * land on the session lane are routed to a freshly forked worktree lane.
-   */
-  sessionLaneEnabled?: boolean;
-}
-
-export type ScheduleEligibleContextsOutcome =
-  | { kind: "none" }
-  | { kind: "solo"; contextId: string }
-  | { kind: "parallel"; batchId: string; contextIds: string[] };
-
-export interface ScheduleEligibleContextsResult {
-  execution: GraphWorkflowExecution;
-  scheduled: ScheduleEligibleContextsOutcome;
 }
 
 export interface RecordPendingHaltReasonInput {
@@ -984,28 +763,6 @@ export interface DrainAndHaltInput {
 }
 
 const logger = createLogger("graph-workflow-manager");
-
-/**
- * Serializes a session's lane provisioning across LOOP GENERATIONS: the
- * retired generation and its replacement hold different manager references,
- * and a pause only signals the retired loop, so its scheduler can still be
- * cutting a worktree out of the lock when the replacement schedules the same
- * lane. Hosted on globalThis, like the active-loop registry, because Next.js
- * evaluates route handlers in separate module graphs: a module-level instance
- * would hand the loop the start route launched and the replacement the resume
- * route launches a mutex each, and the two would provision the lane
- * concurrently after all.
- */
-const LANE_PROVISIONING_MUTEX_KEY =
-  "__cc_graph_workflow_lane_provisioning_mutex" as const;
-
-function laneProvisioningMutex(): KeyedMutex {
-  return getGlobalSingleton(LANE_PROVISIONING_MUTEX_KEY, createKeyedMutex);
-}
-
-function laneProvisioningKey(projectPath: string, sessionName: string): string {
-  return `${projectPath}::${sessionName}`;
-}
 
 /**
  * How long a definition-approval reservation may sit before a sweep may
@@ -1094,142 +851,6 @@ function resolveLandingEvidenceProber(
   return defaultLandingEvidenceProber;
 }
 
-function requireRunningExecution(
-  execution: GraphWorkflowExecution,
-): GraphWorkflowExecution {
-  if (execution.status !== "running") {
-    throw new Error("Only running graph workflow executions can be updated");
-  }
-
-  return execution;
-}
-
-function clearLaneStatesFor(
-  execution: GraphWorkflowExecution,
-  contextIds: readonly string[],
-): string[] {
-  const cleared: string[] = [];
-  for (const contextId of contextIds) {
-    if (execution.laneStates[contextId]) {
-      cleared.push(contextId);
-      delete execution.laneStates[contextId];
-    }
-  }
-  return cleared;
-}
-
-/**
- * The envelope assumed for a context whose ownership was never frozen — a run
- * whose deps cannot resolve a session, and therefore cannot provision lanes
- * either. Full access is the fail-closed reading: it collides with every other
- * write-capable member, so such a context can only ever hold a lane alone.
- */
-const UNKNOWN_OWNERSHIP: CanonicalOwnership = {
-  mode: "full",
-  canonicalPrefixes: [],
-};
-
-/**
- * Drop every lane reservation this batch owns. Owner-checked, like the
- * per-context stamp: a lane re-reserved by a concurrent batch carries a
- * different `batchId` and its claim must survive.
- */
-function releaseLaneReservations(
-  execution: GraphWorkflowExecution,
-  batchId: string,
-): void {
-  for (const [laneId, reservation] of Object.entries(
-    execution.laneReservations,
-  )) {
-    if (reservation.batchId !== batchId) continue;
-    delete execution.laneReservations[laneId];
-  }
-}
-
-/**
- * Find the upstream context whose laneId matches `laneId` and which is the
- * direct dependency of any of `contenders`. Used at fan-out to name the parent
- * a non-inheriting sibling forks from.
- */
-function findUpstreamCompletedOnLane(
-  contenders: readonly string[],
-  laneId: string,
-  execution: GraphWorkflowExecution,
-): string | null {
-  // Projection-resolved (decision D1), still walked in definition order: the
-  // parent whose lane a contender may inherit is the EFFECTIVE source of an
-  // ACTIVE incoming edge. A declined branch never committed anything on that
-  // lane, so inheriting from it would continue work that does not exist.
-  const contenderSet = new Set(contenders);
-  for (const edge of projectExecutionRoutes(execution).edges) {
-    if (!contenderSet.has(edge.targetContextId)) continue;
-    if (edge.resolution.kind !== "active") continue;
-    if (edge.effectiveSourceId === null) continue;
-    const upstream = execution.contextStates[edge.effectiveSourceId];
-    if (!upstream) continue;
-    if (upstream.laneId !== laneId) continue;
-    if (upstream.status !== "completed") continue;
-    return edge.effectiveSourceId;
-  }
-  return null;
-}
-
-/**
- * Record how a just-dispatched context is going to land (D4 decision D8).
- *
- * The mode is read off the placement the dispatch just made, which is the only
- * point where all three shapes are distinguishable: a lane-bound context
- * commits on its lane, a session-bound one commits solo, and a legacy
- * laneId-null worktree context publishes through the fan-in squash merge.
- *
- * `baselineSha` stays null here: the lane head is resolved out of the write
- * queue, so the runner persists it as soon as it captures it — still before the
- * context's first turn (see `runContextTask`).
- */
-function recordDispatchLandingIntent(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-  now: string,
-): void {
-  const state = execution.contextStates[contextId];
-  if (!state) return;
-  const placement = execution.workingDefinition.executionContexts.find(
-    (context) => context.id === contextId,
-  )?.placement;
-  if (placement?.mode === "readOnly") return;
-  const mode =
-    state.laneId !== null
-      ? "lane_commit"
-      : state.isolation === "session"
-        ? "solo_commit"
-        : "fan_in_merge";
-  recordLandingIntent(execution, contextId, {
-    mode,
-    laneId: state.laneId,
-    worktreePath: state.worktreePath,
-    now,
-  });
-}
-
-function markActiveContextReady(execution: GraphWorkflowExecution): void {
-  if (execution.activeContextIds.length === 0) {
-    return;
-  }
-
-  for (const activeContextId of execution.activeContextIds) {
-    const activeContext = execution.contextStates[activeContextId];
-    if (!activeContext) {
-      continue;
-    }
-
-    if (activeContext.status === "running") {
-      transitionContextStatus(execution, activeContextId, "ready", {
-        reason: "manager.mark_active_context_ready",
-      });
-    }
-  }
-}
-
 /**
  * Running task conversations, minus any parked on a user question. A parked
  * conversation's machine sits in waitingForInput, which accepts ABORT_TURN and
@@ -1290,58 +911,9 @@ function collectCancellableConversationIds(
   ];
 }
 
-function interruptRunningTasks(execution: GraphWorkflowExecution): boolean {
-  let foundRunning = false;
-  for (const taskState of Object.values(execution.taskStates)) {
-    if (taskState.status === "running") {
-      taskState.status = "interrupted";
-      foundRunning = true;
-    }
-  }
-  return foundRunning;
-}
-
-/**
- * THE execution-level transition into a non-running state (D4: execution status
- * is hand-rolled here rather than in the context-status owner). Exported so
- * every path that ends or parks a run — including the repository's
- * materialization-failure halt — moves through this one rule set: running tasks
- * are interrupted, the active context is marked ready, a running run's
- * `loopEpoch` is retired, and the lifecycle snapshot is rebuilt.
- */
-export function transitionToNonRunningState(
-  execution: GraphWorkflowExecution,
-  status: Extract<GraphWorkflowStatus, "paused" | "halted" | "aborted">,
-  completedAt: string | null,
-  haltReason: GraphWorkflowHaltReason | null,
-): GraphWorkflowExecution {
-  const nextExecution = cloneExecution(execution);
-  const hadRunningTasks = interruptRunningTasks(nextExecution);
-  markActiveContextReady(nextExecution);
-  if (execution.status === "running") {
-    nextExecution.loopEpoch += 1;
-  }
-  nextExecution.status = status;
-  nextExecution.completedAt = completedAt;
-  nextExecution.haltReason = haltReason;
-  // A run that has left the park has no decision left to make, so a reservation
-  // on it is debt rather than state. Cutting off a live holder is the caller's
-  // question, not this one's: the two acts that can transition a still-parked
-  // run — abort and rejection — refuse while a decision is genuinely in flight.
-  nextExecution.definitionApprovalClaim = null;
-  nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
-    lifecycleStatus: status,
-    recoveryMode: hadRunningTasks ? "interrupted_task" : "none",
-    hasLiveIteration: false,
-  });
-  return nextExecution;
-}
-
 export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
-  const stopLaneDevServers =
-    deps.stopExecutionLaneDevServers ?? defaultStopExecutionLaneDevServers;
-  const executionContract =
-    deps.executionContract ?? createRegisteredGraphExecutionContract();
+  const stopLaneDevServers = deps.stopExecutionLaneDevServers;
+  const executionContract = deps.executionContract;
   const eventPublisher =
     deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
   const userInputGateService =
@@ -1361,7 +933,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     conversationIds: readonly string[],
   ): void {
-    if (!deps.abortConversation || conversationIds.length === 0) {
+    if (conversationIds.length === 0) {
       return;
     }
     for (const conversationId of conversationIds) {
@@ -1386,9 +958,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null> {
-    if (!deps.getSession) {
-      return null;
-    }
     return deps.getSession(projectPath, sessionName);
   }
 
@@ -1396,9 +965,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     projectPath: string,
     sessionName: string,
   ): Promise<DirtyPath[]> {
-    if (!deps.getSession) {
-      return [];
-    }
     const session = await deps.getSession(projectPath, sessionName);
     if (!session) {
       return [];
@@ -1951,19 +1517,17 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       };
     }
 
-    const nextExecution = await deps.executionRepository.mutateActive(
-      input.projectPath,
-      input.sessionName,
-      (execution) => {
+    const nextExecution = await deps.executionRepository
+      .mutateActive(input.projectPath, input.sessionName, (execution) => {
         execution.status = "running";
         execution.machineSnapshot = buildLifecycleSnapshot(execution, {
           lifecycleStatus: "running",
           recoveryMode: "none",
           hasLiveIteration: false,
         });
-        return execution;
-      },
-    );
+        return changed(execution);
+      })
+      .then((mutation) => mutation.execution);
 
     recordExecutionStarted(nextExecution, input.projectPath, input.sessionName);
 
@@ -2067,59 +1631,45 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
    * undecided, and nothing materializes — so a caller that goes on to be
    * refused by the admission gate has an act it can fully undo, and a caller
    * that loses this race never reaches the gate at all. Every refusal branch
-   * throws rather than returning the row: a reducer that hands back what it was
-   * given still commits, still advances the staging fence, and still publishes
-   * an update for a run this caller did not touch.
+   * returns a refusal without committing, advancing the staging fence, or
+   * publishing an update for a run this caller did not touch.
    */
   async function claimDefinitionApproval(
     input: ClaimDefinitionApprovalInput,
   ): Promise<ClaimDefinitionApprovalResult> {
     const now = getNow(deps);
     const claimId = randomUUID();
-    const declined: {
-      reason:
-        | Exclude<ClaimDefinitionApprovalResult, { ok: true }>["reason"]
-        | null;
-    } = { reason: null };
-    const nextExecution = await mutateActiveOrRefuse(() =>
-      deps.executionRepository.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (execution) => {
-          if (
-            input.expectedExecutionId !== undefined &&
-            execution.id !== input.expectedExecutionId
-          ) {
-            declined.reason = "execution_mismatch";
-            throw new MutationRefusedError("claim_definition_approval");
-          }
-          // Ordered so the row's own state outranks a reservation left on it:
-          // a run that has left the park answers "not awaiting approval" even
-          // if an abort walked away from a reservation nobody can use anymore.
-          if (execution.definitionApproval === null) {
-            declined.reason = "not_awaiting_approval";
-            throw new MutationRefusedError("claim_definition_approval");
-          }
-          if (execution.definitionApproval.approvedAt !== null) {
-            declined.reason = "already_decided";
-            throw new MutationRefusedError("claim_definition_approval");
-          }
-          if (execution.status !== "pending") {
-            declined.reason = "not_awaiting_approval";
-            throw new MutationRefusedError("claim_definition_approval");
-          }
-          if (execution.definitionApprovalClaim !== null) {
-            declined.reason = "decision_in_flight";
-            throw new MutationRefusedError("claim_definition_approval");
-          }
-          execution.definitionApprovalClaim = { claimId, claimedAt: now };
-          return execution;
-        },
-      ),
-    );
+    const outcome = await deps.executionRepository.mutateActive<
+      void,
+      Exclude<ClaimDefinitionApprovalResult, { ok: true }>["reason"]
+    >(input.projectPath, input.sessionName, (execution) => {
+      if (
+        input.expectedExecutionId !== undefined &&
+        execution.id !== input.expectedExecutionId
+      ) {
+        return refused("execution_mismatch");
+      }
+      // Ordered so the row's own state outranks a reservation left on it:
+      // a run that has left the park answers "not awaiting approval" even
+      // if an abort walked away from a reservation nobody can use anymore.
+      if (execution.definitionApproval === null) {
+        return refused("not_awaiting_approval");
+      }
+      if (execution.definitionApproval.approvedAt !== null) {
+        return refused("already_decided");
+      }
+      if (execution.status !== "pending") {
+        return refused("not_awaiting_approval");
+      }
+      if (execution.definitionApprovalClaim !== null) {
+        return refused("decision_in_flight");
+      }
+      execution.definitionApprovalClaim = { claimId, claimedAt: now };
+      return changed(execution);
+    });
 
-    if (declined.reason !== null || nextExecution === null) {
-      const reason = declined.reason ?? "no_active_execution";
+    if (outcome.kind === "refused") {
+      const reason = outcome.refusal;
       logger.warn("graph-workflow.definition_approval.claim_refused", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -2128,6 +1678,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       });
       return { ok: false, reason };
     }
+
+    const nextExecution = outcome.execution;
 
     logger.info("graph-workflow.definition_approval.claimed", {
       executionId: nextExecution.id,
@@ -2147,40 +1699,29 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   async function releaseDefinitionApprovalClaim(
     input: ReleaseDefinitionApprovalClaimInput,
   ): Promise<ReleaseDefinitionApprovalClaimResult> {
-    const declined: {
-      reason:
-        | Exclude<ReleaseDefinitionApprovalClaimResult, { ok: true }>["reason"]
-        | null;
-    } = { reason: null };
-    const nextExecution = await mutateActiveOrRefuse(() =>
-      deps.executionRepository.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (execution) => {
-          if (execution.id !== input.expectedExecutionId) {
-            declined.reason = "execution_mismatch";
-            throw new MutationRefusedError("release_definition_approval_claim");
-          }
-          if (execution.definitionApprovalClaim === null) {
-            declined.reason = "not_reserved";
-            throw new MutationRefusedError("release_definition_approval_claim");
-          }
-          // Bound to the holder, not to "a reservation exists": a sweep can
-          // reclaim a stranded reservation and hand the park to a new act while
-          // this one is still running, and freeing THAT act's reservation would
-          // reopen the park underneath its live admission.
-          if (execution.definitionApprovalClaim.claimId !== input.claimId) {
-            declined.reason = "claim_superseded";
-            throw new MutationRefusedError("release_definition_approval_claim");
-          }
-          execution.definitionApprovalClaim = null;
-          return execution;
-        },
-      ),
-    );
+    const outcome = await deps.executionRepository.mutateActive<
+      void,
+      Exclude<ReleaseDefinitionApprovalClaimResult, { ok: true }>["reason"]
+    >(input.projectPath, input.sessionName, (execution) => {
+      if (execution.id !== input.expectedExecutionId) {
+        return refused("execution_mismatch");
+      }
+      if (execution.definitionApprovalClaim === null) {
+        return refused("not_reserved");
+      }
+      // Bound to the holder, not to "a reservation exists": a sweep can
+      // reclaim a stranded reservation and hand the park to a new act while
+      // this one is still running, and freeing THAT act's reservation would
+      // reopen the park underneath its live admission.
+      if (execution.definitionApprovalClaim.claimId !== input.claimId) {
+        return refused("claim_superseded");
+      }
+      execution.definitionApprovalClaim = null;
+      return changed(execution);
+    });
 
-    if (declined.reason !== null || nextExecution === null) {
-      const reason = declined.reason ?? "no_active_execution";
+    if (outcome.kind === "refused") {
+      const reason = outcome.refusal;
       logger.warn("graph-workflow.definition_approval.claim_release_refused", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -2189,6 +1730,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       });
       return { ok: false, reason };
     }
+
+    const nextExecution = outcome.execution;
 
     logger.info("graph-workflow.definition_approval.claim_released", {
       executionId: nextExecution.id,
@@ -2245,82 +1788,59 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       assertGraphExecutionContractAccepted(contractDecision);
     }
 
-    // Holder rather than a bare `let`: TS flow analysis does not see the
-    // closure assignment, so a local would narrow to `never` at the read below.
-    const declined: {
-      reason:
-        | "not_awaiting_approval"
-        | "already_decided"
-        | "execution_mismatch"
-        | "not_reserved"
-        | "claim_superseded"
-        | null;
-    } = { reason: null };
-    const nextExecution = await mutateActiveOrRefuse(() =>
-      deps.executionRepository.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (execution) => {
-          // The AUTHORITATIVE guard: the read above is advisory, and the row
-          // can turn over — or another approval can decide it — in between.
-          // Every branch here refuses the write outright, because a reducer
-          // that hands back the row it was given still commits, still advances
-          // the staging fence, and still publishes an update for a run this
-          // caller just declined to act on.
-          if (
-            input.expectedExecutionId !== undefined &&
-            execution.id !== input.expectedExecutionId
-          ) {
-            declined.reason = "execution_mismatch";
-            throw new MutationRefusedError("record_definition_approval");
-          }
-          const approval = execution.definitionApproval;
-          if (approval === null) {
-            declined.reason = "not_awaiting_approval";
-            throw new MutationRefusedError("record_definition_approval");
-          }
-          if (approval.approvedAt !== null) {
-            declined.reason = "already_decided";
-            throw new MutationRefusedError("record_definition_approval");
-          }
-          if (execution.status !== "pending") {
-            declined.reason = "not_awaiting_approval";
-            throw new MutationRefusedError("record_definition_approval");
-          }
-          // Finalization is the reservation holder's second commit, never a
-          // first move: an approval that starts a run the admission consumer
-          // was never asked about is exactly the unadmitted start the gate
-          // exists to prevent.
-          if (execution.definitionApprovalClaim === null) {
-            declined.reason = "not_reserved";
-            throw new MutationRefusedError("record_definition_approval");
-          }
-          // The reservation must still be THIS act's. A sweep can reclaim a
-          // stranded reservation and grant it to another act, and finalizing
-          // on the strength of that act's reservation would start the run on an
-          // admission this caller no longer has any claim to.
-          if (execution.definitionApprovalClaim.claimId !== input.claimId) {
-            declined.reason = "claim_superseded";
-            throw new MutationRefusedError("record_definition_approval");
-          }
+    const outcome = await deps.executionRepository.mutateActive<
+      void,
+      Exclude<RecordDefinitionApprovalResult, { ok: true }>["reason"]
+    >(input.projectPath, input.sessionName, (execution) => {
+      // The AUTHORITATIVE guard: the read above is advisory, and the row
+      // can turn over — or another approval can decide it — in between.
+      // Refusals preserve the row and staging fence for the act that wins.
+      if (
+        input.expectedExecutionId !== undefined &&
+        execution.id !== input.expectedExecutionId
+      ) {
+        return refused("execution_mismatch");
+      }
+      const approval = execution.definitionApproval;
+      if (approval === null) {
+        return refused("not_awaiting_approval");
+      }
+      if (approval.approvedAt !== null) {
+        return refused("already_decided");
+      }
+      if (execution.status !== "pending") {
+        return refused("not_awaiting_approval");
+      }
+      // Finalization is the reservation holder's second commit, never a
+      // first move: an approval that starts a run the admission consumer
+      // was never asked about is exactly the unadmitted start the gate
+      // exists to prevent.
+      if (execution.definitionApprovalClaim === null) {
+        return refused("not_reserved");
+      }
+      // The reservation must still be THIS act's. A sweep can reclaim a
+      // stranded reservation and grant it to another act, and finalizing
+      // on the strength of that act's reservation would start the run on an
+      // admission this caller no longer has any claim to.
+      if (execution.definitionApprovalClaim.claimId !== input.claimId) {
+        return refused("claim_superseded");
+      }
 
-          approval.approvedAt = getNow(deps);
-          // Consumed by the act it belonged to: the decision is made, so
-          // nothing is in flight for the next act to wait behind.
-          execution.definitionApprovalClaim = null;
-          execution.status = "running";
-          execution.machineSnapshot = buildLifecycleSnapshot(execution, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-          return execution;
-        },
-      ),
-    );
+      approval.approvedAt = getNow(deps);
+      // Consumed by the act it belonged to: the decision is made, so
+      // nothing is in flight for the next act to wait behind.
+      execution.definitionApprovalClaim = null;
+      execution.status = "running";
+      execution.machineSnapshot = buildLifecycleSnapshot(execution, {
+        lifecycleStatus: "running",
+        recoveryMode: "none",
+        hasLiveIteration: false,
+      });
+      return changed(execution);
+    });
 
-    const guardFailure = declined.reason;
-    if (guardFailure !== null || nextExecution === null) {
+    if (outcome.kind === "refused") {
+      const guardFailure = outcome.refusal;
       logger.warn("graph-workflow.definition_approval.guard_failed", {
         executionId: active.id,
         projectPath: input.projectPath,
@@ -2328,8 +1848,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         reason: guardFailure,
         expectedExecutionId: input.expectedExecutionId,
       });
-      return { ok: false, reason: guardFailure ?? "not_awaiting_approval" };
+      return { ok: false, reason: guardFailure };
     }
+
+    const nextExecution = outcome.execution;
 
     // The third kickoff, and the WINNER's alone: an approval-gated launch sits
     // `pending` across an arbitrary wait, so a crash right after its reserving
@@ -2363,22 +1885,27 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const now = getNow(deps);
 
     if (event.type === "pause") {
-      let conversationIdsToAbort: string[] = [];
-      const pausedExecution = await deps.executionRepository.mutateActive(
-        projectPath,
-        sessionName,
-        (execution) => {
-          assertLifecycleTransitionAllowed(
-            execution,
-            "pause",
-            ["running"],
-            "Only running graph workflow executions can be paused",
-          );
-          conversationIdsToAbort = collectCancellableConversationIds(execution);
-          return transitionToNonRunningState(execution, "paused", null, null);
-        },
-      );
-      deps.abortExecutionLoop?.(projectPath, sessionName);
+      const { execution: pausedExecution, conversationIdsToAbort } =
+        await deps.executionRepository
+          .mutateActive(projectPath, sessionName, (execution) => {
+            assertLifecycleTransitionAllowed(
+              execution,
+              "pause",
+              ["running"],
+              "Only running graph workflow executions can be paused",
+            );
+            const conversationIdsToAbort =
+              collectCancellableConversationIds(execution);
+            return changed(
+              transitionToNonRunningState(execution, "paused", null, null),
+              { conversationIdsToAbort },
+            );
+          })
+          .then((mutation) => ({
+            execution: mutation.execution,
+            ...mutationValue(mutation),
+          }));
+      deps.abortExecutionLoop(projectPath, sessionName);
       abortRunningTaskConversations(
         projectPath,
         sessionName,
@@ -2403,47 +1930,52 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     if (event.type === "abort") {
-      let conversationIdsToAbort: string[] = [];
-      const abortedExecution = await deps.executionRepository.mutateActive(
-        projectPath,
-        sessionName,
-        (execution) => {
-          assertLifecycleTransitionAllowed(
-            execution,
-            "abort",
-            ["pending", "running", "paused", "halted"],
-            "Completed or aborted graph workflow executions cannot be aborted",
-          );
-          // A park with a decision in flight is momentarily not abortable. The
-          // holder may be at its admission gate right now; ending the run
-          // underneath it would strand that consumer's durable admission on a
-          // run this abort killed, and leave the admitted act unable to
-          // finalize. Age is deliberately not an exception here: an interrupted
-          // decision may already have written downstream, so it is finished by
-          // the settlement the route layer runs first, never abandoned.
-          if (
-            execution.definitionApprovalClaim !== null &&
-            awaitsDefinitionApproval(
-              execution.status,
-              execution.definitionApproval,
-            )
-          ) {
-            throw new GraphWorkflowTransitionConflictError(
+      const { execution: abortedExecution, conversationIdsToAbort } =
+        await deps.executionRepository
+          .mutateActive(projectPath, sessionName, (execution) => {
+            assertLifecycleTransitionAllowed(
+              execution,
               "abort",
-              execution.status,
-              ["running", "paused", "halted"],
-              "A definition approval decision is in flight; abort once it settles",
+              ["pending", "running", "paused", "halted"],
+              "Completed or aborted graph workflow executions cannot be aborted",
             );
-          }
-          conversationIdsToAbort = collectCancellableConversationIds(execution);
-          return transitionToNonRunningState(execution, "aborted", now, {
-            type: "aborted",
-            cause: null,
-            summary: null,
-          });
-        },
-      );
-      deps.abortExecutionLoop?.(projectPath, sessionName);
+            // A park with a decision in flight is momentarily not abortable. The
+            // holder may be at its admission gate right now; ending the run
+            // underneath it would strand that consumer's durable admission on a
+            // run this abort killed, and leave the admitted act unable to
+            // finalize. Age is deliberately not an exception here: an interrupted
+            // decision may already have written downstream, so it is finished by
+            // the settlement the route layer runs first, never abandoned.
+            if (
+              execution.definitionApprovalClaim !== null &&
+              awaitsDefinitionApproval(
+                execution.status,
+                execution.definitionApproval,
+              )
+            ) {
+              throw new GraphWorkflowTransitionConflictError(
+                "abort",
+                execution.status,
+                ["running", "paused", "halted"],
+                "A definition approval decision is in flight; abort once it settles",
+              );
+            }
+            const conversationIdsToAbort =
+              collectCancellableConversationIds(execution);
+            return changed(
+              transitionToNonRunningState(execution, "aborted", now, {
+                type: "aborted",
+                cause: null,
+                summary: null,
+              }),
+              { conversationIdsToAbort },
+            );
+          })
+          .then((mutation) => ({
+            execution: mutation.execution,
+            ...mutationValue(mutation),
+          }));
+      deps.abortExecutionLoop(projectPath, sessionName);
       abortRunningTaskConversations(
         projectPath,
         sessionName,
@@ -2473,10 +2005,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     if (event.type === "complete") {
-      const nextExecution = await deps.executionRepository.mutateActive(
-        projectPath,
-        sessionName,
-        (execution) => {
+      const nextExecution = await deps.executionRepository
+        .mutateActive(projectPath, sessionName, (execution) => {
           assertLifecycleTransitionAllowed(
             execution,
             "complete",
@@ -2492,9 +2022,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             recoveryMode: "none",
             hasLiveIteration: false,
           });
-          return execution;
-        },
-      );
+          return changed(execution);
+        })
+        .then((mutation) => mutation.execution);
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.completed");
       execLogger?.writeManifest(nextExecution);
@@ -2506,27 +2036,29 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     const haltReason = event.reason;
-    let conversationIdsToAbort: string[] = [];
-    const nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
-        assertLifecycleTransitionAllowed(
-          execution,
-          "halt",
-          ["running"],
-          "Only running graph workflow executions can be halted",
-        );
-        conversationIdsToAbort = collectCancellableConversationIds(execution);
-        return transitionToNonRunningState(
-          execution,
-          "halted",
-          now,
-          haltReason,
-        );
-      },
-    );
-    deps.abortExecutionLoop?.(projectPath, sessionName);
+
+    const { execution: nextExecution, conversationIdsToAbort } =
+      await deps.executionRepository
+        .mutateActive(projectPath, sessionName, (execution) => {
+          let conversationIdsToAbort: string[] = [];
+
+          assertLifecycleTransitionAllowed(
+            execution,
+            "halt",
+            ["running"],
+            "Only running graph workflow executions can be halted",
+          );
+          conversationIdsToAbort = collectCancellableConversationIds(execution);
+          return changed(
+            transitionToNonRunningState(execution, "halted", now, haltReason),
+            { conversationIdsToAbort },
+          );
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
+    deps.abortExecutionLoop(projectPath, sessionName);
     abortRunningTaskConversations(
       projectPath,
       sessionName,
@@ -2552,28 +2084,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     options?: GraphWorkflowResumeOptions,
   ): Promise<GraphWorkflowExecution> {
-    let previousStatus: GraphWorkflowStatus | null = null;
-    // Holder object rather than a `let`: TS flow analysis does not see the
-    // closure assignment, so a bare local reads as never at the emit site.
-    const resumeCapture: {
-      resolvedHaltReason: GraphWorkflowHaltReason | null;
-      loopLimitRefusal: {
-        executionId: string;
-        halt: Extract<GraphWorkflowHaltReason, { type: "loop_limit_reached" }>;
-      } | null;
-    } = { resolvedHaltReason: null, loopLimitRefusal: null };
-    let hasInterrupted = false;
-    let mergeRetryContextIds: string[] = [];
-    let resetJoinIds: string[] = [];
-    let laneConversationIdsToAbort: string[] = [];
-    // What this resume did to the rounds its halts left open. Assigned from
-    // inside the reducer, like the merge-retry ids, so a re-run reducer reports
-    // the committed pass rather than every attempt's accumulation.
-    let refilledRoundContextIds: string[] = [];
-    let retiredRoundContextIds: string[] = [];
+    const mutation = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (execution) => {
+        let previousStatus: GraphWorkflowStatus | null = null;
+        const resumeCapture: {
+          resolvedHaltReason: GraphWorkflowHaltReason | null;
+        } = { resolvedHaltReason: null };
+        let hasInterrupted = false;
+        let mergeRetryContextIds: string[] = [];
+        let resetJoinIds: string[] = [];
+        let laneConversationIdsToAbort: string[] = [];
+        let refilledRoundContextIds: string[] = [];
+        let retiredRoundContextIds: string[] = [];
 
-    const nextExecution = await deps.executionRepository
-      .mutateActive(projectPath, sessionName, (execution) => {
         if (
           options?.expectedExecutionId !== undefined &&
           execution.id !== options.expectedExecutionId
@@ -2648,17 +2173,16 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             now: getNow(deps),
           });
           if (assessment.halt?.type === "loop_limit_reached") {
-            resumeCapture.loopLimitRefusal = {
-              executionId: execution.id,
+            return refused({
               halt: assessment.halt,
-            };
-            throw new GraphWorkflowTransitionConflictError(
-              "resume",
-              execution.status,
-              ["paused", "halted"],
-              `Loop ${assessment.halt.loopGroupId} remains exhausted at pass ${assessment.halt.pass}; resume would halt again. ` +
-                "Use cctl workflow live edit with raise-loop-max-passes or amend-loop-predicate so the next decision can change, or abandon the execution. Template-only edits cannot clear an exhausted limit; the execution-wide backstop cannot be raised.",
-            );
+              error: new GraphWorkflowTransitionConflictError(
+                "resume",
+                execution.status,
+                ["paused", "halted"],
+                `Loop ${assessment.halt.loopGroupId} remains exhausted at pass ${assessment.halt.pass}; resume would halt again. ` +
+                  "Use cctl workflow live edit with raise-loop-max-passes or amend-loop-predicate so the next decision can change, or abandon the execution. Template-only edits cannot clear an exhausted limit; the execution-wide backstop cannot be raised.",
+              ),
+            });
           }
         }
 
@@ -2766,12 +2290,14 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             );
           }
           if (contextState.status === "ready") {
-            contextState.consecutiveFailureCount = 0;
             // The consecutive-mismatch budget is a manual retry decision for
             // the same reason: a context that halted at the bound would come
             // back at the bound and re-halt on its first round, which is a
             // resumable halt in name only.
-            contextState.consecutiveCandidateMismatchCount = 0;
+            Object.assign(
+              contextState,
+              accountContextAction(contextState, { kind: "manual_resume" }),
+            );
           }
           // Resume is the manual retry decision for the two halts that leave a
           // round open, and it owes them opposite things (see
@@ -2820,22 +2346,43 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           recoveryMode: hasInterrupted ? "interrupted_task" : "none",
           hasLiveIteration: false,
         });
-        return execution;
-      })
-      .catch((error: unknown) => {
-        const refusal = resumeCapture.loopLimitRefusal;
-        if (refusal) {
-          logger.warn("graph-workflow.execution.resume_refused", {
-            executionId: refusal.executionId,
-            reason: "loop_limit_unchanged",
-            loopGroupId: refusal.halt.loopGroupId,
-            scope: refusal.halt.scope,
-            pass: refusal.halt.pass,
-            maxPasses: refusal.halt.maxPasses,
-          });
-        }
-        throw error;
+        return changed(execution, {
+          previousStatus,
+          resumeCapture,
+          hasInterrupted,
+          mergeRetryContextIds,
+          resetJoinIds,
+          laneConversationIdsToAbort,
+          refilledRoundContextIds,
+          retiredRoundContextIds,
+        });
+      },
+    );
+    if (mutation.kind === "refused") {
+      const refusal = mutation.refusal;
+      logger.warn("graph-workflow.execution.resume_refused", {
+        executionId: mutation.execution.id,
+        reason: "loop_limit_unchanged",
+        loopGroupId: refusal.halt.loopGroupId,
+        scope: refusal.halt.scope,
+        pass: refusal.halt.pass,
+        maxPasses: refusal.halt.maxPasses,
       });
+      throw refusal.error;
+    }
+    const {
+      execution: nextExecution,
+      value: {
+        previousStatus,
+        resumeCapture,
+        hasInterrupted,
+        mergeRetryContextIds,
+        resetJoinIds,
+        laneConversationIdsToAbort,
+        refilledRoundContextIds,
+        retiredRoundContextIds,
+      },
+    } = mutation;
 
     // Abort only after the epoch bump is committed: a zombie turn racing the
     // abort is already write-fenced, and the new loop is not kicked until
@@ -2940,7 +2487,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     expectedExecutionId?: string,
   ): Promise<void> {
     const ensure = deps.executionRepository.ensureArtifactsMaterialized;
-    if (ensure === undefined) return;
     const execution = await deps.executionRepository.getActive(
       projectPath,
       sessionName,
@@ -3047,97 +2593,90 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         ? await resolveLandingEvidenceProber(deps).probe(probeTargets)
         : undefined;
 
-    const normalizedJoinIds: string[] = [];
-    const reconciledIntentContextIds: string[] = [];
-    const normalized = await mutateActiveOrRefuse(() =>
-      deps.executionRepository.mutateActive(
-        projectPath,
-        sessionName,
-        (current) => {
-          // The authoritative identity and status check. Both refuse rather than
-          // return the row: the probe above is I/O taken outside the queue, so
-          // the row can turn over or settle itself in between, and a returned row
-          // commits — normalizing a successor's running state is exactly the
-          // write a fenced caller asked not to make.
-          if (
-            expectedExecutionId !== undefined &&
-            current.id !== expectedExecutionId
-          ) {
-            throw new MutationRefusedError("normalize_after_restart");
-          }
-          if (current.status !== "running") {
-            throw new MutationRefusedError("normalize_after_restart");
-          }
+    const normalized = await deps.executionRepository.mutateActive<
+      { normalizedJoinIds: string[]; reconciledIntentContextIds: string[] },
+      "superseded"
+    >(projectPath, sessionName, (current) => {
+      // The probe ran outside the queue. Recheck identity and status so a
+      // successor or a run that settled during the probe receives no write.
+      if (
+        expectedExecutionId !== undefined &&
+        current.id !== expectedExecutionId
+      ) {
+        return refused("superseded");
+      }
+      if (current.status !== "running") {
+        return refused("superseded");
+      }
 
-          const timestamp = getNow(deps);
-          const resetRunningJoins = (
-            execution: GraphWorkflowExecution,
-          ): void => {
-            normalizedJoinIds.push(
-              ...resetRunningJoinsToPending(execution, timestamp),
-            );
-          };
+      const normalizedJoinIds: string[] = [];
+      const reconciledIntentContextIds: string[] = [];
+      const timestamp = getNow(deps);
+      const resetRunningJoins = (execution: GraphWorkflowExecution): void => {
+        normalizedJoinIds.push(
+          ...resetRunningJoinsToPending(execution, timestamp),
+        );
+      };
 
-          // A crash between a landing and its intent's settlement leaves the
-          // intent `pending` over work that is already committed — or over a
-          // fan-in merge that failed. Both are decided here from state that
-          // outlived the process (decision D8): the join's own record, and the
-          // branch evidence probed above. The resumed loop classifies from that
-          // durable evidence instead of re-deriving it.
-          reconciledIntentContextIds.push(
-            ...reconcileLandingIntents(current, {
-              now: timestamp,
-              branchEvidence,
-            }),
-          );
+      // A crash between a landing and its intent's settlement leaves the
+      // intent `pending` over work that is already committed — or over a
+      // fan-in merge that failed. Both are decided here from state that
+      // outlived the process (decision D8): the join's own record, and the
+      // branch evidence probed above. The resumed loop classifies from that
+      // durable evidence instead of re-deriving it.
+      reconciledIntentContextIds.push(
+        ...reconcileLandingIntents(current, {
+          now: timestamp,
+          branchEvidence,
+        }),
+      );
 
-          if (current.pendingHaltReason !== null) {
-            const haltReason = current.pendingHaltReason;
-            const transitioned = transitionToNonRunningState(
-              current,
-              "halted",
-              timestamp,
-              haltReason,
-            );
-            transitioned.pendingHaltReason = null;
-            resetRunningJoins(transitioned);
-            transitioned.machineSnapshot = buildLifecycleSnapshot(
-              transitioned,
-              {
-                lifecycleStatus: "halted",
-                recoveryMode: "restart_drain_resumed",
-                hasLiveIteration: false,
-              },
-            );
-            return transitioned;
-          }
+      if (current.pendingHaltReason !== null) {
+        const haltReason = current.pendingHaltReason;
+        const transitioned = transitionToNonRunningState(
+          current,
+          "halted",
+          timestamp,
+          haltReason,
+        );
+        transitioned.pendingHaltReason = null;
+        resetRunningJoins(transitioned);
+        transitioned.machineSnapshot = buildLifecycleSnapshot(transitioned, {
+          lifecycleStatus: "halted",
+          recoveryMode: "restart_drain_resumed",
+          hasLiveIteration: false,
+        });
+        return changed(transitioned, {
+          normalizedJoinIds,
+          reconciledIntentContextIds,
+        });
+      }
 
-          const nextExecution = transitionToNonRunningState(
-            current,
-            "paused",
-            null,
-            null,
-          );
-          resetRunningJoins(nextExecution);
-          nextExecution.machineSnapshot = buildLifecycleSnapshot(
-            nextExecution,
-            {
-              lifecycleStatus: "paused",
-              recoveryMode: "restart_normalized",
-              hasLiveIteration: false,
-            },
-          );
-          return nextExecution;
-        },
-      ),
-    );
+      const nextExecution = transitionToNonRunningState(
+        current,
+        "paused",
+        null,
+        null,
+      );
+      resetRunningJoins(nextExecution);
+      nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
+        lifecycleStatus: "paused",
+        recoveryMode: "restart_normalized",
+        hasLiveIteration: false,
+      });
+      return changed(nextExecution, {
+        normalizedJoinIds,
+        reconciledIntentContextIds,
+      });
+    });
 
     // Refused: the run settled itself or the row turned over while the landing
     // probe ran. The caller gets the run as it was read, unnormalized.
-    if (normalized === null) {
+    if (normalized.kind === "refused") {
       return expectedExecutionId !== undefined ? null : execution;
     }
-    const normalizedExecution = normalized;
+    const normalizedExecution = normalized.execution;
+    const { normalizedJoinIds, reconciledIntentContextIds } = normalized.value;
 
     if (reconciledIntentContextIds.length > 0) {
       logger.info("graph-workflow.restart.landing_intents_reconciled", {
@@ -3183,1396 +2722,60 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     return normalizedExecution;
   }
 
-  async function scheduleNextContext(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution> {
-    let scheduledContextId: string | null = null;
-    let scheduledEligibleContextIds: string[] = [];
-    let scheduledClearedLanes: string[] = [];
-
-    const nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
-        const running = requireRunningExecution(execution);
-        const eligibleContextIds = getEligibleContextIds(
-          running.workingDefinition,
-          running,
-        );
-
-        for (const contextId of eligibleContextIds) {
-          if (!running.contextStates[contextId]) {
-            continue;
-          }
-
-          transitionContextStatus(running, contextId, "ready", {
-            reason: "manager.schedule_next_context.eligible",
-          });
-        }
-
-        const nextContextId = eligibleContextIds[0] ?? null;
-        running.activeContextIds = nextContextId ? [nextContextId] : [];
-        if (nextContextId) {
-          transitionContextStatus(running, nextContextId, "running", {
-            reason: "manager.schedule_next_context.activate",
-          });
-          recordDispatchLandingIntent(running, nextContextId, getNow(deps));
-          const clearedLanes = Object.keys(running.laneStates);
-          running.laneStates = {};
-
-          scheduledContextId = nextContextId;
-          scheduledEligibleContextIds = eligibleContextIds;
-          scheduledClearedLanes = clearedLanes;
-        }
-
-        running.machineSnapshot = buildLifecycleSnapshot(running, {
-          lifecycleStatus: "running",
-          recoveryMode: "none",
-          hasLiveIteration: false,
-        });
-        return running;
-      },
-    );
-
-    if (scheduledContextId) {
-      logger.info("graph-workflow.context.scheduled", {
-        executionId: nextExecution.id,
-        nextContextId: scheduledContextId,
-        eligibleContextIds: scheduledEligibleContextIds,
-        clearedLanes: scheduledClearedLanes,
-      });
-      const execLogger = getExecutionLogger(nextExecution.id);
-      execLogger?.lifecycle("context.scheduled", {
-        contextId: scheduledContextId,
-        eligibleContextIds: scheduledEligibleContextIds,
-        clearedLanes: scheduledClearedLanes,
-      });
-    }
-
-    return nextExecution;
-  }
-
-  /**
-   * The session's worktree directory and branch — everything scheduling needs
-   * from the session record. Resolved once per pass, BEFORE anything is
-   * reserved, so a lookup failure aborts with no state to compensate.
-   *
-   * Returns null when the deps a lane-provisioning scheduler needs are absent,
-   * or when the session itself is gone. Both are refused at the point a pass
-   * actually needs to provision, not here: this runs on EVERY pass, including
-   * passes with nothing eligible, and a session deleted out from under a
-   * winding-down execution should leave those passes a quiet no-op rather than
-   * a throw.
-   */
-  async function resolveSessionTargets(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<{
-    sessionDir: string;
-    sessionBranch: string;
-    sessionWorktreePath: string;
-  } | null> {
-    if (!deps.getSession || !deps.parallelWorktrees) return null;
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) return null;
-    return {
-      sessionDir: path.basename(session.worktreePath),
-      sessionBranch: session.branchName,
-      sessionWorktreePath: session.worktreePath,
-    };
-  }
-
-  async function scheduleEligibleContexts(
-    input: ScheduleEligibleContextsInput,
-  ): Promise<ScheduleEligibleContextsResult> {
-    const { projectPath, sessionName } = input;
-    const excludedContextIds = new Set(input.excludedContextIds ?? []);
-    // Session-lane participation is opt-in per the accepted orchestration
-    // design (decision 10). Default off keeps every parallel chain on its
-    // own worktree lane and merges into the session branch only at final
-    // publish. Callers that have validated the dirty-worktree and
-    // concurrent-job preconditions can opt in by passing `true`.
-    const sessionLaneEnabled = input.sessionLaneEnabled ?? false;
-    const initialCapacity = input.capacityRemaining;
-    const outcome: { value: ScheduleEligibleContextsOutcome } = {
-      value: { kind: "none" },
-    };
-    let scheduledClearedLanes: string[] = [];
-    let readySetEligibleContextIds: string[] = [];
-    type LaneCreatedDecision = {
-      laneId: string;
-      contextId: string;
-      branchName: string;
-      worktreePath: string;
-      kind: "worktree";
-    };
-    type LaneForkedDecision = {
-      newLaneId: string;
-      contextId: string;
-      parentLaneId: string;
-      parentContextId: string;
-      parentBranchName: string;
-      branchName: string;
-      worktreePath: string;
-    };
-    type LaneReusedDecision = {
-      laneId: string;
-      contextId: string;
-      branchName: string | null;
-      worktreePath: string | null;
-      kind: "session" | "worktree";
-    };
-    const laneCreatedDecisions: LaneCreatedDecision[] = [];
-    const laneForkedDecisions: LaneForkedDecision[] = [];
-    const laneReusedDecisions: LaneReusedDecision[] = [];
-    type SchedulableEntry = {
-      contextId: string;
-      /**
-       * The runtime lane id this context is placed on — its AUTHORED lane name,
-       * or `SESSION_LANE_ID` for the reserved session lane. Resolved once here,
-       * where the definition is in hand, so the out-of-lock provisioning and the
-       * finalize mutation address the lane by the same id.
-       *
-       * Not the context id: a context id accepts any non-empty string while a
-       * lane name is spliced into a git branch and a worktree path, and a
-       * pre-placement definition's migrated lane (R11.1) is the sanitized
-       * encoding of an id that may itself be illegal there.
-       */
-      laneId: string;
-      classification: Extract<ContextSchedulability, { kind: "schedulable" }>;
-      /** The envelope this context was admitted under, frozen before reserve. */
-      ownership: CanonicalOwnership | null;
-      // Set on the entry that MINTS the lane: the lane is provisioned once, from
-      // this base, and every other member of the same lane in this batch simply
-      // joins the record it produces.
-      mint: {
-        /** Lane whose committed head the new lane branches from; null = session. */
-        sourceLaneId: string | null;
-        parentBranchName: string;
-        parentContextId: string | null;
-      } | null;
-    };
-    // Routing plan captured by the sync `reserve` mutation below and consumed by
-    // the out-of-lock provisioning + the sync `finalize` mutation. `null` means
-    // reserve resolved a terminal outcome (none / solo-session) with no worktree
-    // work to stage. Boxed like `outcome` so a value assigned inside the reducer
-    // callback keeps its declared type after the call (closure-assignment CFA).
-    type ProvisionPlan = {
-      schedulableEntries: SchedulableEntry[];
-      provisionEntries: SchedulableEntry[];
-      batchId: string;
-    };
-    const provisionPlan: { value: ProvisionPlan | null } = { value: null };
-
-    // ── Stage 0: canonicalize OUTSIDE the write queue (decision D4) ──
-    //
-    // Resolving a placement's owned prefixes to canonical paths is filesystem
-    // I/O, and the reservation reducer runs on the synchronous write-queue
-    // entry where no I/O is allowed. So the realpath work happens here, against
-    // the pre-scheduling snapshot, and hands the reducer an IMMUTABLE canonical
-    // set per candidate. The reducer then compares frozen sets — which is what
-    // makes the admission decision atomic against co-candidates and against a
-    // concurrent scheduler — and the set it admitted on is the set persisted for
-    // dispatch, so nothing between here and the turn can widen the envelope.
-    //
-    // A candidate with no frozen set (deps that cannot resolve a session, which
-    // is also a scheduler that cannot provision lanes) is treated as needing the
-    // lane to itself, the fail-closed reading.
-    const frozenOwnership = new Map<string, CanonicalOwnership>();
-    // Freezes taken against a lane worktree that did not exist yet, keyed by
-    // context: provisional until the worktree is checked out (decision D4).
-    const provisionalFreezes = new Map<
-      string,
-      { placement: ContextPlacement; laneWorktreePath: string }
-    >();
-    // Candidates whose canonical envelope could not be resolved at all. Held
-    // apart from "no freeze taken" so the reducer can refuse them outright
-    // instead of reading them as full access.
-    const unresolvableOwnership = new Set<string>();
-    const sessionTargets = await resolveSessionTargets(
-      projectPath,
-      sessionName,
-    );
-    if (sessionTargets) {
-      const snapshot = await deps.executionRepository.getActive(
-        projectPath,
-        sessionName,
-      );
-      if (snapshot) {
-        for (const contextId of getEligibleContextIds(
-          snapshot.workingDefinition,
-          snapshot,
-        ).filter((contextId) => !excludedContextIds.has(contextId))) {
-          const context = snapshot.workingDefinition.executionContexts.find(
-            (context) => context.id === contextId,
-          );
-          const placement = context?.placement;
-          if (!placement) continue;
-          const laneId =
-            placement.lane === SESSION_LANE_NAME
-              ? SESSION_LANE_ID
-              : placement.lane;
-          const laneWorktreePath =
-            snapshot.executionLanes[laneId]?.worktreePath ??
-            (laneId === SESSION_LANE_ID
-              ? sessionTargets.sessionWorktreePath
-              : deriveLaneWorktreePath({
-                  projectPath,
-                  sessionDir: sessionTargets.sessionDir,
-                  laneId,
-                }));
-          try {
-            frozenOwnership.set(
-              contextId,
-              canonicalizeOwnership({
-                placement,
-                laneWorktreePath,
-                stableRead: context?.outputSchema !== undefined,
-              }),
-            );
-          } catch (error) {
-            // The envelope could not be resolved — an unreadable ancestor, an
-            // unterminating symlink chain, a prefix escaping the worktree. This
-            // is NOT the same as "no freeze was taken" (the no-session case
-            // below), which reads as full access: a candidate whose canonical
-            // set is unknown must not be admitted at all, because there is
-            // nothing to prove it disjoint from anyone. Refusing only this
-            // candidate leaves lanes whose envelopes did resolve free to
-            // proceed, and the next pass re-probes.
-            unresolvableOwnership.add(contextId);
-            logger.warn("graph-workflow.scheduler.ownership_freeze_failed", {
-              executionId: snapshot.id,
-              contextId,
-              laneId,
-              error: getErrorMessage(error),
-            });
-            continue;
-          }
-          // A freeze taken before the lane worktree exists resolved nothing;
-          // it is re-taken after provisioning, below, and re-judged before
-          // anyone starts.
-          if (!laneWorktreeExists(laneWorktreePath)) {
-            provisionalFreezes.set(contextId, { placement, laneWorktreePath });
-          }
-        }
-      }
-    }
-
-    // Staged protocol (Design 3.1): worktree provisioning (`provisionLane`) —
-    // the ~20.8s hold — runs OUTSIDE the write queue between a short synchronous
-    // `reserve` mutation (classify + record `ready` intent, fenced) and a short
-    // synchronous `finalize` mutation (apply the lane state, fence + halt
-    // re-checked, else compensate by disposing the worktrees).
-    let nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
-        const running = requireRunningExecution(execution);
-
-        // Enforce no-new-scheduling-after-pending-halt at the transaction
-        // boundary. The outer event-driven loop checks pendingHaltReason
-        // against its local snapshot, but an in-flight sibling may record a
-        // halt concurrently between the loop's refresh and this scheduling
-        // mutation. Reading pendingHaltReason from the latest persisted
-        // execution inside the repository transaction is the only way to
-        // guarantee the invariant holds under event-driven rescheduling.
-        if (running.pendingHaltReason !== null) {
-          running.machineSnapshot = buildLifecycleSnapshot(running, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-          outcome.value = { kind: "none" };
-          return running;
-        }
-
-        const eligibleContextIds = getEligibleContextIds(
-          running.workingDefinition,
-          running,
-        ).filter((contextId) => !excludedContextIds.has(contextId));
-        readySetEligibleContextIds = [...eligibleContextIds];
-
-        if (eligibleContextIds.length === 0) {
-          running.machineSnapshot = buildLifecycleSnapshot(running, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-          outcome.value = { kind: "none" };
-          return running;
-        }
-
-        for (const contextId of eligibleContextIds) {
-          if (running.contextStates[contextId]) {
-            transitionContextStatus(running, contextId, "ready", {
-              reason: "manager.schedule_eligible_contexts.eligible",
-            });
-          }
-        }
-
-        // Lane-aware routing: classify each eligible context. The classifier
-        // separates dependency-ready, lane-safe contexts from those still
-        // waiting on a join, busy lane, or capacity. Wait-state contexts stay
-        // in status `ready` so the UI surfaces them but are not provisioned.
-        //
-        // `targetLaneId` on a schedulable result is the existing lane to
-        // consume (null = session worktree); `requiresFork` indicates the
-        // session lane is unsafe (either disabled by caller or another
-        // worktree lane has unpublished work) so the scheduler must mint a
-        // fresh worktree lane instead.
-        const schedulableEntries: SchedulableEntry[] = [];
-        // Reserved-but-not-running contexts count against the query budget: the
-        // caller's remaining capacity was computed from what is IN FLIGHT under
-        // its own loop, and a sibling batch's reservations are turns that are
-        // about to start but have not been dispatched yet (decision D4).
-        const foreignReservedCount = Object.values(
-          running.laneReservations,
-        ).reduce((total, reservation) => total + reservation.members.length, 0);
-        let remainingCapacity =
-          initialCapacity === undefined
-            ? undefined
-            : Math.max(0, initialCapacity - foreignReservedCount);
-        // The one place a context's authored lane name is read. Every lane this
-        // pass validates, provisions, or keys uses this rather than the context
-        // id: the two coincide for a context whose id is already a legal lane
-        // segment, and diverge exactly where they must — an authored group lane,
-        // and a pre-placement context whose migrated lane is the sanitized
-        // encoding of an id that is not spliceable into a branch or a path.
-        const authoredLaneOf = (contextId: string): string | undefined =>
-          running.workingDefinition.executionContexts.find(
-            (ctx) => ctx.id === contextId,
-          )?.placement.lane;
-        type Candidate = {
-          contextId: string;
-          classification: Extract<
-            ContextSchedulability,
-            { kind: "schedulable" }
-          >;
-        };
-        const candidates: Candidate[] = [];
-        for (const contextId of eligibleContextIds) {
-          const classification = classifyContextSchedulability({
-            contextId,
-            definition: running.workingDefinition,
-            execution: running,
-            options: {
-              sessionLaneEnabled,
-            },
-          });
-          if (classification.kind !== "schedulable") continue;
-          candidates.push({ contextId, classification });
-        }
-
-        // ── Reservation reducer: the atomic half of admission (decision D4) ──
-        //
-        // Occupancy per lane, over the three populations that can collide with a
-        // candidate: members RUNNING on the lane (their own frozen envelope), a
-        // sibling batch's reservations, and candidates admitted earlier in THIS
-        // pass. All three are compared as frozen canonical sets, so no ordering
-        // of concurrent schedulers can admit two contexts whose write surfaces
-        // touch.
-        const occupantsByLane = new Map<string, LaneOccupant[]>();
-        const occupantsOf = (laneId: string): LaneOccupant[] => {
-          const known = occupantsByLane.get(laneId);
-          if (known) return known;
-          const occupants: LaneOccupant[] = [];
-          for (const state of Object.values(running.contextStates)) {
-            if (
-              (state.laneId ??
-                (state.isolation === "session" ? SESSION_LANE_ID : null)) !==
-              laneId
-            )
-              continue;
-            if (
-              state.status !== "running" &&
-              !(
-                state.status === "completed" &&
-                !isRouteSourceLanded(running, state.contextId)
-              )
-            )
-              continue;
-            occupants.push({
-              contextId: state.contextId,
-              ownership: state.reservedOwnership ?? UNKNOWN_OWNERSHIP,
-            });
-          }
-          for (const member of running.laneReservations[laneId]?.members ??
-            []) {
-            occupants.push(member);
-          }
-          occupantsByLane.set(laneId, occupants);
-          return occupants;
-        };
-        // Lanes this pass will MINT, and the entry that mints each one. A lane
-        // is one worktree for the whole execution, so the first admitted member
-        // provisions it and every later member of the same lane in this pass
-        // coalesces onto the record it produces (decision D5).
-        const mintedByLane = new Map<string, SchedulableEntry>();
-        for (const candidate of candidates) {
-          const { contextId, classification } = candidate;
-          if (remainingCapacity !== undefined && remainingCapacity <= 0) break;
-          // Fail closed rather than falling back to the context id: a context
-          // the definition does not carry has no authored lane, and inventing
-          // one from its id is the lexical fallback lane-write-policy forbids.
-          const laneName = authoredLaneOf(contextId);
-          if (laneName === undefined) {
-            throw new Error(
-              `Context "${contextId}" is not present in the working definition, so it has no authored lane placement`,
-            );
-          }
-          const laneId =
-            laneName === SESSION_LANE_NAME ? SESSION_LANE_ID : laneName;
-
-          // No canonical set, no admission. The stage-0 probe could not decide
-          // what this candidate would write, and an envelope that cannot be
-          // resolved cannot be proven disjoint from anyone.
-          if (unresolvableOwnership.has(contextId)) continue;
-
-          const ownership = frozenOwnership.get(contextId) ?? null;
-          const verdict = classifyLaneAdmission({
-            candidate: ownership ?? UNKNOWN_OWNERSHIP,
-            occupants: occupantsOf(laneId),
-          });
-          if (verdict.kind === "refuse") {
-            logger.info("graph-workflow.scheduler.lane_admission_refused", {
-              executionId: running.id,
-              contextId,
-              laneId,
-              reason: verdict.reason,
-              blockingContextId: verdict.blockingContextId,
-            });
-            continue;
-          }
-
-          // Minting. `requiresFork` with no existing lane record means the
-          // authored lane has to be provisioned; a sibling batch already
-          // provisioning it makes this candidate wait for the pass where the
-          // lane exists, rather than racing `git worktree add` for one path.
-          const mintsLane =
-            classification.targetLaneId === null &&
-            classification.requiresFork &&
-            laneId !== SESSION_LANE_ID;
-          let mint: SchedulableEntry["mint"] = null;
-          if (mintsLane) {
-            if (running.laneReservations[laneId] !== undefined) continue;
-            if (!mintedByLane.has(laneId)) {
-              // Fail closed at the point provisioning is actually required: no
-              // session means no branch to fork from and no path to place the
-              // worktree at, and inventing either is how a lane ends up
-              // somewhere its execution does not own.
-              if (!sessionTargets) {
-                throw new Error(
-                  `Cannot provision lane "${laneId}": session "${sessionName}" was not found (or the scheduler has no \`parallelWorktrees\`/\`getSession\` deps)`,
-                );
-              }
-              const sourceLaneId = classification.forkFromLaneId;
-              const parentLane =
-                sourceLaneId === null
-                  ? undefined
-                  : running.executionLanes[sourceLaneId];
-              mint = {
-                sourceLaneId: parentLane ? sourceLaneId : null,
-                parentBranchName:
-                  parentLane?.branchName ?? sessionTargets.sessionBranch,
-                parentContextId:
-                  sourceLaneId !== null && parentLane
-                    ? findUpstreamCompletedOnLane(
-                        [contextId],
-                        sourceLaneId,
-                        running,
-                      )
-                    : null,
-              };
-            }
-          }
-
-          const entry: SchedulableEntry = {
-            contextId,
-            laneId,
-            classification,
-            ownership,
-            mint,
-          };
-          schedulableEntries.push(entry);
-          if (mintsLane && !mintedByLane.has(laneId)) {
-            mintedByLane.set(laneId, entry);
-          }
-          occupantsOf(laneId).push({
-            contextId,
-            ownership: ownership ?? UNKNOWN_OWNERSHIP,
-          });
-          if (remainingCapacity !== undefined) {
-            remainingCapacity = Math.max(0, remainingCapacity - 1);
-          }
-        }
-
-        if (schedulableEntries.length === 0) {
-          running.machineSnapshot = buildLifecycleSnapshot(running, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-          outcome.value = { kind: "none" };
-          return running;
-        }
-
-        const canMintLane = !!(deps.parallelWorktrees && deps.getSession);
-        // Whether the context's AUTHORED lane is a group lane — anything but
-        // the reserved session lane, which is the session worktree itself.
-        //
-        // This is where the deleted plan's continuation score used to sit, and
-        // the declared answer subsumes it: a context on a group lane needs that
-        // lane provisioned, both for its own work and because every later
-        // member of the lane inherits the worktree it mints. Without it the
-        // first member would land in `laneId: null` and the next member's
-        // classifier would see no worktree source lane to reuse.
-        const laneIsGroupLane = (contextId: string): boolean => {
-          const lane = authoredLaneOf(contextId);
-          return lane !== undefined && lane !== SESSION_LANE_NAME;
-        };
-
-        const soloEntry =
-          schedulableEntries.length === 1 ? schedulableEntries[0]! : null;
-        const isSoloSession =
-          soloEntry !== null &&
-          soloEntry.classification.targetLaneId === null &&
-          !soloEntry.classification.requiresFork &&
-          !(canMintLane && laneIsGroupLane(soloEntry.contextId));
-
-        if (isSoloSession && soloEntry) {
-          const soloContextId = soloEntry.contextId;
-          const contextState = running.contextStates[soloContextId]!;
-          transitionContextStatus(running, soloContextId, "running", {
-            reason: "manager.schedule_eligible_contexts.solo_session",
-          });
-          contextState.isolation = "session";
-          contextState.worktreePath = null;
-          contextState.branchName = null;
-          contextState.batchId = null;
-          contextState.laneId = null;
-          recordDispatchLandingIntent(running, soloContextId, getNow(deps));
-
-          const activeIdSet = new Set(running.activeContextIds);
-          activeIdSet.add(soloContextId);
-          running.activeContextIds = [...activeIdSet];
-
-          const clearedLanes = clearLaneStatesFor(running, [soloContextId]);
-          scheduledClearedLanes = clearedLanes;
-
-          running.machineSnapshot = buildLifecycleSnapshot(running, {
-            lifecycleStatus: "running",
-            recoveryMode: "none",
-            hasLiveIteration: false,
-          });
-          outcome.value = { kind: "solo", contextId: soloContextId };
-          return running;
-        }
-
-        if (!deps.parallelWorktrees) {
-          throw new Error(
-            "scheduleEligibleContexts requires `parallelWorktrees` dep when ≥2 contexts are eligible",
-          );
-        }
-        if (!deps.getSession) {
-          throw new Error(
-            "scheduleEligibleContexts requires `getSession` dep when ≥2 contexts are eligible",
-          );
-        }
-
-        // The lane id is what gets spliced into a branch name and a worktree
-        // path, so that is what must satisfy the charset. Validating the context
-        // id here would refuse a pre-placement context whose migrated lane is
-        // legal precisely because the id was not (R11.1). The session lane is
-        // exempt: it is never spliced into anything, being the session worktree.
-        for (const entry of schedulableEntries) {
-          if (entry.laneId !== SESSION_LANE_ID) validateLaneId(entry.laneId);
-        }
-
-        // Reserve records the routing intent AND persists two owner-discriminated
-        // reservations (Design 3.1, decision D5). Per CONTEXT: the batch id it
-        // will provision under — `getEligibleContextIds` excludes a stamped
-        // context, so a concurrent same-epoch scheduler cannot re-classify and
-        // double-provision it. Per LANE: the batch id plus the frozen ownership
-        // of every member this pass admitted — which is how a concurrent
-        // scheduler sees a lane that is mid-provision (and must not race
-        // `git worktree add` for it) and judges its own candidates against write
-        // surfaces that are claimed but not yet running. Both are cleared at the
-        // fenced finalize, out of the lock, or by the compensating release.
-        const batchId = deps.createBatchId?.() ?? randomUUID();
-        const reservedAt = getNow(deps);
-        for (const entry of schedulableEntries) {
-          const contextState = running.contextStates[entry.contextId];
-          if (contextState) {
-            contextState.reservedByBatchId = batchId;
-            contextState.reservedOwnership = entry.ownership;
-          }
-          const reservation = (running.laneReservations[entry.laneId] ??= {
-            laneId: entry.laneId,
-            batchId,
-            provisioning: false,
-            members: [],
-            createdAt: reservedAt,
-          });
-          reservation.provisioning ||= entry.mint !== null;
-          reservation.members.push({
-            contextId: entry.contextId,
-            ownership: entry.ownership ?? UNKNOWN_OWNERSHIP,
-          });
-        }
-        running.machineSnapshot = buildLifecycleSnapshot(running, {
-          lifecycleStatus: "running",
-          recoveryMode: "none",
-          hasLiveIteration: false,
-        });
-        provisionPlan.value = {
-          schedulableEntries,
-          // Exactly the lane-minting entries: one worktree per lane, however
-          // many members of that lane this batch admitted (decision D5).
-          provisionEntries: schedulableEntries.filter(
-            (entry) => entry.mint !== null,
-          ),
-          batchId,
-        };
-        return running;
-      },
-    );
-
-    // Terminal outcomes (none / solo-session) are fully applied by reserve; only
-    // a routing plan warrants the out-of-lock provisioning + fenced finalize.
-    const plan = provisionPlan.value;
-    if (plan !== null) {
-      const { schedulableEntries, provisionEntries, batchId } = plan;
-
-      // Compensating release of the reserve's owner-discriminated stamps.
-      // DEFINED BEFORE any post-reserve work (session lookup, provisioning) can
-      // throw so EVERY failure path after the reserve commits releases
-      // `reservedByBatchId` — a `getSession` rejection/null (or a missing-dep
-      // throw) must not strand the stamps and leave the contexts permanently
-      // ineligible for a same-epoch retry (Design 3.1). A short sync mutation;
-      // if this generation was already superseded the write is fenced out and
-      // the stamps belong to a dead generation anyway, so a stale-fence refusal
-      // is swallowed. OWNER-CHECKED: only a stamp this batch still owns is
-      // cleared — a concurrent same-epoch batch that re-reserved the context
-      // carries a different `batchId` and its reservation must survive.
-      const releaseReservations = async (): Promise<void> => {
-        try {
-          await deps.executionRepository.mutateActive(
-            projectPath,
-            sessionName,
-            (execution) => {
-              const running = requireRunningExecution(execution);
-              const releasedContextIds: string[] = [];
-              for (const entry of schedulableEntries) {
-                const contextState = running.contextStates[entry.contextId];
-                if (contextState?.reservedByBatchId === batchId) {
-                  contextState.reservedByBatchId = null;
-                  contextState.reservedOwnership = null;
-                  releasedContextIds.push(entry.contextId);
-                }
-              }
-              releaseLaneReservations(running, batchId);
-              // A batch that never formed also gives back the shared pass slots
-              // of any loop pass it was going to start (decision D7): the
-              // reservation is durable, so keeping it would charge the
-              // execution's 25-pass backstop for a pass no lane exists for. The
-              // retry re-reserves through the same definition-ordered admission
-              // walk, and a released slot is reusable meanwhile.
-              const releasedSlots = releaseLoopPassSlotsForContexts(
-                running,
-                releasedContextIds,
-              );
-              if (releasedSlots.length > 0) {
-                logger.info("graph-workflow.loop.pass_slot_released", {
-                  executionId: running.id,
-                  slots: releasedSlots,
-                });
-              }
-              return running;
-            },
-          );
-        } catch (err) {
-          if (!(err instanceof StaleLoopFenceError)) throw err;
-        }
-      };
-
-      // Re-narrow the provisioning deps. The session was already resolved in
-      // stage 0 — before anything was reserved — so a lookup failure aborts with
-      // nothing to compensate; only a genuinely absent dep can surface here, and
-      // it still releases the reservations before aborting.
-      const { parallelWorktrees, sessionDir, sessionBranch } =
-        await (async () => {
-          const parallelWorktreesDep = deps.parallelWorktrees;
-          if (!parallelWorktreesDep || !sessionTargets) {
-            throw new Error(
-              "scheduleEligibleContexts requires `parallelWorktrees` and `getSession` deps when provisioning lanes",
-            );
-          }
-          return {
-            parallelWorktrees: parallelWorktreesDep,
-            sessionDir: sessionTargets.sessionDir,
-            sessionBranch: sessionTargets.sessionBranch,
-          };
-        })().catch(async (err: unknown) => {
-          await releaseReservations();
-          throw err;
-        });
-
-      // Worktrees to dispose if the finalize is refused (superseded fence) or a
-      // halt lands mid-provision — this caller's worktree-side-effect
-      // compensation story.
-      const provisioned: Array<{
-        entry: SchedulableEntry;
-        result: ProvisionResult;
-      }> = [];
-      // Best-effort disposal: a `disposeLane` rejection on one lane must NOT
-      // abort disposal of the remaining lanes nor skip the reservation release
-      // that follows. Failures are collected and returned so the caller can
-      // report them; this never throws.
-      const disposeProvisioned = async (): Promise<
-        Array<{ branchName: string; error: unknown }>
-      > => {
-        const failures: Array<{ branchName: string; error: unknown }> = [];
-        for (const { result } of provisioned) {
-          try {
-            await parallelWorktrees.disposeLane({
-              projectPath,
-              worktreePath: result.worktreePath,
-              branchName: result.branchName,
-            });
-          } catch (error) {
-            failures.push({ branchName: result.branchName, error });
-          }
-        }
-        return failures;
-      };
-
-      // Compensate a failed/superseded schedule: dispose every provisioned lane
-      // best-effort, then GUARANTEE the owner-checked reservation release (it
-      // runs even when a lane disposal failed), then report any disposal
-      // failures. Never throws — the callers preserve the original scheduling
-      // error with their own `throw`. A genuine (non-fence) release failure is
-      // reported rather than masking that original error.
-      const compensateSchedule = async (): Promise<void> => {
-        const disposalFailures = await disposeProvisioned();
-        try {
-          await releaseReservations();
-        } catch (releaseError) {
-          logger.error("graph-workflow.scheduler.reservation_release_failed", {
-            error:
-              releaseError instanceof Error
-                ? releaseError.message
-                : String(releaseError),
-          });
-        }
-        if (disposalFailures.length > 0) {
-          logger.warn("graph-workflow.scheduler.lane_dispose_failed", {
-            failedLaneBranches: disposalFailures.map((f) => f.branchName),
-          });
-        }
-      };
-
-      // One provisioning critical section per session, shared across loop
-      // generations (on globalThis, like the loop registry): a pause only
-      // signals the retired loop, so its scheduler can still be inside
-      // `git worktree add` when the operator resumes and the replacement
-      // generation reserves the same lane. Serializing provision-through-
-      // finalize keeps the two apart: the retired batch finishes, its fenced
-      // finalize disposes what it cut, and only then does the successor
-      // provision. So the successor never adopts a worktree the retired batch
-      // is about to dispose and never races it for one path (#80, design 3.8).
-      await laneProvisioningMutex().run(
-        laneProvisioningKey(projectPath, sessionName),
-        async () => {
-          // Slow worktree provisioning OUTSIDE the write queue. A failure disposes
-          // the lanes already created in this pass, releases the reservations, and
-          // aborts scheduling.
-          try {
-            // Re-judge the generation before touching disk. A pause that landed
-            // between this batch's reserve and its turn in the critical section
-            // has retired it; provisioning anyway would cut a worktree that only
-            // the fenced finalize can dispose, after a successor may have adopted
-            // it. The refusal takes the compensation path below: nothing was
-            // provisioned, and the release fences out like every other write.
-            assertLoopFence(
-              projectPath,
-              sessionName,
-              await deps.executionRepository.getActive(
-                projectPath,
-                sessionName,
-              ),
-            );
-            for (const entry of provisionEntries) {
-              const result = await parallelWorktrees.provisionLane({
-                projectPath,
-                sessionName,
-                sessionDir,
-                sessionBranch: entry.mint?.parentBranchName ?? sessionBranch,
-                laneId: entry.laneId,
-              });
-              provisioned.push({ entry, result });
-            }
-          } catch (err) {
-            await compensateSchedule();
-            throw err;
-          }
-
-          // ── Re-freeze what could only be guessed before the worktree existed ──
-          //
-          // Stage 0 canonicalized a to-be-minted lane's prefixes against a path
-          // `git worktree add` had not created, so they were appended lexically.
-          // Checking the source branch out is exactly the step that can turn two
-          // lexically disjoint prefixes into one directory — a symlink committed on
-          // that branch — so the pre-provision freeze cannot be the set anyone is
-          // admitted under. Re-take it here, still OUTSIDE the write queue (this is
-          // realpath I/O), and let the finalize reducer re-judge the frozen results
-          // atomically. A canonicalization that now throws (a prefix escaping the
-          // checked-out worktree) fails the whole batch closed rather than starting
-          // a turn under an envelope that could not be resolved.
-          const recanonicalized = new Map<string, CanonicalOwnership>();
-          if (provisionalFreezes.size > 0) {
-            const provisionedPathByLane = new Map<string, string>();
-            for (const { entry, result } of provisioned) {
-              provisionedPathByLane.set(entry.laneId, result.worktreePath);
-            }
-            try {
-              for (const entry of schedulableEntries) {
-                const staged = provisionalFreezes.get(entry.contextId);
-                if (!staged) continue;
-                recanonicalized.set(
-                  entry.contextId,
-                  canonicalizeOwnership({
-                    placement: staged.placement,
-                    stableRead: frozenOwnership.get(entry.contextId)
-                      ?.stableRead,
-                    laneWorktreePath:
-                      provisionedPathByLane.get(entry.laneId) ??
-                      staged.laneWorktreePath,
-                  }),
-                );
-              }
-            } catch (err) {
-              await compensateSchedule();
-              throw err;
-            }
-          }
-
-          // Fenced finalize: a short synchronous mutation that re-checks the loop
-          // fence (inside the repository's `mutateActive`) and the pending-halt
-          // state before committing the running/lane transition. If this generation
-          // was superseded or a halt landed while provisioning was in flight, the
-          // provisioned worktrees are disposed as compensation.
-          let compensate = false;
-          nextExecution = await deps.executionRepository
-            .mutateActive(projectPath, sessionName, (execution) => {
-              const running = requireRunningExecution(execution);
-
-              // A halt recorded during provisioning supersedes this schedule: do
-              // not start the contexts; commit only the halt-aware snapshot and
-              // dispose the provisioned worktrees below. Clear the reservation stamps
-              // so the contexts are re-schedulable once the halt clears — the batch
-              // never formed (Design 3.1).
-              if (running.pendingHaltReason !== null) {
-                for (const entry of schedulableEntries) {
-                  const contextState = running.contextStates[entry.contextId];
-                  // Owner-checked like every other release: a stamp reassigned to a
-                  // replacement batch while this one was provisioning is that
-                  // batch's claim, and clearing it here would strand a context this
-                  // batch no longer owns.
-                  if (contextState?.reservedByBatchId === batchId) {
-                    contextState.reservedByBatchId = null;
-                    contextState.reservedOwnership = null;
-                  }
-                }
-                releaseLaneReservations(running, batchId);
-                running.machineSnapshot = buildLifecycleSnapshot(running, {
-                  lifecycleStatus: "running",
-                  recoveryMode: "none",
-                  hasLiveIteration: false,
-                });
-                outcome.value = { kind: "none" };
-                compensate = true;
-                return running;
-              }
-
-              // Re-judge the batch on the re-taken freezes, atomically. Only the
-              // comparison happens here — the realpath work is already done — so
-              // the reducer stays synchronous. A member refused now was admitted on
-              // a prefix set the checkout invalidated: it keeps no lane, gives back
-              // its stamp, and stays eligible. Its next pass canonicalizes against
-              // the worktree that now exists, so the collision is visible up front
-              // and the refusal is stable rather than a livelock.
-              // Owner fence on the per-context stamp, the twin of the one
-              // `releaseLaneReservations` applies to the lane claim (decision D5).
-              // A context whose stamp is no longer this batch's was taken over
-              // while provisioning was in flight — by reservation recovery or a
-              // replacement batch. Starting it here would run it under a plan its
-              // current owner did not make, and clearing the stamp would erase that
-              // owner's claim, so it is dropped untouched.
-              // Both halves of the claim are fenced, because either can be replaced
-              // while provisioning is in flight and each alone is insufficient: the
-              // context stamp says this batch may still start THIS context, and the
-              // lane claim says it may still materialize and occupy THAT lane. The
-              // owner-checked delete afterwards is cleanup, not an admission fence —
-              // without the lane half, a batch whose claim was replaced would still
-              // create the lane record and start its members on it.
-              const disownedContextIds = new Set<string>();
-              for (const entry of schedulableEntries) {
-                const stampLost =
-                  running.contextStates[entry.contextId]?.reservedByBatchId !==
-                  batchId;
-                const laneClaim = running.laneReservations[entry.laneId];
-                const laneLost =
-                  laneClaim === undefined || laneClaim.batchId !== batchId;
-                if (!stampLost && !laneLost) continue;
-                disownedContextIds.add(entry.contextId);
-                // Give back only what is still ours. A stamp this batch still holds
-                // has to be released or the context is stranded ineligible; a stamp
-                // already reassigned belongs to its new owner and is left alone.
-                if (!stampLost) {
-                  const contextState = running.contextStates[entry.contextId];
-                  if (contextState) {
-                    contextState.reservedByBatchId = null;
-                    contextState.reservedOwnership = null;
-                  }
-                }
-                logger.warn("graph-workflow.scheduler.reservation_disowned", {
-                  executionId: running.id,
-                  contextId: entry.contextId,
-                  laneId: entry.laneId,
-                  batchId,
-                  stampLost,
-                  laneLost,
-                });
-              }
-
-              const refusedContextIds = new Set<string>();
-              if (recanonicalized.size > 0) {
-                const finalizeOccupants = new Map<string, LaneOccupant[]>();
-                const finalizeOccupantsOf = (
-                  laneId: string,
-                ): LaneOccupant[] => {
-                  const known = finalizeOccupants.get(laneId);
-                  if (known) return known;
-                  const occupants: LaneOccupant[] = [];
-                  for (const state of Object.values(running.contextStates)) {
-                    if (
-                      (state.laneId ??
-                        (state.isolation === "session"
-                          ? SESSION_LANE_ID
-                          : null)) !== laneId
-                    )
-                      continue;
-                    if (
-                      state.status !== "running" &&
-                      !(
-                        state.status === "completed" &&
-                        !isRouteSourceLanded(running, state.contextId)
-                      )
-                    )
-                      continue;
-                    occupants.push({
-                      contextId: state.contextId,
-                      ownership: state.reservedOwnership ?? UNKNOWN_OWNERSHIP,
-                    });
-                  }
-                  finalizeOccupants.set(laneId, occupants);
-                  return occupants;
-                };
-                for (const entry of schedulableEntries) {
-                  if (disownedContextIds.has(entry.contextId)) continue;
-                  const ownership =
-                    recanonicalized.get(entry.contextId) ??
-                    entry.ownership ??
-                    UNKNOWN_OWNERSHIP;
-                  const occupants = finalizeOccupantsOf(entry.laneId);
-                  const verdict = classifyLaneAdmission({
-                    candidate: ownership,
-                    occupants,
-                  });
-                  if (verdict.kind === "refuse") {
-                    refusedContextIds.add(entry.contextId);
-                    const contextState = running.contextStates[entry.contextId];
-                    if (contextState) {
-                      contextState.reservedByBatchId = null;
-                      contextState.reservedOwnership = null;
-                    }
-                    logger.info(
-                      "graph-workflow.scheduler.lane_admission_refused_post_provision",
-                      {
-                        executionId: running.id,
-                        contextId: entry.contextId,
-                        laneId: entry.laneId,
-                        reason: verdict.reason,
-                        blockingContextId: verdict.blockingContextId,
-                      },
-                    );
-                    continue;
-                  }
-                  occupants.push({ contextId: entry.contextId, ownership });
-                }
-              }
-              const admittedEntries = schedulableEntries.filter(
-                (entry) =>
-                  !refusedContextIds.has(entry.contextId) &&
-                  !disownedContextIds.has(entry.contextId),
-              );
-
-              // Nothing survived the re-check, so this batch never formed. Report
-              // it as such rather than as an empty parallel batch, and give back
-              // only the lane claims still owned here — a replacement owner's claim
-              // must outlive this finalize. Any worktree cut for a lane taken over
-              // meanwhile is deliberately left in place: disposing it could remove
-              // the one its new owner is about to use.
-              if (admittedEntries.length === 0) {
-                releaseLaneReservations(running, batchId);
-                running.machineSnapshot = buildLifecycleSnapshot(running, {
-                  lifecycleStatus: "running",
-                  recoveryMode: "none",
-                  hasLiveIteration: false,
-                });
-                outcome.value = { kind: "none" };
-                return running;
-              }
-
-              const provisionTimestamp = getNow(deps);
-
-              // Mint each provisioned lane exactly once, before placing anyone on
-              // it: several members of one lane can be admitted in a single pass,
-              // and they all join the same record (decision D5).
-              for (const { entry, result } of provisioned) {
-                // A lane whose claim was replaced mid-provision is not this batch's
-                // to materialize: recording it would hand the replacement owner a
-                // lane record it never created. The worktree stays on disk
-                // unreferenced, which is the safe side of this trade.
-                if (disownedContextIds.has(entry.contextId)) continue;
-                const mint = entry.mint;
-                if (!mint) {
-                  throw new Error(
-                    `Provisioned lane "${entry.laneId}" has no mint plan; only a minting entry is provisioned`,
-                  );
-                }
-                // Inherit everything present in the fork parent's branch — what ran
-                // on it AND what a succeeded join already merged into it — so
-                // upstream visibility checks recognize the full history the fork
-                // copied. Inheriting only the parent's own `includedContextIds`
-                // strands the fork on any upstream that arrived by join: its work is
-                // in the branch, but nothing in the lane graph connects the fork to
-                // it. A lane forked from the session branch inherits nothing.
-                const inheritedIncluded =
-                  mint.sourceLaneId === null
-                    ? []
-                    : contextsPresentInLane(mint.sourceLaneId, running);
-                running.executionLanes[entry.laneId] = {
-                  laneId: entry.laneId,
-                  kind: "worktree",
-                  status: "active",
-                  worktreePath: result.worktreePath,
-                  branchName: result.branchName,
-                  includedContextIds: [...inheritedIncluded],
-                  lastCommittingContextId: mint.parentContextId,
-                  commitSnapshots: [],
-                  createdAt: provisionTimestamp,
-                  updatedAt: provisionTimestamp,
-                };
-                if (
-                  mint.sourceLaneId !== null &&
-                  mint.parentContextId !== null
-                ) {
-                  laneForkedDecisions.push({
-                    newLaneId: entry.laneId,
-                    contextId: entry.contextId,
-                    parentLaneId: mint.sourceLaneId,
-                    parentContextId: mint.parentContextId,
-                    parentBranchName: mint.parentBranchName,
-                    branchName: result.branchName,
-                    worktreePath: result.worktreePath,
-                  });
-                } else {
-                  laneCreatedDecisions.push({
-                    laneId: entry.laneId,
-                    contextId: entry.contextId,
-                    branchName: result.branchName,
-                    worktreePath: result.worktreePath,
-                    kind: "worktree",
-                  });
-                }
-              }
-
-              for (const entry of admittedEntries) {
-                const { contextId, laneId } = entry;
-                const contextState = running.contextStates[contextId]!;
-                transitionContextStatus(running, contextId, "running", {
-                  reason: "manager.schedule_eligible_contexts.batch",
-                });
-                contextState.batchId = batchId;
-                // Reservation realized: the context is now `running`, so drop the
-                // owner-discriminated stamp the reserve set (Design 3.1). The frozen
-                // ownership STAYS — it is the envelope dispatch composes the turn's
-                // write policy from, and the set later admissions compare against.
-                // Where the pre-provision freeze was provisional, the re-taken one
-                // supersedes it, so the persisted envelope is the one this context
-                // was actually admitted under.
-                contextState.reservedByBatchId = null;
-                const refrozen = recanonicalized.get(contextId);
-                if (refrozen) contextState.reservedOwnership = refrozen;
-
-                const placement =
-                  running.workingDefinition.executionContexts.find(
-                    (context) => context.id === contextId,
-                  )?.placement;
-                if (
-                  placement?.lane === SESSION_LANE_NAME &&
-                  placement.mode === "readOnly"
-                ) {
-                  contextState.laneId = null;
-                  contextState.worktreePath = null;
-                  contextState.branchName = null;
-                  contextState.isolation = "session";
-                  contextState.batchId = null;
-                  continue;
-                }
-
-                const lane = running.executionLanes[laneId];
-                if (!lane) {
-                  // The session lane before final publish materializes a record for
-                  // it: the context runs in the session worktree with no lane.
-                  if (laneId === SESSION_LANE_ID) {
-                    contextState.laneId = null;
-                    contextState.worktreePath = null;
-                    contextState.branchName = null;
-                    contextState.isolation = "session";
-                    contextState.batchId = null;
-                    continue;
-                  }
-                  throw new Error(
-                    `Lane "${laneId}" referenced by context "${contextId}" was not found in executionLanes`,
-                  );
-                }
-
-                contextState.laneId = laneId;
-                if (lane.kind === "session") {
-                  contextState.worktreePath = null;
-                  contextState.branchName = null;
-                  contextState.isolation = "session";
-                  laneReusedDecisions.push({
-                    laneId,
-                    contextId,
-                    branchName: null,
-                    worktreePath: null,
-                    kind: "session",
-                  });
-                  continue;
-                }
-                if (lane.worktreePath === null) {
-                  throw new Error(
-                    `Lane "${laneId}" referenced by context "${contextId}" is worktree-kind but has null worktreePath`,
-                  );
-                }
-                contextState.worktreePath = lane.worktreePath;
-                contextState.branchName = lane.branchName;
-                contextState.isolation = "worktree";
-                if (entry.mint === null) {
-                  laneReusedDecisions.push({
-                    laneId,
-                    contextId,
-                    branchName: lane.branchName,
-                    worktreePath: lane.worktreePath,
-                    kind: "worktree",
-                  });
-                }
-              }
-
-              releaseLaneReservations(running, batchId);
-
-              // Landing intents ride the SAME mutation that assigns the lanes
-              // (decision D8): the placement above is what decides how each context
-              // will land, so recording the intent anywhere later would leave a
-              // window where the only record of it lives in the runner's memory.
-              for (const entry of admittedEntries) {
-                recordDispatchLandingIntent(
-                  running,
-                  entry.contextId,
-                  provisionTimestamp,
-                );
-              }
-
-              const activeIdSet = new Set(running.activeContextIds);
-              for (const entry of admittedEntries) {
-                activeIdSet.add(entry.contextId);
-              }
-              running.activeContextIds = [...activeIdSet];
-              const clearedLanes = clearLaneStatesFor(
-                running,
-                admittedEntries.map((e) => e.contextId),
-              );
-              scheduledClearedLanes = clearedLanes;
-
-              running.machineSnapshot = buildLifecycleSnapshot(running, {
-                lifecycleStatus: "running",
-                recoveryMode: "none",
-                hasLiveIteration: false,
-              });
-
-              outcome.value = {
-                kind: "parallel",
-                batchId,
-                contextIds: admittedEntries.map((e) => e.contextId),
-              };
-              return running;
-            })
-            .catch(async (err: unknown) => {
-              // A finalize refused for a non-fence reason leaves the reserve's
-              // stamps set; the owner-checked release inside `compensateSchedule`
-              // clears them so the contexts re-schedule. When the refusal IS a
-              // stale fence the stamps live on a superseded generation and the
-              // release fences out harmlessly. Disposal is best-effort and cannot
-              // skip the release.
-              await compensateSchedule();
-              throw err;
-            });
-          if (compensate) {
-            // Halt superseded this batch: the fenced finalize already cleared the
-            // reservation stamps atomically, so only the provisioned worktrees need
-            // best-effort disposal here.
-            const disposalFailures = await disposeProvisioned();
-            if (disposalFailures.length > 0) {
-              logger.warn("graph-workflow.scheduler.lane_dispose_failed", {
-                failedLaneBranches: disposalFailures.map((f) => f.branchName),
-              });
-            }
-          }
-        },
-      );
-    }
-
-    const scheduled = outcome.value;
-    const execLogger = getExecutionLogger(nextExecution.id);
-
-    if (readySetEligibleContextIds.length > 0) {
-      execLogger?.lifecycle("scheduler.ready_set", {
-        eligibleContextIds: readySetEligibleContextIds,
-      });
-      logger.info("graph-workflow.scheduler.ready_set", {
-        executionId: nextExecution.id,
-        eligibleContextIds: readySetEligibleContextIds,
-      });
-    }
-
-    for (const decision of laneCreatedDecisions) {
-      execLogger?.lifecycle("lane.created", decision);
-      logger.info("graph-workflow.lane.created", {
-        executionId: nextExecution.id,
-        ...decision,
-      });
-    }
-
-    for (const decision of laneForkedDecisions) {
-      execLogger?.lifecycle("lane.forked", decision);
-      logger.info("graph-workflow.lane.forked", {
-        executionId: nextExecution.id,
-        ...decision,
-      });
-    }
-
-    for (const decision of laneReusedDecisions) {
-      execLogger?.lifecycle("lane.reused", decision);
-      logger.info("graph-workflow.lane.reused", {
-        executionId: nextExecution.id,
-        ...decision,
-      });
-    }
-
-    if (scheduledClearedLanes.length > 0) {
-      execLogger?.lifecycle("lane.cleanup", {
-        clearedLaneStateContextIds: scheduledClearedLanes,
-      });
-      logger.info("graph-workflow.lane.cleanup", {
-        executionId: nextExecution.id,
-        clearedLaneStateContextIds: scheduledClearedLanes,
-      });
-    }
-
-    if (scheduled.kind === "solo") {
-      logger.info("graph-workflow.context.scheduled", {
-        executionId: nextExecution.id,
-        nextContextId: scheduled.contextId,
-        eligibleContextIds: [scheduled.contextId],
-        clearedLanes: scheduledClearedLanes,
-      });
-      execLogger?.lifecycle("context.scheduled", {
-        contextId: scheduled.contextId,
-        eligibleContextIds: [scheduled.contextId],
-        clearedLanes: scheduledClearedLanes,
-      });
-    } else if (scheduled.kind === "parallel") {
-      logger.info("graph-workflow.parallel.batch_scheduled", {
-        executionId: nextExecution.id,
-        batchId: scheduled.batchId,
-        contextIds: scheduled.contextIds,
-        clearedLanes: scheduledClearedLanes,
-      });
-      execLogger?.lifecycle("parallel.batch_scheduled", {
-        batchId: scheduled.batchId,
-        contextIds: scheduled.contextIds,
-        clearedLanes: scheduledClearedLanes,
-      });
-    }
-
-    return { execution: nextExecution, scheduled };
-  }
-
   async function recoverRetryableIterationError(
     projectPath: string,
     sessionName: string,
     input: GraphWorkflowRetryableIterationErrorInput,
   ): Promise<GraphWorkflowExecution> {
     const now = getNow(deps);
-    let rotationScheduled = false;
 
-    const nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
-        const running = requireRunningExecution(execution);
-        const contextState = running.contextStates[input.contextId];
-        if (!contextState) {
-          throw new Error(
-            `Execution context "${input.contextId}" does not exist in runtime state`,
-          );
-        }
+    const { execution: nextExecution, rotationScheduled } =
+      await deps.executionRepository
+        .mutateActive(projectPath, sessionName, (execution) => {
+          let rotationScheduled = false;
 
-        transitionContextStatus(running, input.contextId, "ready", {
-          reason: "manager.recover_retryable_iteration_error",
-        });
-        if (!running.activeContextIds.includes(input.contextId)) {
-          running.activeContextIds = [
-            ...running.activeContextIds,
-            input.contextId,
-          ];
-        }
-        running.completedAt = null;
-        running.haltReason = null;
-        running.machineSnapshot = buildLifecycleSnapshot(running, {
-          lifecycleStatus: "running",
-          recoveryMode: "none",
-          hasLiveIteration: false,
-        });
+          const running = requireRunningExecution(execution);
+          const contextState = running.contextStates[input.contextId];
+          if (!contextState) {
+            throw new Error(
+              `Execution context "${input.contextId}" does not exist in runtime state`,
+            );
+          }
 
-        const implementerLane =
-          running.laneStates[input.contextId]?.["implementer"];
-        rotationScheduled =
-          implementerLane?.refKind === "conversation" &&
-          implementerLane.contextId === input.contextId;
+          transitionContextStatus(running, input.contextId, "ready", {
+            reason: "manager.recover_retryable_iteration_error",
+          });
+          if (!running.activeContextIds.includes(input.contextId)) {
+            running.activeContextIds = [
+              ...running.activeContextIds,
+              input.contextId,
+            ];
+          }
+          running.completedAt = null;
+          running.haltReason = null;
+          running.machineSnapshot = buildLifecycleSnapshot(running, {
+            lifecycleStatus: "running",
+            recoveryMode: "none",
+            hasLiveIteration: false,
+          });
 
-        if (rotationScheduled && implementerLane) {
-          implementerLane.metrics.rotateBeforeNextTurn = true;
-          implementerLane.lastUsedAt = now;
-        }
+          const implementerLane =
+            running.laneStates[input.contextId]?.["implementer"];
+          rotationScheduled =
+            implementerLane?.refKind === "conversation" &&
+            implementerLane.contextId === input.contextId;
 
-        return running;
-      },
-    );
+          if (rotationScheduled && implementerLane) {
+            implementerLane.metrics.rotateBeforeNextTurn = true;
+            implementerLane.lastUsedAt = now;
+          }
+
+          return changed(running, { rotationScheduled });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
 
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.decision("iteration.retryable_error_recovery", {
@@ -4594,20 +2797,28 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     input: RecordPendingHaltReasonInput,
   ): Promise<RecordPendingHaltReasonResult> {
     const { projectPath, sessionName, reason, applyAdditionalMutation } = input;
-    let accepted = false;
-    let rejectedStatus: GraphWorkflowStatus | null = null;
-    let rejectedExecutionId: string | null = null;
 
-    const nextExecution = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (execution) => {
+    const {
+      execution: nextExecution,
+      rejectedExecutionId,
+      rejectedStatus,
+      accepted,
+    } = await deps.executionRepository
+      .mutateActive<{
+        rejectedExecutionId: string | null;
+        rejectedStatus: GraphWorkflowStatus | null;
+        accepted: boolean;
+      }>(projectPath, sessionName, (execution) => {
+        let accepted = false;
+        let rejectedStatus: GraphWorkflowStatus | null = null;
+        let rejectedExecutionId: string | null = null;
+
         if (
           input.expectedExecutionId !== undefined &&
           execution.id !== input.expectedExecutionId
         ) {
           rejectedExecutionId = execution.id;
-          return execution;
+          return unchanged({ rejectedExecutionId, rejectedStatus, accepted });
         }
         // A pending halt reason is a signal to a running loop's
         // drain-then-halt path. The loop fence rejects writes from a generation
@@ -4615,7 +2826,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // callers from poisoning suspended state with a late halt signal.
         if (execution.status !== "running") {
           rejectedStatus = execution.status;
-          return execution;
+          return unchanged({ rejectedExecutionId, rejectedStatus, accepted });
         }
         const next = cloneExecution(execution);
         if (applyAdditionalMutation) {
@@ -4627,9 +2838,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         } else if (next.secondaryHaltReasons.length < 10) {
           next.secondaryHaltReasons = [...next.secondaryHaltReasons, reason];
         }
-        return next;
-      },
-    );
+        return changed(next, { rejectedExecutionId, rejectedStatus, accepted });
+      })
+      .then((mutation) => ({
+        execution: mutation.execution,
+        ...mutationValue(mutation),
+      }));
 
     if (rejectedExecutionId !== null) {
       logger.warn(
@@ -4688,7 +2902,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const { projectPath, sessionName } = input;
     const now = getNow(deps);
 
-    const nextExecution = await deps.executionRepository.mutateActive(
+    const mutation = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
       (execution) => {
@@ -4696,13 +2910,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           input.expectedExecutionId !== undefined &&
           execution.id !== input.expectedExecutionId
         ) {
-          logger.warn("graph-workflow.drain_halt.execution_mismatch", {
+          return refused({
             expectedExecutionId: input.expectedExecutionId,
             activeExecutionId: execution.id,
           });
-          throw new Error(
-            `Cannot drain execution ${input.expectedExecutionId}: active execution is ${execution.id}`,
-          );
         }
         const haltReason = execution.pendingHaltReason;
         if (haltReason === null) {
@@ -4717,9 +2928,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           haltReason,
         );
         transitioned.pendingHaltReason = null;
-        return transitioned;
+        return changed(transitioned);
       },
     );
+    if (mutation.kind === "refused") {
+      logger.warn(
+        "graph-workflow.drain_halt.execution_mismatch",
+        mutation.refusal,
+      );
+      throw new Error(
+        `Cannot drain execution ${mutation.refusal.expectedExecutionId}: active execution is ${mutation.refusal.activeExecutionId}`,
+      );
+    }
+    const nextExecution = mutation.execution;
 
     await stopLaneDevServers({ execution: nextExecution, projectPath });
 
@@ -4756,8 +2977,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     contextId: string,
   ): Promise<GraphWorkflowExecution> {
-    let previousStatus: GraphWorkflowStatus | null = null;
-
     // Mark every event filed under the context up to the current insertion
     // boundary as pre-reset before the reset write appends its own status-change
     // events, so those new events stay visible post-reset (the old in-memory
@@ -4792,29 +3011,34 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     // The reducer captures the pre-reset status (pure) and returns the reset
     // execution; a rejected reset (ResetExecutionContextError) is logged in the
     // catch below, outside the lock.
-    let resetExecutionId: string | null = null;
-    let nextExecution: GraphWorkflowExecution;
-    try {
-      nextExecution = await deps.executionRepository.mutateActive(
-        projectPath,
-        sessionName,
-        (execution) => {
-          previousStatus = execution.status;
-          resetExecutionId = execution.id;
-          return resetExecutionContext(execution, contextId);
-        },
-      );
-    } catch (error) {
-      if (error instanceof ResetExecutionContextError) {
-        logger.warn("graph-workflow.context.reset_rejected", {
-          executionId: resetExecutionId,
-          contextId,
-          status: previousStatus,
-          reason: error.message,
-        });
-      }
-      throw error;
+    const mutation = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (execution) => {
+        try {
+          return changed(resetExecutionContext(execution, contextId), {
+            previousStatus: execution.status,
+          });
+        } catch (error) {
+          if (error instanceof ResetExecutionContextError)
+            return refused(error);
+          throw error;
+        }
+      },
+    );
+    if (mutation.kind === "refused") {
+      logger.warn("graph-workflow.context.reset_rejected", {
+        executionId: mutation.execution.id,
+        contextId,
+        status: mutation.execution.status,
+        reason: mutation.refusal.message,
+      });
+      throw mutation.refusal;
     }
+    const {
+      execution: nextExecution,
+      value: { previousStatus },
+    } = mutation;
 
     let execLogger = getExecutionLogger(nextExecution.id);
     if (!execLogger) {
@@ -4849,45 +3073,42 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     contextId: string,
     assignmentId: string,
   ): Promise<GraphWorkflowExecution> {
-    let retiredConversationId: string | null = null;
-    let withdrawnQuestion: {
-      conversationId: string;
-      questionBatchId: string;
-    } | null = null;
-    let previousStatus: GraphWorkflowStatus | null = null;
-    let resetExecutionId: string | null = null;
-
-    let nextExecution: GraphWorkflowExecution;
-    try {
-      nextExecution = await deps.executionRepository.mutateActive(
-        projectPath,
-        sessionName,
-        (execution) => {
-          previousStatus = execution.status;
-          resetExecutionId = execution.id;
+    const mutation = await deps.executionRepository.mutateActive(
+      projectPath,
+      sessionName,
+      (execution) => {
+        try {
           const result = resetExecutionContextAssignment(execution, {
             contextId,
             assignmentId,
           });
-          retiredConversationId = result.retiredConversationId;
-          withdrawnQuestion = result.withdrawnQuestion;
-          return result.execution;
-        },
-      );
-    } catch (error) {
-      if (error instanceof ResetAssignmentError) {
-        logger.warn("graph-workflow.assignment.reset_rejected", {
-          executionId: resetExecutionId,
-          contextId,
-          assignmentId,
-          status: previousStatus,
-          reason: error.message,
-        });
-      }
-      throw error;
+          return changed(result.execution, {
+            previousStatus: execution.status,
+            retiredConversationId: result.retiredConversationId,
+            withdrawnQuestion: result.withdrawnQuestion,
+          });
+        } catch (error) {
+          if (error instanceof ResetAssignmentError) return refused(error);
+          throw error;
+        }
+      },
+    );
+    if (mutation.kind === "refused") {
+      logger.warn("graph-workflow.assignment.reset_rejected", {
+        executionId: mutation.execution.id,
+        contextId,
+        assignmentId,
+        status: mutation.execution.status,
+        reason: mutation.refusal.message,
+      });
+      throw mutation.refusal;
     }
+    const {
+      execution: nextExecution,
+      value: { previousStatus, retiredConversationId, withdrawnQuestion },
+    } = mutation;
 
-    if (retiredConversationId !== null && deps.retireLaneConversation) {
+    if (retiredConversationId !== null) {
       try {
         deps.retireLaneConversation({
           projectPath,
@@ -5042,72 +3263,54 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return { ok: false, reason: "no_active_execution" };
     }
 
-    // Holder object rather than a bare `let`: TS flow analysis does not see the
-    // closure assignment, so a local would narrow to `never` at the read below.
-    const declined: {
-      refusal: Exclude<RejectDefinitionResult, { ok: true }> | null;
-    } = { refusal: null };
     const now = getNow(deps);
-    const nextExecution = await mutateActiveOrRefuse(() =>
-      deps.executionRepository.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (execution) => {
-          // Re-applied inside the serialized section against the row as it is
-          // now: a concurrent approval or launch between the read above and
-          // this write would otherwise be rejected in the parked run's place.
-          // Both branches REFUSE rather than return the row: a returned row is
-          // a committed write, so a loser would end its race by writing to the
-          // incumbent it refused to reject.
-          if (execution.id !== input.executionId) {
-            declined.refusal = {
-              ok: false,
-              reason: "execution_mismatch",
-              activeExecutionId: execution.id,
-            };
-            throw new MutationRefusedError("reject_definition");
-          }
-          if (
-            !awaitsDefinitionApproval(
-              execution.status,
-              execution.definitionApproval,
-            )
-          ) {
-            declined.refusal = {
-              ok: false,
-              reason: "not_awaiting_approval",
-              status: execution.status,
-            };
-            throw new MutationRefusedError("reject_definition");
-          }
-          // An approval act is mid-saga on this same park: it has reserved the
-          // decision and may already be talking to the admission consumer.
-          // Ending the run underneath it would strand that consumer's durable
-          // admission on a run this rejection aborted — so the reservation
-          // stands whatever its age, and an interrupted one is finished by the
-          // route layer's settlement before a rejection is even attempted.
-          if (execution.definitionApprovalClaim !== null) {
-            declined.refusal = { ok: false, reason: "decision_in_flight" };
-            throw new MutationRefusedError("reject_definition");
-          }
-          return transitionToNonRunningState(execution, "aborted", now, {
-            type: "aborted",
-            cause: "definition_rejected",
-            summary: "A human rejected the definition at the approval gate.",
-          });
-        },
-      ),
-    );
-
-    // A refused reducer wrote nothing and returned nothing, so the two are one
-    // branch: `declined.refusal` carries which question the row failed.
-    if (declined.refusal !== null || nextExecution === null) {
-      const refusal: Exclude<RejectDefinitionResult, { ok: true }> =
-        declined.refusal ?? {
+    const outcome = await deps.executionRepository.mutateActive<
+      void,
+      Exclude<RejectDefinitionResult, { ok: true }>
+    >(input.projectPath, input.sessionName, (execution) => {
+      // Re-applied inside the serialized section against the row as it is
+      // now: a concurrent approval or launch between the read above and
+      // this write would otherwise be rejected in the parked run's place.
+      // A race loser must leave the incumbent row and staging fence intact.
+      if (execution.id !== input.executionId) {
+        return refused({
+          ok: false,
+          reason: "execution_mismatch",
+          activeExecutionId: execution.id,
+        });
+      }
+      if (
+        !awaitsDefinitionApproval(
+          execution.status,
+          execution.definitionApproval,
+        )
+      ) {
+        return refused({
           ok: false,
           reason: "not_awaiting_approval",
-          status: active.status,
-        };
+          status: execution.status,
+        });
+      }
+      // An approval act is mid-saga on this same park: it has reserved the
+      // decision and may already be talking to the admission consumer.
+      // Ending the run underneath it would strand that consumer's durable
+      // admission on a run this rejection aborted — so the reservation
+      // stands whatever its age, and an interrupted one is finished by the
+      // route layer's settlement before a rejection is even attempted.
+      if (execution.definitionApprovalClaim !== null) {
+        return refused({ ok: false, reason: "decision_in_flight" });
+      }
+      return changed(
+        transitionToNonRunningState(execution, "aborted", now, {
+          type: "aborted",
+          cause: "definition_rejected",
+          summary: "A human rejected the definition at the approval gate.",
+        }),
+      );
+    });
+
+    if (outcome.kind === "refused") {
+      const refusal = outcome.refusal;
       logger.warn("graph-workflow.definition_rejection.refused", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -5117,6 +3320,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return refusal;
     }
 
+    const nextExecution = outcome.execution;
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("execution.aborted", { actor: "operator" });
     execLogger?.writeManifest(nextExecution);
@@ -5128,23 +3332,6 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       originKind: nextExecution.origin.kind,
     });
     return { ok: true, execution: nextExecution };
-  }
-
-  async function mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (
-      execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution> {
-    return deps.executionRepository.mutateActive(projectPath, sessionName, fn);
-  }
-
-  async function getActive(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<GraphWorkflowExecution | null> {
-    return deps.executionRepository.getActive(projectPath, sessionName);
   }
 
   return {
@@ -5159,15 +3346,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     resume,
     abandon,
     normalizeAfterRestart,
-    scheduleNextContext,
-    scheduleEligibleContexts,
     recoverRetryableIterationError,
     recordPendingHaltReason,
     drainAndHalt,
     resetContext,
     resetContextAssignment,
     hasActive,
-    mutateActive,
-    getActive,
   };
 }

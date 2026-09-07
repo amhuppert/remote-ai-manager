@@ -45,7 +45,7 @@ async function installActive(execution: GraphWorkflowExecution): Promise<void> {
     PROJECT_PATH,
     SESSION_NAME,
     "test.install-active-execution",
-    () => ({ execution, events: [] }),
+    () => ({ kind: "commit", value: undefined, ...{ execution, events: [] } }),
   );
 }
 

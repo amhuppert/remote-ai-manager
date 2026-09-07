@@ -2,7 +2,7 @@ import {
   abandonGraphWorkflowExecutionForSession,
   abortGraphWorkflowExecutionForSession,
   locateGraphWorkflowExecution,
-} from "@/lib/workflow-graph/execution-route-handlers";
+} from "@/lib/workflow-graph/production";
 import type { SpecWorkflowCleanupPort } from "./execution-service";
 
 /**

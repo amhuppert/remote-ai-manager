@@ -1215,7 +1215,6 @@ describe("E6: graph runners", () => {
         contextId: "ctx-e6",
         backend: TESTFAKE_BACKEND_ID,
         modelSelection: TESTFAKE_MODEL_SELECTION,
-        toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       })
       .then(

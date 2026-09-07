@@ -83,7 +83,11 @@ async function seedSessionWithExecution(
     PROJECT_PATH,
     SESSION_NAME,
     "test.seed-active-execution",
-    () => ({ execution: makeExecution(), events: [] }),
+    () => ({
+      kind: "commit",
+      value: undefined,
+      ...{ execution: makeExecution(), events: [] },
+    }),
   );
 }
 
@@ -138,7 +142,11 @@ describe("graph-workflow boundary result atomicity", () => {
         PROJECT_PATH,
         SESSION_NAME,
         "test.seed-boundary",
-        () => ({ execution: initial, events: [] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: initial, events: [] },
+        }),
       );
       const next = makeExecution({
         ...initial,
@@ -161,13 +169,19 @@ describe("graph-workflow boundary result atomicity", () => {
         PROJECT_PATH,
         SESSION_NAME,
         `test.boundary-${kind}`,
-        () => ({ execution: next, events: [boundaryEvent(next, kind)] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: next, events: [boundaryEvent(next, kind)] },
+        }),
       );
 
       const boundary = fixture.graphWorkflowEvents
         .findRecordsByExecution(PROJECT_PATH, SESSION_NAME, next.id)
         .find((record) => record.event.type === "graph-workflow-boundary");
       expect(boundary).toBeDefined();
+      if (committed.kind !== "committed")
+        throw new Error("Expected execution write");
       expect(committed.delivery.publications).toEqual([
         {
           type: "graph-workflow-result-recorded",
@@ -206,7 +220,11 @@ describe("graph-workflow boundary result atomicity", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seed-boundary-sequence",
-      () => ({ execution: running, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: running, events: [] },
+      }),
     );
     const halted = makeExecution({ ...running, status: "halted" });
     const completed = makeExecution({
@@ -218,21 +236,33 @@ describe("graph-workflow boundary result atomicity", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.halt",
-      () => ({ execution: halted, events: [boundaryEvent(halted, "halt")] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: halted, events: [boundaryEvent(halted, "halt")] },
+      }),
     );
     await fixture.store.mutateActiveGraphWorkflowExecution(
       PROJECT_PATH,
       SESSION_NAME,
       "test.resume",
-      () => ({ execution: running, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: running, events: [] },
+      }),
     );
     await fixture.store.mutateActiveGraphWorkflowExecution(
       PROJECT_PATH,
       SESSION_NAME,
       "test.complete",
       () => ({
-        execution: completed,
-        events: [boundaryEvent(completed, "completion")],
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: completed,
+          events: [boundaryEvent(completed, "completion")],
+        },
       }),
     );
 
@@ -268,7 +298,11 @@ describe("graph-workflow boundary result atomicity", () => {
         PROJECT_PATH,
         SESSION_NAME,
         "test.seed-failure",
-        () => ({ execution: running, events: [] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: running, events: [] },
+        }),
       );
       const paused = makeExecution({ ...running, status: "paused" });
 
@@ -278,8 +312,12 @@ describe("graph-workflow boundary result atomicity", () => {
           SESSION_NAME,
           "test.delivery-failure",
           () => ({
-            execution: paused,
-            events: [boundaryEvent(paused, "pause")],
+            kind: "commit",
+            value: undefined,
+            ...{
+              execution: paused,
+              events: [boundaryEvent(paused, "pause")],
+            },
           }),
         ),
       ).rejects.toThrow("injected result-delivery failure");
@@ -341,7 +379,11 @@ describe("graph-workflow boundary result atomicity", () => {
         PROJECT_PATH,
         SESSION_NAME,
         "test.seed-event-failure",
-        () => ({ execution: running, events: [] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: running, events: [] },
+        }),
       );
       const paused = makeExecution({ ...running, status: "paused" });
 
@@ -351,8 +393,12 @@ describe("graph-workflow boundary result atomicity", () => {
           SESSION_NAME,
           "test.event-failure",
           () => ({
-            execution: paused,
-            events: [boundaryEvent(paused, "pause")],
+            kind: "commit",
+            value: undefined,
+            ...{
+              execution: paused,
+              events: [boundaryEvent(paused, "pause")],
+            },
           }),
         ),
       ).rejects.toThrow("injected boundary-event failure");
@@ -387,7 +433,11 @@ describe("graph-workflow boundary result atomicity", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seed-abandon",
-      () => ({ execution: halted, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: halted, events: [] },
+      }),
     );
 
     const outcome = await fixture.store.archiveActiveGraphWorkflowExecution(
@@ -446,7 +496,11 @@ describe("graph-workflow boundary result atomicity", () => {
         PROJECT_PATH,
         SESSION_NAME,
         "test.seed-archive-failure",
-        () => ({ execution: halted, events: [] }),
+        () => ({
+          kind: "commit",
+          value: undefined,
+          ...{ execution: halted, events: [] },
+        }),
       );
 
       await expect(
@@ -599,8 +653,12 @@ describe("reserveActiveGraphWorkflowExecution — authoritative lease CAS", () =
       SESSION_NAME,
       "test.seed-incumbent",
       () => ({
-        execution: makeExecution({ id: "wf-incumbent", ...overrides }),
-        events: [],
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: makeExecution({ id: "wf-incumbent", ...overrides }),
+          events: [],
+        },
       }),
     );
   }
@@ -1372,8 +1430,12 @@ describe("archiveActiveGraphWorkflowExecution — authoritative eligibility", ()
         SESSION_NAME,
         "test.seed",
         () => ({
-          execution: makeExecution({ id: "wf-archive", status: "halted" }),
-          events: [],
+          kind: "commit",
+          value: undefined,
+          ...{
+            execution: makeExecution({ id: "wf-archive", status: "halted" }),
+            events: [],
+          },
         }),
       );
 
@@ -1412,8 +1474,12 @@ describe("archiveActiveGraphWorkflowExecution — authoritative eligibility", ()
         SESSION_NAME,
         "test.seed-halted",
         () => ({
-          execution: makeExecution({ id: "wf-raced", status: "halted" }),
-          events: [],
+          kind: "commit",
+          value: undefined,
+          ...{
+            execution: makeExecution({ id: "wf-raced", status: "halted" }),
+            events: [],
+          },
         }),
       );
       // A's ordinary advisory read — this is what caches "halted" on A.
@@ -1436,8 +1502,12 @@ describe("archiveActiveGraphWorkflowExecution — authoritative eligibility", ()
         (current) => {
           if (current === null) throw new Error("B saw no active execution");
           return {
-            execution: { ...current, status: "running" },
-            events: [],
+            kind: "commit",
+            value: undefined,
+            ...{
+              execution: { ...current, status: "running" },
+              events: [],
+            },
           };
         },
       );
@@ -1796,16 +1866,20 @@ describe("mutateActiveGraphWorkflowExecution — definition-tier dirty fence", (
       SESSION_NAME,
       "test.graph-edit-without-revision-bump",
       () => ({
-        execution: {
-          ...seeded,
-          // A reducer that edits the graph and leaves the fence alone — the
-          // scheduler and the pre-merge remediation path both do this.
-          workingDefinition: {
-            ...seeded.workingDefinition,
-            approvalRequired: true,
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: {
+            ...seeded,
+            // A reducer that edits the graph and leaves the fence alone — the
+            // scheduler and the pre-merge remediation path both do this.
+            workingDefinition: {
+              ...seeded.workingDefinition,
+              approvalRequired: true,
+            },
           },
+          events: [],
         },
-        events: [],
       }),
     );
 
@@ -1833,8 +1907,12 @@ describe("mutateActiveGraphWorkflowExecution — definition-tier dirty fence", (
       SESSION_NAME,
       "test.runtime-only-tick",
       () => ({
-        execution: { ...seeded, status: "paused" },
-        events: [],
+        kind: "commit",
+        value: undefined,
+        ...{
+          execution: { ...seeded, status: "paused" },
+          events: [],
+        },
       }),
     );
 

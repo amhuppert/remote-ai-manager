@@ -7928,6 +7928,7 @@ describe("runTaskRunTurnForMachine", () => {
     } = {},
   ): RunTaskRunInput {
     const input: RunTaskRunInput = {
+      role: null,
       persistence: "durable",
       projectPath: "/projects/repo",
       target: targetFromStoreSessionName("repo", "test-session", "conv-1"),

@@ -262,6 +262,9 @@ function setupObservability() {
   });
 
   const repo = createGraphWorkflowExecutionRepository({
+    getGraphWorkflowPendingArtifacts: async () => null,
+    clearGraphWorkflowPendingArtifacts: async () => false,
+
     // No git worktree in this harness; the real exclusion would shell out.
     ensureCcArtifactsExcluded: async () => {},
     async getSession(projectPath, sessionName) {
@@ -294,14 +297,24 @@ function setupObservability() {
         session = makeSession();
         sessions.set(key, session);
       }
-      const { execution, events, pushes } = await mutate(
-        session.graphWorkflowExecution,
-      );
+      const decision = mutate(session.graphWorkflowExecution);
+      if (decision.kind === "no_commit")
+        return {
+          kind: "not_committed" as const,
+          execution: session.graphWorkflowExecution,
+          value: decision.value,
+        };
+      const { execution, events, pushes } = decision;
       session.graphWorkflowExecution = execution;
       appendedEvents.push(...events);
       // Mirror the production seam: commit the rows and hand the committed
       // delivery back; the repository performs delivery post-commit.
-      return { execution, delivery: { events, pushes: pushes ?? [] } };
+      return {
+        kind: "committed" as const,
+        value: decision.value,
+        execution,
+        delivery: { events, pushes: pushes ?? [] },
+      };
     },
     reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
       readActive: (projectPath, sessionName) =>

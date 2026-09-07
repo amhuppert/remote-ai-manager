@@ -20,6 +20,116 @@ const tsx = new RuleTester({
 });
 
 describe("architecture-seams", () => {
+  tsx.run(
+    "no-graph-ownership-violation",
+    plugin.rules["no-graph-ownership-violation"],
+    {
+      valid: [
+        {
+          code: 'import { createValidateHandlers } from "@/lib/workflow-graph/validate-route-handlers";',
+          filename: "src/lib/workflows/validate-route-composition.ts",
+        },
+        {
+          code: "const tasks = execution.workingDefinition.tasks.map(task => task.id);",
+          filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+        },
+        {
+          code: "execution.workingDefinition.tasks.push(task);",
+          filename: "src/lib/workflow-graph/live-edit-apply.ts",
+        },
+        {
+          code: "execution.workingDefinition = initializeDefinition();",
+          filename: "src/lib/workflow-graph/execution-repository.ts",
+        },
+        {
+          code: "await runtimeEditService.applyLiveEdits(input);",
+          filename: "src/cli/commands/workflow.ts",
+        },
+        {
+          code: 'import { transition } from "./execution-transitions";',
+          filename: "src/lib/workflow-graph/execution-repository.ts",
+        },
+        {
+          code: 'import type { Input } from "./workflow-manager";',
+          filename: "src/lib/workflow-graph/execution-repository.ts",
+        },
+        {
+          code: 'export type { Input } from "./workflow-manager";',
+          filename: "src/lib/workflow-graph/execution-repository.ts",
+        },
+        {
+          code: 'import { fixture } from "./testing/context-fixture";',
+          filename: "src/lib/workflow-graph/example.test.ts",
+        },
+        {
+          code: 'import { fixture } from "@/lib/workflow-graph/testing/context-fixture";',
+          filename: "src/components/workflow-graph/Graph.stories.tsx",
+        },
+        {
+          code: 'export { POST } from "@/lib/workflow-graph/execution-route-handlers";',
+          filename: "src/app/api/workflows/route.ts",
+        },
+      ],
+      invalid: [
+        {
+          code: "execution.workingDefinition.tasks.push(task);",
+          filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+          errors: [{ messageId: "graphLiveEditOwnership" }],
+        },
+        {
+          code: 'execution["workingDefinition"].edges = edges;',
+          filename: "src/cli/commands/workflow.ts",
+          errors: [{ messageId: "graphLiveEditOwnership" }],
+        },
+        {
+          code: "delete execution.workingDefinition.tasks[0];",
+          filename: "src/app/api/workflows/route.ts",
+          errors: [{ messageId: "graphLiveEditOwnership" }],
+        },
+        {
+          code: "Object.assign(execution.workingDefinition, edits);",
+          filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+          errors: [{ messageId: "graphLiveEditOwnership" }],
+        },
+        {
+          code: 'import { moveDocumentTask } from "./document-edit-mechanics";',
+          filename: "src/lib/workflow-graph/runtime-edit-route-handlers.ts",
+          errors: [{ messageId: "graphLiveEditOwnership" }],
+        },
+        {
+          code: 'import { transition as move } from "./workflow-manager";',
+          filename: "src/lib/workflow-graph/execution-repository.ts",
+          errors: [{ messageId: "graphOwnership" }],
+        },
+        {
+          code: 'export { transition as move } from "@/lib/workflow-graph/workflow-manager";',
+          filename: "src/lib/workflow-graph/execution-repository.ts",
+          errors: [{ messageId: "graphOwnership" }],
+        },
+        {
+          code: 'const routes = await import("./execution-route-handlers");',
+          filename: "src/lib/workflow-graph/lifecycle-service.ts",
+          errors: [{ messageId: "graphOwnership" }],
+        },
+        {
+          code: 'import { launch } from "../workflow-graph/execution-route-handlers";',
+          filename: "src/lib/specs/service-factory.ts",
+          errors: [{ messageId: "graphOwnership" }],
+        },
+        {
+          code: 'const harness = require("./compat/engine-harness");',
+          filename: "src/lib/workflow-graph/production.ts",
+          errors: [{ messageId: "graphOwnership" }],
+        },
+        {
+          code: 'import { harness } from "@/lib/workflow-graph/testing/cohort-engine-harness";',
+          filename: "src/components/workflow-graph/Graph.stories.tsx",
+          errors: [{ messageId: "graphOwnership" }],
+        },
+      ],
+    },
+  );
+
   // (1) Backend seam: deep agent-backends/{claude,codex} + SDK-package imports
   // are confined to the adapter seam.
   tsx.run("no-backend-deep-import", plugin.rules["no-backend-deep-import"], {

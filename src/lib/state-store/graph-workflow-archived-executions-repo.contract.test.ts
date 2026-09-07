@@ -259,7 +259,11 @@ describe("active-or-archived execution accessor", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seed-current",
-      () => ({ execution: running, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: running, events: [] },
+      }),
     );
 
     expect(
@@ -270,12 +274,20 @@ describe("active-or-archived execution accessor", () => {
       ),
     ).toEqual(running);
 
-    const completed = makeExecution({ id: running.id, status: "completed" });
+    const completed = makeExecution({
+      id: running.id,
+      status: "completed",
+      executionStateRevision: running.executionStateRevision + 1,
+    });
     await store.mutateActiveGraphWorkflowExecution(
       PROJECT_PATH,
       SESSION_NAME,
       "test.complete-in-place",
-      () => ({ execution: completed, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution: completed, events: [] },
+      }),
     );
     expect(
       await store.getGraphWorkflowExecutionById(

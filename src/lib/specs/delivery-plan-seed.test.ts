@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -207,9 +208,11 @@ describe("seedDeliveryPlanFromLast", () => {
     ]);
 
     const reopened = { ...record, ...seeded.launch, id: "reopened-draft" };
-    const byId = applyDefinitionEdits(reopened, [
-      { type: "remove-edge", edgeId: "edge-plan-to-implement" },
-    ]);
+    const byId = applyDefinitionEdits(
+      reopened,
+      [{ type: "remove-edge", edgeId: "edge-plan-to-implement" }],
+      createNonParticipatingGraphExecutionContract(),
+    );
     expect(byId).toEqual({ ok: true, record: expect.anything() });
     if (!byId.ok) return;
     expect(byId.record.definition.edges.map((edge) => edge.id)).toEqual([
@@ -217,13 +220,17 @@ describe("seedDeliveryPlanFromLast", () => {
     ]);
 
     // The endpoint-pair form stays the documented fallback.
-    const byEndpoints = applyDefinitionEdits(reopened, [
-      {
-        type: "remove-edge",
-        sourceContextId: "context-implement",
-        targetContextId: "context-verify",
-      },
-    ]);
+    const byEndpoints = applyDefinitionEdits(
+      reopened,
+      [
+        {
+          type: "remove-edge",
+          sourceContextId: "context-implement",
+          targetContextId: "context-verify",
+        },
+      ],
+      createNonParticipatingGraphExecutionContract(),
+    );
     expect(byEndpoints).toEqual({ ok: true, record: expect.anything() });
     if (!byEndpoints.ok) return;
     expect(byEndpoints.record.definition.edges.map((edge) => edge.id)).toEqual([

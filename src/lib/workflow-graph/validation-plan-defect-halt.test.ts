@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * The ENGINE's reaction to a plan-defect round conclusion, driven through the
  * production orchestrator: a durable, resumable halt, and nothing else.
@@ -134,10 +135,8 @@ describe("a plan-defect conclusion halts the run and touches nothing else", () =
 
     // What the plan repair leaves behind, applied the way the live-edit core
     // does: a task in the definition and a state to go with it.
-    await harness.repository.mutateActive(
-      PROJECT_PATH,
-      SESSION_NAME,
-      (execution) => {
+    await harness.repository
+      .mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => {
         const next = structuredClone(execution);
         next.workingDefinition.tasks = [
           ...next.workingDefinition.tasks,
@@ -164,9 +163,9 @@ describe("a plan-defect conclusion halts the run and touches nothing else", () =
           failureMessage: null,
           failureHistory: [],
         };
-        return next;
-      },
-    );
+        return changed(next);
+      })
+      .then((mutation) => mutation.execution);
 
     await harness.resumeHalt();
 

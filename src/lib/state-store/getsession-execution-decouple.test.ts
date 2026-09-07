@@ -43,7 +43,11 @@ describe("getSession is decoupled from the active graph-workflow execution", () 
       PROJECT_PATH,
       SESSION_NAME,
       "test.seed-active-execution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
 
     // The focused execution accessor sees it...

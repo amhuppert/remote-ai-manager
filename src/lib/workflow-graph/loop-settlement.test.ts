@@ -15,7 +15,7 @@ import {
 import { routeVerdict } from "./route-projection";
 import { settleRoutes } from "./route-runtime";
 import { applyLiveExecutionEdits } from "./runtime-edits";
-import { validateWorkflowDefinition } from "./validation";
+import { validateWorkflowDefinition } from "./definition-validation";
 import {
   ALPHA_P1_JUDGE,
   ALPHA_P1_WORKER,

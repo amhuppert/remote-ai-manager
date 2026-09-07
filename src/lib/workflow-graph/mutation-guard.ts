@@ -295,11 +295,21 @@ export async function runPinnedMutation<T>(
   verb: string,
   run: () => Promise<T>,
 ): Promise<PinnedMutationOutcome<T>> {
+  return observeExecutionMutation(fence, verb, () =>
+    fence === null ? run() : runWithExecutionPrincipalFence(fence, run),
+  );
+}
+
+export async function observeExecutionMutation<T>(
+  fence: GraphWorkflowPrincipalFence | null,
+  verb: string,
+  run: () => Promise<T>,
+): Promise<PinnedMutationOutcome<T>> {
   if (fence === null) return { kind: "acted", value: await run() };
   try {
     return {
       kind: "acted",
-      value: await runWithExecutionPrincipalFence(fence, run),
+      value: await run(),
     };
   } catch (error) {
     if (error instanceof LaneBindingTurnoverError) {

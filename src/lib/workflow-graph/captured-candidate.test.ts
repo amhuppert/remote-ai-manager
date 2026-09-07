@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { describe, expect, it } from "vitest";
 import {
   createCohortExecution,
@@ -98,18 +99,16 @@ describe("captured candidate lifecycle", () => {
         }),
       },
       runContextValidator: async (input) => {
-        await harness.repository.mutateActive(
-          "/repo",
-          "session-1",
-          (execution) => {
+        await harness.repository
+          .mutateActive("/repo", "session-1", (execution) => {
             execution.contextStates[
               "context-plan"
             ]!.validationRound!.outputCandidate!.value = {
               instructions: "Different text",
             };
-            return execution;
-          },
-        );
+            return changed(execution);
+          })
+          .then((mutation) => mutation.execution);
         return {
           result: failResult(input.validator.id, ["task-plan-1"]),
           metadata: metadata(),

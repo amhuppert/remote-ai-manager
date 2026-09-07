@@ -1,3 +1,4 @@
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 import { describe, expect, it } from "vitest";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -845,6 +846,9 @@ describe("the staging seam over the real repository fence", () => {
     }
 
     const repo = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       async getSession(projectPath, sessionName) {
@@ -860,11 +864,21 @@ describe("the staging seam over the real repository fence", () => {
         mutate,
       ) {
         const entry = session(projectPath, sessionName);
-        const { execution, events, pushes } = mutate(
-          entry.graphWorkflowExecution,
-        );
+        const decision = mutate(entry.graphWorkflowExecution);
+        if (decision.kind === "no_commit")
+          return {
+            kind: "not_committed" as const,
+            execution: entry.graphWorkflowExecution,
+            value: decision.value,
+          };
+        const { execution, events, pushes } = decision;
         entry.graphWorkflowExecution = execution;
-        return { execution, delivery: { events, pushes: pushes ?? [] } };
+        return {
+          kind: "committed" as const,
+          value: decision.value,
+          execution,
+          delivery: { events, pushes: pushes ?? [] },
+        };
       },
       reserveActiveGraphWorkflowExecution: createInMemoryLeaseReservation({
         readActive: (projectPath, sessionName) =>
@@ -896,25 +910,25 @@ describe("the staging seam over the real repository fence", () => {
     const prepared = prepare(snapshot);
 
     // A real scheduler commit lands in between and moves the repository fence.
-    const ticked = await repo.mutateActive("/repo", "session-1", (execution) =>
-      startPlanContext(execution),
-    );
+    const ticked = await repo
+      .mutateActive("/repo", "session-1", (execution) =>
+        changed(startPlanContext(execution)),
+      )
+      .then((mutation) => mutation.execution);
     expect(ticked.executionStateRevision).toBe(prepared.baseStateRevision + 1);
 
     // Finalize inside a reducer, exactly where a staged caller would.
     let install: string | undefined;
-    const committed = await repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => {
+    const committed = await repo
+      .mutateActive("/repo", "session-1", (execution) => {
         const result = finalizePreparedEdits(execution, prepared);
         if (!result.ok) {
           throw new Error(`finalize did not install: ${result.outcome}`);
         }
         install = result.install;
-        return result.execution;
-      },
-    );
+        return changed(result.execution);
+      })
+      .then((mutation) => mutation.execution);
 
     expect(install).toBe("merged");
     expect(committed.contextStates["context-plan"]).toMatchObject({
@@ -942,18 +956,16 @@ describe("the staging seam over the real repository fence", () => {
     const prepared = prepare(snapshot);
 
     let install: string | undefined;
-    const committed = await repo.mutateActive(
-      "/repo",
-      "session-1",
-      (execution) => {
+    const committed = await repo
+      .mutateActive("/repo", "session-1", (execution) => {
         const result = finalizePreparedEdits(execution, prepared);
         if (!result.ok) {
           throw new Error(`finalize did not install: ${result.outcome}`);
         }
         install = result.install;
-        return result.execution;
-      },
-    );
+        return changed(result.execution);
+      })
+      .then((mutation) => mutation.execution);
 
     expect(install).toBe("spliced");
     expect(verifyTaskTitles(committed)).toEqual([

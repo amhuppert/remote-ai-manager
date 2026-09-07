@@ -1,51 +1,3 @@
-import type {
-  GraphWorkflowContextSkipReason,
-  GraphWorkflowExecution,
-  GraphWorkflowLoopState,
-} from "@/lib/workflow-graph/schemas";
-import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
-import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
-import type {
-  ResolvedRouteEdge,
-  RouteEdgeResolution,
-} from "@/lib/workflow-graph/route-projection";
-import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
-import {
-  resolveLoopPassMembership,
-  type LoopPassMembership,
-} from "@/lib/workflow-graph/loop-ledger";
-import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
-import type {
-  GraphWorkflowAgentConfig,
-  GraphWorkflowCommandSelector,
-  GraphWorkflowLaneMergeValidationConfig,
-  SeededAgentAssignment,
-  SeededValidatorCohort,
-  ValidatorAssignment,
-} from "@/lib/workflow-graph/config-schemas";
-import { formatAgentProfileRef } from "@/lib/agent-profiles/schemas";
-import type {
-  GraphWorkflowContextStatus,
-  GraphWorkflowResolvedContext,
-  GraphWorkflowStatus,
-  GraphWorkflowTaskStatus,
-} from "@/lib/workflow-graph/definition-schemas";
-import {
-  classifyContextLifecycle,
-  classifyExecutionEditability,
-  type ContextLifecycle,
-  type ExecutionEditability,
-} from "./lifecycle-classifier";
-import type { CharterAmendment } from "@/lib/workflows/charter-schemas";
-import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
-import type { BackendModelSelection } from "@/lib/agent-backends/schemas";
-import {
-  getContextOutput,
-  summarizeOutputSchemaShape,
-  type GraphWorkflowOutputSchemaShape,
-} from "./context-outputs";
-import { computeCharterHash, renderCharterMarkdown } from "./charter/render";
-
 /**
  * The server-side live-outline projection (doc 06, "Read API — live outline").
  * Deliberately server-side (D10): editability is derived from the SAME lifecycle
@@ -59,365 +11,57 @@ import { computeCharterHash, renderCharterMarkdown } from "./charter/render";
  * Pure and table-testable: no I/O, no state-store access.
  */
 
-/** The three editability tiers a context row can carry (doc 06 outline column). */
-export type LiveOutlineEditability = "frozen" | "editable" | "pause-to-edit";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { acceptanceCriteriaText } from "@/lib/workflow-graph/criteria/criterion-records";
+import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
 
-export interface LiveOutlineHeader {
-  executionId: string;
-  liveRevision: number;
-  status: GraphWorkflowStatus;
-  seedDefinitionId: string;
-  seedDefinitionRevision: number;
-  /**
-   * Whether the execution accepts live edits at all. A terminal/non-resumable
-   * execution surfaces its read-only-ness HERE (doc 06: "not-editable … shown in
-   * the header line instead"), so the per-context `editability` tier stays one of
-   * the three lifecycle-derived values and the header is the authoritative gate.
-   */
-  editable: boolean;
-  notEditableReason?: Extract<
-    ExecutionEditability,
-    { kind: "not-editable" }
-  >["reason"];
-  /** Accepted live charter amendments so far (doc 07); 0 for pre-field rows. */
-  charterAmendmentCount: number;
-  /** Plan-repair rounds run so far (docs/design/cc-cli/08); 0 for pre-D1 rows. */
-  planRepairRoundCount: number;
-  /**
-   * The round whose repair agent has not reported yet, or null.
-   *
-   * The count alone cannot answer the question a reader of a HALTED run has:
-   * a repair mid-turn and one that gave up long ago present identically —
-   * same status, same halt reason, same count — and they call for opposite
-   * actions. `startedAt` is included because the turn is bounded, so how long
-   * the round has been open is what says whether the agent can still be there;
-   * `conversationId` is the transcript that settles the question outright.
-   */
-  openPlanRepairRound: {
-    seq: number;
-    contextId: string;
-    startedAt: string;
-    conversationId: string | null;
-  } | null;
-}
-
-export interface LiveOutlineAgentSummary {
-  backend: GraphWorkflowAgentConfig["backend"];
-  modelSelection: BackendModelSelection;
-}
-
-/**
- * The provenance of a SEEDED assignment: which profile revision execution start
- * resolved, and the hash of the instruction block the lane actually replays.
- *
- * These two fields are what separates a live execution's staffing from a saved
- * definition's. A saved document names a reference the library still owns and
- * can still change; a running execution replays bytes nothing can reach. The
- * instruction text behind the hash is deliberately absent — an outline is a
- * navigation surface, and the hash is the whole point of provenance here.
- */
-export interface LiveOutlineAssignmentProvenance {
-  /** The assignment's stable use-site id, unique within its cohort. */
-  assignmentId: string;
-  /** The library profile, in the compact `tier:id` spelling. */
-  profile: string;
-  /** The use-site steer narrowing the profile, when one was authored. */
-  focus: string | null;
-  /** The profile revision resolved at execution start. */
-  revision: number;
-  /** Hash of the rendered instruction block the lane replays verbatim. */
-  resolvedInstructionHash: string;
-}
-
-export type LiveOutlineImplementerSummary = LiveOutlineAgentSummary &
-  LiveOutlineAssignmentProvenance;
-
-export interface LiveOutlineValidatorSummary
-  extends LiveOutlineAssignmentProvenance, LiveOutlineAgentSummary {
-  strategy: ValidatorAssignment["strategy"];
-}
-
-export interface LiveOutlineCollaborationSummary {
-  secondAgent: LiveOutlineAgentSummary;
-  negotiationRounds: number;
-  autonomousResolutionThreshold: string;
-}
-
-export interface LiveOutlineScriptValidatorSummary {
-  commands: string[];
-}
-
-/** The concrete per-role command selections from the seed-time snapshot. */
-export interface LiveOutlineAgentValidationSummary {
-  implementer: GraphWorkflowCommandSelector;
-  contextValidator: GraphWorkflowCommandSelector;
-}
-
-export interface LiveOutlineContextConfig {
-  contextId: string;
-  implementer: LiveOutlineImplementerSummary;
-  /**
-   * False when the cohort is switched off. Dormancy is a property of the
-   * COHORT, not of an assignment — every assignment below is dormant when this
-   * is false, and none of them is dispatched.
-   */
-  validatorCohortEnabled: boolean;
-  /**
-   * Every seeded assignment, dormant ones included. A disabled cohort retains
-   * its assignments and start snapshotted them, so this is what the execution
-   * actually holds — omitting them would make re-enabling one a blind edit.
-   */
-  validators: LiveOutlineValidatorSummary[];
-  scriptValidator: LiveOutlineScriptValidatorSummary;
-  humanApprovalGate: boolean;
-  askUserQuestions: boolean;
-  /** `null` when no resolved collaboration snapshot exists (legacy executions). */
-  collaboration: LiveOutlineCollaborationSummary | null;
-  /** `null` when no selector snapshot exists (pre-snapshot executions). */
-  agentValidation: LiveOutlineAgentValidationSummary | null;
-}
-
-/**
- * A context's FULL resolved config — the concrete runtime values a `live edit`
- * addresses (doc 06: selector responses return full config, not the compact
- * outline summary). Every block is the exact resolved shape from
- * `workingDefinition`, so the inspector/agent can inspect and edit concrete
- * values (implementer, validator, script/approval/questions gates, iteration
- * policy, circuit breaker, mutability, collaboration). Kept in lockstep with
- * `graphWorkflowResolvedContextSchema` via `Pick` so a new resolved-config field
- * surfaces here without drift.
- */
-export type LiveOutlineResolvedConfig = Pick<
+import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
+import { resolveLoopPassMembership } from "@/lib/workflow-graph/loop-ledger";
+import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
+import type {
+  GraphWorkflowAgentConfig,
+  SeededAgentAssignment,
+  SeededValidatorCohort,
+} from "@/lib/workflow-graph/config-schemas";
+import { formatAgentProfileRef } from "@/lib/agent-profiles/schemas";
+import type {
   GraphWorkflowResolvedContext,
-  | "implementer"
-  | "contextValidator"
-  | "scriptValidator"
-  | "humanApprovalGate"
-  | "askUserQuestions"
-  | "iterationPolicy"
-  | "circuitBreaker"
-  | "mutability"
-  | "planRepair"
-  | "agentValidation"
-  // Context identity rather than a cascade result, but it belongs to the same
-  // read-back: an agent about to edit a context needs its declared output
-  // contract, and the edit tiers address it here. Optional — absent on contexts
-  // that declare none.
-  | "outputSchema"
-> & {
-  contextId: string;
-  /** `null` when no resolved collaboration snapshot exists (legacy executions). */
-  collaboration: ResolvedCollaborationConfig | null;
-};
+  GraphWorkflowTaskStatus,
+} from "@/lib/workflow-graph/definition-schemas";
+import {
+  classifyContextLifecycle,
+  classifyExecutionEditability,
+  type ContextLifecycle,
+  type ExecutionEditability,
+} from "./lifecycle-classifier";
 
-/**
- * The SHAPE of a declared `outputSchema`, never its body (R7.2). The outline
- * sizes prose rather than inlining it, and a declaration is prose: the row says
- * a contract exists and how wide it is, and `--config <ctx>` returns the
- * document itself.
- */
-export type LiveOutlineOutputSchemaSummary = GraphWorkflowOutputSchemaShape;
+import {
+  getContextOutput,
+  summarizeOutputSchemaShape,
+} from "./context-outputs";
+import { computeCharterHash, renderCharterMarkdown } from "./charter/render";
 
-/**
- * One edge as the route projection resolved it (D4 R13.2).
- *
- * `source` is the AUTHORED (logical) source — the topology an operator reads —
- * and `effectiveSource` is the instance whose landed work actually satisfies
- * the edge (decision D1). They differ exactly when a concluded loop's external
- * edge resolves onto its concluding pass's exit instance, which is how the
- * outline renders a logical exit with its effective instance as provenance.
- * `null` while the edge is unresolved.
- */
-export interface LiveOutlineRoute {
-  id: string;
-  source: string;
-  effectiveSource: string | null;
-  target: string;
-  guard: ResolvedRouteEdge["guard"];
-  resolution: RouteEdgeResolution["kind"];
-}
-
-/** One declared loop's activation, pass counter and budget (R13.2). */
-export interface LiveOutlineLoop {
-  loopGroupId: string;
-  activation: GraphWorkflowLoopState["activation"];
-  passCount: number;
-  maxPasses: number;
-  loopControlRevision: number;
-  /** The AUTHORED exit whose external edges the loop holds. */
-  logicalExitContextId: string;
-  /** The concluding pass's exit instance; null until the loop concludes. */
-  concludingExitContextId: string | null;
-}
-
-/** The expansion audit ledgers, flattened for the CLI (R8/R13.2). */
-export interface LiveOutlineExpansions {
-  accepted: Array<{
-    requestId: string;
-    invokerContextId: string;
-    rationale: string;
-    addedContextIds: string[];
-    addedTaskIds: string[];
-    rejoinContextIds: string[];
-    payloadHash: string;
-    acceptedAt: string;
-  }>;
-  refusals: Array<{
-    requestId: string;
-    invokerContextId: string;
-    refusalCode: string;
-    refusedAt: string;
-  }>;
-}
-
-export interface LiveOutlineContext {
-  id: string;
-  title: string;
-  status: GraphWorkflowContextStatus;
-  editability: LiveOutlineEditability;
-  /** Upstream context ids (edges whose target is this context), in edge order. */
-  deps: string[];
-  completedTaskCount: number;
-  totalTaskCount: number;
-  iterationCount: number;
-  maxIterations: number;
-  /** `null` when the context declares no output contract (free-form). */
-  outputSchema: LiveOutlineOutputSchemaSummary | null;
-  /**
-   * The recorded route verdicts of a `skipped` context (D4 R4); `null` on every
-   * other status. The COMPLETE verdict set, exactly as persisted — a skip an
-   * operator cannot reconstruct is not an auditable decision.
-   */
-  skip: GraphWorkflowContextSkipReason | null;
-  /** Loop pass membership; `null` for a context outside every loop body. */
-  loop: LoopPassMembership | null;
-  /** The expansion that created this context; `null` when the planner did. */
-  provenance: { requestId: string; invokerContextId: string } | null;
-}
-
-/**
- * One context's output contract and what it has produced (R7.2 CLI read path).
- *
- * `capture` mirrors the states {@link getContextOutput} can report for a
- * context that participates at all; contexts it reports `none` for never appear
- * here, so "absent" unambiguously means "declares nothing and banked nothing".
- * `skipped` is listed rather than dropped — its declared contract is still part
- * of the graph an operator is reading — but never as `pending`, because a
- * not-taken branch owes nothing (D4 R4).
- */
-export interface LiveOutlineContextOutput {
-  contextId: string;
-  title: string;
-  status: GraphWorkflowContextStatus;
-  /** `null` when a live edit cleared the declaration after a capture. */
-  schema: LiveOutlineOutputSchemaSummary | null;
-  capture:
-    | {
-        kind: "captured";
-        value: Record<string, unknown>;
-        capturedAt: string;
-        iteration: number;
-        parse: AgentCallStructuredOutputParse;
-      }
-    | { kind: "pending" }
-    | { kind: "skipped" };
-}
-
-export interface LiveOutlineTask {
-  contextId: string;
-  order: number;
-  id: string;
-  status: GraphWorkflowTaskStatus;
-  title: string;
-  instructionChars: number;
-}
-
-export interface LiveOutlineTaskFull {
-  contextId: string;
-  order: number;
-  id: string;
-  status: GraphWorkflowTaskStatus;
-  title: string;
-  instructions: string;
-  metadata?: Record<string, string>;
-}
-
-export interface LiveOutlineContextSection {
-  id: string;
-  title: string;
-  description: string | null;
-  acceptanceCriteria: string;
-  status: GraphWorkflowContextStatus;
-  editability: LiveOutlineEditability;
-  deps: string[];
-  completedTaskCount: number;
-  totalTaskCount: number;
-  iterationCount: number;
-  maxIterations: number;
-  config: LiveOutlineResolvedConfig;
-  tasks: LiveOutlineTaskFull[];
-}
-
-export interface LiveOutline {
-  header: LiveOutlineHeader;
-  contexts: LiveOutlineContext[];
-  tasks: LiveOutlineTask[];
-  config: LiveOutlineContextConfig[];
-  /**
-   * The workflow-scope lane-merge validation selection, straight from the
-   * seed-time `workingDefinition` snapshot (workflow tier only — the gate
-   * guards the shared fan-in target, so no per-context copy exists). `null`
-   * for executions seeded before the snapshot existed.
-   */
-  laneMergeValidation: GraphWorkflowLaneMergeValidationConfig | null;
-  /**
-   * Every edge with its guard and resolved verdict (R13.2). Always present and
-   * always complete: guard-free routes report `guard: "none"`, so a reader
-   * never has to infer "unguarded" from an absent row. The CLI text view
-   * renders the block only when there is something conditional to say, which is
-   * what keeps a pre-D4 outline's rendering unchanged.
-   */
-  routes: LiveOutlineRoute[];
-  /** Declared loops with their activation, pass counter and budget; `[]` if none. */
-  loops: LiveOutlineLoop[];
-  /** The expansion audit ledgers; both empty for an execution that never expanded. */
-  expansions: LiveOutlineExpansions;
-}
-
-export type LiveOutlineSelector =
-  | { kind: "outline" }
-  | { kind: "full" }
-  | { kind: "context"; contextId: string }
-  | { kind: "task"; taskId: string }
-  | { kind: "config"; contextId: string }
-  | { kind: "charter" }
-  | { kind: "outputs" };
-
-/**
- * The charter selector's payload (doc 07): the full rendered document (content +
- * amendment log — the same markdown the worktree charter.md carries) plus the
- * structured amendment entries and the current content hash.
- */
-export interface LiveOutlineCharter {
-  markdown: string;
-  amendments: CharterAmendment[];
-  charterHash: string;
-}
-
-export type LiveOutlineResult =
-  | { ok: true; section: "outline"; outline: LiveOutline }
-  | {
-      ok: true;
-      section: "full";
-      header: LiveOutlineHeader;
-      contexts: LiveOutlineContextSection[];
-    }
-  | { ok: true; section: "context"; context: LiveOutlineContextSection }
-  | { ok: true; section: "task"; task: LiveOutlineTaskFull }
-  | { ok: true; section: "config"; config: LiveOutlineResolvedConfig }
-  | { ok: true; section: "charter"; charter: LiveOutlineCharter }
-  | { ok: true; section: "outputs"; outputs: LiveOutlineContextOutput[] }
-  | { ok: false; error: string };
+import type {
+  LiveOutlineEditability,
+  LiveOutlineHeader,
+  LiveOutlineAgentSummary,
+  LiveOutlineAssignmentProvenance,
+  LiveOutlineValidatorSummary,
+  LiveOutlineCollaborationSummary,
+  LiveOutlineContextConfig,
+  LiveOutlineResolvedConfig,
+  LiveOutlineOutputSchemaSummary,
+  LiveOutlineRoute,
+  LiveOutlineLoop,
+  LiveOutlineExpansions,
+  LiveOutlineContext,
+  LiveOutlineContextOutput,
+  LiveOutlineTask,
+  LiveOutlineTaskFull,
+  LiveOutlineContextSection,
+  LiveOutlineSelector,
+  LiveOutlineResult,
+} from "./live-outline-schemas";
 
 function buildHeader(execution: GraphWorkflowExecution): LiveOutlineHeader {
   const editability = classifyExecutionEditability(execution);
@@ -610,7 +254,7 @@ function summarizeOutputSchema(
 ): LiveOutlineOutputSchemaSummary | null {
   return outputSchema === undefined
     ? null
-    : summarizeOutputSchemaShape(outputSchema);
+    : { ...summarizeOutputSchemaShape(outputSchema) };
 }
 
 function contextRow(
@@ -624,6 +268,11 @@ function contextRow(
     execution.expansionReceipts,
     context.id,
   );
+  const membership = resolveLoopPassMembership({
+    contextId: context.id,
+    loopGroups: execution.workingDefinition.loopGroups ?? [],
+    loopStates: execution.loopStates,
+  });
   return {
     id: context.id,
     title: context.title,
@@ -636,11 +285,7 @@ function contextRow(
     maxIterations: context.iterationPolicy.maxIterations,
     outputSchema: summarizeOutputSchema(context.outputSchema),
     skip: state?.status === "skipped" ? (state.skipReason ?? null) : null,
-    loop: resolveLoopPassMembership({
-      contextId: context.id,
-      loopGroups: execution.workingDefinition.loopGroups ?? [],
-      loopStates: execution.loopStates,
-    }),
+    loop: membership === null ? null : { ...membership },
     provenance:
       provenance?.nodeKind === "context"
         ? {

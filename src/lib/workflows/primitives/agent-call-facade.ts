@@ -119,10 +119,8 @@ interface TaskRunnerResolution {
   signal?: AbortSignal;
   /**
    * Opt-in CC session identity for the child process (see the trust contract
-   * on `ccTaskSessionScopeSchema`). Deliberately absent from
-   * `TaskExecutionIntent`: only a resolver-callback caller that owns a real
-   * session — today the standalone collaboration production caller — can grant
-   * it, so no registry-resolved intent path can.
+   * on `ccTaskSessionScopeSchema`). Only trusted orchestration that owns the
+   * persisted conversation may grant it; it never comes from a task request.
    */
   ccSessionScope?: AgentTaskRequest["ccSessionScope"];
   /**
@@ -154,6 +152,8 @@ export interface TaskExecutionIntent {
   skipGitRepoCheck?: boolean;
   artifacts?: readonly ArtifactRef[];
   signal?: AbortSignal;
+  /** Trusted hosted identity; never populate from task requests or agent output. */
+  ccSessionScope?: AgentTaskRequest["ccSessionScope"];
 }
 
 /** Outcome of the pre-turn portable-MCP apply hook. */
@@ -613,6 +613,9 @@ async function resolveTaskRunnerTarget(
         ? { artifacts: intent.artifacts }
         : {}),
       ...(intent.signal !== undefined ? { signal: intent.signal } : {}),
+      ...(intent.ccSessionScope !== undefined
+        ? { ccSessionScope: intent.ccSessionScope }
+        : {}),
     };
   }
   if (deps.resolveTaskRunner) {

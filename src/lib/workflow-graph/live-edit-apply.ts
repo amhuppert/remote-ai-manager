@@ -1,3 +1,6 @@
+import { refused, type ExecutionMutationOutcome } from "./execution-mutation";
+import type { ExecutionMutationDecision } from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
 /**
  * The live-edit apply core (doc 06 route pipeline, extracted per
  * docs/design/cc-cli/08): gate evaluation → serialized atomic mutation with a
@@ -28,10 +31,7 @@ import { readRepoConfig } from "@/lib/projects/repo-config";
 import { createValidationCommandPreflight } from "@/lib/validation/preflight";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type {
-  GraphWorkflowExecutionContextDefinition,
-  WorkflowGraphValidationError,
-} from "@/lib/workflow-graph/definition-schemas";
+import type { WorkflowGraphValidationError } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import {
   prepareLiveEditAssignmentSnapshots,
@@ -45,19 +45,10 @@ import type {
   PublishLiveEditAppliedInput,
 } from "./execution-events";
 import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
-import {
-  createRegisteredGraphExecutionContract,
-  type GraphExecutionContract,
-} from "./execution-contract-port";
-import type { MutateActiveResult } from "./execution-repository";
+import { type GraphExecutionContract } from "./execution-contract-port";
+
 import { classifyExecutionEditability } from "./lifecycle-classifier";
-import {
-  coerceGlobalDefaults,
-  resolveAgentValidationWithProvenance,
-  resolveMemoryPolicyWithProvenance,
-  resolveCollaborationConfigWithProvenance,
-  resolveContext,
-} from "./resolve-config";
+import { coerceGlobalDefaults, resolveContextDefaults } from "./resolve-config";
 import {
   applyLiveExecutionEdits,
   type LiveEditDeps,
@@ -129,8 +120,8 @@ export function buildDefaultAssignmentSnapshotPreparation(
  * Resolve the concrete config a new `add-context` op seeds from when no
  * `configFromContextId` is given and the deferred script-validator prerequisite,
  * both computed once per request (the pure core's deps are sync). Resolves the
- * global defaults through the same cascade a launch uses, against a synthetic
- * no-override context, so a live-added context matches what a seeded one carries.
+ * global defaults through the same config cascade a launch uses, so a live-added
+ * context matches the corresponding seeded configuration.
  */
 export async function buildDefaultLiveEditDeps(
   projectPath: string,
@@ -143,33 +134,10 @@ export async function buildDefaultLiveEditDeps(
     global.validation,
   );
   const defaults = coerceGlobalDefaults(global.workflowDefaults);
-  const syntheticContext: GraphWorkflowExecutionContextDefinition = {
-    id: "__live_edit_global_defaults__",
-    title: "Live edit defaults",
-    acceptanceCriteria: "Live edit defaults",
-    // Never scheduled and never validated — this context exists only to give
-    // the config cascade a no-override input — but the field is required, so it
-    // carries the same self-named single-member lane every other default uses.
-    placement: { lane: "__live_edit_global_defaults__", mode: "full" },
-  };
-  const resolved = resolveContext(defaults, {}, syntheticContext);
+  const resolved = resolveContextDefaults(defaults);
   const snapshotFor = await buildAssignmentSnapshotLookup(projectPath);
-  const collaboration = resolveCollaborationConfigWithProvenance(
-    defaults,
-    {},
-    syntheticContext,
-  );
-  const agentValidation = resolveAgentValidationWithProvenance(
-    defaults,
-    {},
-    syntheticContext,
-  );
-  const memory = resolveMemoryPolicyWithProvenance(
-    defaults,
-    {},
-    syntheticContext,
-  );
   const resolvedGlobalDefaults: ResolvedContextConfig = {
+    ...resolved,
     implementer: {
       ...resolved.implementer,
       profileSnapshot: snapshotFor(resolved.implementer),
@@ -181,17 +149,6 @@ export async function buildDefaultLiveEditDeps(
         profileSnapshot: snapshotFor(assignment),
       })),
     },
-    scriptValidator: resolved.scriptValidator,
-    scriptValidatorSource: resolved.scriptValidatorSource ?? "global",
-    humanApprovalGate: resolved.humanApprovalGate,
-    askUserQuestions: resolved.askUserQuestions,
-    mutability: resolved.mutability,
-    circuitBreaker: resolved.circuitBreaker,
-    iterationPolicy: resolved.iterationPolicy,
-    planRepair: resolved.planRepair,
-    collaboration,
-    agentValidation,
-    memory,
   };
 
   return {
@@ -273,15 +230,15 @@ export interface LiveEditApplyServiceDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
-  mutateActive(
+  mutateActive<Value = void, Refusal = never>(
     projectPath: string,
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => MutateActiveResult | GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
+    ) => ExecutionMutationDecision<Value, Refusal>,
+  ): Promise<ExecutionMutationOutcome<Value, Refusal>>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
-  executionContract?: GraphExecutionContract;
+  executionContract: GraphExecutionContract;
   /**
    * Compose and hash the snapshot for every assignment this batch introduces,
    * BEFORE the serialized mutation (D10). Library resolution is async and the
@@ -322,14 +279,6 @@ type LiveEditGateResult =
       affectedContextIds: string[];
     }
   | { ok: false; failure: LiveEditFailure };
-
-/** Thrown inside the serialized mutation so a rejection persists nothing. */
-class LiveEditRejectionSignal extends Error {
-  constructor(readonly failure: LiveEditFailure) {
-    super(failure.error);
-    this.name = "LiveEditRejectionSignal";
-  }
-}
 
 const NO_ACTIVE_EXECUTION_MESSAGE =
   "Session does not have an active graph workflow execution";
@@ -439,8 +388,7 @@ export async function applyLiveEditsToActiveExecution(
   deps: LiveEditApplyServiceDeps,
 ): Promise<LiveEditApplyOutcome> {
   const { projectPath, sessionName, request } = input;
-  const executionContract =
-    deps.executionContract ?? createRegisteredGraphExecutionContract();
+  const executionContract = deps.executionContract;
 
   // Preparation first (D10). A dangling reference fails here, where the op that
   // carried it is still known, rather than as a throw out of a reducer that has
@@ -496,18 +444,17 @@ export async function applyLiveEditsToActiveExecution(
 
   // Apply — inside the serialized mutation (atomic). Gates re-run against the
   // write-queue-held current state (apply-time re-classification, D7); a
-  // rejection throws so nothing persists. On success bump `liveRevision` by
+  // rejection returns without persistence. On success bump `liveRevision` by
   // exactly one (D4) and emit the mandatory live-edit event (D12/D16).
-  let applied = 0;
-  let liveRevision = 0;
-  let affectedContextIds: string[] = [];
   const containsCharterAmendment = request.operations.some(
     (operation) => operation.type === "amend-charter",
   );
-  let committedExecution: GraphWorkflowExecution | null = null;
-  let amendedExecution: GraphWorkflowExecution | null = null;
+  let mutation: ExecutionMutationOutcome<
+    { applied: number; liveRevision: number; affectedContextIds: string[] },
+    LiveEditFailure
+  >;
   try {
-    await deps.mutateActive(projectPath, sessionName, (current) => {
+    mutation = await deps.mutateActive(projectPath, sessionName, (current) => {
       const gate = evaluateLiveEditRequest(
         current,
         request,
@@ -515,7 +462,7 @@ export async function applyLiveEditsToActiveExecution(
         executionContract,
       );
       if (!gate.ok) {
-        throw new LiveEditRejectionSignal(gate.failure);
+        return refused(gate.failure);
       }
 
       const bumpedLiveRevision = gate.execution.liveRevision + 1;
@@ -547,19 +494,19 @@ export async function applyLiveEditsToActiveExecution(
         });
         delivery.events.push(...charterDelivery.events);
         delivery.pushes.push(...charterDelivery.pushes);
-        amendedExecution = bumped;
       }
 
-      applied = request.operations.length;
-      liveRevision = bumpedLiveRevision;
-      affectedContextIds = gate.affectedContextIds;
-      committedExecution = bumped;
-      return { execution: bumped, ...delivery };
+      return changed(
+        bumped,
+        {
+          applied: request.operations.length,
+          liveRevision: bumpedLiveRevision,
+          affectedContextIds: gate.affectedContextIds,
+        },
+        delivery,
+      );
     });
   } catch (error) {
-    if (error instanceof LiveEditRejectionSignal) {
-      return rejected(error.failure);
-    }
     if (
       error instanceof Error &&
       error.message === NO_ACTIVE_EXECUTION_MESSAGE
@@ -569,11 +516,17 @@ export async function applyLiveEditsToActiveExecution(
     throw error;
   }
 
+  if (mutation.kind === "refused") return rejected(mutation.refusal);
+  const {
+    execution: committedExecution,
+    value: { applied, liveRevision, affectedContextIds },
+  } = mutation;
+
   // Post-commit: refresh the session worktree's charter.md pointer copy.
   // Best-effort — the amendment is already durable and broadcast; the inline
   // prompt digest renders from the execution, not this file.
-  if (amendedExecution !== null) {
-    const committed: GraphWorkflowExecution = amendedExecution;
+  if (containsCharterAmendment) {
+    const committed = committedExecution;
     const latestAmendment = committed.charterAmendments.at(-1);
     logger.info("live_edit.charter_amended", {
       executionId: committed.id,

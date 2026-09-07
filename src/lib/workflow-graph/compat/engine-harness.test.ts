@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { workflowSemanticDefinitionSchema } from "../definition-schemas";
 import { runEngineScenario } from "./engine-harness";
+import { createNonParticipatingGraphExecutionContract } from "../execution-contract-port";
 
 const CONTEXT_ID = "context-collision";
 const LEFT_SEAT = "left";
@@ -61,6 +62,97 @@ function collisionDefinition() {
 }
 
 describe("engine harness validator-attempt accounting", () => {
+  it("persists one task completion with its actual lane conversation and one matching event", async () => {
+    let conversationId: string | undefined;
+    await runEngineScenario(
+      {
+        name: "task-completion-evidence",
+        definition: collisionDefinition(),
+        sessionLaneEnabled: false,
+        agent: () => "complete-next-task",
+        onAgentTurn: async (input) => {
+          conversationId = input.conversationId;
+        },
+      },
+      async (run) => {
+        const store = run.restartedStore();
+        const persisted = await store.getActiveGraphWorkflowExecution(
+          run.projectPath,
+          run.sessionName,
+        );
+        expect(conversationId).toBeDefined();
+        expect(persisted?.taskStates["task-collision"]).toMatchObject({
+          status: "completed",
+          lastConversationId: conversationId,
+          summary: "Completed task-collision",
+        });
+        const events = await store.getGraphWorkflowEventsTail(
+          run.projectPath,
+          run.sessionName,
+          run.settled.id,
+          100,
+        );
+        const completions = events.filter(
+          (row) =>
+            row.event.type === "graph-workflow-task-status" &&
+            row.event.status === "completed",
+        );
+        expect(completions).toHaveLength(1);
+        expect(completions[0]?.event).toMatchObject({
+          taskId: "task-collision",
+          lastConversationId: conversationId,
+          completedAt: persisted?.taskStates["task-collision"]?.completedAt,
+        });
+      },
+    );
+  });
+
+  it("enforces the production task-completion contract before persisting task or completion events", async () => {
+    await runEngineScenario(
+      {
+        name: "task-completion-contract",
+        definition: collisionDefinition(),
+        sessionLaneEnabled: false,
+        agent: () => "complete-next-task",
+      },
+      async (run) => {
+        const store = run.restartedStore();
+        const persisted = await store.getActiveGraphWorkflowExecution(
+          run.projectPath,
+          run.sessionName,
+        );
+        expect(persisted?.taskStates["task-collision"]?.status).not.toBe(
+          "completed",
+        );
+        expect(persisted?.taskStates["task-collision"]?.completedAt).toBeNull();
+        expect(run.settled.status).toBe("halted");
+        expect(
+          run.events.filter(
+            (event) =>
+              event.kind === "graph-workflow-task-status" &&
+              event.detail === "completed",
+          ),
+        ).toEqual([]);
+      },
+      {
+        executionContract: {
+          ...createNonParticipatingGraphExecutionContract(),
+          validateTaskCompletion: () => ({
+            ok: false,
+            code: "task-evidence-required",
+            issues: [
+              {
+                code: "task-evidence-required",
+                message: "Persist task evidence before completion",
+              },
+            ],
+            instruction: "Provide task evidence",
+          }),
+        },
+      },
+    );
+  });
+
   it("keeps delimiter-colliding runtime identities independent through runEngineScenario", async () => {
     const attempts = new Map<string, number[]>();
     let mappedIdentities = 0;
@@ -104,4 +196,46 @@ describe("engine harness validator-attempt accounting", () => {
     expect(attempts.get(LEFT_SEAT)).toEqual([1, 2]);
     expect(attempts.get(RIGHT_SEAT)).toEqual([1, 2]);
   }, 120_000);
+});
+
+describe("shared engine worktree preflight", () => {
+  it("persists an IO halt without provisioning or dispatch when inspection fails", async () => {
+    await runEngineScenario(
+      {
+        name: "inspection-failure",
+        definition: collisionDefinition(),
+        sessionLaneEnabled: false,
+        agent: () => {
+          throw new Error("Agent must not run before inspection");
+        },
+      },
+      async (run) => {
+        expect(run.settled.status).toBe("halted");
+        expect(run.settled.haltReason).toMatchObject({
+          type: "execution_loop_failed",
+          cause: "io",
+          message: "filesystem unavailable",
+        });
+        expect(
+          Object.values(run.settled.contextStates).every(
+            (state) =>
+              state.consecutiveFailureCount === 0 &&
+              state.worktreePath === null,
+          ),
+        ).toBe(true);
+        const persisted = await run
+          .restartedStore()
+          .getActiveGraphWorkflowExecution("/compat-repo", "session-1");
+        expect(persisted?.haltReason).toMatchObject({
+          type: "execution_loop_failed",
+          cause: "io",
+        });
+      },
+      {
+        getSessionWorktreeDirtyPaths: async () => {
+          throw new Error("filesystem unavailable");
+        },
+      },
+    );
+  });
 });

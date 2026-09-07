@@ -1,3 +1,4 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { describe, expect, it, vi } from "vitest";
 import {
   createGraphLaneContinuity,
@@ -313,8 +314,9 @@ function makeHarness(partial: Partial<GraphLaneContinuityDeps> = {}): Harness {
         if (!current) {
           throw new Error("harness: no execution seeded");
         }
-        current = await fn(current);
-        return current;
+        return applyFixtureMutation(current, fn, (next) => {
+          current = next;
+        });
       },
     },
     createConversation: vi.fn().mockResolvedValue({ id: "conv-new" }),

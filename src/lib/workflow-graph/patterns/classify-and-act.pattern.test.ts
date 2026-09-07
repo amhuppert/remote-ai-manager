@@ -384,7 +384,7 @@ describe("Classify-And-Act, as an ordinary template (D4 R15.1)", () => {
 
       // Durable, not an in-memory verdict: reloading through the repository —
       // real SQLite, same database — returns the same terminal routing.
-      const reloaded = await run.manager.getActive(
+      const reloaded = await run.repository.getActive(
         run.projectPath,
         run.sessionName,
       );

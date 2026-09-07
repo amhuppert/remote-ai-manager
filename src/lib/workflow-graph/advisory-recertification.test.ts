@@ -198,7 +198,7 @@ describe("a response turn that changed the candidate (R8.2)", () => {
     const result = await subject.harness.run();
 
     expect(subject.harness.contextState()?.status).not.toBe("completed");
-    expect(result.shouldContinueInContext).toBe(true);
+    expect(result.decision.kind).toBe("continue");
   });
 
   it("re-certifies with the script gate and the blocking lane only", async () => {
@@ -254,7 +254,7 @@ describe("a response turn that changed the candidate (R8.2)", () => {
     expect(
       subject.harness.repository.read().taskStates["task-plan-1"]?.status,
     ).toBe("pending");
-    expect(failedRecertification.shouldContinueInContext).toBe(true);
+    expect(failedRecertification.decision.kind).toBe("continue");
     expect(subject.harness.contextState()?.status).toBe("running");
   });
 

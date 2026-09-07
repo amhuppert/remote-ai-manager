@@ -1,3 +1,5 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { describe, expect, it } from "vitest";
 import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
 import {
@@ -18,7 +20,7 @@ import type {
   PublishCharterUpdatedInput,
   PublishLiveEditAppliedInput,
 } from "./execution-events";
-import type { MutateActiveResult } from "./execution-repository";
+
 import type { SessionState } from "@/lib/sessions/schemas";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
@@ -130,15 +132,16 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
       execution = { ...execution, status };
     },
     deps: {
+      executionContract: createNonParticipatingGraphExecutionContract(),
       getActiveExecution: () => Promise.resolve(execution),
       mutateActive: (_projectPath, _sessionName, fn) => {
         harness.mutations += 1;
         harness.beforeMutation?.();
-        const result = fn(execution) as
-          | MutateActiveResult
-          | GraphWorkflowExecution;
-        execution = "execution" in result ? result.execution : result;
-        return Promise.resolve(execution);
+        return Promise.resolve(
+          applyFixtureMutation(execution, fn, (next) => {
+            execution = next;
+          }),
+        );
       },
       prepareAssignmentSnapshots: (_projectPath, operations) => {
         harness.prepareCalls += 1;
@@ -202,6 +205,8 @@ describe("applyLiveEditsToActiveExecution", () => {
     const harness = makeHarness(createWorkflowExecution({ status: "paused" }));
     const calls: string[] = [];
     harness.deps.executionContract = {
+      loadPromptProjection: async () => null,
+
       validateDefinition: () => ({ ok: true }),
       loadLiveEdit: () => {
         calls.push("binding-loaded");

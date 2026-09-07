@@ -1,21 +1,12 @@
+import { getGraphWorkflowRuntime } from "./production";
+import { createWorkflowStorageService } from "./storage";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readConfig } from "@/lib/config/loader";
 import { readLiveOccupancy } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
-import {
-  getSession,
-  getActiveGraphWorkflowExecution,
-  mutateActiveGraphWorkflowExecution,
-  reserveActiveGraphWorkflowExecution,
-  archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
-  getGraphWorkflowPendingArtifacts,
-  clearGraphWorkflowPendingArtifacts,
-} from "@/lib/state-store";
-import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
-import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
-import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
+import { getSession, getActiveGraphWorkflowExecution } from "@/lib/state-store";
+
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
 import { createRegisteredGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
@@ -26,12 +17,12 @@ import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "@/lib/workflow-graph/cons
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
 import { createSharedDocumentStore } from "@/lib/workflow-graph/shared-document-store";
-import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+
 import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
-import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+
 import { createGraphWorkflowCollaborationCoordinator } from "@/lib/workflow-graph/workflow-collaboration-coordinator";
 import { createWorkflowCollaboratorCaller } from "@/lib/workflow-graph/workflow-collaborator-caller";
-import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
+
 import type { GraphWorkflowToolServerContext } from "@/lib/workflow-graph/lane-tool-service";
 import { createCollaborationProductionAgentCaller } from "@/lib/workflows/collaboration/agent-caller-production";
 import { oppositeCollaborationBackend } from "@/lib/workflows/collaboration/backend-pair";
@@ -78,52 +69,43 @@ export type LoadLaneToolContextResult =
     }
   | { ok: false; status: number; error: string };
 
-const eventPublisher = createGraphWorkflowExecutionEventPublisher({
-  dispatchPush: dispatchPushForGraphWorkflowEvent,
-});
+function createLaneToolServices() {
+  const workflowStorage = createWorkflowStorageService();
+  const { executionRepository, eventPublisher, workflowManager } =
+    getGraphWorkflowRuntime();
+  const workflowCollaborationCoordinator =
+    createGraphWorkflowCollaborationCoordinator({
+      workflowManager,
+      executionRepository,
+    });
 
-const executionRepository = createGraphWorkflowExecutionRepository({
-  getSession,
-  getActiveGraphWorkflowExecution,
-  mutateActiveGraphWorkflowExecution,
-  reserveActiveGraphWorkflowExecution,
-  archiveActiveGraphWorkflowExecution,
-  markGraphWorkflowContextEventsPreReset,
-  getGraphWorkflowPendingArtifacts,
-  clearGraphWorkflowPendingArtifacts,
-  eventPublisher,
-});
-
-const workflowStorage = createWorkflowStorageService();
-const workflowManager = createGraphWorkflowManager({
-  executionRepository,
-  loadDefinition: (projectPath, definitionId, tier) =>
-    workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
-  parallelWorktrees: createParallelWorktrees(),
-  getSession,
-});
-const workflowCollaborationCoordinator =
-  createGraphWorkflowCollaborationCoordinator({
-    workflowManager,
+  const runtimeEditService = createGraphWorkflowRuntimeEditService();
+  const sharedDocumentStore = createSharedDocumentStore();
+  const sharedDocumentRegistry =
+    createGraphWorkflowSharedDocumentRegistryService({
+      captureDocumentContent: (input) =>
+        sharedDocumentStore.captureFromWorktree(input),
+    });
+  const executionTargetResolver = createExecutionTargetResolver();
+  const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
+    executionRepository,
+    runtimeEditService,
+    sharedDocumentRegistry,
+    publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
+    readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
+    executionContract: createRegisteredGraphExecutionContract(),
   });
 
-const runtimeEditService = createGraphWorkflowRuntimeEditService();
-const sharedDocumentStore = createSharedDocumentStore();
-const sharedDocumentRegistry = createGraphWorkflowSharedDocumentRegistryService(
-  {
-    captureDocumentContent: (input) =>
-      sharedDocumentStore.captureFromWorktree(input),
-  },
-);
-const executionTargetResolver = createExecutionTargetResolver();
-const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
-  workflowManager,
-  runtimeEditService,
-  sharedDocumentRegistry,
-  publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
-  readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
-  executionContract: createRegisteredGraphExecutionContract(),
-});
+  return {
+    workflowStorage,
+    workflowManager,
+    workflowCollaborationCoordinator,
+    executionToolContextFactory,
+    executionTargetResolver,
+  };
+}
+
+let laneToolServices: ReturnType<typeof createLaneToolServices> | undefined;
 
 /**
  * Resolve the fully-wired lane tool context for one active execution context,
@@ -138,6 +120,14 @@ export async function loadGraphWorkflowLaneToolContext(
   executionId: string,
   contextId: string,
 ): Promise<LoadLaneToolContextResult> {
+  laneToolServices ??= createLaneToolServices();
+  const {
+    workflowStorage,
+    workflowManager,
+    workflowCollaborationCoordinator,
+    executionToolContextFactory,
+    executionTargetResolver,
+  } = laneToolServices;
   const session = await getSession(projectPath, sessionName);
   if (!session) {
     return { ok: false, status: 404, error: "Session not found" };

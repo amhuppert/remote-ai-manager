@@ -2,10 +2,7 @@ import { materializeGlobalConfig } from "@/lib/config/loader";
 import { rawGlobalConfigSchema } from "@/lib/config/schemas";
 import {
   coerceGlobalDefaults,
-  resolveAgentValidationWithProvenance,
-  resolveCollaborationConfigWithProvenance,
-  resolveContext,
-  resolveMemoryPolicyWithProvenance,
+  resolveContextDefaults,
 } from "../resolve-config";
 import type { LiveEditDeps } from "../runtime-edits";
 import { makeProfileSnapshot, seedAssignment } from "../test-fixtures";
@@ -24,22 +21,13 @@ import { makeProfileSnapshot, seedAssignment } from "../test-fixtures";
 export function harnessLiveEditDeps(): LiveEditDeps {
   const config = materializeGlobalConfig(rawGlobalConfigSchema.parse({}));
   const defaults = coerceGlobalDefaults(config.workflowDefaults);
-  const synthetic = {
-    id: "__pattern_defaults__",
-    title: "Pattern defaults",
-    acceptanceCriteria: "Pattern defaults",
-    placement: { lane: "__pattern_defaults__", mode: "full" as const },
-  };
-  const resolved = resolveContext(defaults, {}, synthetic);
-  const agentValidation = resolveAgentValidationWithProvenance(
-    defaults,
-    {},
-    synthetic,
-  );
+  const resolved = resolveContextDefaults(defaults);
+  const agentValidation = resolved.agentValidation;
   let minted = 0;
   return {
     createTaskId: () => `pattern-task-${(minted += 1)}`,
     resolvedGlobalDefaults: () => ({
+      ...resolved,
       implementer: seedAssignment(resolved.implementer),
       contextValidator: {
         ...resolved.contextValidator,
@@ -47,19 +35,6 @@ export function harnessLiveEditDeps(): LiveEditDeps {
           seedAssignment(assignment),
         ),
       },
-      scriptValidator: resolved.scriptValidator,
-      scriptValidatorSource: resolved.scriptValidatorSource,
-      humanApprovalGate: resolved.humanApprovalGate,
-      askUserQuestions: resolved.askUserQuestions,
-      mutability: resolved.mutability,
-      circuitBreaker: resolved.circuitBreaker,
-      iterationPolicy: resolved.iterationPolicy,
-      planRepair: resolved.planRepair,
-      collaboration: resolveCollaborationConfigWithProvenance(
-        defaults,
-        {},
-        synthetic,
-      ),
       agentValidation: {
         implementer: { ...agentValidation.implementer, commands: [] },
         contextValidator: {
@@ -67,7 +42,6 @@ export function harnessLiveEditDeps(): LiveEditDeps {
           commands: [],
         },
       },
-      memory: resolveMemoryPolicyWithProvenance(defaults, {}, synthetic),
     }),
     validationCommandPreflight: () => ({
       commandCosts: {},

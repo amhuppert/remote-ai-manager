@@ -1,3 +1,4 @@
+import { createLogger } from "@/lib/logging";
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import type { AuthoredAccountabilityCoverageGroup } from "@/lib/workflow-graph/authored-accountability-coverage-core";
 import type {
@@ -60,7 +61,7 @@ export interface GraphExecutionContract {
   deriveContextAcceptanceCriteria(
     definition: GraphExecutionContractDefinition,
   ): GraphExecutionContractDerivation;
-  loadPromptProjection?(
+  loadPromptProjection(
     execution: GraphWorkflowExecution,
     contextId?: string,
   ): Promise<GraphRolePromptProjection | null>;
@@ -80,43 +81,84 @@ export function registerGraphExecutionContract(
   contract: GraphExecutionContract,
 ): void {
   state().contract = contract;
+  logger.info("graph-workflow.execution_contract.registered", {});
+}
+
+const logger = createLogger("graph-execution-contract");
+
+function missingContractRefusal(): Exclude<
+  GraphExecutionContractDecision,
+  { ok: true }
+> {
+  return {
+    ok: false,
+    code: "execution_contract_unregistered",
+    issues: [
+      {
+        code: "execution-contract-unregistered",
+        message: "Graph execution policy is not registered.",
+      },
+    ],
+    instruction:
+      "Register the graph execution contract before starting semantic work.",
+  };
+}
+
+export function assertGraphExecutionContractRegistered(): void {
+  if (state().contract === null) {
+    logger.error("graph-workflow.execution_contract.unregistered", {});
+    throw new GraphExecutionContractViolationError(missingContractRefusal());
+  }
+}
+
+function requireContract(): GraphExecutionContract {
+  const contract = state().contract;
+  if (contract === null)
+    throw new GraphExecutionContractViolationError(missingContractRefusal());
+  return contract;
+}
+
+export function createNonParticipatingGraphExecutionContract(): GraphExecutionContract {
+  return {
+    validateDefinition: () => ({ ok: true }),
+    loadLiveEdit: () => ({
+      validateOperation: () => ({ ok: true }),
+      accountabilityCoverageGroups: [],
+    }),
+    validateTaskCompletion: () => ({ ok: true }),
+    deriveContextAcceptanceCriteria: () => ({
+      ok: true,
+      acceptanceCriteriaByContextId: {},
+    }),
+    loadPromptProjection: async () => null,
+  };
 }
 
 export function createRegisteredGraphExecutionContract(): GraphExecutionContract {
   return {
     validateDefinition(definition) {
-      return state().contract?.validateDefinition(definition) ?? { ok: true };
+      return (
+        state().contract?.validateDefinition(definition) ??
+        missingContractRefusal()
+      );
     },
     loadLiveEdit(execution) {
-      return (
-        state().contract?.loadLiveEdit(execution) ?? {
-          validateOperation: () => ({ ok: true }),
-          accountabilityCoverageGroups: [],
-        }
-      );
+      return requireContract().loadLiveEdit(execution);
     },
     validateTaskCompletion(execution, taskId) {
       return (
-        state().contract?.validateTaskCompletion(execution, taskId) ?? {
-          ok: true,
-        }
+        state().contract?.validateTaskCompletion(execution, taskId) ??
+        missingContractRefusal()
       );
     },
     deriveContextAcceptanceCriteria(definition) {
       return (
-        state().contract?.deriveContextAcceptanceCriteria(definition) ?? {
-          ok: true,
-          acceptanceCriteriaByContextId: {},
-        }
+        state().contract?.deriveContextAcceptanceCriteria(definition) ??
+        missingContractRefusal()
       );
     },
     async loadPromptProjection(execution, contextId) {
-      return (
-        (await state().contract?.loadPromptProjection?.(
-          execution,
-          contextId,
-        )) ?? null
-      );
+      return requireContract().loadPromptProjection(execution, contextId);
     },
   };
 }

@@ -135,17 +135,23 @@ export function reconcilePassSlots(
   execution: GraphWorkflowExecution,
   group: GraphWorkflowResolvedLoopGroup,
   state: GraphWorkflowLoopState,
-): void {
+): boolean {
+  let changed = false;
   for (const slot of state.slotLedger) {
     if (slot.state !== "reserved") continue;
     if (hasPassStarted(execution, group, slot.pass)) {
       slot.state = "counted";
+      changed = true;
       continue;
     }
     const settled =
       state.activation === "concluded" || state.activation === "skipped";
-    if (settled && slot.pass > state.passCount) slot.state = "released";
+    if (settled && slot.pass > state.passCount) {
+      slot.state = "released";
+      changed = true;
+    }
   }
+  return changed;
 }
 
 /** True once any instance of this pass has left `pending` — R10's "started". */

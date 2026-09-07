@@ -1,14 +1,17 @@
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { mintImplementerLaneCapability as defaultMintImplementerLaneCapability } from "@/lib/agent-gateway/token";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import { executeConversationTurn as defaultExecuteConversationTurn } from "@/lib/workflows/conversation/manager";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
-import { adaptGraphConversationTurn } from "./conversation-turn-result";
+import {
+  adaptGraphConversationTurn,
+  ConversationTurnNotStartedError,
+} from "./conversation-turn-result";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
-import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { SessionState } from "@/lib/sessions/schemas";
 
@@ -20,9 +23,12 @@ import {
   composeImplementerLaneWriteEnvelope,
   type ImplementerLaneWriteEnvelope,
 } from "@/lib/workflow-graph/implementer-lane-write-envelope";
-import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
+import {
+  AgentTurnFailedError,
+  ConversationTurnSettlementError,
+} from "@/lib/workflow-graph/errors";
 
-const logger = createLogger("graph-workflow-implementer-runner");
+const defaultLogger = createLogger("graph-workflow-implementer-runner");
 
 /** The hosted turn owns transcripts, the conversation lock, and lifecycle settlement. */
 export interface GraphWorkflowImplementerRunnerDeps {
@@ -53,6 +59,27 @@ export interface GraphWorkflowImplementerRunnerDeps {
     contextId: string;
     conversationId: string;
   }): string | null;
+  /** Injected so a test can observe the emitted turn-failure classification. */
+  logger?: Logger;
+}
+
+/**
+ * Structured cause fields for the turn-failure warning. Settlement failures
+ * carry their code and attempt so a reader can correlate the halt with the
+ * conversation's retained work; the retained provider result never enters the
+ * log.
+ */
+function classifyTurnFailureForLog(error: unknown) {
+  if (error instanceof AgentTurnFailedError) return { cause: error.cause };
+  if (error instanceof ConversationTurnSettlementError)
+    return {
+      cause: "settlement_failed" as const,
+      settlementCode: error.outcome.code,
+      attemptId: error.attemptId,
+    };
+  if (error instanceof ConversationTurnNotStartedError)
+    return { cause: "not_started" as const };
+  return { cause: "unknown" as const };
 }
 
 export interface RunIterationInput {
@@ -64,7 +91,6 @@ export interface RunIterationInput {
   contextId: string;
   backend: AgentBackendId;
   modelSelection: BackendModelSelection;
-  toolServer: unknown;
   /**
    * When supplied, the iteration runs against this resolved target's
    * worktree and branch instead of `session.worktreePath` /
@@ -140,6 +166,7 @@ export function createGraphWorkflowImplementerRunner(
   const conversationFsWriteRestriction =
     deps.conversationFsWriteRestriction ??
     getConversationFsWriteRestrictionForBackend;
+  const logger = deps.logger ?? defaultLogger;
 
   async function runIteration(input: RunIterationInput): Promise<{
     conversationId: string;
@@ -237,9 +264,6 @@ export function createGraphWorkflowImplementerRunner(
       modelSelection: input.modelSelection,
       autonomous: true,
       backend: input.backend,
-      tooling: {
-        portableMcp: input.toolServer as PortableMcpConfig,
-      },
       // Lane identity for the session env so `cctl workflow …` resolves its
       // execution/context from env inside this implementer conversation, plus
       // the signed capability that proves this conversation IS the context's
@@ -260,7 +284,7 @@ export function createGraphWorkflowImplementerRunner(
       // asking-questions session instructions (Req 8.1-8.4).
       askUserQuestionsEnabled: input.askUserQuestionsEnabled === true,
     };
-    const { tooling, workflowContext, ...spec } = turn;
+    const { workflowContext, ...spec } = turn;
     const execution = await executeConversationTurn({
       binding: {
         kind: "durable",
@@ -279,7 +303,7 @@ export function createGraphWorkflowImplementerRunner(
         ...spec,
         ...(envelope !== null ? { fsWritePolicy: envelope.policy } : {}),
       },
-      executionContext: { tooling, workflowContext },
+      executionContext: { workflowContext },
       // SDK auto-continuations can briefly retain the lane conversation after
       // the preceding work turn settles. The execution loop owns this follow-up
       // and must serialize behind that continuation instead of treating the
@@ -299,8 +323,7 @@ export function createGraphWorkflowImplementerRunner(
         contextId: input.contextId,
         backend: input.backend,
         error: getErrorMessage(error),
-        cause:
-          error instanceof AgentTurnFailedError ? error.cause : "not_started",
+        ...classifyTurnFailureForLog(error),
       });
       throw error;
     }

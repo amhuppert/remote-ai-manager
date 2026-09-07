@@ -1,3 +1,4 @@
+import { classifyContextActivity } from "@/lib/workflow-graph/context-activity";
 import type { Node, Edge } from "@xyflow/react";
 import type {
   GraphWorkflowExecution,
@@ -212,25 +213,16 @@ export function getContextDisplayPhase(
   contextState: GraphWorkflowExecutionContextState | undefined,
 ): ContextDisplayPhase | undefined {
   if (!contextState) return undefined;
-  if (contextState.mergeStatus === "in-progress") {
-    return "merging";
-  }
-  if (contextState.status === "running") {
-    // Ahead of the task-count check for the same reason as the wait state: a
-    // context owing an advisory-response turn has already been certified, and
-    // reading it as `validating` would colour the node for a review that is
-    // over. `recertifying` falls through — a blocking round IS what runs next.
-    if (contextState.advisoryResponse?.phase === "awaiting_response") {
+  switch (classifyContextActivity(contextState)) {
+    case "merging":
+      return "merging";
+    case "advisory_response":
       return "advisory-response";
-    }
-    if (
-      contextState.totalTaskCount > 0 &&
-      contextState.completedTaskCount >= contextState.totalTaskCount
-    ) {
+    case "validation":
       return "validating";
-    }
+    case "ordinary_work":
+      return contextState.status;
   }
-  return contextState.status;
 }
 
 /** One incoming route as the inspector reports it (D4 R13 legibility). */

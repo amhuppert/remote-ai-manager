@@ -1,3 +1,6 @@
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 /**
  * Section 6.2 — graph + debug workflow parity verification.
  *
@@ -700,8 +703,8 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
   });
 
   it("graph workflow execution loop routes its consecutive-failure halt through the runCircuitBreakerGate dep", async () => {
-    const { createGraphWorkflowExecutionLoop } =
-      await import("@/lib/workflow-graph/execution-loop");
+    const { createExecutionLoopFixture } =
+      await import("@/lib/workflow-graph/testing/execution-loop-fixture");
 
     const definition = createResolvedWorkflowDefinition();
     const contextId = definition.executionContexts[0]!.id;
@@ -800,8 +803,11 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       branchName: "csm/session-1",
     };
 
-    const loop = createGraphWorkflowExecutionLoop({
-      workflowManager: {
+    const loop = createExecutionLoopFixture({
+      executionContract: createNonParticipatingGraphExecutionContract(),
+      getSessionWorktreeDirtyPaths: async () => [],
+
+      contextScheduler: {
         async scheduleEligibleContexts() {
           if (currentExecution.status !== "running") {
             return {
@@ -814,20 +820,21 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
             scheduled: { kind: "solo", contextId },
           };
         },
-        send: sendSpy,
-        recordPendingHaltReason: recordPendingHaltReasonSpy,
-        drainAndHalt: drainAndHaltSpy,
+      },
+      executionRepository: {
         async mutateActive(_p, _s, fn) {
-          const result = await fn(currentExecution);
-          currentExecution =
-            "execution" in result && "events" in result
-              ? result.execution
-              : result;
-          return currentExecution;
+          return applyFixtureMutation(currentExecution, fn, (next) => {
+            currentExecution = next;
+          });
         },
         async getActive() {
           return currentExecution;
         },
+      },
+      workflowManager: {
+        send: sendSpy,
+        recordPendingHaltReason: recordPendingHaltReasonSpy,
+        drainAndHalt: drainAndHaltSpy,
       },
       iterationOrchestrator: {
         runIteration: async () => {
@@ -845,7 +852,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           return {
             conversationId: "conv-1",
             execution: next,
-            shouldContinueInContext: true,
+            decision: { kind: "continue", reason: "tasks_remaining" },
           };
         },
       },
@@ -864,10 +871,12 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       joinRunner: {
         async run({ joinId, mutateActive }) {
           await mutateActive((e) =>
-            applyJoinProgress(e, joinId, new Date().toISOString(), {
-              status: "succeeded",
-            }),
-          );
+            changed(
+              applyJoinProgress(e, joinId, new Date().toISOString(), {
+                status: "succeeded",
+              }),
+            ),
+          ).then((mutation) => mutation.execution);
           return { status: "succeeded" };
         },
       },
@@ -1030,6 +1039,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       });
 
       const runner = createValidatorRunner({
+        executionContract: createNonParticipatingGraphExecutionContract(),
         resolveWorktreePath: async () => workingDir,
         resolveTimeoutMs: async () => 60_000,
         executeWorkflowTaskRun: executeWorkflowTaskRunSpy,

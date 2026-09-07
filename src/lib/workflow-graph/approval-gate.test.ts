@@ -496,6 +496,9 @@ describe("createApprovalGateService.recordDecision", () => {
 
   function buildService() {
     const repo = createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: fixture.store.getSession,
@@ -529,7 +532,11 @@ describe("createApprovalGateService.recordDecision", () => {
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      () => ({ execution, events: [] }),
+      () => ({
+        kind: "commit",
+        value: undefined,
+        ...{ execution, events: [] },
+      }),
     );
   }
 

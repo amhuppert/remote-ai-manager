@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "../core";
+import { projectLiveOutline } from "@/lib/workflow-graph/live-outline";
+import {
+  liveOutlineResultSchema,
+  liveOutlineSelectorSchema,
+  type LiveOutlineSelector,
+} from "@/lib/workflow-graph/live-outline-schemas";
+import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type { CliEnv, CliHost, FetchInit } from "../shared";
 import {
   CONVERSATION_CAPABILITY_ENV_VAR,
@@ -61,6 +68,74 @@ function makeHost(
     homedir: "/Users/test",
   };
 }
+
+describe("server outline contract through the CLI", () => {
+  it.each([
+    { selector: { kind: "outline" }, args: [], marker: "execution-1" },
+    {
+      selector: { kind: "context", contextId: "context-plan" },
+      args: ["--context", "context-plan"],
+      marker: "Plan",
+    },
+    {
+      selector: { kind: "task", taskId: "task-plan-1" },
+      args: ["--task", "task-plan-1"],
+      marker: "Read the relevant files.",
+    },
+    {
+      selector: { kind: "config", contextId: "context-plan" },
+      args: ["--config", "context-plan"],
+      marker: "profileSnapshot",
+    },
+    { selector: { kind: "full" }, args: ["--full"], marker: "context-plan" },
+    { selector: { kind: "charter" }, args: ["--charter"], marker: "#" },
+    {
+      selector: { kind: "outputs" },
+      args: ["--outputs"],
+      marker: "output schema: object",
+    },
+  ] satisfies {
+    selector: LiveOutlineSelector;
+    args: string[];
+    marker: string;
+  }[])(
+    "parses and renders the server's $selector.kind projection",
+    async ({ selector, args, marker }) => {
+      const execution = createWorkflowExecution({ status: "paused" });
+      const context = execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      );
+      if (!context) throw new Error("context fixture missing");
+      context.outputSchema = {
+        type: "object",
+        properties: { verdict: { type: "string" } },
+      };
+      const body = projectLiveOutline(
+        execution,
+        liveOutlineSelectorSchema.parse(selector),
+      );
+      const parsed = liveOutlineResultSchema.safeParse(body);
+      expect(parsed.success, JSON.stringify(parsed)).toBe(true);
+      const host = makeHost(() => jsonResponse(body));
+      const result = await runCli(
+        ["workflow", "live", "get", ...args],
+        baseEnv,
+        host,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(marker);
+      expect(result.stderr).toBe("");
+      expect(host.requests).toHaveLength(1);
+      const jsonResult = await runCli(
+        ["workflow", "live", "get", ...args, "--json"],
+        baseEnv,
+        makeHost(() => jsonResponse(body)),
+      );
+      expect(jsonResult.exitCode).toBe(0);
+      expect(JSON.parse(jsonResult.stdout)).toMatchObject(body);
+    },
+  );
+});
 
 const OUTLINE_BODY = {
   ok: true,

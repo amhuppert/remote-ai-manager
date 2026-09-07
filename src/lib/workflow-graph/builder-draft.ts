@@ -8,7 +8,7 @@ import type {
 import {
   validateWorkflowDefinition,
   type WorkflowGraphValidationError,
-} from "./validation";
+} from "./definition-validation";
 import {
   criterionRecordsOf,
   type CriterionRecord,

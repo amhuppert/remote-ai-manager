@@ -21,7 +21,7 @@ const PUBLIC_GRAPH_BOUNDARY_MODULES = new Set([
   "@/lib/workflow-graph/authored-context-outcome",
   "@/lib/workflow-graph/execution-contract-port",
   "@/lib/workflow-graph/execution-lifecycle-port",
-  "@/lib/workflow-graph/execution-route-handlers",
+  "@/lib/workflow-graph/production",
   "@/lib/workflow-graph/launch-presentation",
   // The prompt-projection seam: `execution-contract-port` already publishes
   // `GraphRolePromptProjection` in the contract signature a spec implements,
@@ -108,7 +108,7 @@ function graphImportIssues(relativePath: string): string[] {
 }
 
 describe("native SDD graph boundary", () => {
-  it("allows only the exact launch schema and public admission/start/bridge modules", () => {
+  it("allows only the exact launch schema and public admission/lifecycle/bridge modules", () => {
     const issues =
       SPEC_PRODUCTION_ROOTS.flatMap(productionFiles).flatMap(graphImportIssues);
 

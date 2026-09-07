@@ -5,6 +5,10 @@ import { makeConversationState } from "@/lib/conversations/testing/conversation-
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import { ConversationTurnSettlementError } from "./errors";
+import { ConversationTurnNotStartedError } from "./conversation-turn-result";
+import type { ConversationTurnExecution } from "@/lib/workflows/conversation/manager";
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
   return {
@@ -66,7 +70,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -128,7 +131,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -192,15 +194,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: {
-        servers: [
-          {
-            id: "transient-tool",
-            transport: "streamable-http",
-            url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
-          },
-        ],
-      },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -226,17 +219,6 @@ describe("graph workflow implementer runner", () => {
           workflowContext: {
             executionId: "execution-1",
             contextId: "context-plan",
-          },
-          tooling: {
-            portableMcp: {
-              servers: [
-                {
-                  id: "transient-tool",
-                  transport: "streamable-http",
-                  url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
-                },
-              ],
-            },
           },
         }),
         waitUntilReady: true,
@@ -278,15 +260,6 @@ describe("graph workflow implementer runner", () => {
       modelSelection: {
         modelId: "codex-mini",
         parameters: { reasoning: "medium", fast: "false" },
-      },
-      toolServer: {
-        servers: [
-          {
-            id: "transient-tool",
-            transport: "streamable-http",
-            url: "http://127.0.0.1:3000/mcp",
-          },
-        ],
       },
       placement: { lane: "build", mode: "full" },
     });
@@ -354,7 +327,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
       executionTarget,
     });
@@ -404,7 +376,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -458,7 +429,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -504,7 +474,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -553,7 +522,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
       askUserQuestionsEnabled: true,
     });
@@ -603,7 +571,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
       askUserQuestionsEnabled: false,
     });
@@ -667,7 +634,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -704,7 +670,6 @@ describe("graph workflow implementer runner", () => {
         modelId: "opus",
         parameters: { effort: "high" },
       },
-      toolServer: { servers: [] },
       placement: { lane: "build", mode: "full" },
     });
 
@@ -747,7 +712,6 @@ describe("graph workflow implementer runner", () => {
           modelId: "opus",
           parameters: { effort: "high" },
         },
-        toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       }),
     ).rejects.toThrow("SDK error: Claude API overloaded");
@@ -794,7 +758,6 @@ describe("graph workflow implementer runner", () => {
           modelId: "opus",
           parameters: { effort: "high" },
         },
-        toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       }),
     ).rejects.toMatchObject({
@@ -844,7 +807,6 @@ describe("graph workflow implementer runner", () => {
           modelId: "gpt-5.6-sol",
           parameters: { reasoning: "xhigh", fast: "false" },
         },
-        toolServer: { servers: [] },
         placement: { lane: "build", mode: "full" },
       }),
     ).rejects.toMatchObject({
@@ -854,5 +816,141 @@ describe("graph workflow implementer runner", () => {
     });
 
     expect(getConversation).not.toHaveBeenCalled();
+  });
+
+  function baseInput() {
+    return {
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Implement feature",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude" as const,
+      modelSelection: {
+        modelId: "opus",
+        parameters: { effort: "high" },
+      },
+      placement: { lane: "build" as const, mode: "full" as const },
+    };
+  }
+
+  it("reports a settlement failure truthfully and rethrows the same typed error", async () => {
+    const completedTurn = settledConversationTurn({
+      usage: { costUsd: 0.4, inputTokens: 12 },
+      outcome: {
+        kind: "completed",
+        text: "secret-ish provider text 5150",
+        contentBlocks: [
+          { type: "text", text: "secret-ish provider text 5150" },
+        ],
+      },
+    });
+    if (
+      completedTurn.kind !== "settled" ||
+      completedTurn.turn.outcome.kind !== "call_result"
+    )
+      throw new Error("Fixture did not produce a call result");
+    const execution: ConversationTurnExecution = {
+      kind: "settled",
+      turn: {
+        attemptId: "attempt-settle-1",
+        status: "awaiting",
+        pendingQuestion: null,
+        outcome: {
+          kind: "settlement_failed",
+          code: "delivery_receipt",
+          message: "receipt sink unavailable",
+          result: completedTurn.turn.outcome.result,
+        },
+      },
+    };
+    const logger = createCapturingLogger();
+    const getConversation = vi.fn(async () => makeConversation());
+    const runner = createGraphWorkflowImplementerRunner({
+      executeConversationTurn: vi.fn(async () => execution),
+      getConversation,
+      logger,
+    });
+
+    const thrown = await runner.runIteration(baseInput()).then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(ConversationTurnSettlementError);
+    if (!(thrown instanceof ConversationTurnSettlementError))
+      throw new Error("unreachable");
+    expect(thrown.outcome).toBe(execution.turn.outcome);
+    expect(getConversation).not.toHaveBeenCalled();
+
+    const warning = logger.entries.find(
+      (entry) => entry.message === "graph-workflow.implementer.turn_failed",
+    );
+    expect(warning?.level).toBe("warn");
+    expect(warning?.fields).toEqual({
+      sessionName: "session-1",
+      conversationId: "conversation-1",
+      contextId: "context-plan",
+      backend: "claude",
+      error: "receipt sink unavailable",
+      cause: "settlement_failed",
+      settlementCode: "delivery_receipt",
+      attemptId: "attempt-settle-1",
+    });
+    expect(JSON.stringify(logger.allFieldValues())).not.toContain(
+      "secret-ish provider text 5150",
+    );
+  });
+
+  it("keeps a genuine admission refusal classified as not_started", async () => {
+    const logger = createCapturingLogger();
+    const runner = createGraphWorkflowImplementerRunner({
+      executeConversationTurn: vi.fn(async () => ({
+        kind: "refused" as const,
+        code: "busy" as const,
+        message: "Conversation is busy",
+      })),
+      getConversation: vi.fn(async () => makeConversation()),
+      logger,
+    });
+    await expect(runner.runIteration(baseInput())).rejects.toBeInstanceOf(
+      ConversationTurnNotStartedError,
+    );
+    const warning = logger.entries.find(
+      (entry) => entry.message === "graph-workflow.implementer.turn_failed",
+    );
+    expect(warning?.fields).toMatchObject({ cause: "not_started" });
+    expect(warning?.fields).not.toHaveProperty("settlementCode");
+  });
+
+  it("does not label an unexpected paused outcome as an admission refusal", async () => {
+    const logger = createCapturingLogger();
+    const runner = createGraphWorkflowImplementerRunner({
+      executeConversationTurn: vi.fn(async () =>
+        settledConversationTurn({
+          outcome: {
+            kind: "paused",
+            pauseKind: "post_turn",
+            resumeToken: "pending",
+          },
+        }),
+      ),
+      getConversation: vi.fn(async () => makeConversation()),
+      logger,
+    });
+    const thrown = await runner.runIteration(baseInput()).then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (error: unknown) => error,
+    );
+    expect(thrown).not.toBeInstanceOf(ConversationTurnNotStartedError);
+    expect(thrown).not.toBeInstanceOf(ConversationTurnSettlementError);
+    const warning = logger.entries.find(
+      (entry) => entry.message === "graph-workflow.implementer.turn_failed",
+    );
+    expect(warning?.fields).toMatchObject({ cause: "unknown" });
   });
 });

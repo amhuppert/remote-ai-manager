@@ -69,7 +69,7 @@ export interface GraphExecutionLifecycleCallbacks {
 }
 
 interface GraphExecutionLifecyclePortState {
-  callbacks: GraphExecutionLifecycleCallbacks | null;
+  callbacks: Required<GraphExecutionLifecycleCallbacks> | null;
 }
 
 function state(): GraphExecutionLifecyclePortState {
@@ -78,10 +78,34 @@ function state(): GraphExecutionLifecyclePortState {
   }));
 }
 
+async function ignoreUnclaimedExecution(): Promise<void> {}
+async function admitUnclaimedDefinition(): Promise<DefinitionApprovalGateDecision> {
+  return { ok: true };
+}
+
+export function normalizeGraphExecutionLifecycleCallbacks(
+  callbacks: GraphExecutionLifecycleCallbacks,
+): Required<GraphExecutionLifecycleCallbacks> {
+  return {
+    markRunning: callbacks.markRunning,
+    markDelivered: callbacks.markDelivered,
+    awaitingDefinitionApproval:
+      callbacks.awaitingDefinitionApproval ?? ignoreUnclaimedExecution,
+    admitDefinitionApproval:
+      callbacks.admitDefinitionApproval ?? admitUnclaimedDefinition,
+    executionAborted: callbacks.executionAborted ?? ignoreUnclaimedExecution,
+  };
+}
+
+export function assertGraphExecutionLifecycleCallbacksRegistered(): void {
+  if (state().callbacks === null)
+    throw new Error("Graph execution lifecycle callbacks are not registered");
+}
+
 export function registerGraphExecutionLifecycleCallbacks(
   callbacks: GraphExecutionLifecycleCallbacks,
 ): void {
-  state().callbacks = callbacks;
+  state().callbacks = normalizeGraphExecutionLifecycleCallbacks(callbacks);
 }
 
 export function createRegisteredGraphExecutionLifecycleCallbacks(): GraphExecutionLifecycleCallbacks {

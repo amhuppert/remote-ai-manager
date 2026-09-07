@@ -1,3 +1,4 @@
+import { createNonParticipatingGraphExecutionContract } from "@/lib/workflow-graph/execution-contract-port";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -230,6 +231,7 @@ describe("charter floor/round conflict behavioral fixture", () => {
     );
 
     const runner = createValidatorRunner({
+      executionContract: createNonParticipatingGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,
@@ -291,6 +293,7 @@ describe("charter floor/round conflict behavioral fixture", () => {
     );
 
     const runner = createValidatorRunner({
+      executionContract: createNonParticipatingGraphExecutionContract(),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       executeWorkflowTaskRun,

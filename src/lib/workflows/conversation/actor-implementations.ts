@@ -1768,6 +1768,17 @@ async function runTaskRunTurnForMachine(
   const facadeDeps: AgentCallFacadeDeps = {
     taskExecution: {
       workingDirectory: input.worktreePath,
+      ...(input.persistence === "durable" &&
+      input.target.scope === "session" &&
+      input.role === "validator"
+        ? {
+            ccSessionScope: {
+              project: input.target.projectName,
+              session: input.target.sessionName,
+              conversationId: input.target.conversationId,
+            },
+          }
+        : {}),
       autonomous: true,
       signal: abortController.signal,
       ...(resumeRef !== null ? { resumeRef } : {}),
@@ -1792,6 +1803,7 @@ async function runTaskRunTurnForMachine(
     backend: input.agentBackend,
     conversationId: input.target.conversationId,
     hasOutputSchema: request.outputSchema !== undefined,
+    hasCcSessionScope: facadeDeps.taskExecution?.ccSessionScope !== undefined,
     structuredOutputTextField: input.turn.structuredOutputTextField,
   });
 

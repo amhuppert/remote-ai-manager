@@ -1,3 +1,4 @@
+import { declineFixtureAdvisories } from "../testing/advisory-response-fixture";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +67,7 @@ async function runAdversarial<T>(
       sessionLaneEnabled: false,
       agent: () => "complete-next-task",
       validator: script,
+      advisoryResponse: declineFixtureAdvisories,
       capture: ({ contextId }) => {
         if (contextId === REPORT) {
           return {

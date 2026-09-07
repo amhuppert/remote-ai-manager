@@ -47,6 +47,9 @@ function createServices() {
       resolveConfigDir: () => TEST_DIR,
     }),
     repository: createGraphWorkflowExecutionRepository({
+      getGraphWorkflowPendingArtifacts: async () => null,
+      clearGraphWorkflowPendingArtifacts: async () => false,
+
       // No git worktree in this harness; the real exclusion would shell out.
       ensureCcArtifactsExcluded: async () => {},
       getSession: stateManager.getSession,

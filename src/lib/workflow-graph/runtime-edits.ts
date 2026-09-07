@@ -1,3 +1,16 @@
+import {
+  orderedContextTaskIds,
+  setTaskOrder,
+  isPermutation,
+  insertTask,
+  removeTask,
+  moveTask,
+  removeContextContent,
+  matchEdgeTargets,
+  resolveEdgeTarget,
+  updateEdgeGuard,
+  removeEdge,
+} from "./document-edit-mechanics";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { assertNever } from "@/lib/shared/assert-never";
@@ -39,7 +52,7 @@ import {
   validateCharterInvariantScopes,
   validateResolvedWorkflow,
   validateWorkflowDefinition,
-} from "./validation";
+} from "./definition-validation";
 import { validatePlacements } from "./placement-validation";
 import { collectLiveSessionReadOnlyViolations } from "./live-session-read-only";
 import {
@@ -80,7 +93,7 @@ import { resolvedContextConfig } from "./generated-child-config";
 import { collectStableAccountabilityContextIds } from "./authored-accountability";
 import { locateAuthoredAccountabilityCoverageCore } from "./authored-accountability-coverage-core";
 import { bumpRouteControlRevisions } from "./route-control-revision";
-import type { DefinitionEditTaskPosition } from "@/lib/workflows/edit-schemas";
+
 import {
   findLockedRegionTouch,
   regionLockedInstruction,
@@ -185,25 +198,23 @@ function getContextTasks(
 function setContextTaskOrder(
   execution: GraphWorkflowExecution,
   contextId: string,
-  orderedTaskIds: string[],
+  orderedTaskIds: readonly string[],
 ): void {
-  const taskById = new Map(
-    execution.workingDefinition.tasks.map((task) => [task.id, task]),
-  );
+  setTaskOrder(execution.workingDefinition.tasks, orderedTaskIds);
+  syncTaskOrder(execution, contextId);
+}
 
-  orderedTaskIds.forEach((taskId, index) => {
-    const task = taskById.get(taskId);
-    if (!task) {
-      return;
-    }
-
-    task.order = index + 1;
-    const taskState = execution.taskStates[taskId];
-    if (taskState) {
-      taskState.order = index + 1;
-      taskState.contextId = contextId;
-    }
-  });
+function syncTaskOrder(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): void {
+  for (const task of execution.workingDefinition.tasks) {
+    if (task.contextId !== contextId) continue;
+    const state = execution.taskStates[task.id];
+    if (!state) continue;
+    state.order = task.order;
+    state.contextId = contextId;
+  }
 }
 
 function syncContextState(
@@ -695,7 +706,7 @@ function liveEditTouchedPaths(
     case "update-edge":
       return [["edges", operation.edgeId, "when"]];
     case "remove-edge": {
-      const matches = matchLiveEdges(
+      const matches = matchEdgeTargets(
         execution.workingDefinition.edges,
         operation,
       );
@@ -1927,50 +1938,6 @@ function applyLiveConfigBlocks(
   if (op.memory !== undefined) context.memory = op.memory;
 }
 
-/**
- * Place a task (already assigned to `contextId`) at `position` within its
- * context, then densely renumber the context. `position` is relative — the
- * server owns the numeric order. Returns an error message when an `after`/
- * `before` anchor is not a sibling.
- */
-function placeTaskInLiveContext(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-  taskId: string,
-  position: DefinitionEditTaskPosition | undefined,
-): { ok: true } | { ok: false; message: string } {
-  const siblings = getContextTasks(execution, contextId)
-    .map((task) => task.id)
-    .filter((id) => id !== taskId);
-
-  let insertIndex: number;
-  if (position === undefined || "at" in position) {
-    insertIndex = position && position.at === "start" ? 0 : siblings.length;
-  } else if ("after" in position) {
-    const anchor = siblings.indexOf(position.after);
-    if (anchor === -1) {
-      return {
-        ok: false,
-        message: `position anchor task "${position.after}" is not in context "${contextId}"`,
-      };
-    }
-    insertIndex = anchor + 1;
-  } else {
-    const anchor = siblings.indexOf(position.before);
-    if (anchor === -1) {
-      return {
-        ok: false,
-        message: `position anchor task "${position.before}" is not in context "${contextId}"`,
-      };
-    }
-    insertIndex = anchor;
-  }
-
-  siblings.splice(insertIndex, 0, taskId);
-  setContextTaskOrder(execution, contextId, siblings);
-  return { ok: true };
-}
-
 function applyLiveEditOperation(
   next: GraphWorkflowExecution,
   operation: WorkflowLiveEditOperation,
@@ -2277,15 +2244,9 @@ function applyAddTask(
     ...(op.metadata ? { metadata: op.metadata } : {}),
     source,
   };
-  next.workingDefinition.tasks.push(task);
+  const placed = insertTask(next.workingDefinition.tasks, task, op.position);
   next.taskStates[taskId] = buildInitialTaskState(task);
-
-  const placed = placeTaskInLiveContext(
-    next,
-    op.contextId,
-    taskId,
-    op.position,
-  );
+  if (placed.ok) syncTaskOrder(next, op.contextId);
   if (!placed.ok) {
     return rejectLiveEdit(
       "invalid_edit",
@@ -2375,15 +2336,9 @@ function applyRemoveTask(
   if (gate) return gate;
 
   const contextId = task.contextId;
-  next.workingDefinition.tasks = next.workingDefinition.tasks.filter(
-    (entry) => entry.id !== op.taskId,
-  );
+  removeTask(next.workingDefinition.tasks, task);
   delete next.taskStates[op.taskId];
-  setContextTaskOrder(
-    next,
-    contextId,
-    getContextTasks(next, contextId).map((entry) => entry.id),
-  );
+  syncTaskOrder(next, contextId);
   syncContextState(next, contextId);
   ctx.affectedContextIds.add(contextId);
   return null;
@@ -2471,15 +2426,13 @@ function applyMoveTask(
     );
   }
 
-  task.contextId = op.targetContextId;
-  const placed = placeTaskInLiveContext(
-    next,
+  const placed = moveTask(
+    next.workingDefinition.tasks,
+    task,
     op.targetContextId,
-    op.taskId,
     op.position,
   );
   if (!placed.ok) {
-    task.contextId = sourceContextId;
     return rejectLiveEdit(
       "invalid_edit",
       liveEditIssue("position-target-not-found", placed.message, index, {
@@ -2489,14 +2442,11 @@ function applyMoveTask(
   }
 
   if (op.targetContextId !== sourceContextId) {
-    setContextTaskOrder(
-      next,
-      sourceContextId,
-      getContextTasks(next, sourceContextId).map((entry) => entry.id),
-    );
+    syncTaskOrder(next, sourceContextId);
     syncContextState(next, sourceContextId);
     ctx.affectedContextIds.add(sourceContextId);
   }
+  syncTaskOrder(next, op.targetContextId);
   syncContextState(next, op.targetContextId);
   ctx.affectedContextIds.add(op.targetContextId);
   return null;
@@ -2527,12 +2477,7 @@ function applyReorderTasks(
   const editableIds = contextTasks
     .filter((task) => !isLiveTaskLocked(next, task.id))
     .map((task) => task.id);
-  const provided = new Set(op.orderedTaskIds);
-  if (
-    provided.size !== op.orderedTaskIds.length ||
-    provided.size !== editableIds.length ||
-    editableIds.some((id) => !provided.has(id))
-  ) {
+  if (!isPermutation(editableIds, op.orderedTaskIds)) {
     return rejectLiveEdit(
       "invalid_edit",
       liveEditIssue(
@@ -3154,27 +3099,31 @@ function applyLoopTemplateContentOp(
           ),
         );
       }
-      group.template.tasks.push({
+      const task: GraphWorkflowTaskDefinition = {
         id: taskId,
         contextId: op.contextId,
-        order: templateTaskIds(group, op.contextId).length + 1,
+        order:
+          orderedContextTaskIds(group.template.tasks, op.contextId).length + 1,
         title: op.title,
         instructions: op.instructions,
         ...(op.metadata ? { metadata: op.metadata } : {}),
         source: "user",
-      });
-      const placed = placeTemplateTask(
-        group,
-        op.contextId,
-        taskId,
-        op.position,
-      );
+      };
+      const placed = insertTask(group.template.tasks, task, op.position);
       if (!placed.ok) {
         return rejectLiveEdit(
           "invalid_edit",
-          liveEditIssue("position-target-not-found", placed.message, index, {
-            taskId,
-          }),
+          liveEditIssue(
+            "position-target-not-found",
+            placed.message.replace(
+              " is not in context ",
+              " is not in body-template context ",
+            ),
+            index,
+            {
+              taskId,
+            },
+          ),
         );
       }
       return null;
@@ -3194,26 +3143,13 @@ function applyLoopTemplateContentOp(
     case "remove-task": {
       const task = group.template.tasks.find((entry) => entry.id === op.taskId);
       if (!task) return unknownTask(op.taskId);
-      const contextId = task.contextId;
-      group.template.tasks = group.template.tasks.filter(
-        (entry) => entry.id !== op.taskId,
-      );
-      renumberTemplateTasks(
-        group,
-        contextId,
-        templateTaskIds(group, contextId),
-      );
+      removeTask(group.template.tasks, task);
       return null;
     }
     case "reorder-tasks": {
       if (!templateContext(op.contextId)) return unknownContext(op.contextId);
-      const current = templateTaskIds(group, op.contextId);
-      const provided = new Set(op.orderedTaskIds);
-      if (
-        provided.size !== op.orderedTaskIds.length ||
-        provided.size !== current.length ||
-        current.some((id) => !provided.has(id))
-      ) {
+      const current = orderedContextTaskIds(group.template.tasks, op.contextId);
+      if (!isPermutation(current, op.orderedTaskIds)) {
         return rejectLiveEdit(
           "invalid_edit",
           liveEditIssue(
@@ -3224,7 +3160,7 @@ function applyLoopTemplateContentOp(
           ),
         );
       }
-      renumberTemplateTasks(group, op.contextId, op.orderedTaskIds);
+      setTaskOrder(group.template.tasks, op.orderedTaskIds);
       return null;
     }
     default:
@@ -3233,68 +3169,6 @@ function applyLoopTemplateContentOp(
         `unhandled loop template content operation: ${JSON.stringify(op)}`,
       );
   }
-}
-
-/** A template context's task ids, in current order. */
-function templateTaskIds(
-  group: GraphWorkflowResolvedLoopGroup,
-  contextId: string,
-): string[] {
-  return group.template.tasks
-    .filter((task) => task.contextId === contextId)
-    .sort((left, right) => left.order - right.order)
-    .map((task) => task.id);
-}
-
-/** Densely renumber one template context to 1..n in the given order. */
-function renumberTemplateTasks(
-  group: GraphWorkflowResolvedLoopGroup,
-  contextId: string,
-  orderedTaskIds: readonly string[],
-): void {
-  orderedTaskIds.forEach((taskId, position) => {
-    const task = group.template.tasks.find((entry) => entry.id === taskId);
-    if (task && task.contextId === contextId) task.order = position + 1;
-  });
-}
-
-/** {@link placeTaskInLiveContext} for a body template's own task list. */
-function placeTemplateTask(
-  group: GraphWorkflowResolvedLoopGroup,
-  contextId: string,
-  taskId: string,
-  position: DefinitionEditTaskPosition | undefined,
-): { ok: true } | { ok: false; message: string } {
-  const siblings = templateTaskIds(group, contextId).filter(
-    (id) => id !== taskId,
-  );
-
-  let insertIndex: number;
-  if (position === undefined || "at" in position) {
-    insertIndex = position && position.at === "start" ? 0 : siblings.length;
-  } else if ("after" in position) {
-    const anchor = siblings.indexOf(position.after);
-    if (anchor === -1) {
-      return {
-        ok: false,
-        message: `position anchor task "${position.after}" is not in body-template context "${contextId}"`,
-      };
-    }
-    insertIndex = anchor + 1;
-  } else {
-    const anchor = siblings.indexOf(position.before);
-    if (anchor === -1) {
-      return {
-        ok: false,
-        message: `position anchor task "${position.before}" is not in body-template context "${contextId}"`,
-      };
-    }
-    insertIndex = anchor;
-  }
-
-  siblings.splice(insertIndex, 0, taskId);
-  renumberTemplateTasks(group, contextId, siblings);
-  return { ok: true };
 }
 
 function applyRemoveContext(
@@ -3376,20 +3250,9 @@ function applyRemoveContext(
   for (const task of contextTasks) {
     delete next.taskStates[task.id];
   }
-  next.workingDefinition.tasks = next.workingDefinition.tasks.filter(
-    (task) => task.contextId !== op.contextId,
-  );
-  next.workingDefinition.executionContexts =
-    next.workingDefinition.executionContexts.filter(
-      (entry) => entry.id !== op.contextId,
-    );
   // Incoming edges cascade automatically (the upstream's executed work is
   // unaffected by dropping a future dependency).
-  next.workingDefinition.edges = next.workingDefinition.edges.filter(
-    (edge) =>
-      edge.sourceContextId !== op.contextId &&
-      edge.targetContextId !== op.contextId,
-  );
+  removeContextContent(next.workingDefinition, op.contextId);
   const scopeRejection = rejectUnknownCharterInvariantScopes(
     next,
     next.charter,
@@ -3466,13 +3329,7 @@ function applyAddEdge(
     );
   }
 
-  if (
-    findLiveEdge(
-      next.workingDefinition.edges,
-      op.sourceContextId,
-      op.targetContextId,
-    )
-  ) {
+  if (matchEdgeTargets(next.workingDefinition.edges, op).length > 0) {
     return rejectLiveEdit(
       "invalid_edit",
       liveEditIssue(
@@ -3561,11 +3418,7 @@ function applyUpdateEdge(
     );
   }
 
-  if (op.when === null) {
-    delete edge.when;
-  } else if (op.when !== undefined) {
-    edge.when = op.when;
-  }
+  updateEdgeGuard(edge, op.when);
 
   ctx.affectedContextIds.add(edge.sourceContextId);
   ctx.affectedContextIds.add(edge.targetContextId);
@@ -3581,41 +3434,27 @@ function applyRemoveEdge(
   const notQuiescent = requireQuiescent(ctx, index);
   if (notQuiescent) return notQuiescent;
 
-  const matches = matchLiveEdges(next.workingDefinition.edges, op);
-  const described =
-    op.edgeId !== undefined
-      ? `"${op.edgeId}"`
-      : `${op.sourceContextId} → ${op.targetContextId}`;
-
-  if (matches.length === 0) {
-    return rejectLiveEdit(
-      "invalid_edit",
-      liveEditIssue("unknown-edge", `No edge ${described}`, index, {
-        ...(op.edgeId !== undefined ? { edgeId: op.edgeId } : {}),
-        ...(op.targetContextId !== undefined
-          ? { contextId: op.targetContextId }
-          : {}),
-      }),
-    );
-  }
-  // Endpoint addressing is first-match by nature; with guards, parallel edges
-  // between one pair carry different routing meaning, so removing whichever came
-  // first would silently delete the wrong branch (D2). Name the candidates so
-  // the caller retries by id.
-  if (matches.length > 1) {
+  const resolved = resolveEdgeTarget(next.workingDefinition.edges, op);
+  if (!resolved.ok) {
+    const unknown = resolved.code === "unknown-edge";
     return rejectLiveEdit(
       "invalid_edit",
       liveEditIssue(
-        "ambiguous-edge-endpoints",
-        `${matches.length} edges match ${described}; address one by edgeId: ${matches
-          .map((edge) => edge.id)
-          .join(", ")}`,
+        resolved.code,
+        unknown
+          ? resolved.message.replace(/^no edge/, "No edge")
+          : resolved.message,
         index,
+        {
+          ...resolved.extra,
+          ...(unknown && op.targetContextId !== undefined
+            ? { contextId: op.targetContextId }
+            : {}),
+        },
       ),
     );
   }
-
-  const edge = matches[0]!;
+  const edge = resolved.edge;
   const targetLifecycle = classifyContextLifecycle(next, edge.targetContextId);
   if (targetLifecycle !== "unstarted") {
     return rejectLiveEdit(
@@ -3629,39 +3468,13 @@ function applyRemoveEdge(
     );
   }
 
-  next.workingDefinition.edges = next.workingDefinition.edges.filter(
-    (entry) => entry.id !== edge.id,
+  next.workingDefinition.edges = removeEdge(
+    next.workingDefinition.edges,
+    edge.id,
   );
   ctx.affectedContextIds.add(edge.sourceContextId);
   ctx.affectedContextIds.add(edge.targetContextId);
   return null;
-}
-
-/** Every edge an id- or endpoint-addressed `remove-edge` could mean. */
-function matchLiveEdges(
-  edges: readonly GraphWorkflowContextEdge[],
-  op: Extract<WorkflowLiveEditOperation, { type: "remove-edge" }>,
-): GraphWorkflowContextEdge[] {
-  if (op.edgeId !== undefined) {
-    return edges.filter((edge) => edge.id === op.edgeId);
-  }
-  return edges.filter(
-    (edge) =>
-      edge.sourceContextId === op.sourceContextId &&
-      edge.targetContextId === op.targetContextId,
-  );
-}
-
-function findLiveEdge(
-  edges: GraphWorkflowContextEdge[],
-  sourceContextId: string,
-  targetContextId: string,
-): GraphWorkflowContextEdge | undefined {
-  return edges.find(
-    (edge) =>
-      edge.sourceContextId === sourceContextId &&
-      edge.targetContextId === targetContextId,
-  );
 }
 
 function mintLiveEdgeId(

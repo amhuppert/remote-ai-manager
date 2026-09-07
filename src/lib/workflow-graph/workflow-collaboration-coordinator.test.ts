@@ -1,3 +1,8 @@
+import type {
+  ExecutionMutationDecision as FixtureDecision,
+  ExecutionMutationOutcome as FixtureOutcome,
+} from "@/lib/workflow-graph/execution-mutation";
+import { applyFixtureMutation } from "@/lib/workflow-graph/testing/execution-mutation-fixture";
 import { describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
@@ -60,20 +65,21 @@ describe("createGraphWorkflowCollaborationCoordinator", () => {
       result: WorkflowCollaborationResult;
       roundsConsumed: number;
     }>();
-    const mutateActive = vi.fn(
-      async (
-        _projectPath: string,
-        _sessionName: string,
-        fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-      ) => {
-        current = await fn(current);
-        return current;
-      },
-    );
+    const mutateActive = async <Value, Refusal>(
+      _projectPath: string,
+      _sessionName: string,
+      fn: (
+        execution: GraphWorkflowExecution,
+      ) => FixtureDecision<Value, Refusal>,
+    ): Promise<FixtureOutcome<Value, Refusal>> => {
+      return applyFixtureMutation(current, fn, (next) => {
+        current = next;
+      });
+    };
     const recordPendingHaltReason = vi.fn();
     const coordinator = createGraphWorkflowCollaborationCoordinator({
+      executionRepository: { mutateActive },
       workflowManager: {
-        mutateActive,
         recordPendingHaltReason,
       },
       now: () => "2026-03-27T12:10:00.000Z",
@@ -149,11 +155,14 @@ describe("createGraphWorkflowCollaborationCoordinator", () => {
       roundsConsumed: number;
     }>();
     const coordinator = createGraphWorkflowCollaborationCoordinator({
-      workflowManager: {
+      executionRepository: {
         mutateActive: async (_projectPath, _sessionName, fn) => {
-          current = await fn(current);
-          return current;
+          return applyFixtureMutation(current, fn, (next) => {
+            current = next;
+          });
         },
+      },
+      workflowManager: {
         recordPendingHaltReason: async (input) => {
           const next = structuredClone(current);
           input.applyAdditionalMutation?.(next);

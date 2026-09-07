@@ -65,3 +65,5 @@ export const STATE_STORE_CONSTRUCTION_ALLOWLIST = [
   // persistence-testing steering); never runs in production.
   "src/lib/shared/testing/persistence-fixture.ts",
 ];
+
+export const GRAPH_OWNERSHIP_ALLOWLIST = [];

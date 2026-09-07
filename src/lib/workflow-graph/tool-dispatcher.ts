@@ -24,7 +24,7 @@
  */
 
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
-import { IterationHaltedError } from "./iteration-orchestrator";
+import { IterationHaltedError } from "@/lib/workflow-graph/context-outcome";
 
 export interface ToolUseBlock {
   id: string;

@@ -1,3 +1,7 @@
+import { unchanged } from "@/lib/workflow-graph/execution-mutation";
+import { mutationValue } from "@/lib/workflow-graph/execution-mutation";
+import { changed } from "@/lib/workflow-graph/execution-mutation";
+import type { GraphWorkflowExecutionRepository } from "./execution-repository";
 /**
  * Graph lane continuity (plan §3.2.3): the single continuity door for graph
  * implementer/validator lanes, composed from the shared workflow-primitive
@@ -60,13 +64,10 @@ const logger = createLogger("workflow-graph.lane-continuity");
 // Dependency Injection
 // ============================================================
 
-export interface GraphLaneContinuityExecutionRepository {
-  mutateActive(
-    projectPath: string,
-    sessionName: string,
-    fn: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
-  ): Promise<GraphWorkflowExecution>;
-}
+export type GraphLaneContinuityExecutionRepository = Pick<
+  GraphWorkflowExecutionRepository,
+  "mutateActive"
+>;
 
 export interface GraphLaneContinuityDeps {
   /**
@@ -78,7 +79,7 @@ export interface GraphLaneContinuityDeps {
   /**
    * Persists the graph-only lane extras (`limitEvaluation`) and mirrors the
    * post-outcome lane state onto the execution row after a turn is recorded.
-   * Production threads the workflow manager's `mutateActive`.
+   * Production uses the fenced execution repository.
    */
   executionRepository: GraphLaneContinuityExecutionRepository;
   /** Creates a role-stamped CC lane conversation (the lane dispatch anchor). */
@@ -1069,44 +1070,52 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     // (`deriveLaneOutcome`), but the durable write happens once, here, inside
     // the shared critical section — so a competing same-lane mutation cannot
     // land between a separate read and a mirror-back and be silently clobbered.
-    let rotationScheduled = false;
-    const recorded = await deps.executionRepository.mutateActive(
-      projectPath,
-      sessionName,
-      (latest) => {
-        const existingGraphLane = latest.laneStates[contextId]?.[laneKey];
-        if (!existingGraphLane) return latest;
-        const existingNeutral = toNeutralLaneState(
-          latest,
-          existingGraphLane,
-          identity,
-          contextId,
-        );
-        const { state, contextLimitEvaluation } = deriveLaneOutcome(
-          existingNeutral,
-          outcome,
-          getNow(),
-        );
-        rotationScheduled =
-          state.metrics.rotateBeforeNextTurn === true &&
-          existingNeutral.metrics.rotateBeforeNextTurn !== true;
-        // Map the service's honest verdict onto the coarser graph label. A turn
-        // without occupancy metrics on a metrics-capable backend surfaces as
-        // "metrics_unavailable" rather than a fabricated "supported".
-        const limitEvaluation = toGraphLimitEvaluation(contextLimitEvaluation);
-        const mirrored = toGraphLaneState(
-          state,
-          identity,
-          contextId,
-          existingGraphLane,
-        );
-        const nextLane = graphWorkflowAgentSessionStateSchema.parse({
-          ...mirrored,
-          limitEvaluation,
-        });
-        return withLaneState(latest, contextId, identity, nextLane);
-      },
-    );
+
+    const { execution: recorded, rotationScheduled } =
+      await deps.executionRepository
+        .mutateActive(projectPath, sessionName, (latest) => {
+          let rotationScheduled = false;
+
+          const existingGraphLane = latest.laneStates[contextId]?.[laneKey];
+          if (!existingGraphLane) return unchanged({ rotationScheduled });
+          const existingNeutral = toNeutralLaneState(
+            latest,
+            existingGraphLane,
+            identity,
+            contextId,
+          );
+          const { state, contextLimitEvaluation } = deriveLaneOutcome(
+            existingNeutral,
+            outcome,
+            getNow(),
+          );
+          rotationScheduled =
+            state.metrics.rotateBeforeNextTurn === true &&
+            existingNeutral.metrics.rotateBeforeNextTurn !== true;
+          // Map the service's honest verdict onto the coarser graph label. A turn
+          // without occupancy metrics on a metrics-capable backend surfaces as
+          // "metrics_unavailable" rather than a fabricated "supported".
+          const limitEvaluation = toGraphLimitEvaluation(
+            contextLimitEvaluation,
+          );
+          const mirrored = toGraphLaneState(
+            state,
+            identity,
+            contextId,
+            existingGraphLane,
+          );
+          const nextLane = graphWorkflowAgentSessionStateSchema.parse({
+            ...mirrored,
+            limitEvaluation,
+          });
+          return changed(withLaneState(latest, contextId, identity, nextLane), {
+            rotationScheduled,
+          });
+        })
+        .then((mutation) => ({
+          execution: mutation.execution,
+          ...mutationValue(mutation),
+        }));
     if (rotationScheduled) {
       const overLimit =
         outcome.contextLimitTokens !== undefined &&

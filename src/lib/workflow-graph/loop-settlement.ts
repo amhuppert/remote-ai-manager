@@ -18,9 +18,9 @@
  *  - **Idempotent on the decision record.** Every applied decision writes a
  *    {@link GraphWorkflowLoopDecisionRecord} carrying its full deduplication key
  *    (loop, pass, control revision, exit-capture identity, template version).
- *    A HALT deliberately writes nothing: it is re-derived from durable state on
- *    every pass, which is what lets an amended control revision — or a repaired
- *    exit instance — take effect on resume without a second unwind path.
+ *    A HALT applies no loop decision: it is re-derived from durable state on
+ *    every pass, which lets amended control or a repaired exit take effect on
+ *    resume. Ledger reconciliation still records passes that have started.
  *
  * Two budgets gate the decision and they are checked in different places. A
  * loop's own `maxPasses` is per-loop and belongs to {@link decideLoop}, because
@@ -101,6 +101,7 @@ export interface LoopMaterializationRequest {
 }
 
 export interface LoopSettlementOutcome {
+  readonly ledgerChanged: boolean;
   /** Loops that became active this pass, reserving their pass-1 slot. */
   readonly activatedLoopGroupIds: readonly string[];
   /** Loops whose activation path was not taken (R9.6) — no halt. */
@@ -112,9 +113,9 @@ export interface LoopSettlementOutcome {
    * The typed resumable loop halt this pass found, or null.
    *
    * A halt raised by a DECISION — an exit that skipped, an unreadable capture, a
-   * loop past its own `maxPasses` — applies nothing at all, for the same reason a
-   * routing halt does: settling around a loop the engine cannot decide is the
-   * guess R9 forbids.
+   * loop past its own `maxPasses` — applies no loop decision, for the same
+   * reason a routing halt does: settling around a loop the engine cannot decide
+   * is the guess R9 forbids. Reconciled ledger changes remain authoritative.
    *
    * A halt raised by the shared BACKSTOP is different in exactly one way: the
    * grants the budget already admitted, in definition order, before it reached
@@ -176,7 +177,7 @@ export function settleLoops(
   // this pass can settle anything — and a halt must never be able to leave a
   // pass that genuinely ran sitting in `reserved`, which is the one state the
   // release path is entitled to give back (R10's started-pass accounting).
-  reconcileLedgers(draft, groups);
+  const ledgerChanged = reconcileLedgers(draft, groups);
 
   const projection = projectExecutionRoutes(draft);
   const decisions = groups.map((group) =>
@@ -187,9 +188,10 @@ export function settleLoops(
     (decision): decision is Extract<LoopDecision, { kind: "halt" }> =>
       decision.kind === "halt",
   );
-  if (halt) return { ...emptyOutcome(), halt: halt.halt };
+  if (halt) return { ...emptyOutcome(), ledgerChanged, halt: halt.halt };
 
-  return applyDecisions(draft, groups, decisions, options);
+  const outcome = applyDecisions(draft, groups, decisions, options);
+  return { ...outcome, ledgerChanged: ledgerChanged || outcome.ledgerChanged };
 }
 
 /**
@@ -220,6 +222,7 @@ function applyDecisions(
   const skippedLoopGroupIds: string[] = [];
   const concludedLoopGroupIds: string[] = [];
   const materializations: LoopMaterializationRequest[] = [];
+  let ledgerChanged = false;
   let remaining = remainingPassSlots(draft);
   let halt: LoopHaltReason | null = null;
 
@@ -240,12 +243,13 @@ function applyDecisions(
       // mutation would hand a lower grant order to any loop declared AFTER this
       // one that merely activated in the same scheduling pass, which is the
       // arbitration reversal the ledger exists to prevent.
-      grantSlot(
+      const granted = grantSlot(
         draft,
         ensureLoopState(draft, group.id),
         request.pass,
         options.now,
       );
+      ledgerChanged ||= granted;
       remaining -= 1;
     }
     if (refused) {
@@ -306,9 +310,11 @@ function applyDecisions(
 
   // Ledger bookkeeping last, so a conclusion applied in THIS mutation already
   // releases the reservation of an unroll it will never install.
-  reconcileLedgers(draft, groups);
+  const reconciled = reconcileLedgers(draft, groups);
+  ledgerChanged ||= reconciled;
 
   return {
+    ledgerChanged,
     activatedLoopGroupIds,
     skippedLoopGroupIds,
     concludedLoopGroupIds,
@@ -320,11 +326,15 @@ function applyDecisions(
 function reconcileLedgers(
   draft: GraphWorkflowExecution,
   groups: readonly GraphWorkflowResolvedLoopGroup[],
-): void {
+): boolean {
+  let changed = false;
   for (const group of groups) {
     const state = draft.loopStates[group.id];
-    if (state) reconcilePassSlots(draft, group, state);
+    if (!state) continue;
+    const reconciled = reconcilePassSlots(draft, group, state);
+    changed ||= reconciled;
   }
+  return changed;
 }
 
 /**
@@ -435,6 +445,7 @@ function executionBackstopHalt(
 
 function emptyOutcome(): LoopSettlementOutcome {
   return {
+    ledgerChanged: false,
     activatedLoopGroupIds: [],
     skippedLoopGroupIds: [],
     concludedLoopGroupIds: [],
@@ -653,14 +664,14 @@ function grantSlot(
   state: GraphWorkflowLoopState,
   pass: number,
   now: string,
-): void {
+): boolean {
   const existing = state.slotLedger.find((slot) => slot.pass === pass);
-  if (existing && existing.state !== "released") return;
+  if (existing && existing.state !== "released") return false;
   if (existing) {
     existing.state = "reserved";
     existing.grantOrder = nextGrantOrder(draft);
     existing.grantedAt = now;
-    return;
+    return true;
   }
   state.slotLedger.push({
     pass,
@@ -668,6 +679,7 @@ function grantSlot(
     grantOrder: nextGrantOrder(draft),
     grantedAt: now,
   });
+  return true;
 }
 
 /**

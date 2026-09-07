@@ -23,8 +23,7 @@ export type AgentTaskExecutionProfile = TaskExecutionProfile;
  * The CC session a task subprocess is permitted to act as.
  *
  * TRUST CONTRACT — this is a server-side value supplied ONLY by trusted
- * orchestration code (today: the standalone-collaboration production caller,
- * which derives it from the originating session and conversation). It must
+ * orchestration code, derived from its persisted session and conversation. It must
  * never be populated from user input, request bodies, prompts, or agent
  * output: its presence opts the subprocess into the CC session environment
  * contract, which hands the child an instance API token and server URL that
