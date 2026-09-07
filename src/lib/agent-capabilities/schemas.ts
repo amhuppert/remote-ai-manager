@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { commandItemSchema } from "@/lib/commands/schemas";
 
 import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -12,8 +13,7 @@ import {
 // Agent Capability Configuration Schemas
 //
 // Persistent override storage, runtime apply state, API view/patch contracts,
-// and SSE event payloads for the five backend-specific capability cascades
-// (claude-skills, claude-plugins, claude-agents, codex-skills, codex-plugins).
+// and SSE event payloads for backend-specific capability cascades.
 // These schemas are the single source of truth shared by override stores,
 // resolvers, API routes, and UI hooks.
 // ============================================================
@@ -24,6 +24,9 @@ export const AGENT_CAPABILITY_CASCADE_KINDS = [
   "claude-agents",
   "codex-skills",
   "codex-plugins",
+  "cursor-skills",
+  "cursor-plugins",
+  "cursor-agents",
 ] as const;
 
 export const agentCapabilityCascadeKindSchema = z.enum(
@@ -36,9 +39,8 @@ export type AgentCapabilityCascadeKind = z.infer<
 // ============================================================
 // In-memory cascade taxonomy: { backend, kind }
 //
-// The persisted representation stays the five strings above (overrides in
-// config.json and project/session/conversation state keep their shape; older
-// builds keep reading them). This bijective codec is the only translation
+// The persisted representation uses the strings above.
+// This bijective codec is the only translation
 // point; an unknown pair or string fails loudly instead of being coerced.
 // ============================================================
 
@@ -92,6 +94,9 @@ export const AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP: Readonly<
   "claude-agents": "claude",
   "codex-skills": "codex",
   "codex-plugins": "codex",
+  "cursor-skills": "cursor",
+  "cursor-plugins": "cursor",
+  "cursor-agents": "cursor",
 };
 
 function requireAgentCapabilityCascadeBackendOwnership(
@@ -474,6 +479,7 @@ export const agentCapabilityViewRowSchema = z
     currentLayerValue: agentCapabilityEffectiveStateSchema.optional(),
     inheritedEffectiveState: agentCapabilityEffectiveStateSchema.optional(),
     effectiveState: agentCapabilityEffectiveStateSchema,
+    appliedEnabled: z.boolean().optional(),
     originLayer: agentCapabilityOriginLayerSchema,
     conversationScope: agentCapabilityConversationScopeSchema.optional(),
     owningPluginId: z.string().optional(),
@@ -521,6 +527,7 @@ export const agentCapabilityViewResponseSchema = z
     cascadeKind: agentCapabilityCascadeKindSchema,
     backend: agentBackendSchema,
     items: z.array(agentCapabilityViewRowSchema),
+    appliedCommands: z.array(commandItemSchema).optional(),
     diagnostics: z.array(agentCapabilityDiagnosticSchema),
     effectiveHash: z.string(),
     metadata: agentCapabilityMetadataSchema.optional(),

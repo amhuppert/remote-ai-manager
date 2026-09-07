@@ -1,3 +1,4 @@
+import { discoverCursorCapabilities } from "./cursor-discovery";
 import {
   createCapabilityConfigComposer,
   promoteSeededRuntimeState,
@@ -318,6 +319,15 @@ const defaultDiscoveryProviders: Readonly<
         home: input.home,
         runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
       }),
+  },
+  "cursor-skills": {
+    discover: (input) => discoverCursorCapabilities(input, "skills"),
+  },
+  "cursor-plugins": {
+    discover: (input) => discoverCursorCapabilities(input, "plugins"),
+  },
+  "cursor-agents": {
+    discover: (input) => discoverCursorCapabilities(input, "agents"),
   },
   "codex-skills": {
     discover: (input) =>

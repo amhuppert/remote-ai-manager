@@ -1,14 +1,3 @@
-/**
- * The Cursor runtime-config apply seam.
- *
- * Cursor declares an EMPTY capability-kind set: the worker attaches under
- * `settingSources: []`, so there is no skills/plugins/agents surface for a
- * cascade to reach. That makes the interesting behavior the refusals — a
- * cascade carrying any kind must be rejected loudly rather than silently
- * dropped, which is the difference between "this backend has no cascade" and
- * "this backend quietly ignored yours".
- */
-
 import { describe, expect, it } from "vitest";
 import { createCursorRuntimeConfigAdapter } from "./runtime-config";
 import type { ConversationBackendRuntime } from "../conversation";
@@ -53,7 +42,7 @@ describe("createCursorRuntimeConfigAdapter", () => {
     expect(result).toEqual({ status: "applied" });
   });
 
-  it("rejects every capability kind by name rather than dropping it", async () => {
+  it("defers selected capabilities until a subsequent conversation", async () => {
     const adapter = createCursorRuntimeConfigAdapter();
     for (const kind of ["skills", "plugins", "agents"] as const) {
       const result = await adapter.apply({
@@ -68,10 +57,10 @@ describe("createCursorRuntimeConfigAdapter", () => {
           ],
         },
       });
-      expect(result.status).toBe("rejected");
-      if (result.status === "rejected") {
-        expect(result.error).toContain(kind);
-      }
+      expect(result).toEqual({
+        status: "deferred",
+        reason: "next_conversation",
+      });
     }
   });
 

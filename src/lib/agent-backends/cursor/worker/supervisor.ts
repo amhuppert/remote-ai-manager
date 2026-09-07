@@ -357,6 +357,7 @@ class SupervisedWorker implements CursorWorkerSession {
       settingSources: [],
       enableAgentRetries: CURSOR_PHASE1_POLICY.enableAgentRetries,
       mcpServers: input.mcpServers,
+      agents: input.agents,
     });
   }
 

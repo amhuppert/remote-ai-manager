@@ -31,13 +31,10 @@ describe("commandCascadesForBackend", () => {
     });
   });
 
-  // Cursor attaches under `settingSources: []` and declares `capabilityKinds:
-  // []`, so it owns no cascade at all. Naming one would query a cascade the
-  // registry does not have (spec D4).
-  it("resolves no cascade for a backend that registers none", () => {
+  it("resolves Cursor's registered CC delivery cascades", () => {
     expect(commandCascadesForBackend("cursor")).toEqual({
-      plugins: null,
-      skills: null,
+      plugins: "cursor-plugins",
+      skills: "cursor-skills",
     });
   });
 

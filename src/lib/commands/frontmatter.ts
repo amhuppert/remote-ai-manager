@@ -22,12 +22,27 @@ export function parseFrontmatter(content: string): FrontmatterResult {
   const body = content.slice(closingIdx + 4).trimStart(); // skip "\n---"
 
   const fields: Record<string, string> = {};
+  let blockKey: string | undefined;
+  let blockSeparator = " ";
   for (const line of frontmatterBlock.split("\n")) {
+    if (blockKey && /^\s/.test(line)) {
+      fields[blockKey] = [fields[blockKey], line.trim()]
+        .filter(Boolean)
+        .join(blockSeparator);
+      continue;
+    }
+    blockKey = undefined;
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) continue;
 
     const key = line.slice(0, colonIdx).trim();
     let value = line.slice(colonIdx + 1).trim();
+    if (/^[>|][-+]?$/.test(value)) {
+      blockKey = key;
+      blockSeparator = value.startsWith("|") ? "\n" : " ";
+      fields[key] = "";
+      continue;
+    }
 
     // Strip surrounding quotes
     if (

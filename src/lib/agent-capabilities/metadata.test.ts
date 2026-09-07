@@ -10,28 +10,32 @@ import {
 } from "./metadata";
 
 describe("agent capability metadata registry", () => {
-  // Cursor attaches under `settingSources: []` and declares `capabilityKinds:
-  // []`, so it owns no cascade. The capability-tab surface derives its tabs
-  // from this registry, so an entry here would render a tab for a cascade the
-  // adapter cannot serve (spec D4).
-  it("registers no cascade for a backend that declares no capability kinds", () => {
-    expect(
-      defaultAgentCapabilityMetadataRegistry.listForBackend("cursor"),
-    ).toEqual([]);
-    expect(
-      AGENT_CAPABILITY_CASCADE_KINDS.filter((kind) =>
-        kind.startsWith("cursor-"),
-      ),
-    ).toEqual([]);
+  it("declares Cursor CC delivery at the next-conversation boundary", () => {
+    const records =
+      defaultAgentCapabilityMetadataRegistry.listForBackend("cursor");
+    expect(records.map((record) => record.cascadeKind)).toEqual([
+      "cursor-skills",
+      "cursor-plugins",
+      "cursor-agents",
+    ]);
+    for (const record of records)
+      expect(record).toMatchObject({
+        applySemantics: "next-conversation",
+        compositionSupport: "translator",
+        discoverySupport: "available",
+      });
   });
 
-  it("declares exactly the five supported cascade kinds", () => {
+  it("declares the supported cascade kinds", () => {
     expect(AGENT_CAPABILITY_CASCADE_KINDS).toEqual([
       "claude-skills",
       "claude-plugins",
       "claude-agents",
       "codex-skills",
       "codex-plugins",
+      "cursor-skills",
+      "cursor-plugins",
+      "cursor-agents",
     ]);
   });
 
@@ -44,12 +48,14 @@ describe("agent capability metadata registry", () => {
     expect(cascadeKinds.size).toBe(AGENT_CAPABILITY_CASCADE_KINDS.length);
   });
 
-  it("assigns claude cascades to the claude backend and codex cascades to codex", () => {
+  it("assigns each cascade to its backend", () => {
     for (const record of agentCapabilityMetadata) {
       if (record.cascadeKind.startsWith("claude-")) {
         expect(record.backend).toBe("claude");
-      } else {
+      } else if (record.cascadeKind.startsWith("codex-")) {
         expect(record.backend).toBe("codex");
+      } else {
+        expect(record.backend).toBe("cursor");
       }
     }
   });

@@ -351,17 +351,21 @@ async function executeLiveApply(input: {
   }
 
   if (result.status === "deferred") {
+    const disposition =
+      result.reason === "next_conversation"
+        ? "deferred-next-conversation"
+        : "staged-idle";
     return {
       outcome: {
         cascadeKind,
-        disposition: "staged-idle",
+        disposition,
         attemptedHash: composed.attemptedHash,
       },
       nextState: recordApplyOutcome({
         previous,
         attemptedHash: composed.attemptedHash,
         attemptedItemIds: composed.attemptedItemIds,
-        outcome: { status: "staged-idle" },
+        outcome: { status: disposition },
       }),
     };
   }
@@ -669,19 +673,21 @@ async function executeTurnStartApply(input: {
   }
 
   if (result.status === "deferred") {
-    // A turn began between staging and this apply; keep the payload staged so
-    // the next turn boundary retries it.
+    const disposition =
+      result.reason === "next_conversation"
+        ? "deferred-next-conversation"
+        : "staged-next-turn";
     return {
       outcome: {
         cascadeKind,
-        disposition: "staged-next-turn",
+        disposition,
         attemptedHash,
       },
       nextState: recordApplyOutcome({
         previous,
         attemptedHash,
         attemptedItemIds,
-        outcome: { status: "staged-next-turn" },
+        outcome: { status: disposition },
       }),
     };
   }

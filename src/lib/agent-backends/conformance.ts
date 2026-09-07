@@ -395,7 +395,8 @@ export async function checkCancellation(
 
 /**
  * Per-kind apply-timing behavior. On an idle runtime every declared kind must
- * apply cleanly. While a turn is in flight the declared timing dictates the
+ * apply cleanly or defer until the declared next-conversation boundary.
+ * While a turn is in flight the declared timing dictates the
  * disposition: `idle_live` must defer with `turn_active` (a live mutation
  * mid-turn would race the provider), `next_turn` must still report `applied`
  * (it only stages state the next turn ingests), and `next_conversation` may
@@ -421,9 +422,16 @@ export async function checkApplyTimingBehavior(
         runtime: idleRuntime,
         resolved: cascadeFor(kind),
       });
-      expect(result, `idle apply of kind '${kind.kind}'`).toEqual({
-        status: "applied",
-      });
+      if (
+        kind.applyTiming === "next_conversation" &&
+        result.status === "deferred"
+      ) {
+        expect(result.reason).toBe("next_conversation");
+      } else {
+        expect(result, `idle apply of kind '${kind.kind}'`).toEqual({
+          status: "applied",
+        });
+      }
     }
   } finally {
     await idleRuntime.close();

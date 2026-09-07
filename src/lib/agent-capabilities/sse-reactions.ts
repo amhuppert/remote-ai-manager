@@ -1,3 +1,4 @@
+import type { AgentCapabilityCascadeKind } from "./schemas";
 /**
  * Agent-capability SSE reactions, registered against the shared
  * `/api/events` EventSource by the client assembly point
@@ -22,12 +23,7 @@ interface CapabilityEventIdentifiers {
   conversationScope?: "session" | "project";
   sessionName?: string;
   conversationId?: string;
-  cascadeKind:
-    | "claude-skills"
-    | "claude-plugins"
-    | "claude-agents"
-    | "codex-skills"
-    | "codex-plugins";
+  cascadeKind: AgentCapabilityCascadeKind;
 }
 
 function invalidateAgentCapabilityViews(

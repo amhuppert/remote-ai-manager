@@ -1,3 +1,4 @@
+import type { CursorCapabilitySnapshot } from "../capability-delivery";
 import {
   CURSOR_CREDENTIAL_PREFLIGHT_TIMEOUT_MS,
   CURSOR_WORKER_HANDSHAKE_TIMEOUT_MS,
@@ -71,6 +72,7 @@ export interface CursorWorkerMcpServer {
  * environment deliberately carries no `CURSOR_API_KEY` for the SDK to find.
  */
 export interface CursorWorkerAttachOptions {
+  agents?: CursorCapabilitySnapshot["agents"];
   recoverAbandonedRun?: boolean;
   apiKey: string;
   modelSelection: BackendModelSelection;
@@ -546,6 +548,7 @@ export function startCursorWorker(deps: CursorWorkerDeps): CursorWorkerHandle {
       settingSources: frame.settingSources,
       enableAgentRetries: frame.enableAgentRetries,
       mcpServers: frame.mcpServers,
+      agents: frame.agents,
       ...(frame.recoverAbandonedRun !== undefined
         ? { recoverAbandonedRun: frame.recoverAbandonedRun }
         : {}),

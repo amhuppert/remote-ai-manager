@@ -120,6 +120,7 @@ function toAgentOptions(
     apiKey: options.apiKey,
     disallowedTools: [...options.disallowedTools],
     mcpServers: toMcpServerConfig(options.mcpServers),
+    agents: options.agents,
     local: {
       cwd: options.cwd,
       // The caller-owned store: agent rows, run events, and checkpoints land

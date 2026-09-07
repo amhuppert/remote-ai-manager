@@ -1,3 +1,4 @@
+import { cursorAgentDefinitionSchema } from "../capability-catalog";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
@@ -14,7 +15,7 @@ import { backendModelSelectionSchema } from "../../schemas";
  * the channel already destroyed.
  */
 
-export const CURSOR_IPC_CODEC_VERSION = 2;
+export const CURSOR_IPC_CODEC_VERSION = 3;
 
 /**
  * Reserved wrapper key. An application object that already owns this key is
@@ -558,6 +559,7 @@ const attachAgentFrameSchema = z
   .object({
     v: versionSchema,
     type: z.literal("attachAgent"),
+    agents: z.record(z.string(), cursorAgentDefinitionSchema).optional(),
     recoverAbandonedRun: z.boolean().optional(),
     mode: z.enum(["create", "resume"]),
     ref: z.string().min(1).nullable(),

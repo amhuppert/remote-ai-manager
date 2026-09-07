@@ -374,7 +374,7 @@ function plcResolverScope() {
 }
 
 describe("project-level conversation capability end-to-end acceptance", () => {
-  it("inherits project, sets/clears a conversation override, applies per-backend, broadcasts, and stays inside the five-cascade boundary", async () => {
+  it("inherits project, sets/clears a conversation override, applies per-backend, broadcasts, and stays inside the backend cascade boundary", async () => {
     // ---- Backend I/O boundary fakes (stores, ports, broadcast) only. ----
     // Two independent override stores so the PLC conversation layer persists in
     // isolation from the project layer that it inherits from.
@@ -884,7 +884,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     );
     expect(serializedSurface).not.toContain("sessionName");
 
-    // ===== Step 6 — Backend isolation + five-cascade boundary (Req 20.1, 20.3). =====
+    // ===== Step 6 — Backend isolation + backend cascade boundary (Req 20.1, 20.3). =====
     // A Codex PLC composition omits Claude cascades, and a Claude PLC
     // composition omits Codex cascades — no cross-backend mirroring.
     const codexComposition = composeConversationStartRuntime({
@@ -918,8 +918,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
       "project",
     );
 
-    // The registry exposes EXACTLY the five cascade kinds and NO sixth
-    // PLC-specific kind. PLC discrimination is conversationScope, not a cascade.
+    // PLC discrimination is conversationScope, not a separate cascade kind.
     expect([...AGENT_CAPABILITY_CASCADE_KINDS].sort()).toEqual(
       [
         "claude-agents",
@@ -927,6 +926,9 @@ describe("project-level conversation capability end-to-end acceptance", () => {
         "claude-skills",
         "codex-plugins",
         "codex-skills",
+        "cursor-skills",
+        "cursor-plugins",
+        "cursor-agents",
       ].sort(),
     );
     for (const cascadeKind of AGENT_CAPABILITY_CASCADE_KINDS) {

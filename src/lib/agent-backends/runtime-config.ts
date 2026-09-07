@@ -58,7 +58,7 @@ export type ResolvedCapabilityCascade = z.infer<
 
 export type RuntimeConfigApplyResult =
   | { status: "applied" }
-  | { status: "deferred"; reason: "turn_active" }
+  | { status: "deferred"; reason: "turn_active" | "next_conversation" }
   | { status: "rejected"; error: string };
 
 export interface BackendRuntimeConfigAdapter {

@@ -35,11 +35,6 @@ export const cursorConversationExecution: ConversationExecutionPolicy = {
 /**
  * Backend catalog metadata for Cursor.
  *
- * `skillTriggerPrefix` is required by the canonical catalog helpers (they throw
- * for an id absent from the catalog); it is metadata, not a claim of a skill
- * surface — the tested SDK exposes none, so command discovery returns a bounded
- * empty result and Cursor conversations run without CC's bundled skills (D14).
- *
  * The tone token is Cursor's identity accent in the UI, distinct from Claude's
  * cyan and Codex's violet. `amber` is the remaining design-system accent the
  * existing chip/toggle tone maps already resolve; a genuinely new colour would
@@ -80,8 +75,8 @@ export const cursorBackendMetadata: AgentBackendMetadata = {
  * - `contextWindowMetrics`, `nativeMidTurnAskUser`, `externalTurns`: the SDK
  *   surfaces no context-window figures, its interactive tools are denied by the
  *   Phase 1 policy, and it produces no turns Command Center did not start.
- * - `capabilityKinds: []`: the worker attaches under `settingSources: []`, so
- *   there is no skills/plugins/agents cascade to apply.
+ * - Capability selection is fixed at conversation creation. CC supplies skill
+ *   metadata and explicit agent definitions while ambient settings stay off.
  */
 export const cursorConversationCapabilities: BackendConversationCapabilities = {
   queue: { acceptsWhileRunning: true, deliveryTiming: "next_turn" },
@@ -91,7 +86,11 @@ export const cursorConversationCapabilities: BackendConversationCapabilities = {
   contextWindowMetrics: false,
   nativeMidTurnAskUser: false,
   externalTurns: false,
-  capabilityKinds: [],
+  capabilityKinds: [
+    { kind: "skills", applyTiming: "next_conversation" },
+    { kind: "plugins", applyTiming: "next_conversation" },
+    { kind: "agents", applyTiming: "next_conversation" },
+  ],
 };
 
 /**
@@ -166,11 +165,7 @@ export function createCursorBackendDescriptor(
       runtimeConfig: deps.runtimeConfig,
       transcript: cursorConversationTranscriptProjection,
     },
-    // No task facet: Phase 1 delivers conversations only, and `hermetic` on
-    // both is the explicit declaration that neither profile receives Command
-    // Center's managed skill bundle — the worker attaches with empty setting
-    // sources and nothing publishes a bundle into its checkout.
-    managedSkills: { conversations: "hermetic", tasks: "hermetic" },
+    managedSkills: { conversations: "bundled", tasks: "hermetic" },
     nativeMemory: cursorNativeMemory,
     mcp: deps.mcp,
     errors: deps.failureClassifier,

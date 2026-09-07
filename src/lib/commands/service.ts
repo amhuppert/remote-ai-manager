@@ -1,3 +1,8 @@
+import {
+  discoverCursorCatalog,
+  cursorSkillCommands,
+} from "@/lib/agent-backends/cursor/capability-catalog";
+import { getPublishedManagedSkillBundle } from "@/lib/managed-skills/service";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -398,9 +403,6 @@ function codexPluginName(pluginId: string): string {
  * scanned. It replaced a `codex ? … : claude` fallback whose else-branch quietly
  * pointed every other backend at Claude's `.claude/` directories (spec D14).
  *
- * Cursor's arm is the empty discoverer: the tested SDK exposes no command or
- * skill surface, so there is nothing to scan and any non-empty result would be
- * invented. It touches no filesystem path at all.
  */
 const DISCOVERERS: Record<
   AgentBackendId,
@@ -411,7 +413,14 @@ const DISCOVERERS: Record<
 > = {
   claude: discoverClaudeItems,
   codex: discoverCodexItems,
-  cursor: async () => [],
+  cursor: async (worktreePath) => {
+    const catalog = await discoverCursorCatalog({
+      worktreePath,
+      home: os.homedir(),
+      bundle: getPublishedManagedSkillBundle(),
+    });
+    return cursorSkillCommands(catalog.items);
+  },
 };
 
 /**

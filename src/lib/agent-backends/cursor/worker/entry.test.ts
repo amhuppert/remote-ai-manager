@@ -483,11 +483,16 @@ describe("cursor worker attach", () => {
   it("passes the full non-persisted option set on create", async () => {
     const harness = createHarness();
     await handshake(harness);
-    await attach(harness);
+    await attach(harness, {
+      agents: { auditor: { description: "Audit", prompt: "Review carefully" } },
+    });
 
     expect(harness.sdk.creates).toStrictEqual([
       {
         apiKey: API_KEY,
+        agents: {
+          auditor: { description: "Audit", prompt: "Review carefully" },
+        },
         modelSelection: MODEL_SELECTION,
         cwd: "/work/tree",
         storePath: "/state/cursor/conv-1",
@@ -510,9 +515,13 @@ describe("cursor worker attach", () => {
       mode: "resume",
       ref: "agent-ref-1",
       recoverAbandonedRun: true,
+      agents: { auditor: { description: "Audit", prompt: "Review carefully" } },
     });
 
     expect(harness.sdk.resumes).toHaveLength(1);
+    expect(harness.sdk.resumes[0]?.options.agents).toEqual({
+      auditor: { description: "Audit", prompt: "Review carefully" },
+    });
     expect(harness.sdk.resumes[0]?.ref).toBe("agent-ref-1");
     expect(harness.sdk.resumes[0]?.options.recoverAbandonedRun).toBe(true);
     expect(harness.sdk.resumes[0]?.options.disallowedTools).toStrictEqual([

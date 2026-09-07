@@ -1,3 +1,7 @@
+import { cursorAgentStorePath } from "@/lib/agent-backends/cursor/store-path";
+import { readCursorCapabilitySnapshot } from "@/lib/agent-backends/cursor/capability-delivery";
+import { applyDeliveredCapabilityView } from "./runtime-seed";
+import { discoverCursorCapabilities } from "./cursor-discovery";
 import os from "node:os";
 
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
@@ -76,7 +80,7 @@ async function resolveAgentCapabilityRouteView(input: {
     refresh: input.refresh,
   });
 
-  return resolveCascadeView({
+  const view = resolveCascadeView({
     cascadeKind: input.cascadeKind,
     scope: context.scopeContext,
     overrideChain: context.overrideChain,
@@ -86,6 +90,20 @@ async function resolveAgentCapabilityRouteView(input: {
     runtimeApplyState: context.runtimeApplyState,
     ...(pluginResolution ? { pluginResolution } : {}),
   });
+  if (view.backend !== "cursor" || input.scope.level !== "conversation")
+    return view;
+  const snapshot = await readCursorCapabilitySnapshot(
+    cursorAgentStorePath(input.scope.conversationId),
+  );
+  const delivered =
+    getRuntime(input.scope.conversationId)?.capabilitiesAtCreation ??
+    snapshot?.capabilities;
+  return {
+    ...applyDeliveredCapabilityView(view, delivered),
+    ...(snapshot && input.cascadeKind === "cursor-skills"
+      ? { appliedCommands: snapshot.commands }
+      : {}),
+  };
 }
 
 async function refreshAgentCapabilityRouteDiscovery(input: {
@@ -295,6 +313,12 @@ async function fetchInventory(
 ): Promise<AgentCapabilityInventory> {
   const home = os.homedir();
   switch (cascadeKind) {
+    case "cursor-skills":
+      return discoverCursorCapabilities({ worktreePath, home }, "skills");
+    case "cursor-plugins":
+      return discoverCursorCapabilities({ worktreePath, home }, "plugins");
+    case "cursor-agents":
+      return discoverCursorCapabilities({ worktreePath, home }, "agents");
     case "claude-skills": {
       const result = await discoverClaudeSkills({
         worktreePath,
@@ -386,6 +410,8 @@ function pluginCascadeForChild(
     return "claude-plugins";
   }
   if (cascadeKind === "codex-skills") return "codex-plugins";
+  if (cascadeKind === "cursor-skills" || cascadeKind === "cursor-agents")
+    return "cursor-plugins";
   return undefined;
 }
 

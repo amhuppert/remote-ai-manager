@@ -360,8 +360,8 @@ describe("cursor IPC frames", () => {
     forceExpirePersistedRun: false,
   };
 
-  it("uses protocol version 2 for the atomic model selection contract", () => {
-    expect(CURSOR_IPC_CODEC_VERSION).toBe(2);
+  it("uses protocol version 3 for selected agent definitions", () => {
+    expect(CURSOR_IPC_CODEC_VERSION).toBe(3);
   });
 
   it("accepts every parent frame in the contract", () => {

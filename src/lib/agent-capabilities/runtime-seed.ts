@@ -1,7 +1,10 @@
+import { computeCascadeRuntimeHash } from "./runtime-hashes";
+import { encodeCascadeKind } from "./schemas";
 import { applyTimingForCascade } from "./metadata";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   AgentCapabilityCascadeKind,
+  AgentCapabilityViewResponse,
   AgentCapabilityDiagnostic,
   AgentCapabilityRuntimeApplicationState,
 } from "./schemas";
@@ -106,5 +109,56 @@ export function createCapabilityConfigComposer(
       diagnostics: result.diagnostics,
       runtimeState: promoteSeededRuntimeState(result.runtimeState),
     };
+  };
+}
+
+export function reconcileDeliveredCapabilityState(
+  seed: AgentCapabilityRuntimeApplicationState,
+  delivered: ResolvedCapabilityCascade | undefined,
+): AgentCapabilityRuntimeApplicationState {
+  if (!delivered) return seed;
+  const result = { cascades: { ...seed.cascades } };
+  for (const kind of delivered.kinds) {
+    const cascadeKind = encodeCascadeKind({
+      backend: delivered.backend,
+      kind: kind.kind,
+    });
+    const appliedHash = computeCascadeRuntimeHash({
+      cascadeKind,
+      rows: kind.items.filter((item) => item.originLayer !== "native"),
+    });
+    const desired = seed.cascades[cascadeKind];
+    const pendingHash = desired?.pendingHash ?? desired?.appliedHash;
+    result.cascades[cascadeKind] =
+      pendingHash && pendingHash !== appliedHash
+        ? {
+            appliedHash,
+            pendingHash,
+            lastApplyStatus: "deferred-next-conversation",
+          }
+        : { appliedHash, lastApplyStatus: "applied" };
+  }
+  return result;
+}
+
+export function applyDeliveredCapabilityView(
+  view: AgentCapabilityViewResponse,
+  delivered: ResolvedCapabilityCascade | undefined,
+): AgentCapabilityViewResponse {
+  if (!delivered || delivered.backend !== view.backend) return view;
+  const kind = delivered.kinds.find(
+    (k) =>
+      encodeCascadeKind({ backend: delivered.backend, kind: k.kind }) ===
+      view.cascadeKind,
+  );
+  const enabled = new Set(
+    kind?.items.filter((item) => item.enabled).map((item) => item.itemId),
+  );
+  return {
+    ...view,
+    items: view.items.map((item) => ({
+      ...item,
+      appliedEnabled: enabled.has(item.itemId),
+    })),
   };
 }

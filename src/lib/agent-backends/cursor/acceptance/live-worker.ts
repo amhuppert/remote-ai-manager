@@ -84,6 +84,7 @@ export interface LiveConversation {
 }
 
 export interface LiveHarness {
+  readonly transport: CursorWorkerTransport;
   readonly root: string;
   createWorkspace(name: string): LiveWorkspace;
   start(options: LiveConversationOptions): Promise<CursorWorkerStartResult>;
@@ -253,6 +254,7 @@ export function createLiveHarness(options: LiveHarnessOptions): LiveHarness {
   }
 
   return {
+    transport,
     root,
     createWorkspace,
     start,

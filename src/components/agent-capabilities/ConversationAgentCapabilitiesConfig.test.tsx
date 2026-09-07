@@ -132,7 +132,9 @@ describe("ConversationAgentCapabilitiesConfig", () => {
       within(drawer).getByTestId("capability-search-claude-plugins"),
     ).toHaveTextContent("git-guardrails");
 
-    fireEvent.mouseDown(within(drawer).getByRole("tab", { name: "Agents" }));
+    fireEvent.mouseDown(
+      within(drawer).getAllByRole("tab", { name: "Agents" })[0]!,
+    );
     expect(
       within(drawer).getByTestId("capability-panel-claude-agents"),
     ).toBeInTheDocument();
@@ -145,14 +147,14 @@ describe("ConversationAgentCapabilitiesConfig", () => {
     ).toBeInTheDocument();
 
     fireEvent.mouseDown(
-      within(drawer).getAllByRole("tab", { name: "Skills" })[1]!,
+      within(drawer).getAllByRole("tab", { name: "Skills" })[2]!,
     );
     expect(
       within(drawer).getByTestId("capability-panel-codex-skills"),
     ).toBeInTheDocument();
 
     fireEvent.mouseDown(
-      within(drawer).getAllByRole("tab", { name: "Plugins" })[1]!,
+      within(drawer).getAllByRole("tab", { name: "Plugins" })[2]!,
     );
     expect(
       within(drawer).getByTestId("capability-panel-codex-plugins"),

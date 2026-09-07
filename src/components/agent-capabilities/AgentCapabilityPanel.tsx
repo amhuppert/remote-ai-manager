@@ -72,6 +72,9 @@ const CASCADE_TITLES: Record<AgentCapabilityCascadeKind, string> = {
   "claude-agents": "Claude Sub-Agents",
   "codex-skills": "Codex Skills",
   "codex-plugins": "Codex Plugins",
+  "cursor-skills": "Cursor Skills",
+  "cursor-plugins": "Cursor Plugins (CC delivery)",
+  "cursor-agents": "Cursor Agent Definitions",
 };
 
 // Visually-hidden text exposed to screen readers only.

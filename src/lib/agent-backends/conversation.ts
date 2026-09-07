@@ -1,3 +1,4 @@
+import type { ResolvedCapabilityCascade } from "./runtime-config";
 import type { ExecutionIntent } from "./execution-admission";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type {
@@ -193,6 +194,8 @@ export type ReadyResult =
   | { status: "recreate-runtime"; reason: string };
 
 export interface ConversationBackendRuntime {
+  /** The selection actually attached when a backend restores a persisted snapshot. */
+  readonly capabilitiesAtCreation?: ResolvedCapabilityCascade;
   readonly backend: AgentBackendId;
   readonly status: "alive" | "dead";
   /**

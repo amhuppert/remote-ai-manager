@@ -76,6 +76,18 @@ export interface AgentCapabilityMetadataRegistry {
 }
 
 export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
+  ...(["skills", "plugins", "agents"] as const).map((kind) =>
+    agentCapabilityMetadataSchema.parse({
+      cascadeKind: `cursor-${kind}`,
+      backend: "cursor",
+      capabilityKind:
+        kind === "skills" ? "skill" : kind === "plugins" ? "plugin" : "agent",
+      applySemantics: applySemanticsForCascade(`cursor-${kind}`),
+      discoverySupport: "available",
+      runtimeVisibility: "source-only",
+      compositionSupport: "translator",
+    }),
+  ),
   agentCapabilityMetadataSchema.parse({
     cascadeKind: "claude-skills",
     backend: "claude",

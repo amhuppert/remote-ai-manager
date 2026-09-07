@@ -1,3 +1,4 @@
+import type { CursorCapabilitySnapshot } from "./capability-delivery";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { BackendModelSelection } from "../schemas";
 import type {
@@ -87,6 +88,7 @@ export type CursorWorkerStartResult =
   | { kind: "spawn_failed"; message: string };
 
 export interface CursorAttachInput {
+  agents?: CursorCapabilitySnapshot["agents"];
   mode: "create" | "resume";
   /** Required for resume; ignored for create. */
   ref: string | null;

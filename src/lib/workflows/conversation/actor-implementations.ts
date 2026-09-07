@@ -1,3 +1,4 @@
+import { reconcileDeliveredCapabilityState } from "@/lib/agent-capabilities/runtime-seed";
 import { toPromptActorResult } from "./turn-result";
 import {
   prepareConversationTurnContext,
@@ -1048,7 +1049,10 @@ async function executePromptForMachine(
       await seedRuntimeCapabilityState(
         deps.policy,
         capabilityCtx,
-        capabilityRuntimeStateSeed,
+        reconcileDeliveredCapabilityState(
+          capabilityRuntimeStateSeed,
+          newRuntime.capabilitiesAtCreation,
+        ),
       );
     }
 

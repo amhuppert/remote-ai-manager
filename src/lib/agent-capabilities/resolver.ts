@@ -88,7 +88,10 @@ export type PluginEnablementMap = ReadonlyMap<
   { enabled: boolean; originLayer: AgentCapabilityOriginLayer }
 >;
 
-export type PluginCascadeKind = "claude-plugins" | "codex-plugins";
+export type PluginCascadeKind =
+  | "claude-plugins"
+  | "codex-plugins"
+  | "cursor-plugins";
 
 export interface ResolvePluginEnablementInput {
   /**
@@ -510,11 +513,14 @@ function capabilityKindForCascade(
   switch (kind) {
     case "claude-skills":
     case "codex-skills":
+    case "cursor-skills":
       return "skill";
     case "claude-plugins":
     case "codex-plugins":
+    case "cursor-plugins":
       return "plugin";
     case "claude-agents":
+    case "cursor-agents":
       return "agent";
   }
 }

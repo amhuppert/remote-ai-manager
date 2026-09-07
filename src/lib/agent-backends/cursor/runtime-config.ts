@@ -1,16 +1,3 @@
-/**
- * Cursor's `BackendRuntimeConfigAdapter` (spec D18).
- *
- * Cursor declares no capability kinds: the worker attaches with
- * `settingSources: []`, so the SDK reads no user, project, team, or MDM
- * configuration and there is no skills/plugins/agents surface a resolved
- * cascade could reach. There is therefore nothing to translate — but there is
- * something to refuse. `validateResolvedCascade` rejects any kind the
- * descriptor does not declare, which is what turns "Cursor has no cascade" into
- * a loud, named result instead of a silent drop the operator would read as
- * applied.
- */
-
 import { createLogger } from "@/lib/logging";
 
 import type { ConversationBackendRuntime } from "../conversation";
@@ -46,9 +33,12 @@ export function createCursorRuntimeConfigAdapter(): BackendRuntimeConfigAdapter 
         return { status: "rejected", error: "cursor runtime is closed" };
       }
 
-      // An empty cascade is the only one that reaches here, and applying it is
-      // a no-op by construction — no provider call, nothing staged for the next
-      // turn.
+      if (input.resolved.kinds.length) {
+        return {
+          status: "deferred",
+          reason: "next_conversation",
+        };
+      }
       return { status: "applied" };
     },
   };

@@ -114,7 +114,7 @@ describe("cursor descriptor — facets", () => {
 
   it("declares managed skills hermetic for both facets — nothing is bundled", () => {
     const { managedSkills } = descriptor();
-    expect(managedSkills.conversations).toBe("hermetic");
+    expect(managedSkills.conversations).toBe("bundled");
     expect(managedSkills.tasks).toBe("hermetic");
     expect(managedSkills.prepareCheckout).toBeUndefined();
   });
@@ -130,7 +130,11 @@ describe("cursor descriptor — conversation capabilities", () => {
       contextWindowMetrics: false,
       nativeMidTurnAskUser: false,
       externalTurns: false,
-      capabilityKinds: [],
+      capabilityKinds: [
+        { kind: "skills", applyTiming: "next_conversation" },
+        { kind: "plugins", applyTiming: "next_conversation" },
+        { kind: "agents", applyTiming: "next_conversation" },
+      ],
     });
   });
 

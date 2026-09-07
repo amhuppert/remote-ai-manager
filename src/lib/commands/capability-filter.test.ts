@@ -112,6 +112,59 @@ function viewFor(
 }
 
 describe("filterDisabledCommandItems", () => {
+  it("uses the delivered skill catalog across managed bundle changes", () => {
+    const current = skillItem({
+      name: "/command-center:current",
+      source: "managed",
+    });
+    const retired = skillItem({
+      name: "/command-center:retired",
+      source: "managed",
+    });
+    const view = {
+      ...viewFor("cursor-skills", []),
+      appliedCommands: [retired],
+    };
+    expect(filterDisabledCommandItems([current], undefined, view)).toEqual([
+      retired,
+    ]);
+  });
+  it("keeps the applied Cursor selection while next-conversation changes are pending", () => {
+    const enabled = {
+      ...skillRow({ itemId: "old", enabled: false }),
+      appliedEnabled: true,
+    };
+    const disabled = {
+      ...skillRow({ itemId: "future", enabled: true }),
+      appliedEnabled: false,
+    };
+    const items = [
+      skillItem({ name: "/old", source: "user" }),
+      skillItem({ name: "/future", source: "user" }),
+    ];
+    expect(
+      filterDisabledCommandItems(
+        items,
+        undefined,
+        viewFor("cursor-skills", [enabled, disabled]),
+      ),
+    ).toEqual([items[0]]);
+  });
+  it("keeps managed commands despite a stale user override with the same name", () => {
+    const item = skillItem({
+      name: "/command-center:cc-cli",
+      source: "managed",
+    });
+    expect(
+      filterDisabledCommandItems(
+        [item],
+        undefined,
+        viewFor("cursor-skills", [
+          skillRow({ itemId: "command-center:cc-cli", enabled: false }),
+        ]),
+      ),
+    ).toEqual([item]);
+  });
   it("returns items unchanged when both views are undefined", () => {
     const items: CommandItem[] = [
       pluginItem({ name: "/foo", source: "ai-resources" }),

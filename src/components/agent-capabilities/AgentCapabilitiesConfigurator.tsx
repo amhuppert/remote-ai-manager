@@ -31,7 +31,7 @@ export interface AgentCapabilitiesConfiguratorProps {
 type CapabilityTabId = "mcp" | AgentCapabilityCascadeKind;
 
 const CAPABILITY_TAB_GROUPS: Array<{
-  group: "Shared" | "Claude" | "Codex";
+  group: "Shared" | "Claude" | "Codex" | "Cursor";
   tabs: Array<{
     id: CapabilityTabId;
     label: string;
@@ -48,6 +48,14 @@ const CAPABILITY_TAB_GROUPS: Array<{
       { id: "claude-skills", label: "Skills" },
       { id: "claude-agents", label: "Agents" },
       { id: "claude-plugins", label: "Plugins" },
+    ],
+  },
+  {
+    group: "Cursor",
+    tabs: [
+      { id: "cursor-skills", label: "Skills" },
+      { id: "cursor-agents", label: "Agents" },
+      { id: "cursor-plugins", label: "Plugins" },
     ],
   },
   {
@@ -85,7 +93,7 @@ export function AgentCapabilitiesConfigurator({
   const openPluginTab = (pluginId: string, backend: AgentBackendId) => {
     // The capability registry owns which plugin cascade a backend has, so the
     // tab is looked up rather than spelled. A backend that registers no plugin
-    // kind — Cursor declares no capability kinds at all — resolves to null and
+    // kind resolves to null and
     // has no tab to reveal.
     const pluginCascade = commandCascadesForBackend(backend).plugins;
     const pluginTab =

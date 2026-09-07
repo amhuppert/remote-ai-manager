@@ -1012,3 +1012,37 @@ it("delivers an unaccepted synthetic seed to an eagerly created agent", async ()
   ).toBe("anchored history\n\nretry first prompt");
   await harness.runtime.close();
 });
+
+describe("Cursor capability delivery", () => {
+  it("delivers the skill index once and preserves explicit agents across worker attachments", async () => {
+    const snapshot = {
+      catalog: "<cc-skills>CAPABILITY_INDEX</cc-skills>",
+      commands: [],
+      agents: { auditor: { description: "Audit", prompt: "Review carefully" } },
+      delivered: false,
+      capabilities: { backend: "cursor" as const, kinds: [] },
+    };
+    const harness = createHarness({
+      deps: {
+        capabilityDelivery: {
+          snapshot,
+          async markDelivered() {
+            snapshot.delivered = true;
+          },
+        },
+      },
+    });
+    await harness.send();
+    await harness.send();
+    const worker = elementAt(harness.transport.workers, 0);
+    expect(elementAt(worker.turns, 0).input.promptText).toContain(
+      "CAPABILITY_INDEX",
+    );
+    expect(elementAt(worker.turns, 1).input.promptText).not.toContain(
+      "CAPABILITY_INDEX",
+    );
+    expect(snapshot.delivered).toBe(true);
+    expect(worker.attachments[0]).toMatchObject({ agents: snapshot.agents });
+    await harness.runtime.close();
+  });
+});

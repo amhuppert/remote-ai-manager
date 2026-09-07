@@ -1,3 +1,4 @@
+import type { CursorCapabilityDelivery } from "./capability-delivery";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import { createLogger } from "@/lib/logging";
@@ -64,6 +65,7 @@ const failureClassifier = createCursorFailureClassifier();
 const MAX_SEEN_EVENT_KEYS = 20_000;
 
 export interface CursorConversationRuntimeDeps {
+  capabilityDelivery?: CursorCapabilityDelivery;
   transport: CursorWorkerTransport;
   /** Command Center-owned root for this conversation's SDK agent store. */
   storePath(conversationId: string): string;
@@ -216,6 +218,10 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     this.deps = deps;
   }
 
+  get capabilitiesAtCreation() {
+    return this.deps.capabilityDelivery?.snapshot.capabilities;
+  }
+
   get status(): "alive" | "dead" {
     return this._status;
   }
@@ -292,6 +298,8 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
     // Every event emitted for this turn has been handled before the caller
     // sees the result, so a transcript append cannot land after the turn row.
     await this.emitChain;
+    if (this.acceptedThisPrompt)
+      await this.deps.capabilityDelivery?.markDelivered();
 
     return this.buildResult(turn.state, turn.outcome, startedAt);
   }
@@ -473,6 +481,7 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
       // MCP map with the agent, so a resumed agent whose attach omitted it
       // would run with no servers at all (D11, D18).
       mcpServers: this.mcpServerMap(),
+      agents: this.deps.capabilityDelivery?.snapshot.agents ?? {},
     });
     return settlement.promise;
   }
@@ -1047,6 +1056,9 @@ export class CursorConversationRuntime implements ConversationBackendRuntime {
 
   private buildPromptText(input: ConversationBackendTurnInput): string {
     const parts: string[] = [];
+    const skills = this.deps.capabilityDelivery?.snapshot;
+    if (skills && !skills.delivered && skills.catalog)
+      parts.push(skills.catalog);
     if (this.isFirstTurn && this.sessionInstructions.length > 0) {
       parts.push(
         "```\n## System Instructions\n" +
