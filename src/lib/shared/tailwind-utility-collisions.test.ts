@@ -40,6 +40,17 @@ const srcDir = path.join(repoRoot, "src");
  * is migrated so far, keeping its still-legacy siblings under the guard.
  */
 const UTILITY_FIRST_PATHS = [
+  // Memory library surfaces: authored utility-first from the start (no legacy
+  // CSS ever existed for them), so both directories are dir-scoped.
+  `${path.sep}components${path.sep}memory${path.sep}`,
+  `${path.sep}features${path.sep}memory${path.sep}`,
+  // CreateSessionModal is still part-legacy (deferred Family B, see
+  // eslint.config.mjs), but its backend toggle row is deliberately styled with
+  // utilities. File-scoped so its legacy remainder stays under the guard.
+  `${path.sep}components${path.sep}session${path.sep}CreateSessionModal.tsx`,
+  // MobileActionMenu itself is part-legacy and stays guarded; its story wrapper
+  // is utility-styled, like the other listed story files.
+  `${path.sep}components${path.sep}MobileActionMenu.stories.tsx`,
   `${path.sep}components${path.sep}ui${path.sep}`,
   `${path.sep}components${path.sep}markdown${path.sep}`,
   // Pilot slice (design task 5.1): ProjectCard is fully utility-first.

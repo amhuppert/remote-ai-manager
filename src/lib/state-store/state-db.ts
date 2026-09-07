@@ -15,11 +15,12 @@ import os from "node:os";
 import { getConfigDirPath } from "../config/loader";
 import { createLogger } from "@/lib/logging";
 import {
-  deleteGlobalValue,
   getGlobalSingleton,
   getGlobalValue,
   setGlobalValue,
 } from "../shared/global-singleton";
+import { resetInstalledStateDbForTesting } from "./reset-installed-state-db";
+import { STATE_DB_GLOBAL_KEY } from "./state-db-global-key";
 import {
   enforceCurrentSchemaCompatibility,
   enforceSchemaCompatibilityBarrier,
@@ -34,7 +35,7 @@ const logger = createLogger("state-store/state-db");
 
 type Db = InstanceType<typeof Database>;
 
-const GLOBAL_KEY = "__cc_state_db" as const;
+const GLOBAL_KEY = STATE_DB_GLOBAL_KEY;
 const DB_FILE_NAME = "command-center.db";
 
 /**
@@ -3867,11 +3868,7 @@ export function getDb(): Db {
 
 /** Reset the singleton for testing — closes any open connection. */
 export function _resetForTesting(): void {
-  const db = getGlobalValue<Db>(GLOBAL_KEY);
-  if (db) {
-    db.close();
-    deleteGlobalValue(GLOBAL_KEY);
-  }
+  resetInstalledStateDbForTesting();
 }
 
 /**

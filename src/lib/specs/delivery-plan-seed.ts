@@ -1,6 +1,5 @@
-import { criterionRecordsOf } from "@/lib/workflow-graph/criteria/criterion-records";
 import type { WorkflowDefinitionMutation } from "@/lib/workflow-graph/definition-schemas";
-
+import { criterionRecordsOf } from "@/lib/workflow-graph/spec-bridge";
 import type { DeliveryPlanBinding } from "./delivery-plan";
 import { authoredDeliveryPlanSources } from "./delivery-plan-finalization";
 import type { CriterionDeliveryClass } from "./delivery-delta";

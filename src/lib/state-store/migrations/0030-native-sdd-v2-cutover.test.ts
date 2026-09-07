@@ -11,6 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectSameBytes } from "@/lib/shared/testing/same-bytes";
 import Database from "better-sqlite3";
 
 import { _createTestDb, _createTestDbAtPath } from "../state-db";
@@ -1369,14 +1370,18 @@ describe("0030 native-SDD v2 cutover preflight", () => {
     const t4 = performance.now();
     process.stderr.write(`\nZZT preflight=${Math.round(t4 - t3)}ms\n`);
 
-    expect(readFileSync(fixture.dbPath)).toEqual(databaseFileBefore);
+    expectSameBytes(
+      readFileSync(fixture.dbPath),
+      databaseFileBefore,
+      "databaseFileBefore",
+    );
     const t5 = performance.now();
     process.stderr.write(`\nZZT fileCompare=${Math.round(t5 - t4)}ms\n`);
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
     expect(existsSync(manifestPathFor(fixture.configDir))).toBe(false);
     const readBack = new Database(fixture.dbPath, { readonly: true });
     try {
-      expect(readBack.serialize()).toEqual(databaseBefore);
+      expectSameBytes(readBack.serialize(), databaseBefore, "databaseBefore");
       const t6 = performance.now();
       process.stderr.write(`\nZZT serializeCompare=${Math.round(t6 - t5)}ms\n`);
       expect(
@@ -1437,7 +1442,7 @@ describe("0030 native-SDD v2 cutover preflight", () => {
       expect(refusal?.inventory.samples.archivedGraphExecutionIds).toContain(
         COMPLETED_SAMPLE_WORKFLOW_EXECUTION_ID,
       );
-      expect(fixture.db.serialize()).toEqual(databaseBefore);
+      expectSameBytes(fixture.db.serialize(), databaseBefore, "databaseBefore");
       expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
       expect(existsSync(manifestPath)).toBe(false);
       expect(
@@ -1777,7 +1782,11 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       (refusal as NativeSddV2CutoverActiveExecutionError).inventory.samples
         .resumableActiveGraphExecutionIds,
     ).toEqual([ACTIVE_WORKFLOW_EXECUTION_ID]);
-    expect(readFileSync(fixture.dbPath)).toEqual(databaseFileBefore);
+    expectSameBytes(
+      readFileSync(fixture.dbPath),
+      databaseFileBefore,
+      "databaseFileBefore",
+    );
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
     expect(existsSync(manifestPathFor(fixture.configDir))).toBe(false);
     expect(
@@ -2009,7 +2018,11 @@ describe("0030 native-SDD v2 cutover hardening", () => {
         .prepare("SELECT name FROM applied_migrations WHERE name = ?")
         .all(nativeSddV2Cutover.name),
     ).toEqual([{ name: nativeSddV2Cutover.name }]);
-    expect(fixture.db.serialize()).toEqual(databaseAfterFirst);
+    expectSameBytes(
+      fixture.db.serialize(),
+      databaseAfterFirst,
+      "databaseAfterFirst",
+    );
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(
       workflowsAfterFirst,
     );
@@ -2197,7 +2210,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       "Native-SDD v2 cutover postcondition failed: evidenceSourceEvents=1, proofVerdictEvidence=1, taskClaimEvidence=1",
     );
 
-    expect(fixture.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(fixture.db.serialize(), databaseBefore, "databaseBefore");
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
   });
 
@@ -2235,7 +2248,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       "Native-SDD v2 cutover postcondition failed: specLinkExecutionRefs=1",
     );
 
-    expect(fixture.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(fixture.db.serialize(), databaseBefore, "databaseBefore");
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
 
     const applied = await runNativeSddV2Cutover(context);
@@ -2281,7 +2294,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       "Native-SDD v2 cutover postcondition failed: evidenceMergeJobRefs=1",
     );
 
-    expect(fixture.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(fixture.db.serialize(), databaseBefore, "databaseBefore");
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
 
     const applied = await runNativeSddV2Cutover(context);
@@ -2340,7 +2353,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
       "Native-SDD v2 cutover postcondition failed: evidenceWorkflowEventRefs=1",
     );
 
-    expect(fixture.db.serialize()).toEqual(databaseBefore);
+    expectSameBytes(fixture.db.serialize(), databaseBefore, "databaseBefore");
     expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
 
     const applied = await runNativeSddV2Cutover(context);
@@ -2370,7 +2383,7 @@ describe("0030 native-SDD v2 cutover hardening", () => {
         runNativeSddV2Cutover(context, failureHook(failurePoint)),
       ).rejects.toThrow(`injected cutover failure at ${failurePoint}`);
 
-      expect(fixture.db.serialize()).toEqual(databaseBefore);
+      expectSameBytes(fixture.db.serialize(), databaseBefore, "databaseBefore");
       expect(snapshotWorkflowStore(fixture.configDir)).toEqual(workflowsBefore);
       expect(existsSync(manifestPathFor(fixture.configDir))).toBe(false);
       expect(

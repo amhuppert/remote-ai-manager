@@ -96,7 +96,7 @@ describe("scope-specific validation wrappers", () => {
       "npx prettier --write --ignore-unknown --no-color changed.ts",
     ]);
     expect(runWrapper(wrapperPaths.lintChanged)).toEqual([
-      "npx eslint --fix --quiet --no-color --no-warn-ignored changed.ts",
+      "npx eslint --cache --cache-location node_modules/.cache/eslint/ --fix --quiet --no-color --no-warn-ignored changed.ts",
     ]);
   });
 
@@ -105,7 +105,7 @@ describe("scope-specific validation wrappers", () => {
       "npx prettier --write --no-color .",
     ]);
     expect(runWrapper(wrapperPaths.lintFull)).toEqual([
-      "npx eslint . --fix --quiet --no-color --no-warn-ignored",
+      "npx eslint . --cache --cache-location node_modules/.cache/eslint/ --fix --quiet --no-color --no-warn-ignored",
     ]);
   });
 
@@ -114,7 +114,7 @@ describe("scope-specific validation wrappers", () => {
     expect(invocations).toEqual(
       expect.arrayContaining([
         "npx prettier --write --no-color .",
-        "npx eslint . --fix --quiet --no-color --no-warn-ignored",
+        "npx eslint . --cache --cache-location node_modules/.cache/eslint/ --fix --quiet --no-color --no-warn-ignored",
         "npx tsc --noEmit --pretty false",
         expect.stringMatching(
           /^node .*scripts\/validate\/vitest-launcher\.mjs full both$/,

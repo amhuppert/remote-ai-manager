@@ -176,10 +176,10 @@ Structured output works through the same shared post-validation path every backe
 
 ## Verifying a deployment
 
-The authenticated live matrix is a registered validation command:
+The authenticated live matrix runs through its wrapper, which is not part of the registered validation commands (they are pinned by `src/lib/projects/repo-config.test.ts`):
 
 ```bash
-cctl validate run cursor-acceptance
+bash scripts/validate/cursor-acceptance.sh
 ```
 
 It exercises the real SDK against a real account on the machine where it runs: preflight taxonomy, two-conversation isolation, streaming and file operations, continuation and invalid-reference handling, model selection, inline MCP, generation/shell/MCP cancellation with host process scans, worker lifetime bounds, image input, usage, and a closing credential sweep. Its evidence is diagnostic and does not admit or deny machines in production.

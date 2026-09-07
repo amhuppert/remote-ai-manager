@@ -8,11 +8,17 @@
  * never touch the user's real ~/.config/cc/command-center.db. This is required
  * because src/lib/config.ts captures CONFIG_DIR at module load — it MUST be
  * set before any test file imports config.ts (transitively via state-db).
+ *
+ * The per-test reset goes through the state-store-owned lightweight entry
+ * rather than `state-db.ts` itself: importing that module pulls the schema
+ * floor, `better-sqlite3`, the config loader, and logging into every test
+ * file, including the majority that never open a database.
  */
 import { rmSync } from "node:fs";
 import os from "node:os";
 import { afterAll, beforeEach } from "vitest";
 import { createWorkerConfigDir } from "@/lib/shared/testing/worker-config-dir";
+import { resetInstalledStateDbForTesting } from "@/lib/state-store/reset-installed-state-db";
 
 // Always worker-owned, never adopted. An inherited CC_CONFIG_DIR becomes the
 // parent to nest under: registered validation exports one scratch dir for the
@@ -25,9 +31,8 @@ const VITEST_CONFIG_DIR = createWorkerConfigDir(
 );
 process.env["CC_CONFIG_DIR"] = VITEST_CONFIG_DIR;
 
-beforeEach(async () => {
-  const { _resetForTesting } = await import("@/lib/state-store/state-db");
-  _resetForTesting();
+beforeEach(() => {
+  resetInstalledStateDbForTesting();
 });
 
 afterAll(() => {
